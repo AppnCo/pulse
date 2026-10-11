@@ -238,10 +238,12 @@ window.PulseAudio = (function() {
                 const source = ctx.createBufferSource();
                 source.buffer = buf;
 
-                // Fades : GainNode entre la source et l'effet
+                // Fades + gain clip : GainNode entre la source et l'effet
                 const hasFade = (clip.fadeIn && clip.fadeIn > 0) || (clip.fadeOut && clip.fadeOut > 0);
-                if (hasFade) {
+                const clipGainVal = clip.gain !== undefined ? clip.gain : 1.0;
+                if (hasFade || clipGainVal !== 1.0) {
                     const fg = ctx.createGain();
+                    fg.gain.value = clipGainVal;
                     source.connect(fg);
                     fg.connect(fx.input);
                     const clipAbsStart = playbackStartCtxTime + whenAhead;
@@ -337,10 +339,12 @@ window.PulseAudio = (function() {
                 if (!buf) return;
                 const source = offline.createBufferSource();
                 source.buffer = buf;
-                // Fades sur export
+                // Fades + gain clip sur export
                 const hasFade = (clip.fadeIn && clip.fadeIn > 0) || (clip.fadeOut && clip.fadeOut > 0);
-                if (hasFade) {
+                const clipGainVal2 = clip.gain !== undefined ? clip.gain : 1.0;
+                if (hasFade || clipGainVal2 !== 1.0) {
                     const fg = offline.createGain();
+                    fg.gain.value = clipGainVal2;
                     source.connect(fg);
                     fg.connect(trackGain);
                     if (clip.fadeIn > 0) {
@@ -633,6 +637,23 @@ window.PulseAudio = (function() {
         if (!metronomeEnabled) stopMetronome();
     }
 
+    // Calcule le gain de normalisation pour qu'un buffer atteigne targetDb (défaut 0dBFS)
+    function computeNormalizeGain(clipId, targetDb = -0.5) {
+        const buf = buffers.get(clipId);
+        if (!buf) return null;
+        let peak = 0;
+        for (let ch = 0; ch < buf.numberOfChannels; ch++) {
+            const data = buf.getChannelData(ch);
+            for (let i = 0; i < data.length; i++) {
+                const abs = Math.abs(data[i]);
+                if (abs > peak) peak = abs;
+            }
+        }
+        if (peak === 0) return null;
+        const targetLinear = Math.pow(10, targetDb / 20);
+        return targetLinear / peak;
+    }
+
     return {
         init, resumeIfNeeded, requestMic, releaseMic,
         startRecording, stopRecording,
@@ -642,7 +663,7 @@ window.PulseAudio = (function() {
         getTrackAnalyser, getMasterAnalyser, setMasterVolume,
         setMetronome, setMetronomeBpm, setCountIn, isCountInEnabled,
         startMetronome, stopMetronome, playCountIn, stopCountIn,
-        exportWav, audioBufferToWav,
+        exportWav, audioBufferToWav, computeNormalizeGain,
         getContext: () => ctx
     };
 })();

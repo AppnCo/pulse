@@ -487,6 +487,19 @@ body.is-dragging * { cursor: grabbing !important; }
     border: 1px dashed rgba(255, 255, 255, 0.3);
 }
 
+.clip-gain-tag {
+    display: inline-block;
+    font-size: 9px;
+    padding: 1px 5px;
+    background: rgba(0,0,0,0.4);
+    color: rgba(255,255,255,0.85);
+    border-radius: 4px;
+    margin-left: 4px;
+    letter-spacing: 0.3px;
+    vertical-align: 1px;
+    font-weight: 500;
+}
+
 .clip-stale-tag {
     display: inline-block;
     font-size: 9px;

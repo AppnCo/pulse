@@ -175,7 +175,7 @@ function renderClip(t, c, ci) {
         ${fadeInPx  > 0 ? `<div class="clip-fade-overlay in"  style="width:${fadeInPx}px"></div>`  : ''}
         ${fadeOutPx > 0 ? `<div class="clip-fade-overlay out" style="width:${fadeOutPx}px"></div>` : ''}
         ${renderClipWaveform(c, widthPx)}
-        <div class="clip-name" data-ci="${ci}">${esc(c.name || 'Clip')}${stale ? ' <span class="clip-stale-tag">⚠ audio perdu</span>' : ''}</div>
+        <div class="clip-name" data-ci="${ci}">${esc(c.name || 'Clip')}${stale ? ' <span class="clip-stale-tag">⚠ audio perdu</span>' : ''}${c.gain && c.gain !== 1 ? ` <span class="clip-gain-tag">${(20*Math.log10(c.gain)).toFixed(1)}dB</span>` : ''}</div>
     </div>`;
 }
 
@@ -1787,6 +1787,18 @@ function openClipContextMenu(x, y, trackIdx, clipIdx) {
         { label: clip.muted ? 'Désactiver Mute clip' : 'Mute clip', action: () => {
             pushUndo(); clip.muted = !clip.muted; renderTimelineTracks(); saveProject();
         }},
+        { label: 'Normaliser (−0.5 dBFS)', action: () => {
+            if (!clip.id) { flash('Pas de buffer audio pour ce clip'); return; }
+            const gain = PulseAudio.computeNormalizeGain(clip.id);
+            if (gain === null) { flash('Impossible de normaliser'); return; }
+            pushUndo();
+            clip.gain = Math.round(gain * 1000) / 1000;
+            renderTimelineTracks(); saveProject();
+            flash(`Normalisé : gain ${gain > 1 ? '+' : ''}${(20 * Math.log10(gain)).toFixed(1)} dB`);
+        }},
+        { label: 'Réinitialiser le gain', action: () => {
+            pushUndo(); delete clip.gain; renderTimelineTracks(); saveProject(); flash('Gain réinitialisé');
+        }},
         { sep: true },
         { label: 'Supprimer',       action: () => {
             state.selectedClip = { trackIdx, clipIdx };
@@ -2416,6 +2428,15 @@ function startClipTrim(startEvent, clipEl, trackIdx, clipIdx, side) {
     const originalStart = clip.start;
     const originalDuration = clip.duration;
 
+    // Indicateur de durée pendant le trim
+    let trimIndicator = document.getElementById('trimIndicator');
+    if (!trimIndicator) {
+        trimIndicator = document.createElement('div');
+        trimIndicator.id = 'trimIndicator';
+        trimIndicator.style.cssText = 'position:fixed;background:var(--bg-2);color:var(--text-1);border:1px solid var(--border);padding:4px 10px;border-radius:8px;font-size:12px;font-family:ui-monospace,monospace;z-index:300;pointer-events:none;display:none;box-shadow:0 4px 16px rgba(0,0,0,0.4);';
+        document.body.appendChild(trimIndicator);
+    }
+
     const onMove = (ev) => {
         const dx = ev.clientX - startX;
         const dt = dx / state.pxPerSecond;
@@ -2435,11 +2456,17 @@ function startClipTrim(startEvent, clipEl, trackIdx, clipIdx, side) {
             el.style.left  = (clip.start    * state.pxPerSecond) + 'px';
             el.style.width = (clip.duration * state.pxPerSecond) + 'px';
         }
+        // Indicateur durée
+        trimIndicator.textContent = secondsToDuration(clip.duration);
+        trimIndicator.style.display = 'block';
+        trimIndicator.style.left = (ev.clientX + 12) + 'px';
+        trimIndicator.style.top  = (ev.clientY - 28) + 'px';
     };
     const onUp = () => {
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
         document.body.classList.remove('is-trimming');
+        if (trimIndicator) trimIndicator.style.display = 'none';
         renderTimelineTracks(); // re-render final pour synchro waveform/tooltip
         saveProject();
     };
