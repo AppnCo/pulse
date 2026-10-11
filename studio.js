@@ -71,6 +71,21 @@ const state = {
     clipboard: null       // { clip, trackIdx } pour copy/paste
 };
 
+// === Undo (snapshots JSON du projet, max 30 niveaux) ===
+const _undoStack = [];
+const _MAX_UNDO = 30;
+function pushUndo() {
+    _undoStack.push(JSON.stringify(state.project));
+    if (_undoStack.length > _MAX_UNDO) _undoStack.shift();
+}
+function undoAction() {
+    if (!_undoStack.length) { flash('Rien à annuler'); return; }
+    state.project = JSON.parse(_undoStack.pop());
+    renderAll();
+    saveProject();
+    flash('✓ Annulé');
+}
+
 // --- Rendu : panneau pistes ---
 function renderTracksPanel() {
     const list = document.getElementById('tracksList');
@@ -723,6 +738,19 @@ function updatePlayhead() {
     const x = state.playhead * state.pxPerSecond;
     ph.style.left = `${x}px`;
     ph.style.transform = '';
+    // Auto-scroll : le curseur reste visible pendant lecture et rec
+    if (state.playing || state.recording) {
+        const timeline = document.querySelector('.timeline');
+        if (timeline) {
+            const margin = 100;
+            const right = timeline.scrollLeft + timeline.clientWidth;
+            if (x > right - margin) {
+                timeline.scrollLeft = x - margin;
+            } else if (x < timeline.scrollLeft + 20) {
+                timeline.scrollLeft = Math.max(0, x - 40);
+            }
+        }
+    }
 }
 
 let _chronoEl = null;
@@ -770,6 +798,7 @@ function trimAtPlayhead(side) {
     const clips = t.clips || [];
     let touched = 0;
 
+    pushUndo();
     t.clips = clips.flatMap(c => {
         const start = c.start;
         const end   = c.start + c.duration;
@@ -847,9 +876,12 @@ const SHORTCUT_GROUPS = [
             ['Q', 'Couper à gauche du curseur'],
             ['S', 'Couper à droite du curseur'],
             ['B', 'Outil ciseau — couper un clip au clic'],
+            ['⌘C', 'Copier le clip sélectionné'],
+            ['⌘V', 'Coller à la position du curseur'],
+            ['⌘Z', 'Annuler (30 niveaux)'],
             ['Shift + drag clip', 'Désactiver le snap temporairement'],
             ['Shift + drag', 'Sélectionner une plage'],
-            ['Suppr / ⌫', 'Effacer la plage sélectionnée'],
+            ['Suppr / ⌫', 'Effacer le clip ou la plage sélectionnée'],
             ['Alt + drag clip', 'Dupliquer le clip']
         ]
     },
@@ -860,6 +892,7 @@ const SHORTCUT_GROUPS = [
             ['Shift + S', 'Solo piste sélectionnée'],
             ['⌘⇧S', 'Clear tous les solos'],
             ['⌘D', 'Dupliquer la piste (sans clips)'],
+            ['⌘⌫', 'Supprimer la piste sélectionnée'],
             ['↑ / ↓', 'Changer de piste'],
             ['A', 'Mode automation']
         ]
@@ -1442,6 +1475,7 @@ function setZoom(px, anchorSec) {
 function duplicateTrack(idx) {
     const src = state.project.tracks[idx];
     if (!src) return;
+    pushUndo();
     const copy = {
         ...src,
         name: src.name + ' copy',
@@ -1457,8 +1491,30 @@ function duplicateTrack(idx) {
     flash(`Piste dupliquée : « ${copy.name} »`);
 }
 
+// --- Supprimer la piste sélectionnée (⌘⌫) ---
+function deleteSelectedTrack() {
+    const idx = state.selectedTrack;
+    const t = state.project.tracks[idx];
+    if (!t) return;
+    if (t.isCapture) { flash('La Capture Lane ne peut pas être supprimée'); return; }
+    pushUndo();
+    // Nettoyer les blobs orphelins
+    (t.clips || []).forEach(c => {
+        if (!c.id) return;
+        const shared = state.project.tracks.flatMap(tr => tr.clips || []).filter(cl => cl.id === c.id).length;
+        if (shared <= 1 && window.PulsePersist) PulsePersist.deleteBlob(c.id).catch(() => {});
+    });
+    state.project.tracks.splice(idx, 1);
+    state.selectedTrack = Math.min(idx, state.project.tracks.length - 1);
+    state.selectedClip = null;
+    renderAll();
+    saveProject();
+    flash(`Piste « ${t.name} » supprimée`);
+}
+
 // --- Ajouter une piste ---
 function addTrack() {
+    pushUndo();
     const i = state.project.tracks.length;
     state.project.tracks.push({
         name: `Piste ${i + 1}`,
@@ -1559,6 +1615,60 @@ function updatePanKnobVisual(knob, pan) {
     knob.style.transform = `rotate(${deg}deg)`;
 }
 
+// --- Menu contextuel sur une piste ---
+function openTrackContextMenu(x, y, idx, t) {
+    document.querySelector('.track-ctx-menu')?.remove();
+    const menu = document.createElement('div');
+    menu.className = 'track-ctx-menu';
+    menu.style.cssText = `position:fixed;left:${x}px;top:${y}px;z-index:200;`;
+    const items = [
+        { label: 'Renommer',          action: () => { const el = document.querySelector(`.track-name[data-i="${idx}"]`); if (el) { el.focus(); document.execCommand('selectAll'); } } },
+        { label: 'Dupliquer (sans clips)', action: () => duplicateTrack(idx) },
+        t.isCapture ? null : { label: 'Supprimer la piste', action: () => { state.selectedTrack = idx; deleteSelectedTrack(); }, danger: true },
+        { sep: true },
+        { label: t.muted ? 'Désactiver Mute'  : 'Mute',  action: () => toggleMute(idx) },
+        { label: t.solo  ? 'Désactiver Solo'  : 'Solo',  action: () => toggleSolo(idx) },
+        { label: t.armed ? 'Désarmer la piste': 'Armer', action: () => {
+            if (t.isCapture) return;
+            t.armed = !t.armed;
+            renderTracksPanel(); bindTrackEvents(); saveProject();
+        }},
+        { sep: true },
+        { label: 'Changer la couleur', submenu: COLORS.map(c => ({ color: c, action: () => { pushUndo(); t.color = c; renderAll(); saveProject(); } })) }
+    ].filter(Boolean);
+
+    items.forEach(item => {
+        if (item.sep) { const d = document.createElement('div'); d.className = 'ctx-sep'; menu.appendChild(d); return; }
+        if (item.submenu) {
+            const div = document.createElement('div');
+            div.className = 'ctx-item ctx-colors';
+            item.submenu.forEach(s => {
+                const swatch = document.createElement('div');
+                swatch.className = 'ctx-swatch';
+                swatch.style.background = s.color;
+                swatch.addEventListener('click', () => { s.action(); menu.remove(); });
+                div.appendChild(swatch);
+            });
+            const lbl = document.createElement('div');
+            lbl.className = 'ctx-item-label';
+            lbl.textContent = item.label;
+            menu.appendChild(lbl);
+            menu.appendChild(div);
+            return;
+        }
+        const el = document.createElement('div');
+        el.className = 'ctx-item' + (item.danger ? ' ctx-danger' : '');
+        el.textContent = item.label;
+        el.addEventListener('click', () => { item.action(); menu.remove(); });
+        menu.appendChild(el);
+    });
+
+    document.body.appendChild(menu);
+    // Fermer si clic en dehors
+    const close = (ev) => { if (!menu.contains(ev.target)) { menu.remove(); document.removeEventListener('mousedown', close); } };
+    setTimeout(() => document.addEventListener('mousedown', close), 50);
+}
+
 // --- Events pistes ---
 function bindTrackEvents() {
     // Drag depuis n'importe où sur la piste + clic pour sélectionner
@@ -1623,6 +1733,17 @@ function bindTrackEvents() {
 
             document.addEventListener('mousemove', onMove);
             document.addEventListener('mouseup', onUp);
+        });
+    });
+
+    // Clic droit sur une piste → menu contextuel
+    document.querySelectorAll('.track-item').forEach(el => {
+        el.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            const idx = parseInt(el.dataset.i);
+            const t = state.project.tracks[idx];
+            if (!t) return;
+            openTrackContextMenu(e.clientX, e.clientY, idx, t);
         });
     });
 
@@ -1727,6 +1848,13 @@ function bindTimelineClick() {
     tracks.addEventListener('mousemove', (e) => {
         const clipEl = e.target.closest('.clip');
         if (!clipEl) return;
+        // Pas de curseur spécial sur un clip en enregistrement
+        const _cii = parseInt(clipEl.dataset.ci);
+        const _tt = e.target.closest('.timeline-track');
+        if (_tt) {
+            const _c = state.project.tracks[parseInt(_tt.dataset.i)]?.clips[_cii];
+            if (_c?.recording) { clipEl.style.cursor = ''; return; }
+        }
         const rect = clipEl.getBoundingClientRect();
         const relX = e.clientX - rect.left;
         const relY = e.clientY - rect.top;
@@ -1763,30 +1891,37 @@ function bindTimelineClick() {
 
         if (trackEl) {
             const trackIdx = parseInt(trackEl.dataset.i);
-            state.selectedTrack = trackIdx;
-            renderTracksPanel();
-            bindTrackEvents();
+            if (trackIdx !== state.selectedTrack) {
+                state.selectedTrack = trackIdx;
+                renderTracksPanel();
+                bindTrackEvents();
+            }
 
             if (clipEl) {
-                // Outil ciseau
-                if (state.tool === 'scissors') {
-                    splitClipAt(trackIdx, parseInt(clipEl.dataset.ci), eventToTime(e));
-                    return;
+                const _ci = parseInt(clipEl.dataset.ci);
+                const _clip = state.project.tracks[trackIdx]?.clips[_ci];
+                // Clip en cours d'enregistrement → ne pas interagir, laisser placer le curseur
+                if (_clip && !_clip.recording) {
+                    // Outil ciseau
+                    if (state.tool === 'scissors') {
+                        splitClipAt(trackIdx, _ci, eventToTime(e));
+                        return;
+                    }
+                    // Fade drag (zone haute du clip)
+                    const fadeZoneEl = e.target.closest('.clip-fade-zone');
+                    if (fadeZoneEl) {
+                        return startFadeDrag(e, fadeZoneEl.dataset.fade, trackIdx, _ci);
+                    }
+                    // Smart Tool : détecte la zone même sans l'élément explicite
+                    const rect = clipEl.getBoundingClientRect();
+                    const relX = e.clientX - rect.left;
+                    const relY = e.clientY - rect.top;
+                    const fadeZone = Math.max(36, rect.width * 0.3);
+                    const inTopHalf = relY < rect.height * 0.45;
+                    if (inTopHalf && relX < fadeZone) return startFadeDrag(e, 'in',  trackIdx, _ci);
+                    if (inTopHalf && relX > rect.width - fadeZone) return startFadeDrag(e, 'out', trackIdx, _ci);
+                    return startClipDrag(e, clipEl, trackIdx);
                 }
-                // Fade drag (zone haute du clip)
-                const fadeZoneEl = e.target.closest('.clip-fade-zone');
-                if (fadeZoneEl) {
-                    return startFadeDrag(e, fadeZoneEl.dataset.fade, trackIdx, parseInt(clipEl.dataset.ci));
-                }
-                // Smart Tool : détecte la zone même sans l'élément explicite
-                const rect = clipEl.getBoundingClientRect();
-                const relX = e.clientX - rect.left;
-                const relY = e.clientY - rect.top;
-                const fadeZone = Math.max(36, rect.width * 0.3);
-                const inTopHalf = relY < rect.height * 0.45;
-                if (inTopHalf && relX < fadeZone) return startFadeDrag(e, 'in',  trackIdx, parseInt(clipEl.dataset.ci));
-                if (inTopHalf && relX > rect.width - fadeZone) return startFadeDrag(e, 'out', trackIdx, parseInt(clipEl.dataset.ci));
-                return startClipDrag(e, clipEl, trackIdx);
             }
             if (e.shiftKey) {
                 return startRangeSelection(e, eventToTime);
@@ -1881,6 +2016,7 @@ function startClipDrag(startEvent, clipEl, trackIdx) {
             state.selectedClip = { trackIdx, clipIdx: t.clips.indexOf(working) };
             renderTimelineTracks();
         } else {
+            pushUndo();
             renderTimelineTracks();
             saveProject();
         }
@@ -1942,9 +2078,11 @@ function deleteSelectedClip() {
     const { trackIdx, clipIdx } = state.selectedClip;
     const t = state.project.tracks[trackIdx];
     if (!t || !t.clips[clipIdx]) return;
+    pushUndo();
     const clip = t.clips[clipIdx];
-    // Nettoyage persistance
-    if (clip.id && window.PulsePersist) PulsePersist.deleteBlob(clip.id).catch(() => {});
+    // Ne supprimer le blob que si aucun autre clip ne partage cet id (copies collées)
+    const sharedCount = state.project.tracks.flatMap(tr => tr.clips || []).filter(c => c.id === clip.id).length;
+    if (sharedCount <= 1 && clip.id && window.PulsePersist) PulsePersist.deleteBlob(clip.id).catch(() => {});
     t.clips.splice(clipIdx, 1);
     state.selectedClip = null;
     renderTimelineTracks();
@@ -1963,10 +2101,12 @@ function copySelectedClip() {
 
 function pasteClip() {
     if (!state.clipboard) { flash('Presse-papier vide'); return; }
+    pushUndo();
     const { clip, trackIdx } = state.clipboard;
     const targetTrack = state.project.tracks[trackIdx];
     if (!targetTrack) return;
-    const pasted = { ...JSON.parse(JSON.stringify(clip)), start: state.playhead, id: Date.now().toString(36) + Math.random().toString(36).slice(2) };
+    // On garde le même `id` pour partager le buffer audio — un clip copié joue le même audio
+    const pasted = { ...JSON.parse(JSON.stringify(clip)), start: state.playhead };
     targetTrack.clips.push(pasted);
     targetTrack.clips.sort((a, b) => a.start - b.start);
     const newIdx = targetTrack.clips.indexOf(pasted);
@@ -2044,12 +2184,19 @@ function startClipTrim(startEvent, clipEl, trackIdx, clipIdx, side) {
             const raw = originalDuration + dt;
             clip.duration = Math.max(0.1, snapTime(clip.start + raw, ev.shiftKey) - clip.start);
         }
-        renderTimelineTracks();
+        // Mise à jour directe de l'élément (pas de re-render complet)
+        const el = document.querySelector(`.timeline-track[data-i="${trackIdx}"] .clip[data-ci="${clipIdx}"]`);
+        if (el) {
+            el.style.left  = (clip.start    * state.pxPerSecond) + 'px';
+            el.style.width = (clip.duration * state.pxPerSecond) + 'px';
+        }
     };
     const onUp = () => {
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
         document.body.classList.remove('is-trimming');
+        pushUndo();
+        renderTimelineTracks(); // re-render final pour synchro waveform/tooltip
         saveProject();
     };
     document.addEventListener('mousemove', onMove);
@@ -2100,6 +2247,7 @@ function clearRangeSelection() {
 // Supprimer la plage sélectionnée (coupe le son dans la plage sur toutes les pistes)
 function deleteSelection() {
     if (!state.selection) return;
+    pushUndo();
     const a = Math.min(state.selection.start, state.selection.end);
     const b = Math.max(state.selection.start, state.selection.end);
     let count = 0;
@@ -2162,6 +2310,7 @@ function splitClipAt(trackIdx, clipIdx, atSec) {
     const t = state.project.tracks[trackIdx];
     const clip = t.clips[clipIdx];
     if (!clip || clip.recording) return;
+    pushUndo();
     if (atSec <= clip.start || atSec >= clip.start + clip.duration) return;
     const left  = { ...clip, duration: atSec - clip.start };
     const right = { ...clip, start: atSec, duration: clip.start + clip.duration - atSec,
@@ -2194,6 +2343,7 @@ function startFadeDrag(startEvent, fadeDir, trackIdx, clipIdx) {
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
         document.body.classList.remove('is-dragging');
+        pushUndo();
         renderTimelineTracks();
         saveProject();
     };
@@ -2347,7 +2497,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Modifiers d'abord
         if (mod && shift && k === 's') { e.preventDefault(); clearAllSolos(); return; }
         if (mod && k === 's')          { e.preventDefault(); saveProject(); flash('Projet sauvegardé'); return; }
-        if (mod && k === 'z' && !shift){ e.preventDefault(); flash('Undo (à venir)'); return; }
+        if (mod && k === 'z' && !shift){ e.preventDefault(); undoAction(); return; }
         if (mod && k === 'z' && shift) { e.preventDefault(); flash('Redo (à venir)'); return; }
         if (mod && k === 'e')          { e.preventDefault(); exportProject(); return; }
         if (mod && k === 'n')          { e.preventDefault(); window.location.href = 'index.html'; return; }
@@ -2409,6 +2559,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         // Suppr / Backspace → efface le clip sélectionné, sinon la plage
         if (e.key === 'Delete' || e.key === 'Backspace') {
+            if (mod) { e.preventDefault(); deleteSelectedTrack(); return; }
             if (state.selectedClip) { e.preventDefault(); deleteSelectedClip(); return; }
             if (state.selection) { e.preventDefault(); deleteSelection(); return; }
         }

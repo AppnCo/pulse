@@ -1632,3 +1632,57 @@ body.tool-scissors .timeline-tracks .clip {
     background: var(--violet-2);
     transform: translateX(-50%);
 }
+
+/* === Menu contextuel piste === */
+.track-ctx-menu {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 6px;
+    min-width: 200px;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.5), 0 4px 12px rgba(0,0,0,0.3);
+    animation: ctxIn 0.12s var(--ease);
+}
+@keyframes ctxIn {
+    from { opacity: 0; transform: scale(0.95) translateY(-4px); }
+    to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+.ctx-item {
+    padding: 7px 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    color: var(--text-1);
+    cursor: pointer;
+    transition: background 0.1s;
+}
+.ctx-item:hover { background: var(--bg-3); }
+.ctx-item.ctx-danger { color: #F87171; }
+.ctx-item.ctx-danger:hover { background: rgba(248,113,113,0.12); }
+.ctx-item-label {
+    padding: 6px 12px 3px;
+    font-size: 11px;
+    color: var(--text-3);
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+.ctx-sep {
+    height: 1px;
+    background: var(--border);
+    margin: 4px 6px;
+}
+.ctx-colors {
+    display: flex;
+    gap: 6px;
+    padding: 4px 10px 8px;
+    flex-wrap: wrap;
+}
+.ctx-swatch {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    cursor: pointer;
+    border: 2px solid transparent;
+    transition: transform 0.1s, border-color 0.1s;
+}
+.ctx-swatch:hover { transform: scale(1.25); border-color: var(--text-1); }
