@@ -67,7 +67,8 @@ const state = {
     loop: null,           // { start, end } en secondes, ou null
     tool: 'pointer',      // 'pointer' | 'scissors'
     trackHeight: 72,      // hauteur des pistes en px (zoom vertical)
-    snap: 'smart'         // 'smart' | 'bar' | 'beat' | 'division' | 'off'
+    snap: 'smart',        // 'smart' | 'bar' | 'beat' | 'division' | 'off'
+    clipboard: null       // { clip, trackIdx } pour copy/paste
 };
 
 // --- Rendu : panneau pistes ---
@@ -1560,31 +1561,27 @@ function updatePanKnobVisual(knob, pan) {
 
 // --- Events pistes ---
 function bindTrackEvents() {
+    // Drag depuis n'importe où sur la piste + clic pour sélectionner
     document.querySelectorAll('.track-item').forEach(el => {
-        el.addEventListener('click', e => {
-            if (e.target.classList.contains('t-mini')) return;
+        el.addEventListener('mousedown', (e) => {
+            if (e.target.closest('.t-mini')) return;
             if (e.target.closest('.track-name[contenteditable="true"]')) return;
-            if (e.target.closest('.track-drag-handle')) return; // ne pas re-render pendant le drag
-            state.selectedTrack = parseInt(el.dataset.i);
-            renderTracksPanel();
-            bindTrackEvents();
-        });
-    });
 
-    document.querySelectorAll('.track-drag-handle').forEach(handle => {
-        handle.addEventListener('mousedown', (e) => {
-            e.stopPropagation();
-            const trackEl = handle.closest('.track-item');
-            const fromIdx = parseInt(trackEl.dataset.i);
+            const fromIdx = parseInt(el.dataset.i);
+            if (state.project.tracks[fromIdx]?.isCapture) return;
+
             const list = document.getElementById('tracksList');
-
             const indicator = document.createElement('div');
             indicator.className = 'track-drop-indicator';
             let insertBefore = fromIdx;
+            let didDrag = false;
+            const startY = e.clientY;
 
             const getItems = () => [...list.querySelectorAll('.track-item')];
 
             const onMove = (ev) => {
+                if (!didDrag && Math.abs(ev.clientY - startY) < 6) return;
+                didDrag = true;
                 document.body.classList.add('is-dragging');
                 const items = getItems();
                 insertBefore = items.length;
@@ -1592,18 +1589,12 @@ function bindTrackEvents() {
                     const r = items[i].getBoundingClientRect();
                     if (ev.clientY < r.top + r.height / 2) { insertBefore = i; break; }
                 }
-                // Ne pas insérer avant la Capture Lane (index 0 si isCapture)
-                const firstIsCapture = state.project.tracks[0]?.isCapture;
-                if (firstIsCapture && insertBefore === 0) insertBefore = 1;
-
-                // Positionner l'indicateur
+                if (state.project.tracks[0]?.isCapture && insertBefore === 0) insertBefore = 1;
                 const listRect = list.getBoundingClientRect();
                 if (insertBefore < items.length) {
-                    const r = items[insertBefore].getBoundingClientRect();
-                    indicator.style.top = (r.top - listRect.top - 2) + 'px';
+                    indicator.style.top = (items[insertBefore].getBoundingClientRect().top - listRect.top - 2) + 'px';
                 } else {
-                    const r = items[items.length - 1].getBoundingClientRect();
-                    indicator.style.top = (r.bottom - listRect.top + 2) + 'px';
+                    indicator.style.top = (items[items.length - 1].getBoundingClientRect().bottom - listRect.top + 2) + 'px';
                 }
                 if (!indicator.parentNode) list.appendChild(indicator);
             };
@@ -1613,15 +1604,20 @@ function bindTrackEvents() {
                 document.removeEventListener('mouseup', onUp);
                 indicator.remove();
                 document.body.classList.remove('is-dragging');
-
-                if (insertBefore !== fromIdx && insertBefore !== fromIdx + 1) {
-                    const tracks = state.project.tracks;
-                    const moved = tracks.splice(fromIdx, 1)[0];
-                    const insertAt = insertBefore > fromIdx ? insertBefore - 1 : insertBefore;
-                    tracks.splice(insertAt, 0, moved);
-                    if (state.selectedTrack === fromIdx) state.selectedTrack = insertAt;
-                    renderAll();
-                    saveProject();
+                if (didDrag) {
+                    if (insertBefore !== fromIdx && insertBefore !== fromIdx + 1) {
+                        const tracks = state.project.tracks;
+                        const moved = tracks.splice(fromIdx, 1)[0];
+                        const insertAt = insertBefore > fromIdx ? insertBefore - 1 : insertBefore;
+                        tracks.splice(insertAt, 0, moved);
+                        if (state.selectedTrack === fromIdx) state.selectedTrack = insertAt;
+                        renderAll();
+                        saveProject();
+                    }
+                } else {
+                    state.selectedTrack = fromIdx;
+                    renderTracksPanel();
+                    bindTrackEvents();
                 }
             };
 
@@ -1797,7 +1793,8 @@ function bindTimelineClick() {
             }
         }
 
-        // Clic sur zone vide (hors piste ou zone en bas du conteneur) → place le curseur
+        // Clic sur zone vide → place le curseur + efface la sélection
+        if (state.selection) clearRangeSelection();
         setPlayheadFromEvent(e);
         const onMove = (ev) => setPlayheadFromEvent(ev);
         const onUp = () => {
@@ -1810,8 +1807,8 @@ function bindTimelineClick() {
 
     // Zones vides du conteneur .timeline (sous les pistes) : mêmes comportements
     timeline.addEventListener('mousedown', (e) => {
-        // Si on a déjà cliqué dans .timeline-tracks ou .timeline-ruler, laissé faire
         if (e.target.closest('.timeline-ruler, .timeline-tracks, .clip, .instru-dropzone')) return;
+        if (state.selection) clearRangeSelection();
         setPlayheadFromEvent(e);
         const onMove = (ev) => setPlayheadFromEvent(ev);
         const onUp = () => {
@@ -1853,24 +1850,34 @@ function startClipDrag(startEvent, clipEl, trackIdx) {
     const originalStart = working.start;
     let dragged = false;
 
+    const snapLine = getSnapLine();
+
     const onMove = (ev) => {
         const dx = ev.clientX - startX;
         if (!dragged && Math.abs(dx) < 3 && Math.abs(ev.clientY - startY) < 3) return;
         if (!dragged) { dragged = true; document.body.classList.add('is-dragging'); }
 
         const dt = dx / state.pxPerSecond;
-        const newStart = snapTime(originalStart + dt, ev.shiftKey);
+        const raw = originalStart + dt;
+        const newStart = snapTime(raw, ev.shiftKey);
         working.start = newStart;
         const freshEl = document.querySelector(`.timeline-track[data-i="${trackIdx}"] .clip[data-ci="${t.clips.indexOf(working)}"]`);
         if (freshEl) freshEl.style.left = (newStart * state.pxPerSecond) + 'px';
+        // Ligne magnétique : visible uniquement si le snap a changé la position
+        if (state.snap !== 'off' && !ev.shiftKey && Math.abs(newStart - raw) > 0.001) {
+            snapLine.style.left = (newStart * state.pxPerSecond) + 'px';
+            snapLine.style.display = 'block';
+        } else {
+            snapLine.style.display = 'none';
+        }
     };
     const onUp = () => {
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
         document.body.classList.remove('is-dragging');
+        snapLine.style.display = 'none';
 
         if (!dragged) {
-            // Simple click → sélection
             state.selectedClip = { trackIdx, clipIdx: t.clips.indexOf(working) };
             renderTimelineTracks();
         } else {
@@ -1881,6 +1888,19 @@ function startClipDrag(startEvent, clipEl, trackIdx) {
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
     startEvent.preventDefault();
+}
+
+// Ligne magnétique de snap (singleton dans la timeline)
+function getSnapLine() {
+    let line = document.getElementById('snapLine');
+    if (!line) {
+        line = document.createElement('div');
+        line.id = 'snapLine';
+        line.style.cssText = 'position:absolute;top:0;bottom:0;width:1px;background:rgba(168,85,247,0.8);pointer-events:none;z-index:20;display:none;';
+        const tracks = document.getElementById('timelineTracks');
+        if (tracks) tracks.appendChild(line);
+    }
+    return line;
 }
 
 // === Renommer un clip inline ===
@@ -1930,6 +1950,31 @@ function deleteSelectedClip() {
     renderTimelineTracks();
     saveProject();
     flash('Clip supprimé');
+}
+
+function copySelectedClip() {
+    if (!state.selectedClip) { flash('Aucun clip sélectionné'); return; }
+    const { trackIdx, clipIdx } = state.selectedClip;
+    const clip = state.project.tracks[trackIdx]?.clips[clipIdx];
+    if (!clip) return;
+    state.clipboard = { clip: JSON.parse(JSON.stringify(clip)), trackIdx };
+    flash('Clip copié');
+}
+
+function pasteClip() {
+    if (!state.clipboard) { flash('Presse-papier vide'); return; }
+    const { clip, trackIdx } = state.clipboard;
+    const targetTrack = state.project.tracks[trackIdx];
+    if (!targetTrack) return;
+    const pasted = { ...JSON.parse(JSON.stringify(clip)), start: state.playhead, id: Date.now().toString(36) + Math.random().toString(36).slice(2) };
+    targetTrack.clips.push(pasted);
+    targetTrack.clips.sort((a, b) => a.start - b.start);
+    const newIdx = targetTrack.clips.indexOf(pasted);
+    state.selectedTrack = trackIdx;
+    state.selectedClip = { trackIdx, clipIdx: newIdx };
+    renderAll();
+    saveProject();
+    flash('Clip collé à ' + secondsToDuration(state.playhead));
 }
 
 // === Loop region (Alt+drag dans le ruler, Logic style) ===
@@ -2308,6 +2353,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (mod && k === 'n')          { e.preventDefault(); window.location.href = 'index.html'; return; }
         if (mod && k === 'a')          { e.preventDefault(); flash('Tout sélectionner (à venir)'); return; }
         if (mod && k === 'd')          { e.preventDefault(); duplicateTrack(state.selectedTrack); return; }
+        if (mod && k === 'c')          { e.preventDefault(); copySelectedClip(); return; }
+        if (mod && k === 'v')          { e.preventDefault(); pasteClip(); return; }
 
         // Transport (Espace est détourné en mode tap)
         if (e.code === 'Space') {
