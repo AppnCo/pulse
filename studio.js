@@ -846,6 +846,7 @@ const SHORTCUT_GROUPS = [
             ['M', 'Mute piste sélectionnée'],
             ['Shift + S', 'Solo piste sélectionnée'],
             ['⌘⇧S', 'Clear tous les solos'],
+            ['⌘D', 'Dupliquer la piste (sans clips)'],
             ['↑ / ↓', 'Changer de piste'],
             ['A', 'Mode automation']
         ]
@@ -1422,6 +1423,25 @@ function setZoom(px, anchorSec) {
 
     const anchorPxAfter = anchor * newPx;
     timeline.scrollLeft = anchorPxAfter - screenOffset;
+}
+
+// --- Dupliquer une piste (Cmd+D, style Logic) : canal + effets, sans les clips ---
+function duplicateTrack(idx) {
+    const src = state.project.tracks[idx];
+    if (!src) return;
+    const copy = {
+        ...src,
+        name: src.name + ' copy',
+        clips: [],           // pas de régions — comportement Logic
+        isCapture: false,    // la copie n'est jamais Capture Lane
+        armed: false
+    };
+    if (src.effects) copy.effects = [...src.effects];
+    state.project.tracks.splice(idx + 1, 0, copy);
+    state.selectedTrack = idx + 1;
+    renderAll();
+    saveProject();
+    flash(`Piste dupliquée : « ${copy.name} »`);
 }
 
 // --- Ajouter une piste ---
@@ -2174,6 +2194,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (mod && k === 'e')          { e.preventDefault(); exportProject(); return; }
         if (mod && k === 'n')          { e.preventDefault(); window.location.href = 'index.html'; return; }
         if (mod && k === 'a')          { e.preventDefault(); flash('Tout sélectionner (à venir)'); return; }
+        if (mod && k === 'd')          { e.preventDefault(); duplicateTrack(state.selectedTrack); return; }
 
         // Transport (Espace est détourné en mode tap)
         if (e.code === 'Space') {
