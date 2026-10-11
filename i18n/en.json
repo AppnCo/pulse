@@ -1,0 +1,59 @@
+{
+  "lang": "en",
+  "name": "English",
+  "start": {
+    "tagline": "The simple studio.",
+    "card_new": { "title": "New project", "sub": "Start from scratch" },
+    "card_template": { "title": "Template", "sub": "Vocal, podcast, beat…" },
+    "card_recent": { "title": "Recent projects", "sub": "Pick up where you left off" },
+    "recent_label": "Recent",
+    "recent_empty": "No projects yet.",
+    "recent_hint": "Create your first project above."
+  },
+  "modal": {
+    "template_title": "Choose a template",
+    "template_sub": "A starting point to move faster.",
+    "close": "Close"
+  },
+  "templates": {
+    "rap-studio":   { "name": "Rap Studio",     "desc": "Full Ridwane template: Capture Lane, Lead, doubles, backs, ad-libs, instrumental, All Vocal + Mix Bus. The Red Records sound out of the box." },
+    "voix-instru":  { "name": "Vocal + Beat",   "desc": "Simple setup: 1 vocal + 1 instrumental. Perfect for a quick first track." },
+    "podcast":      { "name": "Podcast",         "desc": "2 microphones, clean vocal preset. For an interview or a dialogue." },
+    "beat-simple":  { "name": "Simple Beat",     "desc": "4 rhythm tracks: kick, snare, hihat, bass. To lay a foundation." }
+  },
+  "studio": {
+    "default_project_name": "Untitled project",
+    "default_track_name": "Track {n}",
+    "topbar": { "undo": "Undo", "save": "Save", "export": "Export" },
+    "tracks_label": "Tracks",
+    "add_track_title": "Add a track",
+    "transport": {
+      "back": "Back to start",
+      "play": "Play (Space)",
+      "pause": "Pause",
+      "rec": "Record (R)",
+      "loop": "Loop",
+      "metronome": "Metronome",
+      "mixer": "Mixer"
+    },
+    "mixer_title": "Mixer",
+    "flash": {
+      "saved": "Project saved",
+      "undo_soon": "Undo (coming soon)",
+      "redo_soon": "Redo (coming soon)",
+      "export_soon": "Export (coming soon)",
+      "select_all_soon": "Select all (coming soon)",
+      "trim_left": "✂︎ Trimmed left",
+      "trim_right": "Trimmed right ✂︎",
+      "nothing_to_trim": "Nothing to trim here",
+      "solos_cleared": "Solos cleared",
+      "demo_clip_added": "Demo clip added",
+      "range_deleted": "✂︎ Range deleted ({count} clip{s})",
+      "nothing_in_range": "Nothing in range",
+      "automation_on": "🎚 Automation mode ON — click an effect",
+      "automation_off": "Automation mode OFF",
+      "automation_label": "Automation: {param} on {name}",
+      "capture_always_armed": "The Capture Lane is always armed"
+    }
+  }
+}

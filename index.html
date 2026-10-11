@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pulse — Accueil</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="i18n/i18n.js"></script>
+</head>
+<body>
+    <div class="app">
+        <!-- Logo + wordmark -->
+        <header class="brand">
+            <div class="logo">
+                <span class="dot"></span>
+                <span class="dot"></span>
+                <span class="dot"></span>
+            </div>
+            <h1 class="wordmark">Pulse</h1>
+            <p class="tagline" data-i18n="start.tagline">Le studio simple.</p>
+        </header>
+
+        <!-- 3 cartes principales -->
+        <main class="cards">
+            <button class="card card-new" data-action="new">
+                <div class="card-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="12" y1="5" x2="12" y2="19"></line>
+                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                    </svg>
+                </div>
+                <h2 data-i18n="start.card_new.title">Nouveau projet</h2>
+                <p data-i18n="start.card_new.sub">Commencer de zéro</p>
+            </button>
+
+            <button class="card card-template" data-action="template">
+                <div class="card-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="3" width="7" height="7" rx="1"></rect>
+                        <rect x="14" y="3" width="7" height="7" rx="1"></rect>
+                        <rect x="3" y="14" width="7" height="7" rx="1"></rect>
+                        <rect x="14" y="14" width="7" height="7" rx="1"></rect>
+                    </svg>
+                </div>
+                <h2 data-i18n="start.card_template.title">Template</h2>
+                <p data-i18n="start.card_template.sub">Voix, podcast, beat…</p>
+            </button>
+
+            <button class="card card-recent" data-action="recent">
+                <div class="card-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <polyline points="12 6 12 12 16 14"></polyline>
+                    </svg>
+                </div>
+                <h2 data-i18n="start.card_recent.title">Projets récents</h2>
+                <p data-i18n="start.card_recent.sub">Reprendre où tu t'es arrêté</p>
+            </button>
+        </main>
+
+        <!-- Liste des récents (vide pour l'instant) -->
+        <section class="recent-list" id="recentList">
+            <h3>Récents</h3>
+            <div class="recent-empty">
+                <p>Aucun projet pour l'instant.</p>
+                <p class="hint">Crée ton premier projet ci-dessus.</p>
+            </div>
+        </section>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <span>Pulse v0.1 — proto</span>
+        </footer>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

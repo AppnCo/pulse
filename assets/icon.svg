@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+    <defs>
+        <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#1A1225"/>
+            <stop offset="100%" stop-color="#0F0A1A"/>
+        </linearGradient>
+        <linearGradient id="dotGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#C084FC"/>
+            <stop offset="100%" stop-color="#7C3AED"/>
+        </linearGradient>
+        <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="12" result="blur"/>
+            <feMerge>
+                <feMergeNode in="blur"/>
+                <feMergeNode in="SourceGraphic"/>
+            </feMerge>
+        </filter>
+    </defs>
+    <rect width="512" height="512" rx="112" fill="url(#bgGrad)"/>
+    <g filter="url(#glow)">
+        <!-- Trois ondes verticales symbolisant le pouls -->
+        <rect x="156" y="196" width="40" height="120" rx="20" fill="url(#dotGrad)"/>
+        <rect x="236" y="156" width="40" height="200" rx="20" fill="url(#dotGrad)"/>
+        <rect x="316" y="216" width="40" height="80"  rx="20" fill="url(#dotGrad)"/>
+    </g>
+</svg>

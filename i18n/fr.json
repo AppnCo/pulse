@@ -1,0 +1,59 @@
+{
+  "lang": "fr",
+  "name": "Français",
+  "start": {
+    "tagline": "Le studio simple.",
+    "card_new": { "title": "Nouveau projet", "sub": "Commencer de zéro" },
+    "card_template": { "title": "Template", "sub": "Voix, podcast, beat…" },
+    "card_recent": { "title": "Projets récents", "sub": "Reprendre où tu t'es arrêté" },
+    "recent_label": "Récents",
+    "recent_empty": "Aucun projet pour l'instant.",
+    "recent_hint": "Crée ton premier projet ci-dessus."
+  },
+  "modal": {
+    "template_title": "Choisis un template",
+    "template_sub": "Un point de départ pour aller plus vite.",
+    "close": "Fermer"
+  },
+  "templates": {
+    "rap-studio":   { "name": "Rap Studio",   "desc": "Template complète Ridwane : Capture Lane, Lead, doublages, backs, ad-libs, instru, bus All Vocal + Mix Bus. Le son Red Records out of the box." },
+    "voix-instru":  { "name": "Voix + Instru","desc": "Version simple : 1 voix + 1 instru. Idéale pour un premier morceau rapide." },
+    "podcast":      { "name": "Podcast",       "desc": "2 micros, préset voix propre. Pour une interview ou un dialogue." },
+    "beat-simple":  { "name": "Beat simple",   "desc": "4 pistes rythmiques : kick, snare, hihat, bass. Pour poser une base." }
+  },
+  "studio": {
+    "default_project_name": "Projet sans titre",
+    "default_track_name": "Piste {n}",
+    "topbar": { "undo": "Annuler", "save": "Enregistrer", "export": "Exporter" },
+    "tracks_label": "Pistes",
+    "add_track_title": "Ajouter une piste",
+    "transport": {
+      "back": "Revenir au début",
+      "play": "Lecture (Espace)",
+      "pause": "Pause",
+      "rec": "Enregistrer (R)",
+      "loop": "Boucle",
+      "metronome": "Métronome",
+      "mixer": "Mixer"
+    },
+    "mixer_title": "Mixer",
+    "flash": {
+      "saved": "Projet sauvegardé",
+      "undo_soon": "Annuler (à venir)",
+      "redo_soon": "Rétablir (à venir)",
+      "export_soon": "Export (à venir)",
+      "select_all_soon": "Tout sélectionner (à venir)",
+      "trim_left": "✂︎ Coupé à gauche",
+      "trim_right": "Coupé à droite ✂︎",
+      "nothing_to_trim": "Rien à couper ici",
+      "solos_cleared": "Solos effacés",
+      "demo_clip_added": "Clip démo ajouté",
+      "range_deleted": "✂︎ Plage supprimée ({count} clip{s})",
+      "nothing_in_range": "Rien dans la plage",
+      "automation_on": "🎚 Mode automation ON — clique un effet",
+      "automation_off": "Mode automation OFF",
+      "automation_label": "Automation : {param} sur {name}",
+      "capture_always_armed": "La Capture Lane est toujours armée"
+    }
+  }
+}
