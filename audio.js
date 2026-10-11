@@ -223,6 +223,7 @@ window.PulseAudio = (function() {
             setLiveTrackNodes(trackIdx, trackGain, panNode, analyser);
 
             (track.clips || []).forEach(clip => {
+                if (clip.muted) return;
                 const buf = buffers.get(clip.id);
                 if (!buf) return;
 
@@ -236,7 +237,44 @@ window.PulseAudio = (function() {
 
                 const source = ctx.createBufferSource();
                 source.buffer = buf;
-                source.connect(fx.input);
+
+                // Fades : GainNode entre la source et l'effet
+                const hasFade = (clip.fadeIn && clip.fadeIn > 0) || (clip.fadeOut && clip.fadeOut > 0);
+                if (hasFade) {
+                    const fg = ctx.createGain();
+                    source.connect(fg);
+                    fg.connect(fx.input);
+                    const clipAbsStart = playbackStartCtxTime + whenAhead;
+                    const clipAbsEnd   = clipAbsStart + remainingDuration;
+
+                    // Fade-in
+                    if (clip.fadeIn > 0) {
+                        const fiDuration = clip.fadeIn;
+                        const fiElapsed  = offsetInClip; // combien de fade déjà consommé
+                        if (fiElapsed < fiDuration) {
+                            const startGain = fiElapsed / fiDuration;
+                            const rampEnd   = clipAbsStart + (fiDuration - fiElapsed);
+                            fg.gain.setValueAtTime(startGain, clipAbsStart);
+                            fg.gain.linearRampToValueAtTime(1, rampEnd);
+                        } else {
+                            fg.gain.setValueAtTime(1, clipAbsStart);
+                        }
+                    } else {
+                        fg.gain.setValueAtTime(1, clipAbsStart);
+                    }
+
+                    // Fade-out
+                    if (clip.fadeOut > 0) {
+                        const foStart = clipAbsEnd - clip.fadeOut;
+                        if (foStart > clipAbsStart) {
+                            fg.gain.setValueAtTime(1, foStart);
+                        }
+                        fg.gain.linearRampToValueAtTime(0.001, clipAbsEnd);
+                    }
+                } else {
+                    source.connect(fx.input);
+                }
+
                 try {
                     source.start(playbackStartCtxTime + whenAhead, offsetInClip, remainingDuration);
                 } catch (err) {
@@ -294,12 +332,30 @@ window.PulseAudio = (function() {
             output.connect(mg);
 
             (track.clips || []).forEach(clip => {
+                if (clip.muted) return;
                 const buf = buffers.get(clip.id);
                 if (!buf) return;
                 const source = offline.createBufferSource();
                 source.buffer = buf;
-                source.connect(trackGain);
-                source.start(clip.start);
+                // Fades sur export
+                const hasFade = (clip.fadeIn && clip.fadeIn > 0) || (clip.fadeOut && clip.fadeOut > 0);
+                if (hasFade) {
+                    const fg = offline.createGain();
+                    source.connect(fg);
+                    fg.connect(trackGain);
+                    if (clip.fadeIn > 0) {
+                        fg.gain.setValueAtTime(0, clip.start);
+                        fg.gain.linearRampToValueAtTime(1, clip.start + clip.fadeIn);
+                    }
+                    if (clip.fadeOut > 0) {
+                        const foStart = clip.start + clip.duration - clip.fadeOut;
+                        fg.gain.setValueAtTime(1, foStart);
+                        fg.gain.linearRampToValueAtTime(0.001, clip.start + clip.duration);
+                    }
+                } else {
+                    source.connect(trackGain);
+                }
+                source.start(clip.start, 0, clip.duration);
             });
         });
 

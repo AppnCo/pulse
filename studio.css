@@ -1633,6 +1633,29 @@ body.tool-scissors .timeline-tracks .clip {
     transform: translateX(-50%);
 }
 
+/* === État drag cross-track === */
+.timeline-track.drag-over {
+    background: rgba(168, 85, 247, 0.08);
+    outline: 2px dashed rgba(168, 85, 247, 0.5);
+    outline-offset: -2px;
+}
+
+/* Clip muté individuellement */
+.clip.is-muted-clip {
+    opacity: 0.45;
+}
+.clip.is-muted-clip::after {
+    content: 'M';
+    position: absolute;
+    top: 4px;
+    right: 8px;
+    font-size: 9px;
+    font-weight: 700;
+    color: rgba(255,255,255,0.7);
+    letter-spacing: 0.5px;
+    pointer-events: none;
+}
+
 /* === Menu contextuel piste === */
 .track-ctx-menu {
     background: var(--bg-2);
