@@ -115,6 +115,7 @@ function renderTracksPanel() {
                     <button class="t-mini m-s ${t.solo?'active':''}" data-flag="solo" data-i="${i}" data-tooltip="Solo (Shift+S)">S</button>
                     <button class="t-mini m-r ${t.armed?'active':''} ${t.isCapture?'locked':''}" data-flag="rec" data-i="${i}" data-tooltip="${t.isCapture ? 'Toujours armée (Capture Lane)' : 'Armer la piste'}">R</button>
                     <div class="vu-mini"><span></span></div>
+                    ${t.isCapture ? '' : `<button class="t-mini m-del" data-del="${i}" data-tooltip="Supprimer la piste">×</button>`}
                 </div>
             </div>
         </div>`;
@@ -185,18 +186,19 @@ function renderClipWaveform(c, widthPx) {
     }
     const targetBars = Math.max(2, Math.floor(widthPx / 2));
     const step = peaks.length / targetBars;
-    // La hauteur de la waveform suit la piste (moins les marges clip top/bottom 6px + label 16px)
     const h = Math.max(20, state.trackHeight - 28);
     const barWidth = widthPx / targetBars;
+    const cy = h / 2;
 
+    // Style Logic Pro : barres miroir depuis le centre (haut + bas)
     let path = '';
     for (let i = 0; i < targetBars; i++) {
         const idx = Math.floor(i * step);
         const v = peaks[idx] || 0;
-        const barH = Math.max(1, v * h);
+        const halfH = Math.max(0.5, (v * h) * 0.48); // 48% pour laisser une légère marge
         const x = i * barWidth;
-        const y = (h - barH) / 2;
-        path += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(0.5, barWidth - 0.5).toFixed(1)}" height="${barH.toFixed(1)}" />`;
+        const bw = Math.max(0.5, barWidth - 0.5);
+        path += `<rect x="${x.toFixed(1)}" y="${(cy - halfH).toFixed(1)}" width="${bw.toFixed(1)}" height="${(halfH * 2).toFixed(1)}" />`;
     }
     return `<svg class="clip-wave-svg" viewBox="0 0 ${widthPx} ${h}" preserveAspectRatio="none">${path}</svg>`;
 }
@@ -755,15 +757,25 @@ function updatePlayhead() {
 
 let _chronoEl = null;
 let _chronoLast = '';
+let _chronoMode = 'tc'; // 'tc' (mm:ss.cs) ou 'bars' (mesure:temps:tick)
 function updateChrono() {
     if (!_chronoEl) _chronoEl = document.getElementById('chrono');
     if (!_chronoEl) return;
     const t = Math.max(0, state.playhead);
-    const min = Math.floor(t / 60);
-    const sec = Math.floor(t % 60);
-    // Centiseconds pour éviter le flicker du dernier digit
-    const cs = Math.floor((t % 1) * 100);
-    const txt = `${min.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}.${cs.toString().padStart(2, '0')}`;
+    let txt;
+    if (_chronoMode === 'bars') {
+        const beatSec = 60 / state.project.bpm;
+        const totalBeats = t / beatSec;
+        const bar  = Math.floor(totalBeats / 4) + 1;
+        const beat = Math.floor(totalBeats % 4) + 1;
+        const tick = Math.floor((totalBeats % 1) * 96); // 96 ticks/beat
+        txt = `${bar.toString().padStart(3,' ')} | ${beat} . ${tick.toString().padStart(2,'0')}`;
+    } else {
+        const min = Math.floor(t / 60);
+        const sec = Math.floor(t % 60);
+        const cs  = Math.floor((t % 1) * 100);
+        txt = `${min.toString().padStart(2,'0')}:${sec.toString().padStart(2,'0')}.${cs.toString().padStart(2,'0')}`;
+    }
     if (txt !== _chronoLast) {
         _chronoEl.textContent = txt;
         _chronoLast = txt;
@@ -879,6 +891,8 @@ const SHORTCUT_GROUPS = [
             ['⌘C', 'Copier le clip sélectionné'],
             ['⌘V', 'Coller à la position du curseur'],
             ['⌘Z', 'Annuler (30 niveaux)'],
+            ['← / →', 'Nudger le clip sélectionné (1 snap)'],
+            ['Shift + ← / →', 'Nudger le clip finement (1/48 beat ≈ 1 frame)'],
             ['Shift + drag clip', 'Désactiver le snap temporairement'],
             ['Shift + drag', 'Sélectionner une plage'],
             ['Suppr / ⌫', 'Effacer le clip ou la plage sélectionnée'],
@@ -1452,6 +1466,30 @@ function addDemoClip() {
     flash('Clip démo ajouté');
 }
 
+// Nudge clip sélectionné (← / →)
+// fine = Shift tenu → 1/48 beat (proche d'une frame à 30fps)
+// sinon → 1 unité snap
+function nudgeSelectedClip(dir, fine) {
+    if (!state.selectedClip) return;
+    const { trackIdx, clipIdx } = state.selectedClip;
+    const t = state.project.tracks[trackIdx];
+    const clip = t?.clips[clipIdx];
+    if (!clip) return;
+    pushUndo();
+    const beatSec = 60 / state.project.bpm;
+    const snapUnit = fine
+        ? beatSec / 48   // ~1 frame à 30fps
+        : (() => {
+            const eff = getEffectiveSnap();
+            return eff === 'bar'      ? beatSec * 4
+                 : eff === 'division' ? beatSec / 4
+                 : beatSec;
+        })();
+    clip.start = Math.max(0, clip.start + dir * snapUnit);
+    renderTimelineTracks();
+    saveProject();
+}
+
 // Sélectionner tous les clips de la piste active (Cmd+A)
 function selectAllClipsOnTrack() {
     const t = state.project.tracks[state.selectedTrack];
@@ -1894,6 +1932,16 @@ function bindTrackEvents() {
         });
     });
 
+    // Bouton × supprimer piste
+    document.querySelectorAll('.m-del').forEach(btn => {
+        btn.addEventListener('click', e => {
+            e.stopPropagation();
+            const i = parseInt(btn.dataset.del);
+            state.selectedTrack = i;
+            deleteSelectedTrack();
+        });
+    });
+
     document.querySelectorAll('.t-mini').forEach(el => {
         el.addEventListener('click', e => {
             e.stopPropagation();
@@ -2125,6 +2173,7 @@ function startClipDrag(startEvent, clipEl, trackIdx) {
     const startY = startEvent.clientY;
     const originalStart = working.start;
     let dragged = false;
+    let undoPushed = false;
     let targetTrackIdx = trackIdx;
 
     const snapLine = getSnapLine();
@@ -2142,7 +2191,11 @@ function startClipDrag(startEvent, clipEl, trackIdx) {
     const onMove = (ev) => {
         const dx = ev.clientX - startX;
         if (!dragged && Math.abs(dx) < 3 && Math.abs(ev.clientY - startY) < 3) return;
-        if (!dragged) { dragged = true; document.body.classList.add('is-dragging'); }
+        if (!dragged) {
+            if (!undoPushed) { pushUndo(); undoPushed = true; } // snapshot avant la 1ère modif
+            dragged = true;
+            document.body.classList.add('is-dragging');
+        }
 
         const dt = dx / state.pxPerSecond;
         const raw = originalStart + dt;
@@ -2200,7 +2253,6 @@ function startClipDrag(startEvent, clipEl, trackIdx) {
             state.selectedClip = { trackIdx, clipIdx: t.clips.indexOf(working) };
             renderTimelineTracks();
         } else {
-            pushUndo();
             if (targetTrackIdx !== trackIdx) {
                 // Déplacer le clip vers la piste cible
                 const srcIdx = t.clips.indexOf(working);
@@ -2358,7 +2410,7 @@ function startClipTrim(startEvent, clipEl, trackIdx, clipIdx, side) {
     const t = state.project.tracks[trackIdx];
     const clip = t.clips[clipIdx];
     if (!clip) return;
-
+    pushUndo(); // snapshot avant modification
     document.body.classList.add('is-trimming');
     const startX = startEvent.clientX;
     const originalStart = clip.start;
@@ -2388,7 +2440,6 @@ function startClipTrim(startEvent, clipEl, trackIdx, clipIdx, side) {
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
         document.body.classList.remove('is-trimming');
-        pushUndo();
         renderTimelineTracks(); // re-render final pour synchro waveform/tooltip
         saveProject();
     };
@@ -2520,6 +2571,7 @@ function startFadeDrag(startEvent, fadeDir, trackIdx, clipIdx) {
     const t = state.project.tracks[trackIdx];
     const clip = t.clips[clipIdx];
     if (!clip) return;
+    pushUndo(); // snapshot avant modification
     const startX = startEvent.clientX;
     const originalFade = fadeDir === 'in' ? (clip.fadeIn || 0) : (clip.fadeOut || 0);
 
@@ -2537,7 +2589,6 @@ function startFadeDrag(startEvent, fadeDir, trackIdx, clipIdx) {
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
         document.body.classList.remove('is-dragging');
-        pushUndo();
         renderTimelineTracks();
         saveProject();
     };
@@ -2603,6 +2654,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Onboarding uniquement au premier lancement
     setTimeout(() => startOnboarding(), 400);
+
+    // Chrono : clic pour basculer entre TC et barres:beats
+    document.getElementById('chrono').addEventListener('click', () => {
+        _chronoMode = _chronoMode === 'tc' ? 'bars' : 'tc';
+        _chronoLast = '';
+        updateChrono();
+    });
+    document.getElementById('chrono').style.cursor = 'pointer';
 
     document.getElementById('btnPlay').addEventListener('click', togglePlay);
     document.getElementById('btnRec').addEventListener('click', toggleRec);
@@ -2735,9 +2794,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Outil ciseau
         if (k === 'b') { e.preventDefault(); setActiveTool(state.tool === 'scissors' ? 'pointer' : 'scissors'); return; }
 
-        // Navigation pistes
-        if (e.code === 'ArrowDown') { e.preventDefault(); selectTrack(state.selectedTrack + 1); return; }
-        if (e.code === 'ArrowUp')   { e.preventDefault(); selectTrack(state.selectedTrack - 1); return; }
+        // Navigation pistes + nudge clip
+        if (e.code === 'ArrowDown' && !state.selectedClip) { e.preventDefault(); selectTrack(state.selectedTrack + 1); return; }
+        if (e.code === 'ArrowUp'   && !state.selectedClip) { e.preventDefault(); selectTrack(state.selectedTrack - 1); return; }
+        // Nudge clip sélectionné (flèche gauche/droite, shift = 1 frame, sinon 1 snap unit)
+        if (e.code === 'ArrowLeft'  && state.selectedClip) { e.preventDefault(); nudgeSelectedClip(-1, e.shiftKey); return; }
+        if (e.code === 'ArrowRight' && state.selectedClip) { e.preventDefault(); nudgeSelectedClip(+1, e.shiftKey); return; }
 
         // Mixer
         if (k === 'x') { e.preventDefault(); toggleMixer(); return; }

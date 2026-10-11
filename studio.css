@@ -308,6 +308,15 @@
 .t-mini.m-s:hover, .t-mini.m-s.active { background: #22D3EE; color: #000; border-color: #22D3EE; }
 .t-mini.m-r:hover, .t-mini.m-r.active { background: #F87171; color: #FFF; border-color: #F87171; }
 
+/* Bouton × supprimer piste — masqué par défaut, visible au hover */
+.t-mini.m-del {
+    opacity: 0;
+    font-size: 14px;
+    transition: opacity 0.15s, background 0.15s;
+}
+.track-item:hover .t-mini.m-del { opacity: 1; }
+.t-mini.m-del:hover { background: rgba(248,113,113,0.2); color: #F87171; border-color: rgba(248,113,113,0.4); }
+
 /* --- Timeline --- */
 .timeline {
     position: relative;
@@ -441,7 +450,19 @@ body.is-dragging * { cursor: grabbing !important; }
 }
 
 .clip-wave-svg rect {
-    fill: rgba(255, 255, 255, 0.78);
+    fill: rgba(255, 255, 255, 0.72);
+}
+
+/* Ligne centrale waveform (après SVG, pseudo-élément) */
+.clip-wave-svg::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: rgba(255,255,255,0.12);
+    pointer-events: none;
 }
 
 .clip:hover {
@@ -1057,12 +1078,16 @@ body.is-trimming .clip-trim-handle { opacity: 1 !important; }
 
 .chrono {
     font-family: 'SF Mono', ui-monospace, monospace;
-    font-size: 20px;
+    font-size: 18px;
     font-weight: 500;
     color: var(--text-1);
     letter-spacing: 0.5px;
     font-variant-numeric: tabular-nums;
+    min-width: 130px;
+    user-select: none;
+    transition: color 0.15s;
 }
+.chrono:hover { color: var(--violet-3); }
 
 .bpm-ctl {
     display: flex;
