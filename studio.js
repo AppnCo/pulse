@@ -143,15 +143,22 @@ function renderClip(t, c, ci) {
     const trackIdx = state.project.tracks.indexOf(t);
     const selected = state.selectedClip && state.selectedClip.trackIdx === trackIdx && state.selectedClip.clipIdx === ci;
 
+    const fadeInPx  = c.fadeIn  ? Math.min(c.fadeIn  * state.pxPerSecond, widthPx * 0.9) : 0;
+    const fadeOutPx = c.fadeOut ? Math.min(c.fadeOut * state.pxPerSecond, widthPx * 0.9) : 0;
+
     return `
     <div class="clip ${c.recording ? 'is-recording' : ''} ${stale ? 'is-stale' : ''} ${selected ? 'is-selected' : ''}"
          data-ci="${ci}"
          data-tooltip="${esc(tooltip)}"
          style="--clip-color: ${t.color}; left: ${leftPx}px; width: ${widthPx}px">
         <div class="clip-trim-handle left"></div>
+        <div class="clip-trim-handle right"></div>
+        <div class="clip-fade-zone in"  data-fade="in"></div>
+        <div class="clip-fade-zone out" data-fade="out"></div>
+        ${fadeInPx  > 0 ? `<div class="clip-fade-overlay in"  style="width:${fadeInPx}px"></div>`  : ''}
+        ${fadeOutPx > 0 ? `<div class="clip-fade-overlay out" style="width:${fadeOutPx}px"></div>` : ''}
         ${renderClipWaveform(c, widthPx)}
         <div class="clip-name" data-ci="${ci}">${esc(c.name || 'Clip')}${stale ? ' <span class="clip-stale-tag">⚠ audio perdu</span>' : ''}</div>
-        <div class="clip-trim-handle right"></div>
     </div>`;
 }
 
@@ -406,18 +413,23 @@ function detectBpmStub(audioBuffer) {
 // --- Rendu : règle temporelle ---
 function renderRuler() {
     const ruler = document.getElementById('timelineRuler');
-    const totalSeconds = 180;
     const beatSec = 60 / state.project.bpm;
     const beatPx = state.pxPerSecond * beatSec;
-    const bars = Math.ceil(totalSeconds / (beatSec * 4));
+    const totalSec = Math.max(180, computeProjectEndSec() + 60);
+    const bars = Math.ceil(totalSec / (beatSec * 4));
+    const showBeats = beatPx >= 24; // affiche les numéros de beat si assez de place
 
     let html = '';
     for (let bar = 0; bar <= bars; bar++) {
         const x = bar * beatPx * 4;
-        html += `<div class="ruler-tick major" style="left:${x}px"></div>`;
-        html += `<div class="ruler-label" style="left:${x}px">${bar + 1}</div>`;
+        html += `<div class="ruler-tick major" style="left:${x.toFixed(1)}px"></div>`;
+        html += `<div class="ruler-label major" style="left:${x.toFixed(1)}px">${bar + 1}</div>`;
         for (let beat = 1; beat < 4; beat++) {
-            html += `<div class="ruler-tick minor" style="left:${x + beat * beatPx}px"></div>`;
+            const bx = x + beat * beatPx;
+            html += `<div class="ruler-tick minor" style="left:${bx.toFixed(1)}px"></div>`;
+            if (showBeats) {
+                html += `<div class="ruler-label minor" style="left:${bx.toFixed(1)}px">${beat + 1}</div>`;
+            }
         }
     }
     ruler.innerHTML = html;
@@ -1550,7 +1562,9 @@ function updatePanKnobVisual(knob, pan) {
 function bindTrackEvents() {
     document.querySelectorAll('.track-item').forEach(el => {
         el.addEventListener('click', e => {
-            if (e.target.classList.contains('t-mini') || e.target.closest('.track-name[contenteditable="true"]')) return;
+            if (e.target.classList.contains('t-mini')) return;
+            if (e.target.closest('.track-name[contenteditable="true"]')) return;
+            if (e.target.closest('.track-drag-handle')) return; // ne pas re-render pendant le drag
             state.selectedTrack = parseInt(el.dataset.i);
             renderTracksPanel();
             bindTrackEvents();
@@ -1701,6 +1715,7 @@ function bindTimelineClick() {
 
     // --- Ruler : clic/drag place le playhead ---
     ruler.addEventListener('mousedown', (e) => {
+        e.preventDefault(); // empêche la sélection de texte sur les labels
         if (e.altKey) return startLoopSelection(e, eventToTime);
         setPlayheadFromEvent(e);
         const onMove = (ev) => setPlayheadFromEvent(ev);
@@ -1710,6 +1725,28 @@ function bindTimelineClick() {
         };
         document.addEventListener('mousemove', onMove);
         document.addEventListener('mouseup', onUp);
+    });
+
+    // --- Smart Tool : cursor qui change selon la zone du clip ---
+    tracks.addEventListener('mousemove', (e) => {
+        const clipEl = e.target.closest('.clip');
+        if (!clipEl) return;
+        const rect = clipEl.getBoundingClientRect();
+        const relX = e.clientX - rect.left;
+        const relY = e.clientY - rect.top;
+        const edgeZone = 8;
+        // Zone fade = top 45% du clip, 30% de la largeur ou 36px min
+        const fadeZone = Math.max(36, rect.width * 0.3);
+        const inTopHalf = relY < rect.height * 0.45;
+
+        if (inTopHalf && relX < fadeZone)                  { clipEl.style.cursor = 'w-resize'; }
+        else if (inTopHalf && relX > rect.width - fadeZone){ clipEl.style.cursor = 'e-resize'; }
+        else if (relX < edgeZone || relX > rect.width - edgeZone){ clipEl.style.cursor = 'ew-resize'; }
+        else { clipEl.style.cursor = ''; }
+    });
+    tracks.addEventListener('mouseleave', (e) => {
+        const clipEl = e.target.closest('.clip');
+        if (clipEl) clipEl.style.cursor = '';
     });
 
     // Double-click sur un clip → rename inline
@@ -1735,10 +1772,24 @@ function bindTimelineClick() {
             bindTrackEvents();
 
             if (clipEl) {
+                // Outil ciseau
                 if (state.tool === 'scissors') {
                     splitClipAt(trackIdx, parseInt(clipEl.dataset.ci), eventToTime(e));
                     return;
                 }
+                // Fade drag (zone haute du clip)
+                const fadeZoneEl = e.target.closest('.clip-fade-zone');
+                if (fadeZoneEl) {
+                    return startFadeDrag(e, fadeZoneEl.dataset.fade, trackIdx, parseInt(clipEl.dataset.ci));
+                }
+                // Smart Tool : détecte la zone même sans l'élément explicite
+                const rect = clipEl.getBoundingClientRect();
+                const relX = e.clientX - rect.left;
+                const relY = e.clientY - rect.top;
+                const fadeZone = Math.max(36, rect.width * 0.3);
+                const inTopHalf = relY < rect.height * 0.45;
+                if (inTopHalf && relX < fadeZone) return startFadeDrag(e, 'in',  trackIdx, parseInt(clipEl.dataset.ci));
+                if (inTopHalf && relX > rect.width - fadeZone) return startFadeDrag(e, 'out', trackIdx, parseInt(clipEl.dataset.ci));
                 return startClipDrag(e, clipEl, trackIdx);
             }
             if (e.shiftKey) {
@@ -2064,6 +2115,58 @@ function splitClipAt(trackIdx, clipIdx, atSec) {
     renderTimelineTracks();
     saveProject();
     flash('✂ Clip coupé');
+}
+
+// === Fade in/out (style Pro Tools — grande zone de prise) ===
+function startFadeDrag(startEvent, fadeDir, trackIdx, clipIdx) {
+    const t = state.project.tracks[trackIdx];
+    const clip = t.clips[clipIdx];
+    if (!clip) return;
+    const startX = startEvent.clientX;
+    const originalFade = fadeDir === 'in' ? (clip.fadeIn || 0) : (clip.fadeOut || 0);
+
+    const onMove = (ev) => {
+        const dx = ev.clientX - startX;
+        const dt = dx / state.pxPerSecond;
+        const delta = fadeDir === 'in' ? dt : -dt;
+        const newFade = Math.max(0, Math.min(clip.duration * 0.9, originalFade + delta));
+        if (fadeDir === 'in') clip.fadeIn = newFade; else clip.fadeOut = newFade;
+        const clipEl = document.querySelector(`.timeline-track[data-i="${trackIdx}"] .clip[data-ci="${clipIdx}"]`);
+        if (clipEl) updateClipFadeVisual(clipEl, clip);
+    };
+
+    const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        document.body.classList.remove('is-dragging');
+        renderTimelineTracks();
+        saveProject();
+    };
+
+    document.body.classList.add('is-dragging');
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    startEvent.preventDefault();
+    startEvent.stopPropagation();
+}
+
+function updateClipFadeVisual(clipEl, clip) {
+    const widthPx = parseFloat(clipEl.style.width) || 0;
+    ['in', 'out'].forEach(dir => {
+        const fadeSec = dir === 'in' ? (clip.fadeIn || 0) : (clip.fadeOut || 0);
+        const fadePx  = Math.min(fadeSec * state.pxPerSecond, widthPx * 0.9);
+        let el = clipEl.querySelector(`.clip-fade-overlay.${dir}`);
+        if (fadePx > 0) {
+            if (!el) {
+                el = document.createElement('div');
+                el.className = `clip-fade-overlay ${dir}`;
+                clipEl.appendChild(el);
+            }
+            el.style.width = fadePx + 'px';
+        } else if (el) {
+            el.remove();
+        }
+    });
 }
 
 // === Basculer l'outil actif (pointer / scissors) ===
