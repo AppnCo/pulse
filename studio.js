@@ -66,7 +66,8 @@ const state = {
     startTime: 0,
     loop: null,           // { start, end } en secondes, ou null
     tool: 'pointer',      // 'pointer' | 'scissors'
-    trackHeight: 72       // hauteur des pistes en px (zoom vertical)
+    trackHeight: 72,      // hauteur des pistes en px (zoom vertical)
+    snap: 'beat'          // 'bar' | 'beat' | 'division' | 'off'
 };
 
 // --- Rendu : panneau pistes ---
@@ -155,15 +156,14 @@ function renderClip(t, c, ci) {
 }
 
 function renderClipWaveform(c, widthPx) {
-    // Peaks stockés sur le clip (sinon fallback au pattern)
     const peaks = c.peaks;
     if (!peaks || !peaks.length || widthPx < 10) {
         return '<div class="clip-wave"></div>';
     }
-    // On downsample les peaks selon la largeur réelle (1 peak par ~2px)
     const targetBars = Math.max(2, Math.floor(widthPx / 2));
     const step = peaks.length / targetBars;
-    const h = 56; // hauteur disponible
+    // La hauteur de la waveform suit la piste (moins les marges clip top/bottom 6px + label 16px)
+    const h = Math.max(20, state.trackHeight - 28);
     const barWidth = widthPx / targetBars;
 
     let path = '';
@@ -525,6 +525,18 @@ function updateSaveIndicator() {
 
 // --- Transport ---
 async function togglePlay() {
+    // Logic : Space pendant rec = stop rec + stop play
+    if (state.recording) {
+        await stopActualRecording();
+        state.playing = false;
+        const btn = document.getElementById('btnPlay');
+        btn.querySelector('.icon-play').style.display = 'block';
+        btn.querySelector('.icon-pause').style.display = 'none';
+        PulseAudio.stopAll();
+        PulseAudio.stopMetronome();
+        return;
+    }
+
     state.playing = !state.playing;
     const btn = document.getElementById('btnPlay');
     btn.querySelector('.icon-play').style.display = state.playing ? 'none' : 'block';
@@ -822,6 +834,7 @@ const SHORTCUT_GROUPS = [
             ['Q', 'Couper à gauche du curseur'],
             ['S', 'Couper à droite du curseur'],
             ['B', 'Outil ciseau — couper un clip au clic'],
+            ['Shift + drag clip', 'Désactiver le snap temporairement'],
             ['Shift + drag', 'Sélectionner une plage'],
             ['Suppr / ⌫', 'Effacer la plage sélectionnée'],
             ['Alt + drag clip', 'Dupliquer le clip']
@@ -1767,8 +1780,6 @@ function startClipDrag(startEvent, clipEl, trackIdx) {
     const startX = startEvent.clientX;
     const startY = startEvent.clientY;
     const originalStart = working.start;
-    const snapToGrid = !startEvent.shiftKey;
-    const beatSec = 60 / state.project.bpm;
     let dragged = false;
 
     const onMove = (ev) => {
@@ -1777,10 +1788,7 @@ function startClipDrag(startEvent, clipEl, trackIdx) {
         if (!dragged) { dragged = true; document.body.classList.add('is-dragging'); }
 
         const dt = dx / state.pxPerSecond;
-        let newStart = Math.max(0, originalStart + dt);
-        if (snapToGrid && !ev.shiftKey) {
-            newStart = Math.round(newStart / beatSec) * beatSec;
-        }
+        const newStart = snapTime(originalStart + dt, ev.shiftKey);
         working.start = newStart;
         const freshEl = document.querySelector(`.timeline-track[data-i="${trackIdx}"] .clip[data-ci="${t.clips.indexOf(working)}"]`);
         if (freshEl) freshEl.style.left = (newStart * state.pxPerSecond) + 'px';
@@ -1911,12 +1919,14 @@ function startClipTrim(startEvent, clipEl, trackIdx, clipIdx, side) {
         const dx = ev.clientX - startX;
         const dt = dx / state.pxPerSecond;
         if (side === 'left') {
-            const newStart = Math.max(0, Math.min(originalStart + originalDuration - 0.1, originalStart + dt));
-            const diff = newStart - originalStart;
-            clip.start = newStart;
+            const raw = originalStart + dt;
+            const snapped = snapTime(Math.min(originalStart + originalDuration - 0.1, raw), ev.shiftKey);
+            const diff = snapped - originalStart;
+            clip.start = snapped;
             clip.duration = originalDuration - diff;
         } else {
-            clip.duration = Math.max(0.1, originalDuration + dt);
+            const raw = originalDuration + dt;
+            clip.duration = Math.max(0.1, snapTime(clip.start + raw, ev.shiftKey) - clip.start);
         }
         renderTimelineTracks();
     };
@@ -2003,10 +2013,22 @@ function deleteSelection() {
     flash(count > 0 ? `✂︎ Plage supprimée (${count} clip${count>1?'s':''})` : 'Rien dans la plage');
 }
 
+// === Snap (Logic-style) ===
+// shiftOverride : si true, force snap off (Shift tenu pendant drag)
+function snapTime(t, shiftOverride) {
+    if (state.snap === 'off' || shiftOverride) return Math.max(0, t);
+    const beatSec = 60 / state.project.bpm;
+    const unit = state.snap === 'bar'      ? beatSec * 4
+               : state.snap === 'division' ? beatSec / 4
+               : beatSec; // 'beat' par défaut
+    return Math.max(0, Math.round(t / unit) * unit);
+}
+
 // === Zoom vertical (hauteur des pistes) ===
 function setTrackHeight(px) {
     state.trackHeight = Math.max(36, Math.min(200, Math.round(px)));
     document.documentElement.style.setProperty('--track-h', state.trackHeight + 'px');
+    renderTimelineTracks(); // recalcule la hauteur des waveforms
 }
 
 // === Outil ciseau : couper un clip en deux au point de clic ===
@@ -2102,6 +2124,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('btnSave').addEventListener('click', () => {
         saveProject();
         flash('Projet sauvegardé');
+    });
+
+    document.getElementById('snapSelect').addEventListener('change', e => {
+        state.snap = e.target.value;
     });
 
     document.getElementById('bpmInput').addEventListener('change', e => {

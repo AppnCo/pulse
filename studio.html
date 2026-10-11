@@ -48,6 +48,15 @@
                     <button class="bpm-mini" id="btnBpmHalf" data-tooltip="Diviser le BPM par 2">÷2</button>
                     <button class="bpm-mini" id="btnBpmDouble" data-tooltip="Multiplier le BPM par 2">×2</button>
                 </div>
+                <div class="snap-ctl" data-tooltip="Magnétisme (Shift = libre)">
+                    <span class="snap-label">SNAP</span>
+                    <select id="snapSelect" class="snap-select">
+                        <option value="bar">Mesure</option>
+                        <option value="beat" selected>Beat</option>
+                        <option value="division">1/8</option>
+                        <option value="off">Libre</option>
+                    </select>
+                </div>
             </div>
 
             <div class="transport-center">
