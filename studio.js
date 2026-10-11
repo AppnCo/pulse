@@ -67,7 +67,7 @@ const state = {
     loop: null,           // { start, end } en secondes, ou null
     tool: 'pointer',      // 'pointer' | 'scissors'
     trackHeight: 72,      // hauteur des pistes en px (zoom vertical)
-    snap: 'beat'          // 'bar' | 'beat' | 'division' | 'off'
+    snap: 'smart'         // 'smart' | 'bar' | 'beat' | 'division' | 'off'
 };
 
 // --- Rendu : panneau pistes ---
@@ -2085,13 +2085,23 @@ function deleteSelection() {
 }
 
 // === Snap (Logic-style) ===
-// shiftOverride : si true, force snap off (Shift tenu pendant drag)
+function getEffectiveSnap() {
+    if (state.snap !== 'smart') return state.snap;
+    // Smart : résolution basée sur le zoom (comme Logic)
+    const beatPx = state.pxPerSecond * (60 / state.project.bpm);
+    if (beatPx >= 120) return 'division'; // 1/8 note
+    if (beatPx >= 40)  return 'beat';
+    return 'bar';
+}
+
+// shiftOverride : Shift tenu = snap libre temporairement
 function snapTime(t, shiftOverride) {
-    if (state.snap === 'off' || shiftOverride) return Math.max(0, t);
+    const snap = getEffectiveSnap();
+    if (snap === 'off' || shiftOverride) return Math.max(0, t);
     const beatSec = 60 / state.project.bpm;
-    const unit = state.snap === 'bar'      ? beatSec * 4
-               : state.snap === 'division' ? beatSec / 4
-               : beatSec; // 'beat' par défaut
+    const unit = snap === 'bar'      ? beatSec * 4
+               : snap === 'division' ? beatSec / 4
+               : beatSec;
     return Math.max(0, Math.round(t / unit) * unit);
 }
 
