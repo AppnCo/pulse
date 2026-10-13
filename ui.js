@@ -169,9 +169,20 @@
         const r = panel.getBoundingClientRect();
         if (r.right > window.innerWidth - 8) panel.style.left = Math.max(8, window.innerWidth - 8 - r.width) + 'px';
     };
+    // Un menu clic droit ne sort jamais de la fenêtre : on le remonte / décale, et on le fait défiler s'il est plus grand que l'écran
+    const fitMenu = (m) => {
+        if (!m.isConnected) return;
+        const maxH = window.innerHeight - 16;
+        m.style.maxHeight = maxH + 'px'; m.style.overflowY = 'auto';
+        const r = m.getBoundingClientRect();
+        if (r.bottom > window.innerHeight - 8) m.style.top = Math.max(8, window.innerHeight - 8 - r.height) + 'px';
+        if (r.right > window.innerWidth - 8) m.style.left = Math.max(8, window.innerWidth - 8 - r.width) + 'px';
+    };
     new MutationObserver((muts) => {
         for (const m of muts) m.addedNodes.forEach(n => {
-            if (n.nodeType === 1 && n.classList && n.classList.contains('fx-panel')) requestAnimationFrame(() => grip(n));
+            if (n.nodeType !== 1 || !n.classList) return;
+            if (n.classList.contains('fx-panel')) requestAnimationFrame(() => grip(n));
+            if (n.classList.contains('track-ctx-menu')) requestAnimationFrame(() => fitMenu(n));
         });
     }).observe(document.body, { childList: true });
 

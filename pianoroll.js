@@ -60,6 +60,7 @@
     function close(silent) {
         if (!el) return;
         flush();
+        if (!el) return;   // la région a disparu pendant l'enregistrement final : l'éditeur s'est déjà fermé
         clearInterval(timer); cancelAnimationFrame(raf);
         document.removeEventListener('keydown', keyHandler, true);
         document.removeEventListener('keyup', onKeyUp, true);
@@ -182,7 +183,7 @@
         q('.me-rec').onclick = () => {
             S.rec = !S.rec; q('.me-rec').classList.toggle('on', S.rec);
             if (S.rec) attachMidi();
-            if (S.rec) S.o.flash && S.o.flash(S.midi.inst === 'drums' || S.view === 'steps' ? 'Lance la lecture (Espace) puis joue : A S D F G H J K L = kick, snare, clap, rim, hi-hat…' : 'Lance la lecture (Espace) puis joue avec A W S E D F T G Y H U J K');
+            if (S.rec) S.o.flash && S.o.flash(S.midi.inst === 'drums' || S.view === 'steps' ? 'Lance la lecture (Espace) puis joue : la rangée du milieu du clavier = kick, snare, clap, rim, hi-hat…' : 'Lance la lecture (Espace) puis joue avec le clavier de l\'ordi : rangée du milieu = notes blanches, rangée du dessus = noires');
         };
         const tpl = q('.me-tpl');
         if (tpl) tpl.onchange = (e) => {
@@ -725,7 +726,7 @@
     // Clavier MIDI USB (Web MIDI) : branché au premier clic sur « Jouer en direct »
     function attachMidi(silent) {
         if (S.midiOk || !navigator.requestMIDIAccess) {
-            if (!silent && !navigator.requestMIDIAccess) S.o.flash && S.o.flash('Ce navigateur ne gère pas les claviers MIDI — joue avec le clavier de l\'ordi (A W S E D F…)');
+            if (!silent && !navigator.requestMIDIAccess) S.o.flash && S.o.flash('Ce navigateur ne gère pas les claviers MIDI — joue avec le clavier de l\'ordi (rangée du milieu)');
             return;
         }
         const SS = S;
@@ -756,9 +757,11 @@
         else if (cmd === 0x80 || (cmd === 0x90 && d2 === 0)) stopIn(id);
     }
     const DRUMKEYS = ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'];
+    // Touches lues par leur POSITION sur le clavier (comme un piano) : sur AZERTY, la rangée du milieu reste les notes blanches
+    const physKey = (e) => (e.code && /^Key[A-Z]$/.test(e.code)) ? e.code.slice(3).toLowerCase() : String(e.key || '').toLowerCase();
     function onKeyUp(e) {
         if (!S) return;
-        stopIn(e.key);
+        stopIn(physKey(e));
     }
     // ---------- Clavier ----------
     const KEYMAP = { a: 0, w: 1, s: 2, e: 3, d: 4, f: 5, t: 6, g: 7, y: 8, h: 9, u: 10, j: 11, k: 12, o: 13, l: 14 };
@@ -788,32 +791,41 @@
             S.sel.forEach(n => {
                 if (k === 'ArrowLeft') n.s = Math.max(0, n.s - (oct ? 4 : u));
                 if (k === 'ArrowRight') n.s = Math.min(S.midi.beats - u, n.s + (oct ? 4 : u));
-                if (k === 'ArrowUp') n.p = oct ? Math.min(127, n.p + 12) : S.rows[Math.max(0, rowOf(n.p) - 1)];
-                if (k === 'ArrowDown') n.p = oct ? Math.max(0, n.p - 12) : S.rows[Math.min(S.rows.length - 1, rowOf(n.p) + 1)];
+                if (k === 'ArrowUp' || k === 'ArrowDown') {
+                    const dirn = k === 'ArrowUp' ? -1 : 1;
+                    if (S.midi.inst === 'drums' && S.view === 'steps') {
+                        // Séquenceur de pas : on ne passe que d'une piste de la grille à l'autre (pas de note « fantôme »)
+                        const lanes = root.PulseSynth.DRUM_LANES.map(l => l.p);
+                        const i = lanes.indexOf(n.p);
+                        if (i >= 0) n.p = lanes[Math.max(0, Math.min(lanes.length - 1, i + dirn))];
+                    } else if (oct) n.p = Math.max(0, Math.min(127, n.p - dirn * 12));
+                    else n.p = S.rows[Math.max(0, Math.min(S.rows.length - 1, rowOf(n.p) + dirn))];
+                }
             });
             const f = [...S.sel][0]; if (k === 'ArrowUp' || k === 'ArrowDown') audition(f.p, f.v);
             changed('nudge'); return;
         }
         // Jouer en direct pendant la lecture : la note est enregistrée au moment où on appuie
         if (!mod && !e.altKey && S.rec) {
-            const lane = DRUMKEYS.indexOf(k.toLowerCase());
+            const kc = physKey(e);
+            const lane = DRUMKEYS.indexOf(kc);
             const isDr = S.midi.inst === 'drums' || S.view === 'steps';
-            const pitch = isDr ? (lane >= 0 && lane < stepRows().length ? stepRows()[lane].p : null) : (KEYMAP[k.toLowerCase()] !== undefined ? 12 * (S.baseOct + 1) + KEYMAP[k.toLowerCase()] : null);
+            const pitch = isDr ? (lane >= 0 && lane < stepRows().length ? stepRows()[lane].p : null) : (KEYMAP[kc] !== undefined ? 12 * (S.baseOct + 1) + KEYMAP[kc] : null);
             if (pitch !== null) {
                 eat();
                 if (e.repeat) return;
-                playIn(k, pitch, 100);
+                playIn(kc, pitch, 100);
                 return;
             }
         }
         // Clavier de l'ordinateur : jouer les notes (comme le clavier de Logic)
-        if (!mod && !e.altKey && !e.repeat && S.midi.inst !== 'drums' && S.view === 'roll' && KEYMAP[k.toLowerCase()] !== undefined) {
+        if (!mod && !e.altKey && !e.repeat && S.midi.inst !== 'drums' && S.view === 'roll' && KEYMAP[physKey(e)] !== undefined) {
             eat();
-            audition(12 * (S.baseOct + 1) + KEYMAP[k.toLowerCase()], 100);
+            audition(12 * (S.baseOct + 1) + KEYMAP[physKey(e)], 100);
             return;
         }
-        if (!mod && S.midi.inst !== 'drums' && (k === 'z' || k === 'x') && S.view === 'roll') {
-            eat(); S.baseOct = Math.max(0, Math.min(8, S.baseOct + (k === 'x' ? 1 : -1)));
+        if (!mod && S.midi.inst !== 'drums' && (physKey(e) === 'z' || physKey(e) === 'x') && S.view === 'roll') {
+            eat(); S.baseOct = Math.max(0, Math.min(8, S.baseOct + (physKey(e) === 'x' ? 1 : -1)));
             S.o.flash && S.o.flash(`Clavier de l'ordinateur : octave ${S.baseOct}`); return;
         }
     }
@@ -870,6 +882,7 @@
     function redo() { if (!S.redo.length) return; S.undo.push(JSON.stringify({ m: S.midi, notes: S.notes })); restore(S.redo.pop()); }
 
     function changed(kind, noSnap) {
+        if (kind === 'undo') S.hist = true;   // retour en arrière dans l'éditeur : pas une nouvelle étape pour le projet
         S.midi.notes = S.notes;
         S.dirty = true;
         syncBar(); draw();
@@ -878,7 +891,8 @@
     function flush() {
         if (!S || !S.dirty) return;
         clearTimeout(S.t); S.dirty = false;
-        S.o.onCommit(clone({ inst: S.midi.inst, beats: S.midi.beats, swing: S.midi.swing || 0, notes: S.notes.map(n => ({ s: n.s, d: n.d, p: n.p, v: n.v })) }), !S.committed);
+        const fromHistory = !!S.hist; S.hist = false;
+        S.o.onCommit(clone({ inst: S.midi.inst, beats: S.midi.beats, swing: S.midi.swing || 0, notes: S.notes.map(n => ({ s: n.s, d: n.d, p: n.p, v: n.v })) }), !S.committed, fromHistory);
         if (S) S.committed = true; // l'éditeur a pu se fermer pendant onCommit
     }
 

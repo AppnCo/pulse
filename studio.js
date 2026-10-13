@@ -100,9 +100,10 @@ function undoAction() {
     if (window.PulsePianoRoll && PulsePianoRoll.isOpen()) PulsePianoRoll.close(true);
     document.querySelectorAll('.fx-panel').forEach(p => p.remove());   // elles pointaient l'ancien état
     _redoStack.push(JSON.stringify(state.project));
-    const lyrics = state.project.lyrics; // le texte n'est pas concerné par Annuler : on ne perd jamais ce qu'on a écrit
+    const lyrics = state.project.lyrics, lmap = state.project.lyricsMap; // le texte n'est pas concerné par Annuler : on ne perd jamais ce qu'on a écrit
     state.project = JSON.parse(_undoStack.pop());
     if (lyrics !== undefined) state.project.lyrics = lyrics;
+    if (lmap !== undefined) state.project.lyricsMap = lmap;
     renderAll(); saveProject(); flash('↩ Annulé');
 }
 function redoAction() {
@@ -111,9 +112,10 @@ function redoAction() {
     if (window.PulsePianoRoll && PulsePianoRoll.isOpen()) PulsePianoRoll.close(true);
     document.querySelectorAll('.fx-panel').forEach(p => p.remove());
     _undoStack.push(JSON.stringify(state.project));
-    const lyrics = state.project.lyrics; // le texte n'est pas concerné par Annuler : on ne perd jamais ce qu'on a écrit
+    const lyrics = state.project.lyrics, lmap = state.project.lyricsMap;
     state.project = JSON.parse(_redoStack.pop());
     if (lyrics !== undefined) state.project.lyrics = lyrics;
+    if (lmap !== undefined) state.project.lyricsMap = lmap;
     renderAll(); saveProject(); flash('↪ Refait');
 }
 function updateUndoBtn() {
@@ -1131,7 +1133,10 @@ async function importAudioFile(file, trackIdx, atTime = null, opts = {}) {
         if (!opts.noUndo) pushUndo();
         t.clips = t.clips || [];
         // Un fichier posé sur une piste vide, pas armée : c'est l'instru → la piste devient « Instru » (icône à part, la voix ira ailleurs)
-        if (!t.clips.length && !t.armed && !t.isCapture && (!t.type || t.type === 'audio')) {
+        // (seulement s'il n'y a pas déjà une instru et si la piste n'est pas rangée dans un groupe : une voix déposée sur « Lead » reste une voix)
+        const inGroup = t.output && t.output !== 'master' && (state.project.buses || []).some(b => b.id === t.output && b.isGroup);
+        if (!t.clips.length && !t.armed && !t.isCapture && (!t.type || t.type === 'audio') && !inGroup
+            && !state.project.tracks.some((o, oi) => oi !== trackIdx && isInstruTrack(o))) {
             t.type = 'inst';
             if (/^Piste \d+$/.test(t.name || '')) t.name = 'Instru';
         }
@@ -1411,6 +1416,11 @@ function applyShowAll() { document.body.classList.toggle('show-all', showAll());
 function migrateProject() {
     let changed = false;
     PulseAudio.setCeiling(state.project.ceilingDb ?? -0.3);
+    // Le fader Master fait partie du projet : même export, même niveau, à chaque ouverture
+    const mv = state.project.masterVolume ?? 100;
+    PulseAudio.setMasterVolume(mv);
+    const mf = document.querySelector('.mixer-master .fader');
+    if (mf) { mf.value = mv; const d = document.querySelector('.mixer-master .strip-db'); if (d) d.textContent = `${volumeToDb(mv)} dB`; }
     applyShowAll();
     // Un modèle décrit le son voulu (« Voix lead » sur le groupe…) : on le traduit en vrais effets à la première ouverture
     [...state.project.tracks, ...(state.project.buses || [])].forEach(x => {
@@ -1520,7 +1530,7 @@ function renderInspector() {
             const v = kind === 'master' ? parseInt(fader.value) : posToVol(parseFloat(fader.value));
             if (kind === 'track') { t.volume = v; PulseAudio.updateTrackVolume(idx, v); syncInspectorVolume(idx); }
             else if (kind === 'bus') { dest.volume = v; PulseAudio.updateBusVolume(dest.id, dest.muted ? 0 : v); }
-            else PulseAudio.setMasterVolume(v);
+            else { PulseAudio.setMasterVolume(v); state.project.masterVolume = v; }
             strip.querySelector('.strip-db').textContent = `${volumeToDb(v)} dB`;
         });
         fader.addEventListener('change', () => { saveProject(); if (state.mixerOpen) { renderMixer(); bindMixerEvents(); } });
@@ -2719,7 +2729,7 @@ async function finalizeCapture() {
     const name = done.length > 1 ? `${done.length} prises enregistrées` : `Prise ${takeLetter(last.take)} enregistrée`;
     if (t.autotune && t.autotune.on) {   // Auto-Tune de piste : la nouvelle prise est corrigée toute seule
         const ti = state.project.tracks.indexOf(t);
-        setTimeout(() => tuneWholeTrack(ti, done.filter(c => !c.midi)), 300);
+        setTimeout(() => tuneWholeTrack(ti, done.filter(c => !c.midi), true), 300);
     }
     if (aside > 0) flash(`✓ ${name} — l'ancienne est rangée juste dessous, clique dessus pour la reprendre`);
     else if (!localStorage.getItem('pulse_tip_stretch')) {
@@ -3133,7 +3143,7 @@ const SHORTCUT_GROUPS = [
             ['⌘ / Maj + glisser', 'Sélectionner plusieurs notes'],
             ['← → ↑ ↓', 'Déplacer la sélection (Maj = mesure / octave)'],
             ['⌘D · ⌘A · ⌘Z', 'Dupliquer · tout choisir · annuler'],
-            ['A W S E D F T G Y H U J K', 'Jouer les notes (Z / X : octave)'],
+            ['Rangée du milieu / du dessus', 'Jouer les notes comme un piano — milieu = blanches, dessus = noires (rangée du bas : octave − / +)'],
             ['● Jouer en direct', 'Enregistre ce que tu joues pendant la lecture (clavier MIDI USB aussi)'],
             ['Échap', 'Fermer l\'éditeur']
         ]
@@ -3765,7 +3775,7 @@ async function doExportStems() {
 
 // Legacy alias
 function projectHasSound() {
-    return state.project.tracks.some(t => (t.clips || []).some(c => !c.recording));
+    return state.project.tracks.some(t => (t.clips || []).some(c => !c.recording && !(c.midi && !(c.midi.notes || []).length)));
 }
 async function exportProject() {
     if (!projectHasSound()) { flash('Ton projet est vide : pose un instru ou enregistre-toi avant d\'exporter'); return; }
@@ -3964,9 +3974,9 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false) {
         if (mask) {
             const named = source === 'instru' || source === 'gamme';
             state.project.key = { notes: mask.slice(), tonic, minor, label: named ? scaleLabel(tonic, minor) : '', source };
-            if (trackMode) { trk.autotune = { on: true, notes: mask.slice(), source, strength, tonic, minor }; saveProject(); tuneWholeTrack(trackIdx); }
+            if (trackMode) { pushUndo(); trk.autotune = { on: true, notes: mask.slice(), source, strength, tonic, minor }; saveProject(); tuneWholeTrack(trackIdx, null, true); }
             else applyTune(clip, { notes: mask.slice(), source, strength, tonic, minor });
-        } else if (trackMode) { trk.autotune = { on: true, root: 'auto', strength }; saveProject(); tuneWholeTrack(trackIdx); }
+        } else if (trackMode) { pushUndo(); trk.autotune = { on: true, root: 'auto', strength }; saveProject(); tuneWholeTrack(trackIdx, null, true); }
         else applyTune(clip, { root: 'auto', strength });
     });
     const rm = panel.querySelector('.tune-remove');
@@ -4066,7 +4076,7 @@ function openMidiEditor(trackIdx, clipIdx, fresh) {
             if (b > clip.midi.beats) { if (!clip.loopEnd || b > (clip.loopEnd - clip.start) / spb) return null; b %= clip.midi.beats; }
             return b;
         },
-        onCommit: (midi, first) => commitMidi(clip, midi),
+        onCommit: (midi, first, fromHistory) => commitMidi(clip, midi, fromHistory),
         onClose: () => { _midiSession = null; renderTimelineTracks(); }
     });
     if (fresh) flash('Clique dans la grille pour poser des notes — Espace pour écouter, Échap pour fermer');
@@ -4077,16 +4087,19 @@ function openMidiEditor(trackIdx, clipIdx, fresh) {
     }, 60);
 }
 
-async function commitMidi(clip, midi) {
+async function commitMidi(clip, midi, fromHistory = false) {
     const ti = state.project.tracks.findIndex(t => t.clips.includes(clip));
     if (ti < 0) { flash('Cette région n\'existe plus — l\'éditeur se ferme'); PulsePianoRoll.close(true); return; }
-    if (_midiSession && !_midiSession.undoPushed) { pushUndo(); _midiSession.undoPushed = true; }
+    if (!fromHistory) pushUndo();   // une étape par série de modifications : ⌘Z défait la dernière série, pas toute la séance
     const bpm = state.project.bpm, spb = 60 / bpm;
     const lenChanged = midi.beats !== clip.midi.beats;
     const pid = clip.midi.pid;
     const buf = await bakeMidiClip(clip, midi, bpm);
     if (lenChanged) { clip.offset = 0; clip.duration = midi.beats * spb; delete clip.loopEnd; }
     else clip.duration = Math.min(clip.duration, Math.max(0.05, buf.duration - (clip.offset || 0)));
+    if (lenChanged && state.project.tracks[ti].clips.some(o => o !== clip && !o.recording && o.start < clip.start + clip.duration - 1e-3 && o.start + o.duration > clip.start + 1e-3)) {
+        flash('Cette région est maintenant plus longue et chevauche la suivante : déplace-la ou raccourcis le motif');
+    }
     // Régions liées (alias) : elles reçoivent exactement le même motif et le même son
     if (pid) state.project.tracks.forEach(t => t.clips.forEach(o => {
         if (o === clip || !o.midi || o.midi.pid !== pid) return;
@@ -4204,20 +4217,33 @@ function renderMidiNotes(c, widthPx) {
 
 // Le tempo change : les régions MIDI sont recalculées à la volée (et gardent leur place sur les temps)
 function rerenderMidiForTempo(bpm) {
-    let n = 0;
+    // Première passe : on note l'ancien tempo de chaque région avant de toucher à quoi que ce soit
+    // (deux moitiés d'une région coupée peuvent partager le même objet « midi »)
+    const todo = [];
     state.project.tracks.forEach(t => (t.clips || []).forEach(c => {
         if (!c.midi || !c.midi.bpm || Math.abs(c.midi.bpm - bpm) < 1e-6) return;
-        const f = c.midi.bpm / bpm;
-        const buf = renderMidiBuffer(c.midi, bpm);
-        const newId = `mid_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-        PulseAudio.registerBuffer(newId, buf);
-        PulsePersist.saveBlob(newId, PulseAudio.audioBufferToWav(buf), { kind: 'midi' }).catch(() => {});
+        todo.push({ c, f: c.midi.bpm / bpm });
+    }));
+    const bufs = new Map();   // un seul rendu par motif
+    todo.forEach(({ c, f }) => {
+        const key = c.midi;
+        if (!bufs.has(key)) {
+            const buf = renderMidiBuffer(c.midi, bpm);
+            const id = `mid_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+            PulseAudio.registerBuffer(id, buf);
+            PulsePersist.saveBlob(id, PulseAudio.audioBufferToWav(buf), { kind: 'midi' }).catch(() => {});
+            bufs.set(key, { buf, id, peaks: makePeaks(buf) });
+        }
+        const r = bufs.get(key);
+        const oldStart = c.start;
+        c.start = oldStart * f;                       // la région reste sur la même mesure
         c.offset = (c.offset || 0) * f; c.duration *= f;
         if (c.fadeIn) c.fadeIn *= f; if (c.fadeOut) c.fadeOut *= f;
-        if (c.loopEnd) c.loopEnd = c.start + (c.loopEnd - c.start) * f;
-        c.id = newId; c.peaks = makePeaks(buf); c.midi.bpm = bpm; n++;
-    }));
-    return n;
+        if (c.loopEnd) c.loopEnd = c.start + (c.loopEnd - oldStart) * f;
+        c.id = r.id; c.peaks = r.peaks;
+    });
+    todo.forEach(({ c }) => { c.midi.bpm = bpm; });
+    return todo.length;
 }
 
 // === Warp : caler un son sur le tempo du projet (sans changer sa hauteur) ===
@@ -4460,7 +4486,7 @@ async function applyTune(clip, opts) {
         PulseAudio.registerBuffer(newId, out);
         try { await PulsePersist.saveBlob(newId, PulseAudio.audioBufferToWav(out), { kind: 'tune' }); }
         catch (e) { console.warn('Persist tune failed', e); }
-        pushUndo();
+        if (!opts.noUndo) pushUndo();
         clip.id = newId;
         clip.tune = opts.notes
             ? { src: srcId, notes: opts.notes, source: opts.source || 'clavier', tonic: opts.tonic, minor: opts.minor, strength: opts.strength }
@@ -4483,14 +4509,14 @@ async function applyTune(clip, opts) {
 function tuneOpts(a) {
     return a.notes ? { notes: a.notes.slice(), source: a.source, strength: a.strength, tonic: a.tonic, minor: a.minor } : { root: 'auto', strength: a.strength };
 }
-async function tuneWholeTrack(trackIdx, onlyClips = null) {
+async function tuneWholeTrack(trackIdx, onlyClips = null, noUndo = false) {
     const t = state.project.tracks[trackIdx];
     if (!t || !t.autotune || !t.autotune.on) return;
     const clips = (onlyClips || t.clips || []).filter(c => !c.midi && !c.recording);
     let n = 0;
     for (const c of clips) {
         if (c.tune && !onlyClips && JSON.stringify(c.tune.notes || null) === JSON.stringify(t.autotune.notes || null) && (c.tune.strength === t.autotune.strength)) continue;
-        await applyTune(c, tuneOpts(t.autotune));
+        await applyTune(c, { ...tuneOpts(t.autotune), noUndo });
         n++;
     }
     if (!clips.length) flash(`Auto-Tune activé sur « ${t.name} » : les prochaines prises seront corrigées toutes seules`);
@@ -4499,17 +4525,18 @@ async function tuneWholeTrack(trackIdx, onlyClips = null) {
 async function untuneWholeTrack(trackIdx) {
     const t = state.project.tracks[trackIdx];
     if (!t) return;
+    pushUndo();
     delete t.autotune;
-    for (const c of (t.clips || [])) if (c.tune) await removeTune(c);
+    for (const c of (t.clips || [])) if (c.tune) await removeTune(c, true);
     saveProject(); renderMixer(); bindMixerEvents();
     flash(`Auto-Tune retiré de « ${t.name} »`);
 }
 
-async function removeTune(clip) {
+async function removeTune(clip, noUndo = false) {
     if (!clip.tune) return;
     const src = await loadBufferById(clip.tune.src);
     if (!src) { flash('La prise d\'origine est introuvable — l\'Auto-Tune ne peut pas être retiré'); return; }
-    pushUndo();
+    if (!noUndo) pushUndo();
     clip.id = clip.tune.src;
     delete clip.tune;
     clip.peaks = makePeaks(src);
@@ -4584,6 +4611,12 @@ function applySound(t) {
     if (space > 0 && !revSend) { fx.push('reverb'); params.reverb = { wet: Math.round(space * 0.6), size: +(1.2 + space * 0.02).toFixed(2), decay: 2.5 }; }
     // EQ réglé à la main (points libres) : il prend la main sur celui du preset
     if (Array.isArray(t.eqBands)) { if (!fx.includes('eq')) fx.push('eq'); params.eq = { bands: t.eqBands }; }
+    // Réglé à la main dans le panneau Pro (Comp, EQ…) : le curseur « Son » le laisse tel quel
+    if (t.proKeep && t.effectParams) {
+        Object.keys(t.proKeep).forEach(k => {
+            if (t.proKeep[k] && t.effectParams[k]) { if (!fx.includes(k)) fx.push(k); params[k] = t.effectParams[k]; }
+        });
+    }
     t.effects = fx;
     t.effectParams = params;
 }
@@ -4760,7 +4793,7 @@ function initLyrics() {
         const pos = state.playhead / barSec;                      // en mesures depuis le début
         const k = Math.floor((pos - (m.start - 1)) / m.per);
         const L = view.querySelectorAll('.lf-line');
-        const now = live ? Math.max(-1, Math.min(L.length - 1, k)) : -1;
+        const now = live ? Math.max(-1, Math.min(L.length, k)) : -1;   // après la dernière ligne : tout est « passé », plus rien d'allumé
         if (now === lastK) return;
         lastK = now;
         L.forEach((el, i) => { el.classList.toggle('now', i === now); el.classList.toggle('past', now >= 0 && i < now); });
@@ -5158,6 +5191,7 @@ function openEqPanel(trackIdx, anchorEl) {
     });
     panel.querySelector('.fx-panel-close').addEventListener('click', () => panel.remove());
     panel.querySelector('.fx-bypass').addEventListener('change', (e) => {
+        pushUndo();
         t.effects = t.effects || [];
         if (e.target.checked) { if (!t.effects.includes('eq')) t.effects.push('eq'); }
         else { const i = t.effects.indexOf('eq'); if (i >= 0) t.effects.splice(i, 1); }
@@ -5243,7 +5277,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
             { key: 'mix',       label: 'Mélange',   unit: '%',  min: 0,   max: 100, def: 100, step: 1 }
         ],
         reverb: [
-            { key: 'wet',   label: 'Mix Wet',    unit: '%',  min: 0,   max: 100, def: 18, step: 1 },
+            { key: 'wet',   label: 'Quantité',    unit: '%',  min: 0,   max: 100, def: 18, step: 1 },
             { key: 'size',  label: 'Taille',     unit: 's',  min: 0.3, max: 5,   def: 1.8, step: 0.1 },
             { key: 'decay', label: 'Déclin',     unit: '',   min: 0.5, max: 5,   def: 2.5, step: 0.1 }
         ]
@@ -5371,13 +5405,16 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
             if (!sl._undone) { pushUndo(); sl._undone = true; }
             t.effectParams[fxName] = t.effectParams[fxName] || {};
             t.effectParams[fxName][key] = val;
+            (t.proKeep = t.proKeep || {})[fxName] = true;   // réglé à la main : le curseur « Son » n'y touche plus
             panel.querySelector(`.fx-val[data-key="${key}"]`).textContent = val + (def?.unit || '');
             refreshPlaybackSoon();
             saveProject();
         });
     });
     panel.querySelector('.fx-reset').addEventListener('click', () => {
+        pushUndo();
         delete t.effectParams[fxName];
+        if (t.proKeep) delete t.proKeep[fxName];
         refreshPlaybackSoon();
         saveProject();
         panel.remove();
@@ -5547,7 +5584,9 @@ function tapOnce() {
         state.project.bpm = bpm;
         document.getElementById('bpmInput').value = bpm;
         btn.textContent = `${bpm}`;
+        if (window.PulseAudio) PulseAudio.setMetronomeBpm(bpm);
         renderRuler();
+        saveProject();
     } else {
         btn.textContent = '…';
     }
@@ -5563,8 +5602,11 @@ function tapOnce() {
 function adjustBpm(factor) {
     let bpm = Math.round(state.project.bpm * factor);
     bpm = Math.max(40, Math.min(240, bpm));
+    if (bpm !== state.project.bpm) pushUndo();
     state.project.bpm = bpm;
     document.getElementById('bpmInput').value = bpm;
+    if (window.PulseAudio) PulseAudio.setMetronomeBpm(bpm);
+    refreshPlaybackSoon();
     renderRuler();
     saveProject();
     flash(`BPM : ${bpm}`);
@@ -5765,6 +5807,7 @@ function deleteSelectedTrack() {
     if (!t) return;
     if (t.isCapture) { flash('Cette piste ne peut pas être supprimée'); return; }
     pushUndo();
+    if (window.PulsePianoRoll && PulsePianoRoll.isOpen()) PulsePianoRoll.close(true);
     // Nettoyer les blobs orphelins
     (t.clips || []).forEach(c => {
         if (!c.id) return;
@@ -5814,8 +5857,13 @@ function _doAddTrack(type = 'audio') {
     pushUndo();
     const i = state.project.tracks.length;
     const typeLabels = { audio: 'Piste', inst: 'Instru', beat: 'Beat', keys: 'Piano', drums: 'Batterie' };
+    // Un nom jamais en double (Piste 3 supprimée puis recréée, etc.)
+    const labelBase = typeLabels[type] || 'Piste';
+    let num = i + 1;
+    const usedNames = new Set(state.project.tracks.map(x => x.name));
+    while (usedNames.has(`${labelBase} ${num}`)) num++;
     state.project.tracks.push({
-        name: `${typeLabels[type] || 'Piste'} ${i + 1}`,
+        name: `${labelBase} ${num}`,
         type: ['inst', 'beat', 'keys', 'drums'].includes(type) ? type : 'audio',
         color: TYPE_COLORS[type] || COLORS[i % COLORS.length],
         clips: [],
@@ -5830,7 +5878,7 @@ function _doAddTrack(type = 'audio') {
         createMidiClip(state.project.tracks.length - 1, state.playhead || 0, true);
         return;
     }
-    flash(`${typeLabels[type] || 'Piste'} ${i + 1} créée`);
+    flash(`${labelBase} ${num} créée`);
 }
 
 // --- Rendu complet ---
@@ -6215,8 +6263,8 @@ function openTrackContextMenu(x, y, idx, t) {
         { sep: true },
         { label: t.muted ? 'Désactiver Mute'  : 'Mute',  action: () => toggleMute(idx) },
         { label: t.solo  ? 'Désactiver Solo'  : 'Solo',  action: () => toggleSolo(idx) },
-        { label: t.armed ? 'Ne plus enregistrer ici': 'Enregistrer sur cette piste', action: () => {
-            if (t.isCapture) return;
+        t.isCapture ? null : { label: t.armed ? 'Ne plus enregistrer ici': 'Enregistrer sur cette piste', action: () => {
+            if (t.type === 'keys' || t.type === 'drums') { flash('Cette piste joue des notes : pour enregistrer ta voix, ajoute une piste « Ma voix » avec le bouton +'); return; }
             t.armed = !t.armed;
             syncMonitor();
             renderTracksPanel(); bindTrackEvents(); saveProject();
@@ -6694,6 +6742,10 @@ function bindTrackEvents() {
             // Capture Lane : son R est verrouillé armé
             if (flag === 'rec' && t.isCapture) {
                 flash('Cette piste est toujours prête à enregistrer');
+                return;
+            }
+            if (flag === 'rec' && (t.type === 'keys' || t.type === 'drums')) {
+                flash('Cette piste joue des notes : pour enregistrer ta voix, ajoute une piste « Ma voix » avec le bouton +');
                 return;
             }
 
@@ -7368,15 +7420,26 @@ function copySelectedClip() {
 
 function pasteClip() {
     if (!state.clipboard) { flash('Presse-papier vide'); return; }
-    pushUndo();
     const { clip } = state.clipboard;
     // Comme Logic : ça se colle sur la piste choisie (sinon sur la piste d'origine)
-    let trackIdx = state.project.tracks[state.selectedTrack] ? state.selectedTrack : state.clipboard.trackIdx;
+    const trackIdx = state.project.tracks[state.selectedTrack] ? state.selectedTrack : state.clipboard.trackIdx;
     const targetTrack = state.project.tracks[trackIdx];
     if (!targetTrack) return;
+    if (clip.midi) {
+        const wantDrums = clip.midi.inst === 'drums';
+        if (targetTrack.type !== 'keys' && targetTrack.type !== 'drums') { flash('Une région de notes se colle sur une piste Piano ou Batterie'); return; }
+        if (wantDrums !== (targetTrack.type === 'drums')) {
+            flash(wantDrums ? 'Cette région est une batterie : colle-la sur une piste Batterie' : 'Cette région est un instrument : colle-la sur une piste Piano');
+            return;
+        }
+    }
+    pushUndo();
     targetTrack.clips = targetTrack.clips || [];
     // On garde le même `id` pour partager le buffer audio — un clip copié joue le même audio
-    const pasted = { ...JSON.parse(JSON.stringify(clip)), start: state.playhead };
+    let start = state.playhead;
+    // Déjà une copie pile ici : la suivante se pose juste après (sinon on empile des clips identiques sans le voir)
+    while (targetTrack.clips.some(o => !o.recording && o.id === clip.id && Math.abs(o.start - start) < 1e-3)) start += clip.duration;
+    const pasted = { ...JSON.parse(JSON.stringify(clip)), start };
     targetTrack.clips.push(pasted);
     targetTrack.clips.sort((a, b) => a.start - b.start);
     const newIdx = targetTrack.clips.indexOf(pasted);
@@ -7384,7 +7447,7 @@ function pasteClip() {
     state.selectedClip = { trackIdx, clipIdx: newIdx };
     renderAll();
     saveProject();
-    flash('Clip collé à ' + secondsToDuration(state.playhead));
+    flash('Clip collé à ' + secondsToDuration(start));
 }
 
 // === Loop region (Alt+drag dans le ruler, Logic style) ===
@@ -8362,8 +8425,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         masterFader.addEventListener('input', () => {
             const v = parseInt(masterFader.value);
             if (window.PulseAudio) PulseAudio.setMasterVolume(v);
+            state.project.masterVolume = v;
             if (masterDbEl) masterDbEl.textContent = `${volumeToDb(v)} dB`;
         });
+        masterFader.addEventListener('change', () => saveProject());
     }
 
     // Raccourcis clavier — philosophie : main gauche en priorité, zéro déplacement
@@ -8401,6 +8466,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (mod && k === 'v')          { e.preventDefault(); pasteClip(); return; }
 
         // Transport (Espace est détourné en mode tap)
+        const onButton = e.target && e.target.closest && e.target.closest('button, [role="button"], select, a[href]');
+        // Un bouton atteint au clavier (Tab) reçoit Espace / Entrée ; après un simple clic souris, Espace reste « lecture »
+        let kbFocus = false; try { kbFocus = !!onButton && onButton.matches(':focus-visible'); } catch {}
+        if (kbFocus && (e.code === 'Space' || e.code === 'Enter')) return;
         if (e.code === 'Space') {
             e.preventDefault();
             if (state.tapMode) tapOnce();
@@ -8467,10 +8536,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (e.altKey && k === 'm') { e.preventDefault(); addMarker(state.playhead); return; }
         if (e.altKey && e.code === 'ArrowLeft'  && !mod) { e.preventDefault(); navigateMarker(-1); return; }
         if (e.altKey && e.code === 'ArrowRight' && !mod) { e.preventDefault(); navigateMarker(+1); return; }
-
-        // Dev-only : D = pose un clip de démo au playhead sur la piste sélectionnée
-        // (le temps que le moteur audio arrive, ça permet de tester Q/S)
-        if (k === 'd') { e.preventDefault(); addDemoClip(); return; }
 
         // F = Zoom sur le clip sélectionné (Logic style)
         if (k === 'f' && !mod) {
@@ -8571,8 +8636,8 @@ function flash(msg) {
             border-radius: 10px; font-size: 12.5px; z-index: 1500;
             box-shadow: 0 8px 32px rgba(0,0,0,0.45); opacity: 0;
             transition: opacity 0.18s, transform 0.25s;
-            border: 1px solid var(--border); white-space: nowrap;
-            pointer-events: none; max-width: 80vw; overflow: hidden; text-overflow: ellipsis;
+            border: 1px solid var(--border); white-space: normal; text-align: center; line-height: 1.35;
+            pointer-events: none; max-width: min(80vw, 720px);
         `;
         document.body.appendChild(el);
     }
@@ -8588,5 +8653,5 @@ function flash(msg) {
     el._to = setTimeout(() => {
         el.style.opacity = '0';
         el.style.transform = 'translateX(-50%) translateY(-6px)';
-    }, 1800);
+    }, Math.min(7000, 1800 + Math.max(0, String(msg).length - 45) * 55));   // un long message reste le temps de le lire
 }
