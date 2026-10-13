@@ -20,6 +20,18 @@
             <p class="tagline" data-i18n="start.tagline">Le studio simple.</p>
         </header>
 
+        <!-- Raccourci débutant : l'instru d'abord -->
+        <button class="instru-start" id="instruStart">
+            <span class="instru-start-icon">
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
+            </span>
+            <span class="instru-start-text">
+                <strong>Dépose ton instru ici, on s'occupe du reste</strong>
+                <em>MP3, WAV, M4A… ou clique pour la choisir. Le projet s'ouvre prêt à enregistrer ta voix.</em>
+            </span>
+        </button>
+        <input type="file" id="instruStartInput" accept="audio/*,.mp3,.wav,.m4a,.flac,.aif,.aiff,.ogg" hidden>
+
         <!-- 3 cartes principales -->
         <main class="cards">
             <button class="card card-new" data-action="new">
@@ -58,22 +70,10 @@
             </button>
         </main>
 
-        <!-- Raccourci débutant : l'instru d'abord -->
-        <button class="instru-start" id="instruStart">
-            <span class="instru-start-icon">
-                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
-            </span>
-            <span class="instru-start-text">
-                <strong>Dépose ton instru ici pour poser ta voix dessus</strong>
-                <em>MP3, WAV, M4A… ou clique pour la choisir. Le projet s'ouvre prêt à enregistrer.</em>
-            </span>
-        </button>
-        <input type="file" id="instruStartInput" accept="audio/*,.mp3,.wav,.m4a,.flac,.aif,.aiff,.ogg" hidden>
-
         <div class="open-file-row">
             <button class="btn-open-file" id="btnOpenFile">
                 <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
-                Ouvrir un fichier .pulse
+                Ouvrir un projet enregistré (.pulse)
             </button>
             <input type="file" id="openFileInput" accept=".pulse,application/zip" hidden>
         </div>

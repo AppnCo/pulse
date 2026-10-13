@@ -13,7 +13,7 @@
 
     --text-1: #F3EEFF;         /* texte principal */
     --text-2: #B8A8D9;         /* texte secondaire */
-    --text-3: #7A6B96;         /* texte faible */
+    --text-3: #9A8CB8;         /* texte faible */
 
     --border: rgba(168, 85, 247, 0.15);
 
@@ -694,3 +694,7 @@ select {
 /* Appli de bureau : la barre de titre du système est fondue dans Pulse (boutons de fenêtre en haut à gauche) */
 .is-app .topbar { padding-left: 84px; }
 .is-app .topbar * { -webkit-user-select: none; }
+/* L'instru est la porte d'entrée : grande et en premier ; les trois cartes passent en dessous, plus discrètes */
+.instru-start { padding: 26px 28px; margin-bottom: 22px; }
+.instru-start-text strong { font-size: 19px; }
+.instru-start-text em { font-size: 14px; opacity: .75; }

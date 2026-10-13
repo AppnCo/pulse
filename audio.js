@@ -861,7 +861,7 @@ window.PulseAudio = (function() {
             const trackDest = getBus(track.output);
 
             // Chaîne : clip → gain clip (fades) → effets → gain piste → pan → [analyser] → master
-            const vol = (track.volume ?? 80) / 100;
+            const vol = (track.volume ?? 100) / 100;
             const trackGain = actx.createGain();
             trackGain.gain.value = audible ? vol : 0;
 
@@ -870,6 +870,7 @@ window.PulseAudio = (function() {
 
             const panNode = actx.createStereoPanner();
             panNode.pan.value = Math.max(-1, Math.min(1, (track.pan || 0) / 100));
+            let preMeter = trackGain;   // point de mesure du niveau : après le fader, avant le pan (comme un canal de console)
             // Courbe de volume (automation) : 0 = silence … 1 = niveau du fader
             const pts = volumePoints(track);
             if (pts.length) {
@@ -880,6 +881,7 @@ window.PulseAudio = (function() {
                 }
                 trackGain.connect(autoGain);
                 autoGain.connect(panNode);
+                preMeter = autoGain;
             } else {
                 trackGain.connect(panNode);
             }
@@ -895,7 +897,12 @@ window.PulseAudio = (function() {
                 spec.fftSize = 4096;
                 spec.smoothingTimeConstant = 0.82;
                 fx.output.connect(spec);
-                liveNodes.set(trackIdx, { gainNode: trackGain, panNode, analyser, spec, vol, audible });
+                // Niveau gauche / droite pour le vu-mètre de la piste (deux barres collées en stéréo, une seule en mono)
+                const msp = actx.createChannelSplitter(2);
+                const mL = actx.createAnalyser(), mR = actx.createAnalyser();
+                mL.fftSize = mR.fftSize = 512; mL.smoothingTimeConstant = mR.smoothingTimeConstant = 0.3;
+                preMeter.connect(msp); msp.connect(mL, 0); msp.connect(mR, 1);
+                liveNodes.set(trackIdx, { gainNode: trackGain, panNode, analyser, spec, meterL: mL, meterR: mR, vol, audible });
             } else {
                 panNode.connect(trackDest);
             }
@@ -940,8 +947,17 @@ window.PulseAudio = (function() {
 
                 // Gain clip + fades (relatifs au clip entier, même si on démarre au milieu)
                 const base = clip.gain !== undefined ? clip.gain : 1.0;
-                const fi = clip.fadeIn || 0;
-                const fo = clip.fadeOut || 0;
+                // Fondu enchaîné automatique (comme Logic) : là où deux régions de la piste se chevauchent,
+                // la première s'éteint et la seconde monte sur toute la zone commune
+                let xIn = 0, xOut = 0;
+                for (const o of (track.clips || [])) {
+                    if (o === clip || o.muted || o.recording || !(o.duration > 0)) continue;
+                    const oEnd = clipEndSec(o);
+                    if (o.start < start - 1e-6 && oEnd > start + 1e-6) xIn = Math.max(xIn, Math.min(oEnd, end) - start);       // une région précédente recouvre mon début
+                    if (o.start > start + 1e-6 && o.start < end - 1e-6) xOut = Math.max(xOut, Math.min(end, oEnd) - o.start);  // une région suivante recouvre ma fin
+                }
+                const fi = Math.max(clip.fadeIn || 0, xIn);
+                const fo = Math.max(clip.fadeOut || 0, xOut);
                 const total = end - start;
                 // Courbure des fondus : niveau = p^k (k = 1 : droit), comme le dessin et le moteur Rust
                 const kIn = clip.fadeInCurve > 0 ? Math.max(0.25, Math.min(4, clip.fadeInCurve)) : 1;
@@ -1380,6 +1396,21 @@ window.PulseAudio = (function() {
         return impulse;
     }
 
+    // Niveaux gauche / droite d'une piste (analyseurs avant pan) ; null si la piste ne joue pas
+    function getTrackMeters(trackIdx) {
+        const n = liveNodes.get(trackIdx);
+        return n && n.meterL ? { l: n.meterL, r: n.meterR } : null;
+    }
+    // Nombre de canaux le plus large parmi les sons d'une piste (1 = mono)
+    function trackChannelCount(track) {
+        let ch = 0;
+        for (const c of (track.clips || [])) {
+            const b = buffers.get(c.id);
+            if (b && b.numberOfChannels > ch) ch = b.numberOfChannels;
+        }
+        return ch;
+    }
+
     function getTrackAnalyser(trackIdx) {
         const n = liveNodes.get(trackIdx);
         return n ? n.analyser : null;
@@ -1644,7 +1675,7 @@ window.PulseAudio = (function() {
         registerBuffer, hasBuffer, getBuffer, getBufferDuration, clearBuffers, computePeaks,
         play, stopAll, getPlaybackPosition, setNativeBackend, isNative, setBeatsPerBar,
         updateTrackVolume, updateTrackPan, refreshAudibility, clearLiveNodes,
-        getTrackAnalyser, getMasterAnalyser, getTrackSpectrum, getBusSpectrum, setMasterVolume,
+        getTrackAnalyser, getTrackMeters, trackChannelCount, getMasterAnalyser, getTrackSpectrum, getBusSpectrum, setMasterVolume,
         setMetronome, setMetronomeBpm, setCountIn, isCountInEnabled,
         startMetronome, stopMetronome, playCountIn, stopCountIn, isCountingIn,
         exportWav, exportTrackWav, audioBufferToWav, computeNormalizeGain,

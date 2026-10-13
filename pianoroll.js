@@ -34,7 +34,7 @@
             stepDiv: 4,                                                       // pas par temps : 4 (1/16), 8 (1/32), 3 (triolets)
             pxBeat: 56, rowH: 16, sx: 0, sy: 0,                               // défilement (px)
             lastLen: 0.25, undo: [], redo: [], dirty: false, drag: null, w: 0, h: 0, playBeat: null, committed: false,
-            color: opts.color || '#A855F7', baseOct: 4,
+            color: opts.color || '#A855F7', baseOct: 4, bpb: Math.max(1, Math.min(12, opts.bpb || 4)),   // temps par mesure (3 = valse)
             scale: opts.key && opts.key.notes ? 'proj' : '', fold: !!(opts.key && opts.key.notes), lock: false, chord: 0, rec: false, recQ: true, held: {}, ghosts: opts.ghost || []
         };
         if (!S.notes.length && !isDrums) S.sy = null;                         // centré sur Do4 au premier dessin
@@ -144,7 +144,7 @@
         const inst = q('.me-inst');
         if (inst) inst.onchange = (e) => { S.midi.inst = e.target.value; changed('inst'); };
         el.querySelectorAll('[data-view]').forEach(b => b.onclick = () => { S.view = b.dataset.view; syncBar(); fit(); centerOnNotes(); draw(); });
-        q('.me-longer').onclick = () => { snapshot(); S.midi.beats = Math.min(256, S.midi.beats + 4); autoZoom(); changed('len'); };
+        q('.me-longer').onclick = () => { snapshot(); S.midi.beats = Math.min(256, S.midi.beats + S.bpb); autoZoom(); changed('len'); };
         q('.me-shorter').onclick = () => {
             if (S.midi.beats <= 4) { S.o.flash && S.o.flash('Le motif fait déjà une mesure — c\'est le minimum'); return; }
             snapshot(); S.midi.beats -= 4;
@@ -190,9 +190,9 @@
             const P = PATTERNS[e.target.value]; e.target.value = ''; if (!P) return;
             snapshot();
             const out = [];
-            for (let bar = 0; bar < S.midi.beats / 4; bar++) for (const k of Object.keys(P)) {
+            for (let bar = 0; bar < S.midi.beats / S.bpb; bar++) for (const k of Object.keys(P)) {
                 if (k === 'label') continue;
-                P[k].forEach(st => out.push({ s: bar * 4 + st / 4, d: 0.25, p: +k, v: (k === '42' && st % 4 !== 0) ? 78 : (k === '42' ? 105 : 110) }));
+                P[k].filter(st => st / 4 < S.bpb).forEach(st => out.push({ s: bar * S.bpb + st / 4, d: 0.25, p: +k, v: (k === '42' && st % 4 !== 0) ? 78 : (k === '42' ? 105 : 110) }));
             }
             S.notes = S.midi.notes = out; S.sel.clear(); changed('tpl');
         };
@@ -211,7 +211,7 @@
         if (!el) return;
         el.querySelectorAll('[data-view]').forEach(b => b.classList.toggle('on', b.dataset.view === S.view));
         el.querySelectorAll('.me-steps-only').forEach(n => n.style.display = S.view === 'steps' ? '' : 'none');
-        el.querySelector('.me-len-n').textContent = `${S.midi.beats / 4} mes.`;
+        el.querySelector('.me-len-n').textContent = `${Math.round(S.midi.beats / S.bpb * 10) / 10} mes.`;
         const h = el.querySelector('.me-hint');
         h.textContent = S.view === 'steps'
             ? 'Clic : poser / retirer un coup · glisser : peindre · clic droit : changer la force'
@@ -320,7 +320,7 @@
             at = Math.ceil(end / len - 1e-6) * len;                          // le prochain emplacement net (mesure ou temps)
         }
         snapshot();
-        while (at + len > S.midi.beats && S.midi.beats < 256) S.midi.beats += 4;
+        while (at + len > S.midi.beats && S.midi.beats < 256) S.midi.beats += S.bpb;
         if (at >= S.midi.beats) { S.o.flash && S.o.flash('Le motif est plein (64 mesures maximum)'); return; }
         const added = pitches.map(p => ({ s: at, d: len * 0.98, p, v: 92 }));
         added.forEach(n => S.notes.push(n));
@@ -377,10 +377,10 @@
         const W = S.w, lw = leftW();
         ctx.fillStyle = '#251934'; ctx.fillRect(0, 0, W, RULER);
         ctx.fillStyle = '#B8A8D9'; ctx.font = '11px -apple-system, system-ui, sans-serif'; ctx.textBaseline = 'middle';
-        const bars = Math.ceil(S.midi.beats / 4);
+        const bars = Math.ceil(S.midi.beats / S.bpb);
         for (let b = 0; b < bars; b++) {
-            const x = bx(b * 4);
-            if (x > W) break; if (x + 4 * S.pxBeat < lw) continue;
+            const x = bx(b * S.bpb);
+            if (x > W) break; if (x + S.bpb * S.pxBeat < lw) continue;
             ctx.fillText(String(b + 1), Math.max(lw + 4, x + 4), RULER / 2);
             ctx.fillStyle = 'rgba(168,85,247,.5)'; ctx.fillRect(x, 4, 1, RULER - 8); ctx.fillStyle = '#B8A8D9';
         }
@@ -393,7 +393,7 @@
         let step = u; while (step * S.pxBeat < 7) step *= 2;
         const a = Math.max(0, Math.floor(xb(lw) / step) * step), b = Math.min(S.midi.beats, xb(S.w) + step);
         for (let t = a; t <= b + 1e-6; t += step) {
-            const x = Math.round(bx(t)) + 0.5, bar = Math.abs(t % 4) < 1e-6, beat = Math.abs(t % 1) < 1e-6;
+            const x = Math.round(bx(t)) + 0.5, bar = Math.abs(t % S.bpb) < 1e-6, beat = Math.abs(t % 1) < 1e-6;
             ctx.strokeStyle = bar ? 'rgba(200,170,255,.45)' : beat ? 'rgba(168,85,247,.28)' : 'rgba(168,85,247,.11)';
             ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, bottom); ctx.stroke();
         }
