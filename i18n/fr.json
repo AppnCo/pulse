@@ -4,22 +4,22 @@
   "start": {
     "tagline": "Le studio simple.",
     "card_new": { "title": "Nouveau projet", "sub": "Commencer de zéro" },
-    "card_template": { "title": "Template", "sub": "Voix, podcast, beat…" },
+    "card_template": { "title": "Modèle", "sub": "Voix, podcast, beat…" },
     "card_recent": { "title": "Projets récents", "sub": "Reprendre où tu t'es arrêté" },
     "recent_label": "Récents",
     "recent_empty": "Aucun projet pour l'instant.",
     "recent_hint": "Crée ton premier projet ci-dessus."
   },
   "modal": {
-    "template_title": "Choisis un template",
+    "template_title": "Choisis un modèle",
     "template_sub": "Un point de départ pour aller plus vite.",
     "close": "Fermer"
   },
   "templates": {
-    "rap-studio":   { "name": "Rap Studio",   "desc": "Template complète Ridwane : Capture Lane, Lead, doublages, backs, ad-libs, instru, bus All Vocal + Mix Bus. Le son Red Records out of the box." },
+    "rap-studio":   { "name": "Rap Studio",   "desc": "Le modèle de base : ton instru en haut, une piste pour enregistrer, puis tes voix rangées par groupe (voix principale, backs, ambiance). Tu ajoutes ou retires ce que tu veux." },
     "voix-instru":  { "name": "Voix + Instru","desc": "Version simple : 1 voix + 1 instru. Idéale pour un premier morceau rapide." },
     "podcast":      { "name": "Podcast",       "desc": "2 micros, préset voix propre. Pour une interview ou un dialogue." },
-    "beat-simple":  { "name": "Beat simple",   "desc": "4 pistes rythmiques : kick, snare, hihat, bass. Pour poser une base." }
+    "beat-simple":  { "name": "Beat simple",   "desc": "Une batterie à pas et une basse au clavier. Pour poser une base sans rien jouer." }
   },
   "studio": {
     "default_project_name": "Projet sans titre",

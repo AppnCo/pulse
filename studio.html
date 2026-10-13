@@ -14,7 +14,7 @@
         <!-- Top bar -->
         <header class="topbar">
             <div class="topbar-left">
-                <a class="brand-mini" href="index.html" title="Accueil">
+                <a class="brand-mini" href="index.html" data-tooltip="Accueil" data-tooltip-placement="bottom">
                     <span class="brand-mini-dot"></span>
                     <span class="brand-mini-dot"></span>
                     <span class="brand-mini-dot"></span>
@@ -29,10 +29,20 @@
                     <div class="master-meter-rail"><div class="master-meter-bar" id="masterMeter"></div></div>
                 </div>
                 <span class="save-indicator" id="saveIndicator">—</span>
+                <button class="btn-ghost btn-inspector" id="btnInspector" data-tooltip="Afficher ou cacher les réglages de la piste sélectionnée, à gauche" data-tooltip-placement="bottom" aria-label="Réglages de la piste">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><rect x="3" y="3" width="18" height="18" rx="2"></rect><line x1="9" y1="3" x2="9" y2="21"></line></svg>
+                </button>
+                <button class="btn-ghost btn-lyrics" id="btnLyrics" data-tooltip="Écrire ton texte à côté du morceau" data-tooltip-placement="bottom">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>
+                    <span>Texte</span>
+                </button>
+                <button class="btn-ghost" id="btnSettings" data-tooltip="Réglages" data-tooltip-placement="bottom" aria-label="Réglages">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                </button>
                 <button class="btn-ghost" id="btnHelp" data-tooltip="Voir les raccourcis (?)" data-tooltip-placement="bottom">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
                 </button>
-                <button class="btn-ghost" id="btnSave" data-i18n="studio.topbar.save">Enregistrer</button>
+                <button class="btn-ghost" id="btnSave" data-tooltip="Sauvegarder le projet (⌘S)" data-tooltip-placement="bottom">Sauvegarder</button>
                 <button class="btn-primary" id="btnExport" data-i18n="studio.topbar.export">Exporter</button>
             </div>
         </header>
@@ -43,20 +53,19 @@
                 <div class="chrono" id="chrono">00:00.00</div>
                 <div class="bpm-ctl">
                     <span class="bpm-label">BPM</span>
-                    <input type="number" class="bpm-input" id="bpmInput" value="90" min="40" max="240">
-                    <button class="bpm-tap" id="btnTap" data-tooltip="Tap tempo (T puis Espace)">TAP</button>
-                    <button class="bpm-mini" id="btnBpmHalf" data-tooltip="Diviser le BPM par 2">÷2</button>
-                    <button class="bpm-mini" id="btnBpmDouble" data-tooltip="Multiplier le BPM par 2">×2</button>
+                    <input type="number" class="bpm-input" id="bpmInput" value="120" min="40" max="240">
+                    <button class="bpm-tap" id="btnTap" data-tooltip="Tape le rythme pour trouver le tempo">TAP</button>
+                    <button class="bpm-mini" id="btnBpmHalf" data-tooltip="Deux fois plus lent">÷2</button>
+                    <button class="bpm-mini" id="btnBpmDouble" data-tooltip="Deux fois plus rapide">×2</button>
                 </div>
-                <div class="snap-ctl" data-tooltip="Magnétisme (Shift = libre)">
-                    <span class="snap-label">SNAP</span>
-                    <select id="snapSelect" class="snap-select">
-                        <option value="smart" selected>Smart</option>
-                        <option value="bar">Mesure</option>
-                        <option value="beat">Beat</option>
-                        <option value="division">1/8</option>
-                        <option value="off">Libre</option>
-                    </select>
+                <div class="snap-ctl" role="group" aria-label="Aimant">
+                    <span class="snap-label">AIMANT</span>
+                    <div class="snap-seg">
+                        <button class="snap-btn" data-snap="off" data-tooltip="Libre : tu places où tu veux (⌘G)">Libre</button>
+                        <button class="snap-btn" data-snap="magnet" data-tooltip="Intelligent : libre, mais un petit aimant te cale sur le temps quand tu en es tout près">Intelligent</button>
+                        <button class="snap-btn" data-snap="grid" data-tooltip="Temps : tout se cale sur la grille">Temps</button>
+                    </div>
+                    <button class="snap-res" id="snapRes" data-tooltip="Finesse de la grille (clic pour changer)" hidden>Auto</button>
                 </div>
             </div>
 
@@ -71,17 +80,21 @@
                 <button class="t-btn t-btn-rec" id="btnRec" data-tooltip="Enregistrer / Stop (R)">
                     <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><circle cx="12" cy="12" r="7"/></svg>
                 </button>
-                <button class="t-btn" id="btnLoop" data-tooltip="Boucle (L)">
+                <div class="rec-level-hint" id="recLevelHint" aria-live="polite"></div>
+                <button class="t-btn" id="btnLoop" data-tooltip="Répéter un passage en boucle (L) — Maj + glisser pour choisir le passage">
                     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"></polyline><path d="M3 11V9a4 4 0 0 1 4-4h14"></path><polyline points="7 23 3 19 7 15"></polyline><path d="M21 13v2a4 4 0 0 1-4 4H3"></path></svg>
                 </button>
             </div>
 
             <div class="transport-right">
+                <button class="btn-ghost" id="btnMic" data-tooltip="Choisir le micro">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line></svg>
+                </button>
                 <button class="btn-ghost" id="btnMetronome" data-tooltip="Métronome (K)">
                     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12l1 7-7 10-7-10z"></path><line x1="12" y1="3" x2="12" y2="20"></line></svg>
                 </button>
-                <button class="btn-countin active" id="btnCountIn" data-tooltip="Count-in 4 beats avant rec">1-2-3-4</button>
-                <button class="btn-ghost" id="btnScissors" data-tooltip="Outil ciseau (B)" data-tooltip-placement="top">
+                <button class="btn-countin active" id="btnCountIn" data-tooltip="Décompte 1-2-3-4 avant d'enregistrer">1-2-3-4</button>
+                <button class="btn-ghost" id="btnScissors" data-tooltip="Couper une région en deux (B)" data-tooltip-placement="top">
                     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><line x1="20" y1="4" x2="8.12" y2="15.88"></line><line x1="14.47" y1="14.48" x2="20" y2="20"></line><line x1="8.12" y1="8.12" x2="12" y2="12"></line></svg>
                 </button>
                 <button class="btn-mixer" id="btnMixer">
@@ -93,6 +106,8 @@
 
         <!-- Workspace -->
         <main class="workspace">
+            <!-- Tranche de la piste sélectionnée + la tranche où elle sort (comme l'inspecteur de Logic) -->
+            <aside class="inspector" id="inspector" hidden></aside>
 
             <!-- Panneau pistes à gauche -->
             <aside class="tracks-panel">
@@ -118,13 +133,30 @@
                 <div class="playhead" id="playhead"></div>
             </section>
 
+            <aside class="lyrics-panel" id="lyricsPanel" hidden>
+                <div class="lyrics-head">
+                    <span>Mon texte</span>
+                    <div class="lyrics-tools">
+                        <button id="lyricsFollow" data-tooltip="Suivre le texte : pendant la lecture, la ligne en cours s'allume (1 ligne = 1 mesure)">Suivre</button>
+                        <button id="lyricsSmaller" data-tooltip="Écrire plus petit" aria-label="Écrire plus petit">A−</button>
+                        <button id="lyricsBigger" data-tooltip="Écrire plus gros" aria-label="Écrire plus gros">A+</button>
+                        <button id="lyricsClose" data-tooltip="Fermer" aria-label="Fermer">×</button>
+                    </div>
+                </div>
+                <div class="lyrics-follow-bar" id="lyricsFollowBar" hidden>
+                    <label>Ligne 1 à la mesure <input type="number" id="lfStart" min="1" max="999" value="1"></label>
+                    <label>1 ligne = <select id="lfPer"><option value="1">1 mesure</option><option value="2">2 mesures</option><option value="0.5">½ mesure</option></select></label>
+                </div>
+                <div class="lyrics-follow" id="lyricsFollowView" hidden></div>
+                <textarea id="lyricsText" spellcheck="false" placeholder="Écris ton texte ici.&#10;&#10;Il reste affiché pendant que tu enregistres, et il est sauvegardé avec ton projet."></textarea>
+            </aside>
         </main>
 
         <!-- Mixer coulissant -->
         <section class="mixer" id="mixer">
             <div class="mixer-header">
                 <h3 data-i18n="studio.mixer_title">Mixer</h3>
-                <button class="btn-ghost" id="btnMixerClose" title="Fermer">
+                <button class="btn-ghost" id="btnMixerClose" data-tooltip="Fermer" aria-label="Fermer">
                     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
                 </button>
             </div>
@@ -135,8 +167,8 @@
                 <div class="strip strip-master">
                     <div class="strip-name">Master</div>
                     <div class="strip-fader-wrap">
-                        <input type="range" class="fader" min="0" max="100" value="80" orient="vertical">
-                        <div class="strip-db">-6.0 dB</div>
+                        <input type="range" class="fader" min="0" max="100" value="100" data-default="100" orient="vertical">
+                        <div class="strip-db">0.0 dB</div>
                     </div>
                 </div>
             </div>
@@ -144,9 +176,17 @@
 
     </div>
 
+    <script src="ui.js"></script>
     <script src="persistence.js"></script>
+    <script src="projectfile.js"></script>
+    <script src="native.js"></script>
     <script src="audio.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/lamejs@1.2.1/lame.min.js"></script>
+    <script src="tune.js"></script>
+    <script src="warp.js"></script>
+    <script src="synth.js"></script>
+    <script src="midifile.js"></script>
+    <script src="pianoroll.js"></script>
+    <script src="vendor/lame.min.js"></script>
     <script src="studio.js"></script>
 </body>
 </html>

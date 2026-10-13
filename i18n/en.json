@@ -16,10 +16,10 @@
     "close": "Close"
   },
   "templates": {
-    "rap-studio":   { "name": "Rap Studio",     "desc": "Full Ridwane template: Capture Lane, Lead, doubles, backs, ad-libs, instrumental, All Vocal + Mix Bus. The Red Records sound out of the box." },
+    "rap-studio":   { "name": "Rap Studio",     "desc": "The base model: your beat on top, one track to record, then your vocals sorted by group (lead, backs, ambience). Add or remove whatever you want." },
     "voix-instru":  { "name": "Vocal + Beat",   "desc": "Simple setup: 1 vocal + 1 instrumental. Perfect for a quick first track." },
     "podcast":      { "name": "Podcast",         "desc": "2 microphones, clean vocal preset. For an interview or a dialogue." },
-    "beat-simple":  { "name": "Simple Beat",     "desc": "4 rhythm tracks: kick, snare, hihat, bass. To lay a foundation." }
+    "beat-simple":  { "name": "Simple Beat",     "desc": "A step drum machine and a keyboard bass. To lay a foundation without playing." }
   },
   "studio": {
     "default_project_name": "Untitled project",

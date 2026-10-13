@@ -4,8 +4,9 @@
 
 window.PulsePersist = (function() {
     const DB_NAME = 'pulse';
-    const DB_VERSION = 1;
+    const DB_VERSION = 2;
     const STORE_CLIPS = 'clips';
+    const STORE_PROJECTS = 'projects';
     let dbPromise = null;
 
     function openDB() {
@@ -16,6 +17,9 @@ window.PulsePersist = (function() {
                 const db = e.target.result;
                 if (!db.objectStoreNames.contains(STORE_CLIPS)) {
                     db.createObjectStore(STORE_CLIPS, { keyPath: 'id' });
+                }
+                if (!db.objectStoreNames.contains(STORE_PROJECTS)) {
+                    db.createObjectStore(STORE_PROJECTS, { keyPath: 'id' });
                 }
             };
             req.onsuccess = () => resolve(req.result);
@@ -84,5 +88,53 @@ window.PulsePersist = (function() {
         return orphans.length;
     }
 
-    return { saveBlob, loadBlob, deleteBlob, listIds, clearAll, gc };
+    // === Projets complets (un document par projet, clé = project.id) ===
+    async function saveProjectDoc(project) {
+        if (!project || !project.id) return;
+        const db = await openDB();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(STORE_PROJECTS, 'readwrite');
+            tx.objectStore(STORE_PROJECTS).put(project);
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+        });
+    }
+
+    async function loadProjectDoc(id) {
+        const db = await openDB();
+        return new Promise((resolve, reject) => {
+            const req = db.transaction(STORE_PROJECTS, 'readonly').objectStore(STORE_PROJECTS).get(id);
+            req.onsuccess = () => resolve(req.result || null);
+            req.onerror = () => reject(req.error);
+        });
+    }
+
+    async function listProjectDocs() {
+        const db = await openDB();
+        return new Promise((resolve, reject) => {
+            const req = db.transaction(STORE_PROJECTS, 'readonly').objectStore(STORE_PROJECTS).getAll();
+            req.onsuccess = () => resolve(req.result || []);
+            req.onerror = () => reject(req.error);
+        });
+    }
+
+    async function deleteProjectDoc(id) {
+        const db = await openDB();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(STORE_PROJECTS, 'readwrite');
+            tx.objectStore(STORE_PROJECTS).delete(id);
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+        });
+    }
+
+    // Nettoyage global : garde l'audio référencé par N'IMPORTE QUEL projet enregistré (+ extraIds)
+    async function gcAll(extraIds = []) {
+        const keep = [...extraIds];
+        (await listProjectDocs()).forEach(p => (p.tracks || []).forEach(t => [...(t.clips || []), ...(t.takes || [])].forEach(c => { if (c.id) keep.push(c.id); if (c.tune && c.tune.src) keep.push(c.tune.src); if (c.warp && c.warp.src) keep.push(c.warp.src); })));
+        return gc(keep);
+    }
+
+    return { saveBlob, loadBlob, deleteBlob, listIds, clearAll, gc, gcAll,
+             saveProjectDoc, loadProjectDoc, listProjectDocs, deleteProjectDoc };
 })();
