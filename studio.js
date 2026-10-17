@@ -2550,6 +2550,12 @@ function openSettings() {
             ${toggle('setReturn', returnOnStop(), 'Espace : pause, puis relance depuis le départ', 'Un premier Espace met en pause là où tu en es, le deuxième relance depuis l\'endroit où tu avais posé le curseur (la petite marque pointillée). Décoché : Espace reprend toujours là où le son s\'est arrêté.')}
             ${toggle('setShowAll', showAll(), 'Afficher les réglages avancés de la sortie', 'Montre aussi les bus de sortie, pour les régler ou dessiner leur volume. Pas besoin pour enregistrer.')}
 
+            <h4 class="set-title">En cas de problème</h4>
+            <div class="set-row">
+                <span>Si Pulse redémarre tout seul ou affiche une erreur, ça s'écrit ici <em>${diagLog().length ? esc(diagLog().slice(-4).map(d => `${d.t.slice(5, 16).replace('T', ' ')} — ${d.kind} : ${d.detail}`).join(' | ')) : '(rien pour l\'instant : tout va bien)'}</em></span>
+                <span><button class="set-btn" id="setDiagCopy">Copier</button></span>
+            </div>
+
             ${window.PulseNative && PulseNative.available ? `<h4 class="set-title">Dossier du projet</h4>
             ${toggle('setFolderAudio', folderAudioCopies(), 'Copier aussi les sons en WAV dans le dossier Audio', 'Le fichier .pulse contient déjà tous tes sons. Cocher ajoute des WAV à part (pratique pour les ouvrir dans un autre logiciel) mais double le poids du dossier.')}` : ''}
 
@@ -2598,6 +2604,11 @@ function openSettings() {
     modal.querySelector('#setReturn').addEventListener('change', (e) => {
         try { localStorage.setItem('pulse_return_on_stop', e.target.checked ? '1' : '0'); } catch {}
         flash(e.target.checked ? 'Espace : pause là où tu en es, puis relance depuis le départ' : 'Espace reprend toujours là où le son s\'est arrêté');
+    });
+    const dc = modal.querySelector('#setDiagCopy');
+    if (dc) dc.addEventListener('click', async () => {
+        const txt = diagLog().map(d => `${d.t} ${d.kind} : ${d.detail}`).join('\n') || 'Rien dans le journal';
+        try { await navigator.clipboard.writeText(txt); flash('Journal copié — colle-le dans ton message pour que je regarde'); } catch { flash('Copie impossible ici : recopie le texte affiché'); }
     });
     const fa = modal.querySelector('#setFolderAudio');
     if (fa) fa.addEventListener('change', (e) => {
@@ -3424,7 +3435,7 @@ const SHORTCUT_GROUPS = [
             ['T', 'Trouver le tempo en tapant le rythme (puis Espace)'],
             ['⌥M', 'Poser un marqueur au curseur'],
             ['⌥← / ⌥→', 'Marqueur précédent / suivant'],
-            ['← / →', 'Curseur : un temps en arrière / en avant'],
+            ['← / →', 'Curseur : un temps en arrière / en avant (pendant la lecture : déplace le curseur de base, la lecture continue)'],
             ['Shift + ← / →', 'Curseur : une mesure'],
             ['Tab / Maj + Tab', 'Curseur : bord de clip suivant / précédent'],
             ['Début / Fin', 'Curseur au début / à la fin du morceau']
@@ -3433,8 +3444,9 @@ const SHORTCUT_GROUPS = [
     {
         title: 'Édition rapide',
         items: [
-            ['Q', 'Couper la région à gauche du curseur'],
-            ['S', 'Couper la région à droite du curseur'],
+            ['S', 'Effacer ce qui est à gauche du curseur (sur la piste choisie)'],
+            ['D', 'Effacer ce qui est à droite du curseur'],
+            ['⌘X', 'Couper la région : la copier et l\'effacer d\'un coup (⌘V la recolle)'],
             ['B', 'Ciseaux : scinder une région là où tu cliques'],
             ['Double-clic sur une région', 'La scinder : garde le 2e clic enfoncé, glisse pour choisir l\'endroit, relâche pour couper (Échap annule) — sur son nom : la renommer'],
             ['⌘C', 'Copier la région choisie'],
@@ -3445,8 +3457,10 @@ const SHORTCUT_GROUPS = [
             ['Clic droit + glisser sur une région', 'Volume de la région : vers le haut = plus fort (⌥ + clic droit : remet 0 dB ; un clic sans bouger = menu)'],
             ['⌘← / ⌘→', 'Décaler la région choisie d\'un cran'],
             ['⌘⇧← / ⌘⇧→', 'Décaler la région très finement'],
-            ['Shift (en tenant un clip)', 'Revenir à la position d\'origine et la figer : tu changes seulement de piste · Shift de nouveau = libère'],
-            ['⌘G', 'Aimant : Libre ↔ Intelligent (les régions se calent sur le rythme)'],
+            ['Shift (en tenant un clip)', 'Verrou d\'axe : surtout vers le bas = tu changes de piste sans bouger dans le temps ; surtout de côté = tu restes sur la piste · Shift de nouveau = libère'],
+            ['Plage glissée sur plusieurs pistes', 'Les régions touchées sont choisies : elles se déplacent ensemble, clic droit pour leur volume'],
+            ['⌥C', 'Panneau de couleurs (régions choisies, sinon pistes choisies)'],
+            ['⌘G', 'Aimant : Libre ↔ Intelligent (les régions et le curseur se calent sur le rythme et sur le bord des régions)'],
             ['⌘ + glisser une région', 'La placer librement, sans aimant'],
             ['Shift + glisser', 'Choisir un passage (Shift + clic : en ajouter / en retirer)'],
             ['Suppr / ⌫', 'Effacer le clip ou la plage sélectionnée'],
@@ -3461,6 +3475,9 @@ const SHORTCUT_GROUPS = [
             ['Shift + S', 'N\'écouter que la piste choisie'],
             ['⌘⇧S', 'Tout réécouter (annule les « seulement celle-ci »)'],
             ['⌘⇧T', 'Nouvelle piste audio'],
+            ['⌘S · ⌘⌥S · ⌘Q', 'Sauvegarder (dans l\'appli : choisir le dossier la 1re fois) · Enregistrer sous… · Quitter'],
+            ['⌘ + clic sur un réglage', 'Le remettre à sa valeur d\'origine · double-clic = écrire la valeur (dB, g15 / -15, 0-100)'],
+            ['⌥ + molette', 'Hauteur des pistes : celle qu\'on survole (les pistes choisies si elles sont plusieurs), ou toutes en dehors · ⌥⌘ + molette = zoom sur le curseur'],
             ['⌘D', 'Dupliquer la piste (sans clips)'],
             ['⌘⌫', 'Supprimer la piste sélectionnée'],
             ['↑ / ↓', 'Changer de piste'],
@@ -6104,15 +6121,52 @@ function saveViewState() {
     localStorage.setItem(ZOOM_KEY, JSON.stringify({
         pxPerSecond: state.pxPerSecond,
         trackHeight: state.trackHeight,
-        scrollLeft: timeline ? timeline.scrollLeft : 0
+        scrollLeft: timeline ? timeline.scrollLeft : 0,
+        project: state.project && state.project.id,
+        playhead: state.playOrigin != null && state.playing ? state.playOrigin : state.playhead
     }));
 }
+// === Journal de problèmes (pour comprendre un redémarrage inattendu de la page) ===
+// Au chargement, si la session précédente ne s'est pas fermée proprement, on le note avec ce qu'elle faisait (lecture, enregistrement…).
+const DIAG_KEY = 'pulse_diag';
+function diagLog() { try { return JSON.parse(localStorage.getItem(DIAG_KEY) || '[]'); } catch { return []; } }
+function diagAdd(kind, detail) {
+    try {
+        const l = diagLog(); l.push({ t: new Date().toISOString(), kind, detail: String(detail || '').slice(0, 300) });
+        localStorage.setItem(DIAG_KEY, JSON.stringify(l.slice(-20)));
+    } catch {}
+}
+(function diagInit() {
+    try {
+        const prev = JSON.parse(localStorage.getItem('pulse_session') || 'null');
+        if (prev && prev.open) diagAdd('redémarrage', `la page a redémarré sans se fermer — elle faisait : ${prev.doing || 'rien de particulier'}`);
+        const mark = (open) => { try { localStorage.setItem('pulse_session', JSON.stringify({ open, doing: (window.state && (state.recording ? 'enregistrement' : state.playing ? 'lecture' : 'arrêt')) || '', at: Date.now() })); } catch {} };
+        mark(true);
+        setInterval(() => mark(true), 3000);
+        window.addEventListener('pagehide', () => mark(false));
+        window.addEventListener('error', (e) => diagAdd('erreur', `${e.message} (${(e.filename || '').split('/').pop()}:${e.lineno})`));
+        window.addEventListener('unhandledrejection', (e) => diagAdd('erreur', 'promesse : ' + (e.reason && e.reason.message || e.reason)));
+    } catch {}
+})();
+// La position du curseur est retenue toutes les 2 s (seulement si elle a bougé)
+let _lastSavedPh = null;
+setInterval(() => {
+    try {
+        const ph = state.playOrigin != null && state.playing ? state.playOrigin : state.playhead;
+        if (ph !== _lastSavedPh && state.project) { _lastSavedPh = ph; saveViewState(); }
+    } catch {}
+}, 2000);
 function restoreViewState() {
     try {
         const s = JSON.parse(localStorage.getItem(ZOOM_KEY) || 'null');
         if (!s) return;
         if (s.pxPerSecond) { state.pxPerSecond = s.pxPerSecond; }
         if (s.trackHeight) { state.trackHeight = s.trackHeight; }
+        // Si la page est rechargée (plantage de la fenêtre, mise à jour…), le curseur revient où il était — pour le même projet
+        if (typeof s.playhead === 'number' && s.project && s.project === state.project.id && !state.playing) {
+            state.playhead = s.playhead;
+            setTimeout(() => { try { updatePlayhead(); updateChrono(); } catch {} }, 150);
+        }
         if (s.scrollLeft) {
             setTimeout(() => {
                 const tl = document.querySelector('.timeline');
@@ -6635,8 +6689,8 @@ function openTimelineEmptyContextMenu(x, y, trackIdx, atSec) {
         (['keys', 'drums'].includes(state.project.tracks[trackIdx]?.type)) ? { label: '⬇ Exporter cette piste en .mid', action: () => exportMidiTrack(trackIdx) } : null,
         { label: 'Poser un marqueur ici', action: () => addMarker(atSec) },
         { sep: true },
-        { label: 'Couper à gauche du curseur (Q)', action: () => { state.playhead = atSec; updatePlayhead(); trimLeft(); }},
-        { label: 'Couper à droite du curseur (S)', action: () => { state.playhead = atSec; updatePlayhead(); trimRight(); }},
+        { label: 'Couper à gauche du curseur (S)', action: () => { state.playhead = atSec; updatePlayhead(); trimLeft(); }},
+        { label: 'Couper à droite du curseur (D)', action: () => { state.playhead = atSec; updatePlayhead(); trimRight(); }},
         { sep: true },
         { label: 'Ajouter une piste audio', action: () => _doAddTrack('audio') },
         { label: 'Ajouter une piste instrument (piano roll)', action: () => _doAddTrack('keys') },
@@ -7747,6 +7801,13 @@ function startClipDrag(startEvent, clipEl, trackIdx) {
     const t = state.project.tracks[trackIdx];
     const clip = t.clips[clipIdx];
     if (!clip || clip.recording) return;
+
+    // La région est choisie dès l'appui (comme Logic), sans attendre le relâché : plus besoin d'« insister » pour la saisir
+    if (!startEvent.altKey && !(state.selectedClips.size > 1 && state.selectedClips.has(`${trackIdx}:${clipIdx}`))) {
+        state.selectedClip = { trackIdx, clipIdx };
+        document.querySelectorAll('.clip.is-selected').forEach(e => e.classList.remove('is-selected'));
+        clipEl.classList.add('is-selected');
+    }
 
     // Détection trim handles : si on clique sur bord gauche/droit → mode trim
     const rect = clipEl.getBoundingClientRect();
@@ -9477,3 +9538,38 @@ function flash(msg) {
         el.style.transform = 'translateX(-50%) translateY(-6px)';
     }, Math.min(7000, 1800 + Math.max(0, String(msg).length - 45) * 55));   // un long message reste le temps de le lire
 }
+
+// === Raccourcis affichés selon l'ordinateur ===
+// Les raccourcis marchent déjà avec Ctrl sur Windows (⌘ ou Ctrl comptent pareil) ; ici on change seulement ce qu'on LIT :
+// sur Windows / Linux, « ⌘ » devient « Ctrl », « ⌥ » devient « Alt », « ⇧ » devient « Maj » (infobulles, aide, messages).
+(function platformKeys() {
+    const isMac = /Mac|iPhone|iPad/.test(navigator.platform || '') || /Mac OS X/.test(navigator.userAgent || '');
+    if (isMac) return;
+    const SYM = /[⌘⌥⇧]/;
+    const names = { '⌘': 'Ctrl', '⌥': 'Alt', '⇧': 'Maj' };
+    const fix = (s) => s
+        .replace(/([⌘⌥⇧])(?=[⌘⌥⇧A-Za-z0-9←→↑↓,.\/\[\]-])/g, (m) => names[m] + '+')   // ⌘S → Ctrl+S, ⌘⌥S → Ctrl+Alt+S
+        .replace(/[⌘⌥⇧]/g, (m) => names[m]);                                          // ⌘ + clic → Ctrl + clic
+    const fixNode = (n) => {
+        if (n.nodeType === 3) { if (SYM.test(n.nodeValue)) n.nodeValue = fix(n.nodeValue); return; }
+        if (n.nodeType !== 1) return;
+        const els = [n, ...n.querySelectorAll('[data-tooltip],[title],[aria-label],[placeholder]')];
+        els.forEach(el => ['data-tooltip', 'title', 'aria-label', 'placeholder'].forEach(a => { const v = el.getAttribute && el.getAttribute(a); if (v && SYM.test(v)) el.setAttribute(a, fix(v)); }));
+        const tw = document.createTreeWalker(n, NodeFilter.SHOW_TEXT);
+        let t; while ((t = tw.nextNode())) if (SYM.test(t.nodeValue)) t.nodeValue = fix(t.nodeValue);
+    };
+    const start = () => {
+        fixNode(document.body);
+        // les changements sont regroupés : un seul passage après une rafale de mises à jour (pas de calcul à chaque dessin)
+        let pending = new Set(), timer = 0;
+        const flushPending = () => { timer = 0; const list = pending; pending = new Set(); list.forEach(n => { if (n.isConnected) fixNode(n); }); };
+        new MutationObserver((muts) => {
+            for (const m of muts) {
+                if (m.type === 'childList') m.addedNodes.forEach(n => pending.add(n));
+                else pending.add(m.target);
+            }
+            if (!timer) timer = setTimeout(flushPending, 60);
+        }).observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['data-tooltip', 'title', 'aria-label'] });
+    };
+    if (document.body) start(); else document.addEventListener('DOMContentLoaded', start);
+})();
