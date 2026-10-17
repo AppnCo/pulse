@@ -2301,13 +2301,13 @@ async function nativeWrite(dir, rel, data) {
     return window.__TAURI__.core.invoke('save_file', bytes, { headers: { dir: encodeURIComponent(dir), path: encodeURIComponent(rel) } });
 }
 // Dossier du projet : celui déjà créé, sinon on demande où le ranger (une seule fois). null = annulé.
-async function ensureProjectFolder(askAgain = false) {
+async function ensureProjectFolder(askAgain = false, forExport = false) {
     const inv = window.__TAURI__.core.invoke;
     let dir = state.project.savedDir;
     if (!askAgain && dir && await inv('project_folder_ok', { dir })) return dir;
     flash('Choisis où ranger ton projet…');
     const parent = await inv('pick_folder', { prompt: 'Où veux-tu ranger ton projet ?' });
-    if (!parent) { flash('Pas de souci : ton projet reste gardé dans Pulse. Appuie sur ⌘S quand tu veux choisir où le ranger'); return null; }
+    if (!parent) { flash(forExport ? 'Export annulé : il faut choisir un dossier pour y ranger ton fichier — recommence quand tu veux' : 'Pas de souci : ton projet reste gardé dans Pulse. Appuie sur ⌘S quand tu veux choisir où le ranger'); return null; }
     dir = await inv('create_project_folder', { parent, name: state.project.name || 'Mon projet' });
     state.project.savedDir = dir;
     state._savedAudio = new Set();
@@ -2316,6 +2316,8 @@ async function ensureProjectFolder(askAgain = false) {
 }
 async function saveProjectFolder(askAgain = false) {
     if (!nativeFs()) { saveProject(); flash('Projet sauvegardé'); return; }
+    if (state._savingFolder) return;   // un 2e ⌘S pendant l'enregistrement (ou pendant la boîte de dialogue) est ignoré
+    state._savingFolder = true;
     try {
         saveProject();
         const dir = await ensureProjectFolder(askAgain);
@@ -2344,12 +2346,12 @@ async function saveProjectFolder(askAgain = false) {
     } catch (err) {
         console.error(err);
         flash('Impossible d\'écrire dans ce dossier — choisis-en un autre avec ⌘⌥S (le projet reste gardé dans Pulse)');
-    }
+    } finally { state._savingFolder = false; }
 }
 // Un fichier prêt à livrer (export) : rangé dans Bounces/ du projet dans l'appli, téléchargé dans le navigateur
 async function deliverFile(blob, filename) {
     if (!nativeFs()) { triggerDownload(blob, filename); return { native: false }; }
-    const dir = await ensureProjectFolder();
+    const dir = await ensureProjectFolder(false, true);
     if (!dir) return { cancelled: true };
     await nativeWrite(dir, `Bounces/${filename}`, blob);
     return { native: true, dir };
@@ -2373,12 +2375,36 @@ async function exportPulseFile() {
     }
 }
 
+// Double-clic sur un .pulse dans le Finder / l'Explorateur (appli de bureau) : le fichier s'ouvre dans Pulse
+async function openPulseFromPath(path) {
+    try {
+        const buf = await window.__TAURI__.core.invoke('read_pulse_file', { path });
+        const name = String(path).split(/[\\/]/).pop();
+        const dir = String(path).slice(0, String(path).length - name.length - 1);
+        await openPulseFileInStudio(new File([buf], name), { dir });
+    } catch (err) {
+        console.error(err);
+        flash('Impossible d\'ouvrir ce fichier .pulse — vérifie qu\'il n\'est pas abîmé');
+    }
+}
+(function nativeOpenFiles() {
+    if (!(window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke)) return;
+    const inv = window.__TAURI__.core.invoke;
+    // fichiers reçus pendant que la page se chargeait ; la liste est vidée à la lecture (sinon la page se rouvrirait en boucle)
+    setTimeout(async () => { try { const list = await inv('take_pending_open'); if (list && list.length) openPulseFromPath(list[0]); } catch {} }, 900);
+    if (window.__TAURI__.event && window.__TAURI__.event.listen) {
+        window.__TAURI__.event.listen('pulse-open-file', async (e) => { try { await inv('take_pending_open'); } catch {} openPulseFromPath(e.payload); });
+    }
+})();
+
 // Ouvre un .pulse déposé dans le studio (le projet en cours reste disponible dans les récents)
-async function openPulseFileInStudio(file) {
+async function openPulseFileInStudio(file, opts = {}) {
     flash(`Ouverture de ${file.name}…`);
     try {
         flushProjectDocSave();
         const project = await PulseFile.unpack(file);
+        // Un .pulse ouvert depuis son dossier de projet : on continue d'y enregistrer
+        if (opts.dir && nativeFs()) { try { if (await window.__TAURI__.core.invoke('project_folder_ok', { dir: opts.dir })) project.savedDir = opts.dir; } catch {} }
         await PulsePersist.saveProjectDoc(project);
         localStorage.setItem('pulse_current_project', JSON.stringify(project));
         _skipUnloadGuard = true;
