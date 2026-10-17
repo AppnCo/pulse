@@ -512,8 +512,10 @@ window.PulseAudio = (function() {
     // Entrée de l'interface à enregistrer (1 = la première). Pris en compte à la prochaine prise (le micro est rouvert).
     function setMicChannel(n) {
         if (recNode || recorder) return false;
-        try { localStorage.setItem('pulse_mic_channel', String(Math.max(1, parseInt(n, 10) || 1))); } catch {}
-        releaseMic();
+        const want = Math.max(1, parseInt(n, 10) || 1);
+        const same = (micChannelPref() + 1) === want;
+        try { localStorage.setItem('pulse_mic_channel', String(want)); } catch {}
+        if (!same) releaseMic();   // le micro est rouvert avec la nouvelle entrée ; rien à faire si c'est déjà la bonne
         return true;
     }
     function getMicChannels() { return micStream ? micChannels : 0; }

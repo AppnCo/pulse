@@ -1489,7 +1489,36 @@ function chainOf(x) {
 function trackIsMono(t) { return !!t.mono || (PulseAudio.trackChannelCount(t) === 1); }
 function monoButtonHtml(t) {
     const mono = trackIsMono(t);
-    return `<button class="insp-mono ${t.mono ? 'on' : ''}" data-tooltip="${mono ? 'Mono : un seul côté (clique pour revenir à la stéréo si le son est stéréo)' : 'Stéréo : clique pour mélanger les deux côtés en mono'}">${mono ? 'Mono' : 'Stéréo'}</button>`;
+    // Entrée de l'interface audio (Apollo…) : seulement pour une piste de voix, comme le sélecteur « Input » de Logic
+    const input = isVoiceTrack(t) ? `<button class="insp-input" data-tooltip="Entrée de ta carte son pour cette piste (ex. l'entrée où est branché ton micro sur l'Apollo)">Entrée ${t.inputChannel || 1}</button>` : '';
+    return `<div class="insp-fmt">${input}<button class="insp-mono ${t.mono ? 'on' : ''}" data-tooltip="${mono ? 'Mono : un seul côté (clique pour revenir à la stéréo si le son est stéréo)' : 'Stéréo : clique pour mélanger les deux côtés en mono'}">${mono ? 'Mono' : 'Stéréo'}</button></div>`;
+}
+// Menu « Entrée » : quelle entrée de la carte son enregistrer sur cette piste
+function openInputMenu(anchor, t) {
+    closeAllMenus();
+    const r = anchor.getBoundingClientRect();
+    const known = PulseAudio.getMicChannels();
+    const n = Math.max(2, Math.min(16, known || 8));
+    const menu = document.createElement('div');
+    menu.className = 'track-ctx-menu';
+    menu.style.cssText = `position:fixed;left:${Math.max(8, r.left)}px;top:${Math.min(window.innerHeight - 40 - n * 28, Math.max(8, r.bottom + 4))}px;z-index:300;min-width:170px`;
+    const cur = t.inputChannel || 1;
+    for (let i = 1; i <= n; i++) {
+        const el = document.createElement('div'); el.className = 'ctx-item';
+        el.textContent = (i === cur ? '✓  ' : '    ') + `Entrée ${i}`;
+        el.addEventListener('click', () => {
+            menu.remove();
+            if (i === cur) return;
+            pushUndo(); if (i === 1) delete t.inputChannel; else t.inputChannel = i;
+            if (t.armed) PulseAudio.setMicChannel(i);
+            saveProject(); renderInspector();
+            flash(`« ${t.name} » enregistrera l'entrée ${i} de ta carte son`);
+        });
+        menu.appendChild(el);
+    }
+    if (!known) { const note = document.createElement('div'); note.className = 'ctx-item-label'; note.textContent = 'Pulse verra les vraies entrées après un premier R'; menu.appendChild(note); }
+    document.body.appendChild(menu);
+    dismissMenuOnOutside(menu);
 }
 function inspectorStrip(kind, x, idx) {
     // kind : 'track' | 'bus' | 'master'
@@ -1604,6 +1633,8 @@ function renderInspector() {
             strip.querySelector('.strip-db').textContent = `${volumeToDb(v)} dB`;
         });
         fader.addEventListener('change', () => { saveProject(); if (state.mixerOpen) { renderMixer(); bindMixerEvents(); } });
+        const inBtn = strip.querySelector('.insp-input');
+        if (inBtn && kind === 'track') inBtn.addEventListener('click', (e) => { e.stopPropagation(); openInputMenu(inBtn, t); });
         const monoBtn = strip.querySelector('.insp-mono');
         if (monoBtn && kind === 'track') monoBtn.addEventListener('click', () => {
             if (!t.mono && PulseAudio.trackChannelCount(t) === 1) { flash('Cette piste est déjà mono : elle a été enregistrée avec un seul micro'); return; }
@@ -2597,10 +2628,6 @@ function openSettings() {
                 <button class="set-btn" id="setMicPick">Changer de micro</button>
             </div>
             <div class="set-row">
-                <span>Entrée de l'interface à enregistrer <em>(carte son à plusieurs entrées, ex. Apollo : choisis celle où est branché ton micro. ${PulseAudio.getMicChannels() > 1 ? `Ton interface en propose ${PulseAudio.getMicChannels()}.` : 'Pulse ne voit qu\'une entrée pour le moment : appuie une fois sur R puis reviens ici.'})</em></span>
-                <span><select id="setMicChannel" class="set-select">${Array.from({ length: Math.max(8, PulseAudio.getMicChannels()) }, (_, i) => `<option value="${i + 1}" ${(parseInt(localStorage.getItem('pulse_mic_channel') || '1', 10) || 1) === i + 1 ? 'selected' : ''}>Entrée ${i + 1}</option>`).join('')}</select></span>
-            </div>
-            <div class="set-row">
                 <span>Caler ma voix sur l'instru <em>(clics + micro : Pulse mesure le décalage tout seul)</em></span>
                 <button class="set-btn" id="setCalib">Régler automatiquement</button>
             </div>
@@ -2709,10 +2736,6 @@ function openSettings() {
         await runLatencyCalibration();
         const el = document.getElementById('setLatency');
         if (el) el.value = Math.round(parseFloat(localStorage.getItem('pulse_latency_ms') || '0') || 0);
-    });
-    modal.querySelector('#setMicChannel').addEventListener('change', (e) => {
-        const ok = PulseAudio.setMicChannel(parseInt(e.target.value, 10));
-        flash(ok ? `Pulse enregistrera l'entrée ${e.target.value} de ton interface` : 'Termine la prise en cours avant de changer d\'entrée');
     });
     modal.querySelector('#setMicPick').addEventListener('click', (e) => { close(); openMicMenu(document.getElementById('btnMic')); });
 }
@@ -2857,6 +2880,9 @@ function recTargetIdx() {
 
 async function beginCapture(targetIdx, startSec) {
     state._cap = { id: `rec_${Date.now().toString(36)}`, trackIdx: targetIdx, regions: [] };
+    // l'entrée de la carte son choisie pour cette piste (sinon la première)
+    const tgt = state.project.tracks[targetIdx];
+    PulseAudio.setMicChannel((tgt && tgt.inputChannel) || 1);
     await PulseAudio.startRecording(targetIdx, startSec, {});
 }
 

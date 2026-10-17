@@ -2918,3 +2918,8 @@ body.is-splitting, body.is-splitting * { cursor: col-resize !important; }
 
 .insp-mono { font-size: 10px; letter-spacing: .04em; text-transform: uppercase; padding: 2px 8px; border-radius: 6px; margin: 0 auto 4px; background: var(--bg-3); color: var(--text-2); border: 1px solid var(--border); cursor: pointer; }
 .insp-mono.on { background: var(--violet-2, #7C3AED); color: #fff; border-color: transparent; }
+
+.insp-fmt { display: flex; gap: 6px; justify-content: center; margin: 0 0 4px; }
+.insp-fmt .insp-mono { margin: 0; }
+.insp-input { font-size: 10px; letter-spacing: .04em; padding: 2px 8px; border-radius: 6px; background: var(--bg-3); color: var(--text-2); border: 1px solid var(--border); cursor: pointer; }
+.insp-input:hover { color: var(--text-1); border-color: var(--violet-2, #7C3AED); }
