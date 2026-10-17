@@ -2332,7 +2332,7 @@ async function saveProjectFolder(askAgain = false) {
             for (const c of (t.clips || [])) {
                 if (c.recording) continue;
                 lines.push(`    ${c.name || 'Région'}  à ${secondsToDuration(c.start)}  (${secondsToDuration(c.duration)})`);
-                if (c.id && !state._savedAudio.has(c.id)) {
+                if (c.id && folderAudioCopies() && !state._savedAudio.has(c.id)) {
                     const buf = PulseAudio.getBuffer(c.id) || await loadBufferById(c.id);
                     if (buf) { await nativeWrite(dir, `Audio/${fsSafe(t.name)} - ${fsSafe(c.id, 'son')}.wav`, new Blob([PulseAudio.audioBufferToWav(buf)])); state._savedAudio.add(c.id); }
                 }
@@ -2479,6 +2479,8 @@ async function togglePlay(fromRec = false) {
         updatePlayOrigin();
     }
 }
+// Copier aussi les sons en WAV dans Audio/ (le .pulse les contient déjà : ça double le poids du dossier) — décoché par défaut
+function folderAudioCopies() { try { return localStorage.getItem('pulse_folder_audio') === '1'; } catch { return false; } }
 function returnOnStop() { try { return localStorage.getItem('pulse_return_on_stop') !== '0'; } catch { return true; } }
 
 // === Réglages (⚙) : tout ce qui change la façon d'enregistrer, au même endroit ===
@@ -2548,6 +2550,9 @@ function openSettings() {
             ${toggle('setReturn', returnOnStop(), 'Espace : pause, puis relance depuis le départ', 'Un premier Espace met en pause là où tu en es, le deuxième relance depuis l\'endroit où tu avais posé le curseur (la petite marque pointillée). Décoché : Espace reprend toujours là où le son s\'est arrêté.')}
             ${toggle('setShowAll', showAll(), 'Afficher les réglages avancés de la sortie', 'Montre aussi les bus de sortie, pour les régler ou dessiner leur volume. Pas besoin pour enregistrer.')}
 
+            ${window.PulseNative && PulseNative.available ? `<h4 class="set-title">Dossier du projet</h4>
+            ${toggle('setFolderAudio', folderAudioCopies(), 'Copier aussi les sons en WAV dans le dossier Audio', 'Le fichier .pulse contient déjà tous tes sons. Cocher ajoute des WAV à part (pratique pour les ouvrir dans un autre logiciel) mais double le poids du dossier.')}` : ''}
+
             ${window.PulseNative && PulseNative.available ? `<h4 class="set-title">Moteur natif (bêta)</h4>
             <div class="set-row">
                 <span>Lire le morceau avec le moteur Pulse de l'appli <em>(le même son, mixé par le moteur natif. Pour écouter et mixer : dès que tu enregistres, Pulse repasse tout seul sur le moteur habituel)</em></span>
@@ -2593,6 +2598,11 @@ function openSettings() {
     modal.querySelector('#setReturn').addEventListener('change', (e) => {
         try { localStorage.setItem('pulse_return_on_stop', e.target.checked ? '1' : '0'); } catch {}
         flash(e.target.checked ? 'Espace : pause là où tu en es, puis relance depuis le départ' : 'Espace reprend toujours là où le son s\'est arrêté');
+    });
+    const fa = modal.querySelector('#setFolderAudio');
+    if (fa) fa.addEventListener('change', (e) => {
+        try { localStorage.setItem('pulse_folder_audio', e.target.checked ? '1' : '0'); } catch {}
+        flash(e.target.checked ? 'Les sons seront aussi copiés en WAV dans le dossier Audio à la prochaine sauvegarde' : 'Les sons restent seulement dans le fichier .pulse (dossier plus léger)');
     });
     const nOn = modal.querySelector('#setNativeOn');
     if (nOn) nOn.addEventListener('change', (e) => {
