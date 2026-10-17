@@ -2597,6 +2597,10 @@ function openSettings() {
                 <button class="set-btn" id="setMicPick">Changer de micro</button>
             </div>
             <div class="set-row">
+                <span>Entrée de l'interface à enregistrer <em>(carte son à plusieurs entrées, ex. Apollo : choisis celle où est branché ton micro. ${PulseAudio.getMicChannels() > 1 ? `Ton interface en propose ${PulseAudio.getMicChannels()}.` : 'Pulse ne voit qu\'une entrée pour le moment : appuie une fois sur R puis reviens ici.'})</em></span>
+                <span><select id="setMicChannel" class="set-select">${Array.from({ length: Math.max(8, PulseAudio.getMicChannels()) }, (_, i) => `<option value="${i + 1}" ${(parseInt(localStorage.getItem('pulse_mic_channel') || '1', 10) || 1) === i + 1 ? 'selected' : ''}>Entrée ${i + 1}</option>`).join('')}</select></span>
+            </div>
+            <div class="set-row">
                 <span>Caler ma voix sur l'instru <em>(clics + micro : Pulse mesure le décalage tout seul)</em></span>
                 <button class="set-btn" id="setCalib">Régler automatiquement</button>
             </div>
@@ -2705,6 +2709,10 @@ function openSettings() {
         await runLatencyCalibration();
         const el = document.getElementById('setLatency');
         if (el) el.value = Math.round(parseFloat(localStorage.getItem('pulse_latency_ms') || '0') || 0);
+    });
+    modal.querySelector('#setMicChannel').addEventListener('change', (e) => {
+        const ok = PulseAudio.setMicChannel(parseInt(e.target.value, 10));
+        flash(ok ? `Pulse enregistrera l'entrée ${e.target.value} de ton interface` : 'Termine la prise en cours avant de changer d\'entrée');
     });
     modal.querySelector('#setMicPick').addEventListener('click', (e) => { close(); openMicMenu(document.getElementById('btnMic')); });
 }

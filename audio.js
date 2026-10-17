@@ -11,7 +11,8 @@ window.PulseAudio = (function() {
     // Marge interne : le fader à 0 dB laisse 1,9 dB de réserve avant le limiteur (réglages calibrés dessus, Rust compris)
     const MASTER_TRIM = 0.8;
     let micStream = null;
-    let micSource = null;
+    let micSource = null;      // sortie « propre » du micro : l'entrée choisie de l'interface, en mono (tout le reste s'y branche)
+    let micRaw = null, micSplit = null, micChannels = 1;
     let micAnalyser = null;
     let metronomeEnabled = false;
     let countInEnabled = true;
@@ -390,7 +391,8 @@ window.PulseAudio = (function() {
             throw err;
         }
         // Mode Faible latence : on demande au navigateur le plus petit tampon d'entrée possible (indice, jamais bloquant)
-        const base = { echoCancellation: false, noiseSuppression: false, autoGainControl: false, ...(lowLatency ? { latency: { ideal: 0 } } : {}) };
+        // channelCount : on demande toutes les entrées de l'interface (Apollo, Focusrite…) pour pouvoir choisir laquelle enregistrer
+        const base = { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: { ideal: 8 }, ...(lowLatency ? { latency: { ideal: 0 } } : {}) };
         const wanted = localStorage.getItem('pulse_mic_id') || '';
         try {
             micStream = await navigator.mediaDevices.getUserMedia({
@@ -404,7 +406,19 @@ window.PulseAudio = (function() {
             micStream = await navigator.mediaDevices.getUserMedia({ audio: base });
         }
         // Analyser d'entrée : niveau micro réel (non routé vers les enceintes → pas de larsen)
-        micSource = ctx.createMediaStreamSource(micStream);
+        micRaw = ctx.createMediaStreamSource(micStream);
+        let nch = 1;
+        try { nch = micStream.getAudioTracks()[0].getSettings().channelCount || 1; } catch {}
+        micChannels = Math.max(1, nch);
+        if (micChannels > 1) {
+            // plusieurs entrées : on prend celle choisie (Réglages > Micro > Entrée de l'interface), en mono
+            const pick = Math.min(micChannelPref(), micChannels - 1);
+            micSplit = ctx.createChannelSplitter(micChannels);
+            micRaw.connect(micSplit);
+            micSource = ctx.createGain();
+            micSource.channelCount = 1; micSource.channelCountMode = 'explicit';
+            micSplit.connect(micSource, pick, 0);
+        } else micSource = micRaw;
         micAnalyser = ctx.createAnalyser();
         micAnalyser.fftSize = 256;
         micAnalyser.smoothingTimeConstant = 0.3;
@@ -494,8 +508,19 @@ window.PulseAudio = (function() {
         return true;
     }
 
+    function micChannelPref() { try { return Math.max(0, (parseInt(localStorage.getItem('pulse_mic_channel') || '1', 10) || 1) - 1); } catch { return 0; } }
+    // Entrée de l'interface à enregistrer (1 = la première). Pris en compte à la prochaine prise (le micro est rouvert).
+    function setMicChannel(n) {
+        if (recNode || recorder) return false;
+        try { localStorage.setItem('pulse_mic_channel', String(Math.max(1, parseInt(n, 10) || 1))); } catch {}
+        releaseMic();
+        return true;
+    }
+    function getMicChannels() { return micStream ? micChannels : 0; }
     function releaseMic() {
         if (micSource) { try { micSource.disconnect(); } catch {} micSource = null; }
+        if (micRaw) { try { micRaw.disconnect(); } catch {} micRaw = null; }
+        if (micSplit) { try { micSplit.disconnect(); } catch {} micSplit = null; }
         micAnalyser = null;
         if (micStream) {
             micStream.getTracks().forEach(t => t.stop());
@@ -1679,7 +1704,7 @@ window.PulseAudio = (function() {
 
     return {
         init, resumeIfNeeded, requestMic, releaseMic, getMicAnalyser, getRoundTripLatency,
-        hasMic, isCapturing, setMonitor, isMonitorOn, setMonitorRoute, isLowLatency, setLowLatency, getLatencyInfo, setCeiling, getCeiling: () => ceilingDb, getMasterVolume: () => masterVolume * 100, listInputs, setInputDevice, muteTrackBetween, calibrateLatency, getMicLabel, getMicDeviceId, consumeMicFallback, updateBusVolume,
+        hasMic, isCapturing, setMonitor, isMonitorOn, setMonitorRoute, isLowLatency, setLowLatency, getLatencyInfo, setCeiling, getCeiling: () => ceilingDb, getMasterVolume: () => masterVolume * 100, listInputs, setInputDevice, setMicChannel, getMicChannels, muteTrackBetween, calibrateLatency, getMicLabel, getMicDeviceId, consumeMicFallback, updateBusVolume,
         startRecording, stopRecording,
         registerBuffer, hasBuffer, getBuffer, getBufferDuration, clearBuffers, computePeaks,
         play, stopAll, getPlaybackPosition, setNativeBackend, isNative, setBeatsPerBar,
