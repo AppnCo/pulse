@@ -867,6 +867,14 @@ window.PulseAudio = (function() {
 
             const fx = createEffectsChain(actx, track.effects || [], { ...(track.effectParams || {}), order: track.fxOrder }, project.bpm);
             fx.output.connect(trackGain);
+            // Piste forcée en mono (bouton Mono / Stéréo) : les deux côtés se mélangent avant les effets
+            let fxIn = fx.input;
+            if (track.mono) {
+                const fold = actx.createGain();
+                fold.channelCount = 1; fold.channelCountMode = 'explicit'; fold.channelInterpretation = 'speakers';
+                fold.connect(fx.input);
+                fxIn = fold;
+            }
 
             const panNode = actx.createStereoPanner();
             panNode.pan.value = Math.max(-1, Math.min(1, (track.pan || 0) / 100));
@@ -953,8 +961,9 @@ window.PulseAudio = (function() {
                 for (const o of (track.clips || [])) {
                     if (o === clip || o.muted || o.recording || !(o.duration > 0)) continue;
                     const oEnd = clipEndSec(o);
-                    if (o.start < start - 1e-6 && oEnd > start + 1e-6) xIn = Math.max(xIn, Math.min(oEnd, end) - start);       // une région précédente recouvre mon début
-                    if (o.start > start + 1e-6 && o.start < end - 1e-6) xOut = Math.max(xOut, Math.min(end, oEnd) - o.start);  // une région suivante recouvre ma fin
+                    // chevauchement partiel seulement : une région entièrement contenue dans l'autre ne fait pas de fondu enchaîné
+                    if (o.start < start - 1e-6 && oEnd > start + 1e-6 && oEnd < end - 1e-6) xIn = Math.max(xIn, oEnd - start);       // une région précédente recouvre mon début
+                    if (o.start > start + 1e-6 && o.start < end - 1e-6 && oEnd > end + 1e-6) xOut = Math.max(xOut, end - o.start);  // une région suivante recouvre ma fin
                 }
                 const fi = Math.max(clip.fadeIn || 0, xIn);
                 const fo = Math.max(clip.fadeOut || 0, xOut);
@@ -984,7 +993,7 @@ window.PulseAudio = (function() {
                     ramp(foStart, into + playLen, kOut);
                 }
                 source.connect(g);
-                g.connect(fx.input);
+                g.connect(fxIn);
 
                 try {
                     source.start(when, bufPos, playLen);

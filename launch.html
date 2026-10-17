@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><title>Pulse</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+html,body{height:100%;margin:0;background:#0F0A1A;color:#B8A8D9;font:14px -apple-system,system-ui,sans-serif}
+body{display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px}
+.dots{display:flex;gap:6px;align-items:flex-end;height:28px}
+.dots i{display:block;width:8px;border-radius:4px;background:#A855F7;animation:p 1s ease-in-out infinite}
+.dots i:nth-child(1){height:10px}.dots i:nth-child(2){height:18px;animation-delay:.15s}.dots i:nth-child(3){height:28px;animation-delay:.3s}
+@keyframes p{50%{opacity:.35}}
+</style></head><body>
+<div class="dots"><i></i><i></i><i></i></div><div id="m">Pulse démarre…</div>
+<script>
+// Le logiciel charge la version en ligne (toujours à jour). Sans internet, il ouvre la copie embarquée.
+(async () => {
+  const LIVE = 'https://appnco.app/pulse/studio.html';
+  const go = (u) => location.replace(u);
+  // Si on a déjà été redirigé ici depuis la version en ligne, ne pas reboucler
+  try {
+    const ctl = new AbortController(); const to = setTimeout(() => ctl.abort(), 3500);
+    const r = await fetch(LIVE, { method: 'GET', cache: 'no-store', signal: ctl.signal });
+    clearTimeout(to);
+    if (r.ok) return go(LIVE);
+  } catch (e) {}
+  document.getElementById('m').textContent = 'Pas de connexion : version enregistrée sur cet ordinateur';
+  setTimeout(() => go('studio.html'), 600);
+})();
+</script></body></html>
