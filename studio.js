@@ -9485,14 +9485,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         const onButton = e.target && e.target.closest && e.target.closest('button, [role="button"], select, a[href]');
         // Un bouton atteint au clavier (Tab) reçoit Espace / Entrée ; après un simple clic souris, Espace reste « lecture »
         let kbFocus = false; try { kbFocus = !!onButton && onButton.matches(':focus-visible'); } catch {}
-        if (kbFocus && (e.code === 'Space' || e.code === 'Enter')) return;
+        if (kbFocus && (e.code === 'Space' || e.code === 'Enter' || e.code === 'NumpadEnter')) return;
         if (e.code === 'Space') {
             e.preventDefault();
             if (state.tapMode) tapOnce();
             else togglePlay();
             return;
         }
-        if (e.code === 'Enter')  { e.preventDefault(); rewind(); return; }
+        if (e.code === 'Enter' || e.code === 'NumpadEnter')  { e.preventDefault(); rewind(); return; }
         if (k === 'r') { toggleRec(); return; }
 
         // Édition (coupes rapides) : S efface ce qui est à gauche du curseur, D ce qui est à droite (Z / E = zoom, tout sous la main gauche)
