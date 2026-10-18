@@ -2564,7 +2564,7 @@ async function togglePlay(fromRec = false) {
         if (useNative) PulseNative.onError = (err) => flash('Le moteur natif n\'a pas pu jouer (' + (err && err.message || err) + ') : lecture par le moteur habituel');
         PulseAudio.setNativeBackend(useNative ? PulseNative : null);
         const from0 = state.playhead;
-        if (!fromRec) state.playOrigin = state.playhead;   // le curseur revient ici à l'arrêt (comme Logic)
+        if (!fromRec) state.playOrigin = state.baseCleared ? null : state.playhead;   // le curseur revient ici à l'arrêt (comme Logic) ; sans base il reste où il s'arrête
         try { await PulseAudio.play(state.project, state.playhead); } catch (err) { console.error(err); }
         // Le mixage natif prend un instant : on recale le curseur sur le vrai départ du son
         if (PulseAudio.isNative()) state.startTime = performance.now() - from0 * 1000;
@@ -3331,10 +3331,20 @@ function updateChrono() {
 }
 
 // === Déplacer le curseur au clavier ===
+// Point de départ (base du curseur) : posé par un clic dans la moitié BASSE d'une piste, dans la règle ou le vide ; retiré par un clic dans la moitié HAUTE.
+// Sans base, la lecture reprend là où elle s'est arrêtée (Espace ne revient plus en arrière).
+function clearPlayBase() {
+    if (state.baseCleared) return;
+    const had = state.playOrigin != null;
+    state.baseCleared = true; state.playOrigin = null;
+    updatePlayOrigin();
+    if (had) flash('Point de départ retiré : la lecture reprend là où elle s\'arrête. Clique dans la moitié basse d\'une piste pour en poser un.');
+}
 let _seekTimer = null;
 function seekPlayhead(sec) {
     if (state.recording) { flash('Arrête l\'enregistrement avant de déplacer le curseur'); return; }
     state.playhead = Math.max(0, sec);
+    state.baseCleared = false;
     if (state.playing) state.playOrigin = state.playhead;
     updatePlayhead(); updateChrono();
     // Le curseur doit rester visible même à l'arrêt
@@ -7438,7 +7448,14 @@ function bindTimelineClick() {
         return Math.max(0, (e.clientX - rect.left + timeline.scrollLeft) / state.pxPerSecond);
     };
 
+    // Une piste est coupée en deux : moitié basse = curseur (pose le point de départ), moitié haute = sélection (le retire)
+    const placeOrSelect = (e) => {
+        const tr = e.target.closest && e.target.closest('.timeline-track');
+        if (tr) { const r = tr.getBoundingClientRect(); if (e.clientY < r.top + r.height / 2) { clearPlayBase(); return; } }
+        setPlayheadFromEvent(e);
+    };
     const setPlayheadFromEvent = (e) => {
+        state.baseCleared = false;   // placer le curseur = poser un point de départ
         // Le curseur se cale sur la grille comme les clips (Shift = placement libre)
         state.playhead = snapPlayheadToEdges(snapTime(eventToTime(e), e.shiftKey), e.shiftKey);
         if (state.playing) {
@@ -7506,6 +7523,11 @@ function bindTimelineClick() {
     // --- Smart Tool : cursor qui change selon la zone du clip ---
     tracks.addEventListener('mousemove', (e) => {
         const clipEl = e.target.closest('.clip');
+        // Moitié haute d'une piste = flèche (sélection), moitié basse = croix (curseur)
+        const rowEl = e.target.closest('.timeline-track');
+        const rowRect = rowEl ? rowEl.getBoundingClientRect() : null;
+        const lowerHalf = rowRect ? e.clientY >= rowRect.top + rowRect.height / 2 : true;
+        if (rowEl) rowEl.style.cursor = lowerHalf ? 'crosshair' : 'default';
         if (!clipEl) return;
         // Pas de curseur spécial sur un clip en enregistrement
         const _cii = parseInt(clipEl.dataset.ci);
@@ -7526,7 +7548,7 @@ function bindTimelineClick() {
         if (e.target.closest('[data-loop-handle]'))          { clipEl.style.cursor = 'e-resize'; clipEl.title = 'Répéter le clip'; }
         else if (relX < edgeZone || relX > rect.width - edgeZone){ clipEl.style.cursor = 'var(--cur-trim)'; }
         else if (inTopHalf && (relX < fadeZone || relX > rect.width - fadeZone)) { clipEl.style.cursor = relX < fadeZone ? 'var(--cur-fade)' : 'var(--cur-fade-out)'; }
-        else { clipEl.style.cursor = ''; clipEl.title = ''; }
+        else { clipEl.style.cursor = lowerHalf ? 'crosshair' : 'default'; clipEl.title = ''; }
     });
     tracks.addEventListener('mouseleave', (e) => {
         const clipEl = e.target.closest('.clip');
@@ -7743,7 +7765,7 @@ function bindTimelineClick() {
                         const onUpF = () => {
                             document.removeEventListener('mousemove', onMv);
                             document.removeEventListener('mouseup', onUpF);
-                            setPlayheadFromEvent(e);
+                            placeOrSelect(e);
                             startClipDrag(e, clipEl, trackIdx);
                             document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
                         };
@@ -7751,8 +7773,8 @@ function bindTimelineClick() {
                         document.addEventListener('mouseup', onUpF);
                         return;
                     }
-                    // Place le curseur au point de clic (Logic behavior)
-                    setPlayheadFromEvent(e);
+                    // Moitié basse : place le curseur au point de clic ; moitié haute : outil de sélection, retire le point de départ
+                    placeOrSelect(e);
                     return startClipDrag(e, clipEl, trackIdx);
                 }
             }
@@ -7765,7 +7787,7 @@ function bindTimelineClick() {
         // clic enfoncé et glissé → on choisit une plage (visible seulement sur les pistes survolées), Suppr l'efface
         if (state.selection) clearRangeSelection();
         deselectTracksByTimelineClick();
-        setPlayheadFromEvent(e);
+        placeOrSelect(e);
         const sx = e.clientX, sy = e.clientY;
         const onMove = (ev) => {
             if (Math.hypot(ev.clientX - sx, ev.clientY - sy) < 4) return;
@@ -8349,7 +8371,12 @@ function startLoopSelection(startEvent, eventToTime) {
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
         if (Math.abs(state.loop.end - state.loop.start) < 0.1) state.loop = null;
-        else state.looping = true;
+        else {
+            state.looping = true;
+            // La lecture part du début de la boucle, sauf si le curseur (le point de départ) est déjà posé à l'intérieur
+            const la = Math.min(state.loop.start, state.loop.end), lb = Math.max(state.loop.start, state.loop.end);
+            if (!(state.playhead >= la && state.playhead < lb) && !state.playing) { state.playhead = la; state.baseCleared = false; updatePlayhead(); updateChrono(); }
+        }
         renderLoopOverlay();
         updateLoopButton();
         saveProject();
