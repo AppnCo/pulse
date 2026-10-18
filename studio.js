@@ -7507,7 +7507,7 @@ function bindTimelineClick() {
         // Bords = étirer ; coins hauts = fondu ; poignée bas-droite = répéter
         if (e.target.closest('[data-loop-handle]'))          { clipEl.style.cursor = 'e-resize'; clipEl.title = 'Répéter le clip'; }
         else if (relX < edgeZone || relX > rect.width - edgeZone){ clipEl.style.cursor = 'var(--cur-trim)'; }
-        else if (inTopHalf && (relX < fadeZone || relX > rect.width - fadeZone)) { clipEl.style.cursor = 'var(--cur-fade)'; }
+        else if (inTopHalf && (relX < fadeZone || relX > rect.width - fadeZone)) { clipEl.style.cursor = relX < fadeZone ? 'var(--cur-fade)' : 'var(--cur-fade-out)'; }
         else { clipEl.style.cursor = ''; clipEl.title = ''; }
     });
     tracks.addEventListener('mouseleave', (e) => {
