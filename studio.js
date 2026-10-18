@@ -2538,7 +2538,9 @@ async function togglePlay(fromRec = false) {
         } else {
             // Curseur à la fin du projet → retour au début (Logic behavior)
             const projEnd = computeProjectEndSec();
-            if (projEnd > 0 && state.playhead >= projEnd - 0.05) {
+            // (sauf juste après une pause : la relance part alors de la base du curseur, voir plus bas)
+            const resumeFromBase = returnOnStop() && state.paused && state.playOrigin != null && Math.abs(state.playhead - state.paused.pos) < 0.02;
+            if (projEnd > 0 && state.playhead >= projEnd - 0.05 && !resumeFromBase) {
                 state.playhead = 0;
                 updatePlayhead(); updateChrono();
             }
@@ -3220,14 +3222,12 @@ function tick() {
             return;
         }
     } else if (!state.recording && !(state._cap && state._cap.regions.length)) {
-        // Stop auto si on dépasse la fin de tous les clips (+ 0.5s de queue)
-        // (pas pendant un passage où des prises ont été posées : c'est Espace qui décide de la fin)
+        // Comme Logic : la lecture ne s'arrête plus toute seule à la fin des régions (on garde un blanc pour poser une idée) ; c'est Espace qui arrête.
+        // Seule sécurité : 10 minutes après la dernière région, on arrête pour ne pas laisser tourner un morceau oublié.
         const end = computeProjectEndSec();
-        if (end > 0 && state.playhead > end + 0.5) {
+        if (end > 0 && state.playhead > end + 600) {
             togglePlay();
-            state.playhead = end;
-            updatePlayhead();
-            updateChrono();
+            flash('Lecture arrêtée : plus rien à écouter depuis 10 minutes');
             return;
         }
     }
