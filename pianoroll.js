@@ -525,10 +525,26 @@
         }
         return null;
     }
+    // Règle de l'éditeur : un clic place le curseur du projet à cet endroit (glisser = se promener, la grille aimante, Maj = libre) ;
+    // un double-clic lance la lecture d'ici. Pas besoin de retourner sur la timeline.
+    function rulerDown(e) {
+        const toBeat = (ev) => {
+            let b = Math.max(0, Math.min(S.midi.beats, xb(pos(ev).x)));
+            if (!ev.shiftKey) b = Math.round(b / unit()) * unit();
+            return Math.min(S.midi.beats, b);
+        };
+        const go = (ev, play) => { const b = toBeat(ev); S.playBeat = b; draw(); if (S.o.onSeek) S.o.onSeek(b, !!play); };
+        go(e, e.detail >= 2);
+        const move = (ev) => go(ev, false);
+        const up = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
+        document.addEventListener('mousemove', move);
+        document.addEventListener('mouseup', up);
+    }
     function onMoveHover(e) {
         if (S.drag || !cv) return;
         const { x, y } = pos(e);
         let c = 'default';
+        if (y < RULER && x > leftW()) { cv.style.cursor = 'pointer'; return; }   // règle : clic = placer le curseur
         if (S.view === 'roll') {
             if (x < leftW()) c = 'pointer';
             else if (y > RULER && y < RULER + gridH()) {
@@ -542,9 +558,9 @@
     function onDown(e) {
         e.preventDefault();
         const { x, y } = pos(e), isRight = e.button === 2;
+        if (y < RULER) { if (!isRight && x > leftW()) rulerDown(e); return; }
         if (S.view === 'steps') return downSteps(x, y, isRight);
         const gh = gridH(), lw = leftW();
-        if (y < RULER) return;
         if (x < lw) {   // clavier : écouter la note
             if (y < RULER + gh) { const p = yp(y); audition(p); const up = () => document.removeEventListener('mouseup', up); document.addEventListener('mouseup', up); }
             return;
@@ -910,7 +926,7 @@
         clearInterval(timer);
         timer = setInterval(() => {
             if (!S) return;
-            const b = S.o.getBeat ? S.o.getBeat() : null;
+            const b = S.o.getCursorBeat ? S.o.getCursorBeat() : (S.o.getBeat ? S.o.getBeat() : null);
             if (b !== S.playBeat) { S.playBeat = b; draw(); }
         }, 50);
     }

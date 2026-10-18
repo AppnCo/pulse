@@ -4595,6 +4595,19 @@ function openMidiEditor(trackIdx, clipIdx, fresh) {
         ghost: t.clips.filter(c => c !== clip && c.midi && !(clip.midi.pid && c.midi.pid === clip.midi.pid)).map(c => c.midi.notes),
         view: clip.midi.inst === 'drums' ? 'steps' : 'roll',
         onPreview: playMidiPreview,
+        // Curseur du projet vu depuis l'éditeur (même à l'arrêt) et clic dans sa règle : on y déplace le curseur, double-clic = lecture d'ici
+        getCursorBeat: () => {
+            const spb = 60 / (clip.midi.bpm || state.project.bpm);
+            const b = (state.playhead - clip.start + (clip.offset || 0)) / spb;
+            if (b < 0) return null;
+            if (b > clip.midi.beats) { if (!state.playing || !clip.loopEnd || b > (clip.loopEnd - clip.start) / spb) return null; return b % clip.midi.beats; }
+            return b;
+        },
+        onSeek: (beat, play) => {
+            const spb = 60 / (clip.midi.bpm || state.project.bpm);
+            seekPlayhead(Math.max(0, clip.start - (clip.offset || 0) + beat * spb));
+            if (play && !state.playing && !state.recording) togglePlay();
+        },
         getBeat: () => {
             if (!state.playing && !state.recording) return null;
             const spb = 60 / (clip.midi.bpm || state.project.bpm);
