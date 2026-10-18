@@ -171,9 +171,9 @@ const TEMPLATES = [
         tracks: [
             { name: 'Instru',   type: 'audio', preset: 'instru', output: 'mixbus1', color: '#60A5FA' },
             { name: 'Rec',      type: 'audio', isCapture: true, armed: true, output: 'allvocal', color: '#F472B6' },
-            { name: 'Lead',     type: 'audio', output: 'vocal1',   color: '#A855F7' },
-            { name: 'Back',     type: 'audio', output: 'back',     color: '#C084FC', sends: { revlong: 20 } },
-            { name: 'Ambiance', type: 'audio', output: 'ambiance', color: '#F0ABFC', sends: { revlong: 25 } }
+            { name: 'Lead',     type: 'audio', output: 'vocal1',   color: '#A855F7', tuneSlot: true },
+            { name: 'Back',     type: 'audio', output: 'back',     color: '#C084FC', sends: { revlong: 20 }, tuneSlot: true },
+            { name: 'Ambiance', type: 'audio', output: 'ambiance', color: '#F0ABFC', sends: { revlong: 25 }, tuneSlot: true }
         ],
         buses: [
             { id: 'vocal1',   name: 'Vocal 1',   isGroup: true, output: 'allvocal', color: '#A855F7', sound: { preset: 'lead', tone: 0, hold: 35, drive: 0, space: 0, deess: 30 } },

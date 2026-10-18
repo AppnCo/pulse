@@ -2923,3 +2923,7 @@ body.is-splitting, body.is-splitting * { cursor: col-resize !important; }
 .insp-fmt .insp-mono { margin: 0; }
 .insp-input { font-size: 10px; letter-spacing: .04em; padding: 2px 8px; border-radius: 6px; background: var(--bg-3); color: var(--text-2); border: 1px solid var(--border); cursor: pointer; }
 .insp-input:hover { color: var(--text-1); border-color: var(--violet-2, #7C3AED); }
+
+/* Entrée / Mono-Stéréo : jamais de débordement quand la colonne de gauche est étroite (les deux boutons passent l'un sous l'autre) */
+.insp-fmt { flex-wrap: wrap; min-width: 0; max-width: 100%; }
+.insp-fmt .insp-input, .insp-fmt .insp-mono { min-width: 0; max-width: 100%; box-sizing: border-box; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; text-align: center; }
