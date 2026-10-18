@@ -222,6 +222,24 @@ function promoteTake(trackIdx, pieceIdx) {
     rerenderTracks(); saveProject(); refreshPlaybackSoon();
     flash(`Prise ${takeLetter(p.take || 1)} choisie sur ce passage`);
 }
+// Comping (option des Réglages) : on glisse sur une prise rangée pour garder CE passage-là de cette prise ;
+// ce qui jouait à cet endroit part de côté, le reste de la prise reste rangé
+const COMPING_KEY = 'pulse_comping';
+function compingOn() { try { return localStorage.getItem(COMPING_KEY) === '1'; } catch { return false; } }
+function compRange(trackIdx, pieceIdx, s, e) {
+    const t = state.project.tracks[trackIdx];
+    const p = t && t.takes && t.takes[pieceIdx];
+    if (!p) return;
+    const a = Math.max(p.start, Math.min(s, e)), b = Math.min(p.start + p.duration, Math.max(s, e));
+    if (b - a < 0.05) return;
+    pushUndo();
+    const r = carveClip(p, a, b);   // r.cut = le passage choisi, r.keep = ce qui reste de la prise
+    t.takes.splice(pieceIdx, 1, ...r.keep.map(k => ({ ...k, fadeIn: 0, fadeOut: 0 })));
+    setAsideRange(t, a, b, null);
+    t.clips.push({ ...r.cut, fadeIn: TAKE_XFADE, fadeOut: TAKE_XFADE });
+    rerenderTracks(); saveProject(); refreshPlaybackSoon();
+    flash(`Prise ${takeLetter(p.take || 1)} gardée sur ce passage (${(b - a).toFixed(1)} s) — ⌘Z pour annuler`);
+}
 function deleteTakePiece(trackIdx, pieceIdx) {
     const t = state.project.tracks[trackIdx];
     if (!t || !t.takes || !t.takes[pieceIdx]) return;
@@ -258,15 +276,35 @@ function renderTakesLanes(t, i, widthPx) {
     return `<div class="takes-lanes ${takeRowsClass(t)}" style="width:${widthPx}px; --track-color: ${t.color}">
         ${nums.map(n => `<div class="take-lane">
             ${(t.clips || []).filter(c => c.take === n && !c.recording).map(c => piece(c, 'is-active', '', `Prise ${takeLetter(n)} — c'est elle qu'on entend ici`)).join('')}
-            ${t.takes.map((c, pi) => (c.take || 0) === n ? piece(c, '', `data-ti="${i}" data-pi="${pi}"`, `Prise ${takeLetter(n)} — clique pour la remettre devant`) : '').join('')}
+            ${t.takes.map((c, pi) => (c.take || 0) === n ? piece(c, '', `data-ti="${i}" data-pi="${pi}"`, `Prise ${takeLetter(n)} — clique pour la remettre devant${compingOn() ? ' · glisse pour ne garder que ce passage' : ''}`) : '').join('')}
         </div>`).join('')}
     </div>`;
 }
 function bindTakePieces() {
     document.querySelectorAll('.take-piece[data-pi]').forEach(el => {
         const ti = parseInt(el.dataset.ti), pi = parseInt(el.dataset.pi);
-        el.addEventListener('mousedown', (e) => e.stopPropagation());
-        el.addEventListener('click', (e) => { e.stopPropagation(); promoteTake(ti, pi); });
+        el.addEventListener('mousedown', (e) => {
+            e.stopPropagation();
+            if (e.button !== 0 || !compingOn()) return;
+            // Comping : glisser sur la prise = ne garder que ce passage
+            const lane = el.parentElement, x0 = e.clientX;
+            let dragged = false, sel = null;
+            const toSec = (cx) => (cx - lane.getBoundingClientRect().left) / state.pxPerSecond;
+            const move = (ev) => {
+                if (!dragged && Math.abs(ev.clientX - x0) < 6) return;
+                dragged = true;
+                if (!sel) { sel = document.createElement('div'); sel.className = 'comp-sel'; lane.appendChild(sel); }
+                const lr = lane.getBoundingClientRect();
+                sel.style.left = (Math.min(x0, ev.clientX) - lr.left) + 'px'; sel.style.width = Math.abs(ev.clientX - x0) + 'px';
+            };
+            const up = (ev) => {
+                document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up);
+                if (sel) sel.remove();
+                if (dragged) { el.dataset.dragged = '1'; compRange(ti, pi, toSec(x0), toSec(ev.clientX)); }
+            };
+            document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+        });
+        el.addEventListener('click', (e) => { e.stopPropagation(); if (el.dataset.dragged) { delete el.dataset.dragged; return; } promoteTake(ti, pi); });
         el.addEventListener('contextmenu', (e) => {
             e.preventDefault(); e.stopPropagation();
             closeAllMenus();
@@ -2650,6 +2688,7 @@ function openSettings() {
                 <span>Volume maximum de sortie <em>(rien ne dépasse ce niveau, même à l'export)</em></span>
                 <span><input type="number" id="setCeiling" class="set-num" step="0.1" min="-6" max="0" value="${(state.project.ceilingDb ?? -0.3).toFixed(1)}"> dB</span>
             </div>
+            ${toggle('setComping', compingOn(), 'Comping : choisir les meilleurs passages de chaque prise', 'Quand tu as enregistré plusieurs prises, glisse sur une prise rangée sous la piste pour garder seulement ce passage-là : ce qui jouait à cet endroit part de côté, le reste de la prise reste rangé. Tu assembles ainsi la meilleure prise phrase par phrase. Décoché : un clic remet la prise entière devant.')}
             ${toggle('setReturn', returnOnStop(), 'Espace : pause, puis relance depuis le départ', 'Un premier Espace met en pause là où tu en es, le deuxième relance depuis l\'endroit où tu avais posé le curseur (la petite marque pointillée). Décoché : Espace reprend toujours là où le son s\'est arrêté.')}
             ${toggle('setShowAll', showAll(), 'Afficher les réglages avancés de la sortie', 'Montre aussi les bus de sortie, pour les régler ou dessiner leur volume. Pas besoin pour enregistrer.')}
 
@@ -2703,6 +2742,11 @@ function openSettings() {
     modal.querySelector('#setBg').addEventListener('change', (e) => {
         localStorage.setItem('pulse_bg_capture', e.target.checked ? '1' : '0');
         flash(e.target.checked ? 'Le micro captera dès la lecture' : 'Le micro ne captera qu\'à partir de R');
+    });
+    modal.querySelector('#setComping').addEventListener('change', (e) => {
+        try { localStorage.setItem(COMPING_KEY, e.target.checked ? '1' : '0'); } catch {}
+        rerenderTracks();
+        flash(e.target.checked ? 'Comping activé : glisse sur une prise rangée pour garder un passage' : 'Comping coupé : un clic remet la prise entière devant');
     });
     modal.querySelector('#setReturn').addEventListener('change', (e) => {
         try { localStorage.setItem('pulse_return_on_stop', e.target.checked ? '1' : '0'); } catch {}
@@ -9835,3 +9879,32 @@ function flash(msg) {
     };
     if (document.body) start(); else document.addEventListener('DOMContentLoaded', start);
 })();
+
+
+// === Graduation en dB à côté des faders (mixeur et panneau de gauche), comme sur une console ===
+const FADER_DB_TICKS = [6, 0, -6, -12, -24];
+function addFaderScales(root) {
+    (root || document).querySelectorAll('input.fader[data-vmap]').forEach(f => {
+        const host = f.parentElement;
+        if (!host || host.querySelector(':scope > .fader-scale')) return;
+        if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
+        const H = f.offsetHeight || 160, thumb = 14;
+        const sc = document.createElement('div');
+        sc.className = 'fader-scale'; sc.setAttribute('aria-hidden', 'true');
+        sc.style.cssText = `left:${f.offsetLeft + f.offsetWidth + 1}px;top:${f.offsetTop}px;height:${H}px`;
+        sc.innerHTML = FADER_DB_TICKS.map(db => {
+            const pos = volToPos(Math.round(100 * Math.pow(10, db / 20)));
+            return `<i style="bottom:${(thumb / 2 + pos / 100 * (H - thumb)).toFixed(1)}px"><b></b>${db > 0 ? '+' + db : db}</i>`;
+        }).join('');
+        host.appendChild(sc);
+    });
+}
+['renderMixer', 'renderInspector'].forEach(name => {
+    const orig = window[name];
+    if (typeof orig !== 'function') return;
+    window[name] = function () {
+        const r = orig.apply(this, arguments);
+        try { addFaderScales(name === 'renderMixer' ? document.getElementById('mixerStrips') : document.getElementById('inspector')); } catch (e) { console.warn('graduation fader', e); }
+        return r;
+    };
+});
