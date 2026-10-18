@@ -7499,15 +7499,15 @@ function bindTimelineClick() {
         const rect = clipEl.getBoundingClientRect();
         const relX = e.clientX - rect.left;
         const relY = e.clientY - rect.top;
-        const edgeZone = 8;
+        const edgeZone = 7;   // même largeur que le clic (étirer la région)
         // Zone fade = top 45% du clip, 30% de la largeur ou 36px min
         const fadeZone = Math.max(36, rect.width * 0.3);
         const inTopHalf = relY < rect.height * 0.45;
 
         // Bords = étirer ; coins hauts = fondu ; poignée bas-droite = répéter
         if (e.target.closest('[data-loop-handle]'))          { clipEl.style.cursor = 'e-resize'; clipEl.title = 'Répéter le clip'; }
-        else if (relX < edgeZone || relX > rect.width - edgeZone){ clipEl.style.cursor = 'ew-resize'; }
-        else if (inTopHalf && (relX < fadeZone || relX > rect.width - fadeZone)) { clipEl.style.cursor = relX < fadeZone ? 'w-resize' : 'e-resize'; }
+        else if (relX < edgeZone || relX > rect.width - edgeZone){ clipEl.style.cursor = 'var(--cur-trim)'; }
+        else if (inTopHalf && (relX < fadeZone || relX > rect.width - fadeZone)) { clipEl.style.cursor = 'var(--cur-fade)'; }
         else { clipEl.style.cursor = ''; clipEl.title = ''; }
     });
     tracks.addEventListener('mouseleave', (e) => {
