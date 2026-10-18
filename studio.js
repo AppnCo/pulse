@@ -4603,6 +4603,17 @@ function openMidiEditor(trackIdx, clipIdx, fresh) {
             if (b > clip.midi.beats) { if (!state.playing || !clip.loopEnd || b > (clip.loopEnd - clip.start) / spb) return null; return b % clip.midi.beats; }
             return b;
         },
+        getLoop: () => {
+            if (!state.loop) return null;
+            const spb = 60 / (clip.midi.bpm || state.project.bpm), o = clip.start - (clip.offset || 0);
+            return { a: (Math.min(state.loop.start, state.loop.end) - o) / spb, b: (Math.max(state.loop.start, state.loop.end) - o) / spb, on: !!state.looping };
+        },
+        setLoop: (a, b) => {   // a, b en temps depuis le début de la région ; null = ne change que l'état
+            const spb = 60 / (clip.midi.bpm || state.project.bpm), o = clip.start - (clip.offset || 0);
+            if (a == null) { state.looping = !state.looping; }
+            else { state.loop = { start: Math.max(0, o + a * spb), end: Math.max(0, o + b * spb) }; state.looping = true; }
+            renderLoopOverlay(); updateLoopButton(); saveProject();
+        },
         onSeek: (beat, play) => {
             const spb = 60 / (clip.midi.bpm || state.project.bpm);
             seekPlayhead(Math.max(0, clip.start - (clip.offset || 0) + beat * spb));
@@ -6215,6 +6226,19 @@ function nudgeSelectedClip(dir, fine) {
 }
 
 // Sélectionner tous les clips de la piste active (Cmd+A)
+// ⌘A comme dans Logic : toutes les régions de toutes les pistes (⌥⌘A : seulement la piste choisie)
+function selectAllClips() {
+    const keys = [];
+    state.project.tracks.forEach((t, ti) => (t.clips || []).forEach((c, ci) => { if (!c.recording) keys.push(`${ti}:${ci}`); }));
+    if (!keys.length) { flash('Rien à choisir : il n\'y a pas encore de région'); return; }
+    document.querySelectorAll('.range-selection').forEach(el => el.remove());
+    state.selection = null;
+    state.selectedClips = new Set(keys);
+    const [ti, ci] = keys[0].split(':').map(Number);
+    state.selectedClip = { trackIdx: ti, clipIdx: ci };
+    renderTimelineTracks();
+    flash(keys.length > 1 ? `${keys.length} régions choisies — Suppr les efface, glisser les déplace ensemble` : '1 région choisie');
+}
 function selectAllClipsOnTrack() {
     const t = state.project.tracks[state.selectedTrack];
     if (!t || !t.clips.length) { flash('Cette piste est vide'); return; }
@@ -7506,25 +7530,37 @@ function bindTimelineClick() {
         if (Math.abs(e.deltaX) > 0 || e.shiftKey) suspendFollow();
     }, { passive: true });
 
-    // --- Règle, façon Logic : un clic place le curseur, un glissé dessine la BOUCLE (Option n'est plus nécessaire) ---
-    // Sur la boucle déjà dessinée : tirer le milieu la déplace, tirer un bord l'étire, un clic l'allume ou l'éteint.
+    // --- Règle, façon Logic : la bande du haut est la boucle (cycle), le reste déplace le curseur ---
+    const CYCLE_STRIP_H = 10;
+    ruler.addEventListener('mousemove', (e) => {
+        const inStrip = e.clientY - ruler.getBoundingClientRect().top < CYCLE_STRIP_H;
+        let c = 'crosshair';
+        if (inStrip) {
+            c = 'pointer';
+            if (state.loop) {
+                const la = Math.min(state.loop.start, state.loop.end), lb = Math.max(state.loop.start, state.loop.end), t = eventToTime(e), edge = 8 / state.pxPerSecond;
+                if (Math.abs(t - la) <= edge || Math.abs(t - lb) <= edge) c = 'ew-resize';
+            }
+        }
+        ruler.style.cursor = c;
+        ruler.setAttribute('data-tooltip', inStrip ? 'Boucle : glisse pour la dessiner, clique dessus pour l\'allumer ou l\'éteindre (touche C)' : '');
+    });
     ruler.addEventListener('mousedown', (e) => {
         e.preventDefault(); // empêche la sélection de texte sur les labels
         if (e.altKey) return startLoopSelection(e, eventToTime);
-        if (state.loop) {
-            const la = Math.min(state.loop.start, state.loop.end), lb = Math.max(state.loop.start, state.loop.end);
-            const t = eventToTime(e), edge = 8 / state.pxPerSecond;
-            if (t >= la - edge && t <= lb + edge) return editLoopRegion(e, eventToTime, Math.abs(t - la) <= edge ? 'left' : Math.abs(t - lb) <= edge ? 'right' : 'move');
+        // Bande de boucle (les 10 px du haut de la règle, comme la barre du cycle de Logic) : glisser = créer la boucle,
+        // sur une boucle existante : le milieu la déplace, un bord l'étire, un clic l'allume / l'éteint
+        if (e.clientY - ruler.getBoundingClientRect().top < CYCLE_STRIP_H) {
+            if (state.loop) {
+                const la = Math.min(state.loop.start, state.loop.end), lb = Math.max(state.loop.start, state.loop.end);
+                const t = eventToTime(e), edge = 8 / state.pxPerSecond;
+                if (t >= la - edge && t <= lb + edge) return editLoopRegion(e, eventToTime, Math.abs(t - la) <= edge ? 'left' : Math.abs(t - lb) <= edge ? 'right' : 'move');
+            }
+            return startLoopSelection(e, eventToTime);
         }
-        const sx = e.clientX;
+        // Reste de la règle : un clic ou un glissé déplace le curseur
         setPlayheadFromEvent(e);
-        const onMove = (ev) => {
-            if (Math.abs(ev.clientX - sx) < 5) return;
-            document.removeEventListener('mousemove', onMove);
-            document.removeEventListener('mouseup', onUp);
-            startLoopSelection(e, eventToTime);
-            document.dispatchEvent(new MouseEvent('mousemove', { clientX: ev.clientX, clientY: ev.clientY, bubbles: true }));
-        };
+        const onMove = (ev) => setPlayheadFromEvent(ev);
         const onUp = () => {
             document.removeEventListener('mousemove', onMove);
             document.removeEventListener('mouseup', onUp);
@@ -9018,7 +9054,7 @@ function resetRange(el) {
     el.dispatchEvent(new Event('change', { bubbles: true }));
 }
 document.addEventListener('mousedown', (e) => {
-    if (!(e.metaKey || e.ctrlKey) || e.button !== 0) return;
+    if (!(e.metaKey || e.ctrlKey || e.altKey) || e.button !== 0) return;
     const el = e.target && e.target.closest ? e.target.closest('input[type="range"][data-default]') : null;
     if (!el || el.disabled) return;
     e.preventDefault(); e.stopPropagation();
@@ -9559,7 +9595,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         if (mod && k === 'e')          { e.preventDefault(); exportProject(); return; }
         if (mod && k === 'n')          { e.preventDefault(); window.location.href = 'index.html'; return; }
-        if (mod && k === 'a')          { e.preventDefault(); selectAllClipsOnTrack(); return; }
+        if (mod && k === 'a')          { e.preventDefault(); if (e.altKey) selectAllClipsOnTrack(); else selectAllClips(); return; }
         if (mod && shift && k === 'f') { e.preventDefault(); zoomToFit(); return; }
         if (mod && k === 'd')          { e.preventDefault(); duplicateTrack(state.selectedTrack); return; }
         if (mod && k === 'g')          { e.preventDefault(); toggleSmartMode(); return; }
@@ -9597,7 +9633,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (k === 'm') { selectedTrackIdxs().forEach(i => toggleMute(i)); return; }
 
         // Transport secondaires
-        if (k === 'l') { document.getElementById('btnLoop').click(); return; }
+        if (k === 'l' || (k === 'c' && !mod && !shift && !e.altKey)) { document.getElementById('btnLoop').click(); return; }   // C = boucle (cycle) comme dans Logic
         if (k === 'k') { document.getElementById('btnMetronome').click(); return; }  // K = click/métronome (comme Logic)
         if (k === 't') { e.preventDefault(); toggleTapMode(); return; }              // T = toggle mode tap (puis Espace tape)
 

@@ -9,6 +9,7 @@
     const BLACK = [1, 3, 6, 8, 10];
     const noteName = (p) => `${NAMES[p % 12]}${Math.floor(p / 12) - 1}`;
     const SNAPS = [['1/4', 1], ['1/8', 0.5], ['1/16', 0.25], ['1/32', 0.125], ['1/8T', 1 / 3], ['1/16T', 1 / 6], ['Libre', 1 / 64]];
+    const CYCLE_H = 8;   // bande de boucle en haut de la règle
     const RULER = 22, KEYW = 66, VELH = 70, MINROW = 10, MAXROW = 34;
     const PATTERNS = {   // 16 pas (1/16) sur une mesure, répétés sur la longueur du motif
         trap:    { label: 'Trap', 36: [0, 7, 10], 38: [8], 39: [8], 42: [0, 2, 4, 6, 8, 10, 12, 13, 14, 15], 46: [] },
@@ -387,6 +388,16 @@
             ctx.fillStyle = 'rgba(168,85,247,.5)'; ctx.fillRect(x, 4, 1, RULER - 8); ctx.fillStyle = '#B8A8D9';
         }
         ctx.fillStyle = '#251934'; ctx.fillRect(0, 0, lw, RULER);
+        // bande de boucle (celle du projet), en haut de la règle
+        if (S.o.setLoop) {
+            ctx.fillStyle = 'rgba(192,132,252,.10)'; ctx.fillRect(lw, 0, W - lw, CYCLE_H);
+            const L = S.o.getLoop && S.o.getLoop();
+            if (L) {
+                const x0 = Math.max(lw, bx(L.a)), x1 = Math.min(W, bx(L.b));
+                if (x1 > x0) { ctx.fillStyle = L.on ? 'rgba(192,132,252,.85)' : 'rgba(192,132,252,.35)'; ctx.fillRect(x0, 0, x1 - x0, CYCLE_H); }
+            }
+            ctx.fillStyle = 'rgba(192,132,252,.25)'; ctx.fillRect(lw, CYCLE_H, W - lw, 1);
+        }
     }
 
     function gridLines(top, bottom) {
@@ -528,6 +539,7 @@
     // Règle de l'éditeur : un clic place le curseur du projet à cet endroit (glisser = se promener, la grille aimante, Maj = libre) ;
     // un double-clic lance la lecture d'ici. Pas besoin de retourner sur la timeline.
     function rulerDown(e) {
+        if (pos(e).y < CYCLE_H && S.o.setLoop) return cycleDown(e);
         const toBeat = (ev) => {
             let b = Math.max(0, Math.min(S.midi.beats, xb(pos(ev).x)));
             if (!ev.shiftKey) b = Math.round(b / unit()) * unit();
@@ -540,11 +552,27 @@
         document.addEventListener('mousemove', move);
         document.addEventListener('mouseup', up);
     }
+    // Bande de boucle (en haut de la règle, comme la barre du cycle de Logic) : glisser = dessiner la boucle ; clic dans la boucle = l'allumer / l'éteindre
+    function cycleDown(e) {
+        const snap = (ev) => { let b = Math.max(0, Math.min(S.midi.beats, xb(pos(ev).x))); if (!ev.shiftKey) b = Math.round(b / unit()) * unit(); return b; };
+        const b0 = snap(e), x0 = e.clientX, L = S.o.getLoop && S.o.getLoop();
+        let moved = false;
+        const move = (ev) => {
+            if (!moved && Math.abs(ev.clientX - x0) < 4) return;
+            moved = true;
+            const b1 = snap(ev); S.o.setLoop(Math.min(b0, b1), Math.max(b0, b1) + (b1 === b0 ? unit() : 0)); draw();
+        };
+        const up = () => {
+            document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up);
+            if (!moved && L && b0 >= L.a && b0 <= L.b) { S.o.setLoop(null); draw(); }
+        };
+        document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+    }
     function onMoveHover(e) {
         if (S.drag || !cv) return;
         const { x, y } = pos(e);
         let c = 'default';
-        if (y < RULER && x > leftW()) { cv.style.cursor = 'pointer'; return; }   // règle : clic = placer le curseur
+        if (y < RULER && x > leftW()) { cv.style.cursor = 'pointer'; cv.setAttribute('data-tooltip', y < CYCLE_H ? 'Boucle : glisse pour la dessiner, clique dessus pour l\'allumer ou l\'éteindre' : 'Clique pour placer le curseur, double-clic pour écouter d\'ici'); return; }   // règle : clic = placer le curseur
         if (S.view === 'roll') {
             if (x < leftW()) c = 'pointer';
             else if (y > RULER && y < RULER + gridH()) {
@@ -829,6 +857,13 @@
             const f = [...S.sel][0]; if (k === 'ArrowUp' || k === 'ArrowDown') audition(f.p, f.v);
             changed('nudge'); return;
         }
+        // Q : quantifier la sélection (ou tout le motif), comme dans Logic
+        if (!mod && !e.altKey && !S.rec && k.toLowerCase() === 'q') {
+            eat(); if (!S.notes.length) return; snapshot();
+            const u = unit(), T = S.sel.size ? [...S.sel] : S.notes;
+            T.forEach(n => { n.s = Math.max(0, Math.round(n.s / u) * u); if (S.midi.inst !== 'drums') n.d = Math.max(u, Math.round(n.d / u) * u); });
+            changed('quant'); S.o.flash && S.o.flash(S.sel.size ? 'Notes choisies calées sur la grille' : 'Toutes les notes calées sur la grille'); return;
+        }
         // Jouer en direct pendant la lecture : la note est enregistrée au moment où on appuie
         if (!mod && !e.altKey && S.rec) {
             const kc = physKey(e);
@@ -927,7 +962,8 @@
         timer = setInterval(() => {
             if (!S) return;
             const b = S.o.getCursorBeat ? S.o.getCursorBeat() : (S.o.getBeat ? S.o.getBeat() : null);
-            if (b !== S.playBeat) { S.playBeat = b; draw(); }
+            const L = S.o.getLoop ? S.o.getLoop() : null, sig = L ? L.a.toFixed(3) + L.b.toFixed(3) + L.on : '';
+            if (b !== S.playBeat || sig !== S._loopSig) { S.playBeat = b; S._loopSig = sig; draw(); }
         }, 50);
     }
 

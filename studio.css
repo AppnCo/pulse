@@ -2935,3 +2935,7 @@ body.is-splitting, body.is-splitting * { cursor: col-resize !important; }
 .insp-del { font-style: normal; margin-left: 6px; padding: 0 5px; border-radius: 5px; color: var(--text-3, #7a6b96); cursor: pointer; line-height: 1.2; opacity: .55; }
 .insp-fx-row:hover .insp-del { opacity: 1; }
 .insp-del:hover { background: rgba(220,38,38,.25); color: #fca5a5; }
+
+/* Règle : la bande du haut est la boucle (comme la barre du cycle de Logic) */
+.timeline-ruler::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 10px; background: rgba(192, 132, 252, 0.07); border-bottom: 1px solid rgba(192, 132, 252, 0.2); pointer-events: none; z-index: 1; }
+.timeline-ruler .loop-region { top: 0; bottom: auto; height: 10px; z-index: 2; border-top: 0; border-radius: 0 0 3px 3px; }
