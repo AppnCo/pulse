@@ -2929,3 +2929,9 @@ body.is-splitting, body.is-splitting * { cursor: col-resize !important; }
 /* Entrée / Mono-Stéréo : jamais de débordement quand la colonne de gauche est étroite (les deux boutons passent l'un sous l'autre) */
 .insp-fmt { flex-wrap: wrap; min-width: 0; max-width: 100%; }
 .insp-fmt .insp-input, .insp-fmt .insp-mono { min-width: 0; max-width: 100%; box-sizing: border-box; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; text-align: center; }
+
+/* Croix « supprimer l'effet » sur chaque ligne d'effet : visible au survol */
+.insp-fx-row { position: relative; }
+.insp-del { font-style: normal; margin-left: 6px; padding: 0 5px; border-radius: 5px; color: var(--text-3, #7a6b96); cursor: pointer; line-height: 1.2; opacity: .55; }
+.insp-fx-row:hover .insp-del { opacity: 1; }
+.insp-del:hover { background: rgba(220,38,38,.25); color: #fca5a5; }

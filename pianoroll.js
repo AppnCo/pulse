@@ -35,7 +35,7 @@
             pxBeat: 56, rowH: 16, sx: 0, sy: 0,                               // défilement (px)
             lastLen: 0.25, undo: [], redo: [], dirty: false, drag: null, w: 0, h: 0, playBeat: null, committed: false,
             color: opts.color || '#A855F7', baseOct: 4, bpb: Math.max(1, Math.min(12, opts.bpb || 4)),   // temps par mesure (3 = valse)
-            scale: opts.key && opts.key.notes ? 'proj' : '', fold: !!(opts.key && opts.key.notes), lock: false, chord: 0, rec: false, recQ: true, held: {}, ghosts: opts.ghost || []
+            scale: opts.key && opts.key.notes ? 'proj' : '', fold: false, lock: false, chord: 0, rec: false, recQ: true, held: {}, ghosts: opts.ghost || []
         };
         if (!S.notes.length && !isDrums) S.sy = null;                         // centré sur Do4 au premier dessin
         build();
@@ -114,6 +114,8 @@
         cv = el.querySelector('.me-cv'); ctx = cv.getContext('2d');
         el.querySelector('.me-title').textContent = S.o.title || 'Région MIDI';
         const q = (s) => el.querySelector(s);
+        // Un clic de souris ne laisse pas le focus sur un bouton : Espace reste « lecture » (sinon il rejouait l'accord cliqué)
+        el.addEventListener('mousedown', (e) => { if (e.target.closest('button')) e.preventDefault(); });
         q('.me-close').onclick = () => close();
         // Poignée du haut : agrandir / réduire l'éditeur (taille mémorisée)
         const HKEY = 'pulse_midi_h';
@@ -161,7 +163,7 @@
             sc.innerHTML = opt.map(([v, l]) => `<option value="${v}" ${v === S.scale ? 'selected' : ''}>${l}</option>`).join('');
             sc.onchange = (e) => {
                 S.scale = e.target.value;
-                S.fold = !!scaleMask();                                   // choisir une gamme replie le clavier dessus
+                if (!scaleMask()) S.fold = false;                        // choisir une gamme fonce les touches hors gamme ; « Seulement la gamme » les cache
                 q('.me-fold').checked = S.fold;
                 buildPads();
                 clampScroll(); centerOnNotes(); draw();
@@ -409,9 +411,11 @@
         ctx.save(); ctx.beginPath(); ctx.rect(lw, RULER, S.w - lw, gh); ctx.clip();
         for (let r = r0; r <= r1; r++) {
             const p = S.rows[r], y = RULER + r * S.rowH - S.sy, pc = p % 12, inKey = key && key.notes ? key.notes[pc] : false;
-            ctx.fillStyle = BLACK.includes(pc) ? (inKey ? '#241838' : '#130c1d') : (inKey ? '#2d2044' : '#1b1228');
+            const dim = !!(key && key.notes && !inKey);   // une gamme est choisie et cette note n'en fait pas partie : rangée foncée
+            ctx.fillStyle = dim ? '#0b0711' : BLACK.includes(pc) ? '#241838' : (key && key.notes ? '#33244e' : '#1b1228');
+            if (!key || !key.notes) ctx.fillStyle = BLACK.includes(pc) ? '#130c1d' : '#1b1228';
             ctx.fillRect(lw, y, S.w - lw, S.rowH);
-            if (key && key.tonic === pc) { ctx.fillStyle = 'rgba(168,85,247,.16)'; ctx.fillRect(lw, y, S.w - lw, S.rowH); }
+            if (key && key.tonic === pc) { ctx.fillStyle = 'rgba(168,85,247,.22)'; ctx.fillRect(lw, y, S.w - lw, S.rowH); }
             ctx.fillStyle = 'rgba(255,255,255,.05)'; ctx.fillRect(lw, y + S.rowH - 1, S.w - lw, 1);
         }
         gridLines(RULER, RULER + gh);
@@ -435,10 +439,13 @@
         ctx.save(); ctx.beginPath(); ctx.rect(0, RULER, lw, gh); ctx.clip();
         for (let r = r0; r <= r1; r++) {
             const p = S.rows[r], y = RULER + r * S.rowH - S.sy, blk = BLACK.includes(p % 12);
+            const kin = !(key && key.notes) || key.notes[p % 12], tonic = !!(key && key.notes && key.tonic === p % 12);
             ctx.fillStyle = blk ? '#14101c' : '#e9e2f5'; ctx.fillRect(0, y, blk ? lw * 0.62 : lw, S.rowH - 0.5);
             if (blk) { ctx.fillStyle = '#d8cfe8'; ctx.fillRect(lw * 0.62, y, lw * 0.38, S.rowH - 0.5); }
-            if (p % 12 === 0 || S.rowH >= 20) {
-                ctx.fillStyle = p % 12 === 0 ? '#3a2a55' : '#7a6b96'; ctx.font = '10px -apple-system, system-ui, sans-serif'; ctx.textBaseline = 'middle';
+            if (!kin) { ctx.fillStyle = 'rgba(8,5,14,.82)'; ctx.fillRect(0, y, lw, S.rowH - 0.5); }           // hors gamme : touche foncée
+            else if (tonic) { ctx.fillStyle = '#A855F7'; ctx.fillRect(0, y, lw, S.rowH - 0.5); }         // la note de départ de la gamme
+            if ((kin && (p % 12 === 0 || S.rowH >= 20 || (key && key.notes))) || (!kin && S.rowH >= 20)) {
+                ctx.fillStyle = !kin ? '#4a3d63' : tonic ? '#fff' : p % 12 === 0 ? '#3a2a55' : '#7a6b96'; ctx.font = '10px -apple-system, system-ui, sans-serif'; ctx.textBaseline = 'middle';
                 ctx.fillText(noteName(p), lw - 34, y + S.rowH / 2);
             }
         }
@@ -761,6 +768,7 @@
     const physKey = (e) => (e.code && /^Key[A-Z]$/.test(e.code)) ? e.code.slice(3).toLowerCase() : String(e.key || '').toLowerCase();
     function onKeyUp(e) {
         if (!S) return;
+        if (e.code === 'Space' && e.target && e.target.closest && e.target.closest('button') && !e.target.matches(':focus-visible')) e.preventDefault();   // Espace relâché ne « clique » pas un bouton touché à la souris
         stopIn(physKey(e));
     }
     // ---------- Clavier ----------

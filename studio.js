@@ -1541,11 +1541,12 @@ function inspectorStrip(kind, x, idx) {
         ${isMaster ? '' : `<div class="insp-fx">
             <div class="strip-sends-title">Effets</div>
             ${kind === 'track' && showTuneSlot(x) ? `<div class="insp-fx-row insp-tune-row ${x.autotune && x.autotune.on ? 'on' : ''}" data-fx="tune" data-tooltip="Corrige les notes de ta voix, sur toute la piste">
-                <span>Auto-Tune</span><em class="insp-state">${x.autotune && x.autotune.on ? 'actif' : 'off'}</em>
+                <span>Auto-Tune</span><em class="insp-state">${x.autotune && x.autotune.on ? 'actif' : 'off'}</em><i class="insp-del" data-tooltip="Supprimer l'Auto-Tune de cette piste">×</i>
             </div>` : ''}
             ${chain.length ? chain.map((n, k) => `
             <div class="insp-fx-row" data-fx="${n}" data-tooltip="Clic pour régler · clic droit pour copier ou supprimer">
                 <span>${FX_NAMES[n] || n}</span>
+                ${x.premaster || x.locked || n === 'limit' || n === 'master' ? '' : '<i class="insp-del" data-tooltip="Supprimer cet effet">×</i>'}
                 ${x.premaster || n === 'limit' || n === 'master' ? '' : `<em class="insp-move"><b data-move="-1" class="${k === 0 ? 'off' : ''}" data-tooltip="Avant">▲</b><b data-move="1" class="${k === chain.length - 1 ? 'off' : ''}" data-tooltip="Après">▼</b></em>`}
             </div>`).join('') : (kind === 'track' && showTuneSlot(x) ? '' : '<div class="insp-empty">Aucun</div>')}
             ${x.premaster || x.locked ? '' : '<button class="insp-add-fx" data-tooltip="Ajouter un effet sur ' + (kind === 'bus' ? 'ce groupe' : 'cette piste') + '">+ Effet</button>'}
@@ -1659,6 +1660,7 @@ function renderInspector() {
             row.addEventListener('click', (e) => {
                 if (e.target.closest('.insp-move')) return;
                 const n = row.dataset.fx;
+                if (e.target.closest('.insp-del')) { e.stopPropagation(); removeFx(n, x); return; }
                 if (n === 'tune') { const r = row.getBoundingClientRect(); openTunePanel(idx, -1, r.left - 290, r.top - 20, true); return; }
                 if (kind === 'bus' && x.premaster) openMasterPanel(x, row);
                 else if (n === 'eq' || n === 'comp' || n === 'reverb') openEffectPanel(kind === 'track' ? idx : x, n, row);
@@ -1734,21 +1736,7 @@ function openFxCopyMenu(cx, cy, fx, x) {
     if (_fxClip && _fxClip.fx === fx) items.push({ label: `Coller le réglage (${name} de « ${_fxClip.from} »)`, run: () => pasteFxSetting(fx, x) });
     // Supprimer l'effet de la chaîne (Auto-Tune : retire aussi la correction des prises)
     const removable = fx === 'tune' ? !!x.tuneSlot || !!x.autotune : (x.effects || []).includes(fx) && !x.premaster && fx !== 'limit' && fx !== 'master';
-    if (removable) items.push({ label: `Supprimer l'effet (${name})`, run: async () => {
-        if (fx === 'tune') {
-            const ti = state.project.tracks.indexOf(x);
-            if (x.autotune && ti >= 0) await untuneWholeTrack(ti); else pushUndo();
-            delete x.tuneSlot; saveProject();
-        } else {
-            pushUndo();
-            x.effects = x.effects.filter(n => n !== fx);
-            saveProject(); refreshPlaybackSoon();
-        }
-        document.querySelectorAll('.fx-panel').forEach(p => p.remove());
-        renderInspector();
-        if (state.mixerOpen) { renderMixer(); bindMixerEvents(); }
-        flash(`${name} supprimé de « ${x.name} » — ⌘Z pour annuler`);
-    } });
+    if (removable) items.push({ label: `Supprimer l'effet (${name})`, run: () => removeFx(fx, x) });
     items.forEach(it => {
         const el = document.createElement('div'); el.className = 'ctx-item'; el.textContent = it.label;
         el.addEventListener('click', () => { menu.remove(); it.run(); });
@@ -1756,6 +1744,23 @@ function openFxCopyMenu(cx, cy, fx, x) {
     });
     document.body.appendChild(menu);
     dismissMenuOnOutside(menu);
+}
+// Supprime un effet de la chaîne d'une piste ou d'un groupe (Auto-Tune : retire aussi la correction des prises)
+async function removeFx(fx, x) {
+    const name = fx === 'tune' ? 'Auto-Tune' : (FX_NAMES[fx] || fx);
+    if (fx === 'tune') {
+        const ti = state.project.tracks.indexOf(x);
+        if (x.autotune && ti >= 0) await untuneWholeTrack(ti); else pushUndo();
+        delete x.tuneSlot; saveProject();
+    } else {
+        pushUndo();
+        x.effects = (x.effects || []).filter(n => n !== fx);
+        saveProject(); refreshPlaybackSoon();
+    }
+    document.querySelectorAll('.fx-panel').forEach(p => p.remove());
+    renderInspector();
+    if (state.mixerOpen) { renderMixer(); bindMixerEvents(); }
+    flash(`${name} supprimé de « ${x.name} » — ⌘Z pour annuler`);
 }
 function pasteFxSetting(fx, x) {
     if (!_fxClip || _fxClip.fx !== fx) return;
@@ -7471,12 +7476,25 @@ function bindTimelineClick() {
         if (Math.abs(e.deltaX) > 0 || e.shiftKey) suspendFollow();
     }, { passive: true });
 
-    // --- Ruler : clic/drag place le playhead ---
+    // --- Règle, façon Logic : un clic place le curseur, un glissé dessine la BOUCLE (Option n'est plus nécessaire) ---
+    // Sur la boucle déjà dessinée : tirer le milieu la déplace, tirer un bord l'étire, un clic l'allume ou l'éteint.
     ruler.addEventListener('mousedown', (e) => {
         e.preventDefault(); // empêche la sélection de texte sur les labels
         if (e.altKey) return startLoopSelection(e, eventToTime);
+        if (state.loop) {
+            const la = Math.min(state.loop.start, state.loop.end), lb = Math.max(state.loop.start, state.loop.end);
+            const t = eventToTime(e), edge = 8 / state.pxPerSecond;
+            if (t >= la - edge && t <= lb + edge) return editLoopRegion(e, eventToTime, Math.abs(t - la) <= edge ? 'left' : Math.abs(t - lb) <= edge ? 'right' : 'move');
+        }
+        const sx = e.clientX;
         setPlayheadFromEvent(e);
-        const onMove = (ev) => setPlayheadFromEvent(ev);
+        const onMove = (ev) => {
+            if (Math.abs(ev.clientX - sx) < 5) return;
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            startLoopSelection(e, eventToTime);
+            document.dispatchEvent(new MouseEvent('mousemove', { clientX: ev.clientX, clientY: ev.clientY, bubbles: true }));
+        };
         const onUp = () => {
             document.removeEventListener('mousemove', onMove);
             document.removeEventListener('mouseup', onUp);
@@ -7637,6 +7655,8 @@ function bindTimelineClick() {
                     clipDouble(e, trackIdx, parseInt(clipEl.dataset.ci));
                     return;
                 }
+                // Région de notes : le 2e appui rouvre l'éditeur (le « dblclick » natif se perd, la liste est redessinée entre les deux clics)
+                if (dc && dc.midi && !dc.recording) { e.preventDefault(); openMidiEditor(trackIdx, parseInt(clipEl.dataset.ci)); return; }
             }
 
             if (clipEl) {
@@ -8292,12 +8312,37 @@ function pasteClip() {
 }
 
 // === Loop region (Alt+drag dans le ruler, Logic style) ===
+// Déplacer / étirer la boucle depuis la règle (la grille aimante les bords, Maj = libre) ; un simple clic l'allume ou l'éteint
+function editLoopRegion(startEvent, eventToTime, mode) {
+    const a0 = Math.min(state.loop.start, state.loop.end), b0 = Math.max(state.loop.start, state.loop.end);
+    const t0 = eventToTime(startEvent), sx = startEvent.clientX;
+    let moved = false;
+    const onMove = (ev) => {
+        if (!moved && Math.abs(ev.clientX - sx) < 4) return;
+        if (!moved) { moved = true; pushUndo(); }
+        const t = eventToTime(ev);
+        let a = a0, b = b0;
+        if (mode === 'move') { const d = snapTime(a0 + (t - t0), ev.shiftKey) - a0; a = Math.max(0, a0 + d); b = a + (b0 - a0); }
+        else if (mode === 'left') a = Math.min(snapTime(t, ev.shiftKey), b0 - 0.1);
+        else b = Math.max(snapTime(t, ev.shiftKey), a0 + 0.1);
+        state.loop = { start: a, end: b };
+        renderLoopOverlay();
+    };
+    const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        if (!moved) { state.looping = !state.looping; flash(state.looping ? 'Boucle allumée' : 'Boucle éteinte (clic sur la zone pour la rallumer)'); }
+        renderLoopOverlay(); updateLoopButton(); saveProject();
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+}
 function startLoopSelection(startEvent, eventToTime) {
-    const start = eventToTime(startEvent);
+    const start = snapTime(eventToTime(startEvent), startEvent.shiftKey);
     state.loop = { start, end: start };
     renderLoopOverlay();
     const onMove = (ev) => {
-        state.loop.end = eventToTime(ev);
+        state.loop.end = snapTime(eventToTime(ev), ev.shiftKey);
         renderLoopOverlay();
     };
     const onUp = () => {
