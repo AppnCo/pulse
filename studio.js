@@ -9813,7 +9813,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (mod && k === 'q') { e.preventDefault(); quitApp(); return; }
 
         // Piste sélectionnée
-        if (k === 's' && shift && !mod) { e.preventDefault(); selectedTrackIdxs().forEach(i => toggleSolo(i)); return; }
+        if (k === 's' && !mod && !e.altKey) { e.preventDefault(); selectedTrackIdxs().forEach(i => toggleSolo(i)); return; }   // S = solo / désolo de la piste choisie (M = mute)
         if (e.altKey && e.code === 'KeyC' && !mod) { e.preventDefault(); openColorPanel(); return; }   // ⌥C = panneau de couleurs (⌥+C donne « ç » sur Mac)
         if (e.altKey && e.code === 'KeyS' && !mod) { e.preventDefault(); selectedTrackIdxs().forEach(i => toggleSolo(i)); return; }  // ⌥S = solo (⌥+S donne « ß » sur Mac)
         if (k === 'm') { selectedTrackIdxs().forEach(i => toggleMute(i)); return; }
