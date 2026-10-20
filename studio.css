@@ -415,12 +415,12 @@
 
 .clip:active { cursor: grabbing; }
 
-/* Zones invisibles de prise des fades (Pro Tools style — grande zone) */
+/* Zones invisibles de prise des fades (Pro Tools style) : petite zone fixe en pixels, facile à attraper même en dézoom */
 .clip-fade-zone {
     position: absolute;
     top: 0;
     height: 45%;
-    width: max(36px, 30%);
+    width: min(32px, 30%);
     z-index: 4;
     cursor: var(--cur-fade);
 }

@@ -2630,8 +2630,11 @@ async function togglePlay(fromRec = false) {
         } else if (state.looping && state.loop) {
             const ls = Math.min(state.loop.start, state.loop.end);
             const le = Math.max(state.loop.start, state.loop.end);
-            if (state.playhead < ls || state.playhead >= le) {
-                state.playhead = ls;
+            // Chaque Espace repart du début de la boucle, sauf si tu as posé toi-même un curseur de départ dans la boucle
+            const ub = state.userBaseSec;
+            const start = (ub != null && !state.baseCleared && ub >= ls && ub < le) ? ub : ls;
+            if (Math.abs(state.playhead - start) > 1e-6) {
+                state.playhead = start;
                 updatePlayhead(); updateChrono();
             }
         } else {
@@ -3449,6 +3452,7 @@ function updateChrono() {
 // Point de départ (base du curseur) : posé par un clic dans la moitié BASSE d'une piste, dans la règle ou le vide ; retiré par un clic dans la moitié HAUTE.
 // Sans base, la lecture reprend là où elle s'est arrêtée (Espace ne revient plus en arrière).
 function clearPlayBase() {
+    state.userBaseSec = null;
     if (state.baseCleared) return;
     const had = state.playOrigin != null;
     state.baseCleared = true; state.playOrigin = null;
@@ -3460,6 +3464,7 @@ function seekPlayhead(sec) {
     if (state.recording) { flash('Arrête l\'enregistrement avant de déplacer le curseur'); return; }
     state.playhead = Math.max(0, sec);
     state.baseCleared = false;
+    state.userBaseSec = state.playhead;
     if (state.playing) state.playOrigin = state.playhead;
     updatePlayhead(); updateChrono();
     // Le curseur doit rester visible même à l'arrêt
@@ -3550,10 +3555,14 @@ function toggleMixer() {
 function trimLeft()  { trimAtPlayhead('left');  }
 function trimRight() { trimAtPlayhead('right'); }
 
+// Point de coupe : le curseur de base (point de départ posé) pendant la lecture, sinon la tête de lecture
+function cutPointSec() {
+    return (state.playing && !state.baseCleared && state.playOrigin != null) ? state.playOrigin : state.playhead;
+}
 function trimAtPlayhead(side) {
     const t = state.project.tracks[state.selectedTrack];
     if (!t) return;
-    const ph = state.playhead;
+    const ph = cutPointSec();
     const clips = t.clips || [];
     let touched = 0;
 
@@ -7017,8 +7026,8 @@ function openTimelineEmptyContextMenu(x, y, trackIdx, atSec) {
         (['keys', 'drums'].includes(state.project.tracks[trackIdx]?.type)) ? { label: '⬇ Exporter cette piste en .mid', action: () => exportMidiTrack(trackIdx) } : null,
         { label: 'Poser un marqueur ici', action: () => addMarker(atSec) },
         { sep: true },
-        { label: 'Couper à gauche du curseur (S)', action: () => { state.playhead = atSec; updatePlayhead(); trimLeft(); }},
-        { label: 'Couper à droite du curseur (D)', action: () => { state.playhead = atSec; updatePlayhead(); trimRight(); }},
+        { label: 'Couper à gauche du curseur (D)', action: () => { state.playhead = atSec; updatePlayhead(); trimLeft(); }},
+        { label: 'Couper à droite du curseur (F)', action: () => { state.playhead = atSec; updatePlayhead(); trimRight(); }},
         { sep: true },
         { label: 'Ajouter une piste audio', action: () => _doAddTrack('audio') },
         { label: 'Ajouter une piste instrument (piano roll)', action: () => _doAddTrack('keys') },
@@ -7666,6 +7675,7 @@ function bindTimelineClick() {
         state.baseCleared = false;   // placer le curseur = poser un point de départ
         // Le curseur se cale sur la grille comme les clips (Shift = placement libre)
         state.playhead = snapPlayheadToEdges(snapTime(eventToTime(e), e.shiftKey), e.shiftKey);
+        state.userBaseSec = state.playhead;
         if (state.playing) {
             state.playOrigin = state.playhead;
             state.startTime = performance.now() - state.playhead * 1000;
@@ -7761,7 +7771,7 @@ function bindTimelineClick() {
         const relY = e.clientY - rect.top;
         const edgeZone = 7;   // même largeur que le clic (étirer la région)
         // Zone fade = top 45% du clip, 30% de la largeur ou 36px min
-        const fadeZone = Math.max(36, rect.width * 0.3);
+        const fadeZone = Math.min(32, rect.width * 0.3);   // petite zone fixe en pixels (comme .clip-fade-zone en CSS)
         const inTopHalf = relY < rect.height * 0.45;
 
         // Bords = étirer ; coins hauts = fondu ; poignée bas-droite = répéter
@@ -7968,7 +7978,7 @@ function bindTimelineClick() {
                     if (relX > rect.width - edge) return startClipTrim(e, clipEl, trackIdx, _ci, 'right');
                     // Fondu (zone haute) : il ne démarre que si on glisse. Un simple clic choisit la région, comme ailleurs.
                     const fadeZoneEl = e.target.closest('.clip-fade-zone');
-                    const fadeZone = Math.max(36, rect.width * 0.3);
+                    const fadeZone = Math.min(32, rect.width * 0.3);   // petite zone fixe en pixels (comme .clip-fade-zone en CSS)
                     const inTopHalf = relY < rect.height * 0.45;
                     const fadeDir = fadeZoneEl ? fadeZoneEl.dataset.fade
                         : (inTopHalf && relX < fadeZone ? 'in' : (inTopHalf && relX > rect.width - fadeZone ? 'out' : null));
@@ -8596,7 +8606,7 @@ function startLoopSelection(startEvent, eventToTime) {
             tipOnce('pulse_tip_loop', 'Boucle allumée — clique dessus pour l\'éteindre (touche C), tire ses bords pour l\'ajuster');
             // La lecture part du début de la boucle, sauf si le curseur (le point de départ) est déjà posé à l'intérieur
             const la = Math.min(state.loop.start, state.loop.end), lb = Math.max(state.loop.start, state.loop.end);
-            if (!(state.playhead >= la && state.playhead < lb) && !state.playing) { state.playhead = la; state.baseCleared = false; updatePlayhead(); updateChrono(); }
+            if (!(state.playhead >= la && state.playhead < lb) && !state.playing) { state.playhead = la; state.baseCleared = false; state.userBaseSec = null; updatePlayhead(); updateChrono(); }
         }
         renderLoopOverlay();
         updateLoopButton();
@@ -9789,10 +9799,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (e.code === 'Enter' || e.code === 'NumpadEnter')  { e.preventDefault(); rewind(); return; }
         if (k === 'r') { toggleRec(); return; }
 
-        // Édition (coupes rapides) : S efface ce qui est à gauche du curseur, D ce qui est à droite (Z / E = zoom, tout sous la main gauche)
+        // Édition (coupes rapides) : D efface ce qui est à gauche du curseur de base, F ce qui est à droite (Z / E = zoom : tout reste près de R)
         if (k === 'q' && !mod) { e.preventDefault(); trimLeft();  return; }
-        if (k === 's' && !shift && !mod) { e.preventDefault(); trimLeft(); return; }
-        if (k === 'd' && !shift && !mod && !e.altKey) { e.preventDefault(); trimRight(); return; }
+        if (k === 'd' && !shift && !mod && !e.altKey) { e.preventDefault(); trimLeft(); return; }
+        if (k === 'f' && !shift && !mod && !e.altKey) { e.preventDefault(); trimRight(); return; }
         // ⌘X / Ctrl+X : couper la région (la copier et l'effacer d'un coup), main droite restée sur la souris
         // Une plage glissée part comme avec Suppr (les bords des régions sont coupés, sur toutes les pistes de la plage)
         if (mod && k === 'x' && !shift) { e.preventDefault(); if (!state.selectedClip && state.selection) deleteSelection(); else cutSelectedClip(); return; }
@@ -9855,8 +9865,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (e.altKey && e.code === 'ArrowLeft'  && !mod) { e.preventDefault(); navigateMarker(-1); return; }
         if (e.altKey && e.code === 'ArrowRight' && !mod) { e.preventDefault(); navigateMarker(+1); return; }
 
-        // F = Zoom sur le clip sélectionné (Logic style)
-        if (k === 'f' && !mod) {
+        // ⇧F = Zoom sur le clip sélectionné (F seul = couper à droite)
+        if (k === 'f' && shift && !mod) {
             e.preventDefault();
             if (state.selectedClip) {
                 const { trackIdx, clipIdx } = state.selectedClip;

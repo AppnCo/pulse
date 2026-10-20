@@ -102,7 +102,7 @@ const exact = {
   'Gain du clip': 'Clip gain',
   '🎹 Créer une région ici (piano roll / pas)': '🎹 Create a region here (piano roll / steps)',
   '⬆ Importer un fichier .mid ici…': '⬆ Import a .mid file here…', '⬇ Exporter cette piste en .mid': '⬇ Export this track as .mid',
-  'Poser un marqueur ici': 'Add a marker here', 'Couper à gauche du curseur (S)': 'Cut to the left of the cursor (S)', 'Couper à droite du curseur (D)': 'Cut to the right of the cursor (D)',
+  'Poser un marqueur ici': 'Add a marker here', 'Couper à gauche du curseur (D)': 'Cut to the left of the cursor (D)', 'Couper à droite du curseur (F)': 'Cut to the right of the cursor (F)',
   'Ajouter une piste audio': 'Add an audio track', 'Ajouter une piste instrument (piano roll)': 'Add an instrument track (piano roll)', 'Ajouter une piste batterie (séquenceur)': 'Add a drum track (sequencer)',
   'la région': 'the region', 'la piste': 'the track', 'Couleur de la piste': 'Track color',
   'Désactiver Mute': 'Turn Mute off', 'Désactiver Solo': 'Turn Solo off',

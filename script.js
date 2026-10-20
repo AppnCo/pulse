@@ -119,9 +119,9 @@ async function startFromInstru(file) {
             bpm: 120,
             buses: [],
             tracks: [
+                { name: 'Instru', type: 'audio', preset: 'instru', color: '#60A5FA', output: 'master' },
                 { name: 'Voix', type: 'audio', armed: true, color: '#A855F7', output: 'master',
-                  effects: ['eq', 'comp'], sound: { preset: 'lead', tone: 0, hold: 35, drive: 0 } },
-                { name: 'Instru', type: 'audio', preset: 'instru', color: '#60A5FA', output: 'master' }
+                  effects: ['eq', 'comp'], sound: { preset: 'lead', tone: 0, hold: 35, drive: 0 } }
             ],
             pendingInstru: { key, name: file.name, type: file.type || 'audio/mpeg' },
             createdAt: Date.now(),
@@ -194,8 +194,8 @@ const TEMPLATES = [
         icon: 'mic',
         bpm: 120,
         tracks: [
-            { name: 'Voix',   type: 'audio', preset: 'voix-lead', color: '#A855F7', effects: ['eq', 'comp', 'reverb'], output: 'master' },
-            { name: 'Instru', type: 'audio', preset: 'instru',    color: '#60A5FA', output: 'master' }
+            { name: 'Instru', type: 'audio', preset: 'instru',    color: '#60A5FA', output: 'master' },
+            { name: 'Voix',   type: 'audio', preset: 'voix-lead', color: '#A855F7', effects: ['eq', 'comp', 'reverb'], output: 'master' }
         ]
     },
     {
