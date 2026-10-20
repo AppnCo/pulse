@@ -1103,6 +1103,11 @@ function renderInstruDropzone(trackIdx) {
                     <input type="url" class="dz-url-input" placeholder="https://youtube.com/watch?v=…">
                     <button class="dz-url-btn">Importer</button>
                 </div>
+                <div class="dz-url-wrap dz-url-convert">
+                    <span class="dz-url-or">ou garder le fichier :</span>
+                    <button class="dz-url-btn dz-url-dl" data-fmt="mp3">Convertir en MP3</button>
+                    <button class="dz-url-btn dz-url-dl" data-fmt="wav">Convertir en WAV</button>
+                </div>
                 <div class="dz-url-note">
                     <span>Usage personnel : vérifie que tu as le droit d'utiliser cette instru (licence du beatmaker, crédit « prod by »).</span>
                     <span>La 1re fois, Pulse télécharge son outil d'import (quelques secondes).</span>
@@ -1166,6 +1171,13 @@ function bindDropzones() {
             if (!/^https:\/\/(www\.|m\.|music\.|on\.)?(youtube\.com|youtu\.be|soundcloud\.com)\//i.test(url)) { flash('Colle un lien YouTube ou SoundCloud (qui commence par https://)'); return; }
             importFromUrl(url, trackIdx, urlBtn);
         });
+        dz.querySelectorAll('.dz-url-dl').forEach(b => b.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const url = urlInput.value.trim();
+            if (!url) { flash('Colle d\'abord un lien YouTube ou SoundCloud dans la case'); return; }
+            if (!/^https:\/\/(www\.|m\.|music\.|on\.)?(youtube\.com|youtu\.be|soundcloud\.com)\//i.test(url)) { flash('Colle un lien YouTube ou SoundCloud (qui commence par https://)'); return; }
+            convertFromUrl(url, b.dataset.fmt, b);
+        }));
         urlInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') { e.preventDefault(); urlBtn.click(); }
             e.stopPropagation();
@@ -1187,12 +1199,39 @@ async function importFromUrl(url, trackIdx, btn) {
         const bytes = await inv('read_import_file', { path });
         const name = String(path).split(/[\\/]/).pop() || 'instru.m4a';
         const ext = (name.split('.').pop() || '').toLowerCase();
-        const file = new File([bytes], name.replace(/_/g, ' '), { type: ext === 'm4a' || ext === 'mp4' ? 'audio/mp4' : ext === 'webm' ? 'audio/webm' : 'audio/mpeg' });
+        const file = new File([bytes], name.replace(/_/g, ' '), { type: ext === 'm4a' || ext === 'mp4' ? 'audio/mp4' : ext === 'webm' ? 'audio/webm' : ext === 'wav' ? 'audio/wav' : 'audio/mpeg' });
         await importAudioFile(file, trackIdx);
     } catch (err) {
         flash('Import impossible : ' + (err && err.message ? err.message : err));
     } finally {
         if (btn) { btn.disabled = false; btn.textContent = 'Importer'; }
+    }
+}
+
+// Lien → fichier MP3 ou WAV rangé dans Téléchargements (sans toucher au projet)
+async function convertFromUrl(url, fmt, btn) {
+    const inv = window.__TAURI__.core.invoke;
+    const label = btn ? btn.textContent : '';
+    document.querySelectorAll('.dz-url-btn').forEach(b => { b.disabled = true; });
+    if (btn) btn.textContent = 'Conversion…';
+    flash(`Téléchargement et conversion en ${fmt.toUpperCase()}… (la 1re fois, Pulse installe aussi son outil d'import)`);
+    try {
+        if (fmt === 'mp3' && !window.lamejs) throw new Error('le MP3 n\'est pas prêt — recharge la page, ou choisis WAV');
+        const path = await inv('import_url', { url });
+        const bytes = await inv('read_import_file', { path });
+        await PulseAudio.init();
+        const buf = await PulseAudio.getContext().decodeAudioData(bytes.slice(0));
+        const wavBlob = PulseAudio.audioBufferToWav(buf);
+        const outBlob = fmt === 'mp3' ? await encodeToMp3(wavBlob, 320) : wavBlob;
+        const base = (String(path).split(/[\\/]/).pop() || 'son').replace(/\.[^.]+$/, '').replace(/_/g, ' ');
+        const data = new Uint8Array(await outBlob.arrayBuffer());
+        await inv('save_download', data, { headers: { name: encodeURIComponent(`${base}.${fmt}`) } });
+        flash(`✓ ${base}.${fmt} rangé dans ton dossier Téléchargements`);
+    } catch (err) {
+        flash('Conversion impossible : ' + (err && err.message ? err.message : err));
+    } finally {
+        document.querySelectorAll('.dz-url-btn').forEach(b => { b.disabled = false; });
+        if (btn) btn.textContent = label;
     }
 }
 

@@ -2953,3 +2953,6 @@ body.is-splitting, body.is-splitting * { cursor: col-resize !important; }
 .set-lang { display: flex; gap: 8px; margin: 4px 0 10px; }
 .set-lang-btn { background: var(--bg-3); color: var(--text-2); border: 1px solid var(--border); border-radius: 8px; padding: 6px 14px; font: inherit; font-size: 13px; cursor: pointer; }
 .set-lang-btn.on { background: var(--violet-2, #7C3AED); color: #fff; border-color: transparent; }
+.dz-url-convert { margin-top: 8px; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dz-url-or { font-size: 12px; opacity: .7; }
+.dz-url-dl { background: transparent; border: 1px solid currentColor; color: inherit; opacity: .9; }
