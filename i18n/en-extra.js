@@ -4,6 +4,7 @@ const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const P = (fr, en) => [fr.split('§').map(esc).join('(.+?)'), en];
 
 const exact = {
+  'Compter mon installation (anonyme)': 'Count my install (anonymous)', 'Envoie un numéro tiré au hasard, la version et ton système, jamais tes projets ni tes sons. Ça nous dit seulement combien de personnes utilisent Pulse.': 'Sends a random number, the version and your system, never your projects or sounds. It only tells us how many people use Pulse.', 'Comptage anonyme activé': 'Anonymous counting on', 'Comptage anonyme désactivé': 'Anonymous counting off',
   'Ajouter un effet sur ce groupe': 'Add an effect to this group', 'Ajouter un effet sur cette piste': 'Add an effect to this track',
   // groupes et bus
   'Dupliquer le groupe (pour un feat, par exemple)': 'Duplicate the group (for a feature, for example)',

@@ -1208,7 +1208,7 @@ window.PulseAudio = (function() {
     const liveBusNodes = new Map();
     const liveBusSpec = new Map();
 
-    // ===================== EFFETS INTÉGRÉS (presets Ridwane) =====================
+    // ===================== EFFETS INTÉGRÉS (presets Pulse) =====================
     // Crée une chaîne EQ -> Comp -> Reverb selon les flags du track.effects
     // Retourne { input, output } pour brancher avant le gain de piste.
     function createEffectsChain(actx, enabled = [], params = {}, bpm = 120, ceiling = ceilingDb) {

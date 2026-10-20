@@ -2757,6 +2757,7 @@ function openSettings() {
             ${toggle('setReturn', returnOnStop(), 'Espace : pause, puis relance depuis le départ', 'Un premier Espace met en pause là où tu en es, le deuxième relance depuis l\'endroit où tu avais posé le curseur (la petite marque pointillée). Décoché : Espace reprend toujours là où le son s\'est arrêté.')}
             ${toggle('setShowAll', showAll(), 'Afficher les réglages avancés de la sortie', 'Montre aussi les bus de sortie, pour les régler ou dessiner leur volume. Pas besoin pour enregistrer.')}
 
+            ${window.PulseCompteur && PulseCompteur.configured ? toggle('setCompteur', PulseCompteur.enabled(), 'Compter mon installation (anonyme)', 'Envoie un numéro tiré au hasard, la version et ton système, jamais tes projets ni tes sons. Ça nous dit seulement combien de personnes utilisent Pulse.') : ''}
             <h4 class="set-title">En cas de problème</h4>
             <div class="set-row">
                 <span>Si Pulse redémarre tout seul ou affiche une erreur, ça s'écrit ici <em>${diagLog().length ? esc(diagLog().slice(-4).map(d => `${d.t.slice(5, 16).replace('T', ' ')} — ${d.kind} : ${d.detail}`).join(' | ')) : '(rien pour l\'instant : tout va bien)'}</em></span>
@@ -2823,6 +2824,8 @@ function openSettings() {
         try { localStorage.setItem('pulse_return_on_stop', e.target.checked ? '1' : '0'); } catch {}
         flash(e.target.checked ? 'Espace : pause là où tu en es, puis relance depuis le départ' : 'Espace reprend toujours là où le son s\'est arrêté');
     });
+    const cpt = modal.querySelector('#setCompteur');
+    if (cpt) cpt.addEventListener('change', (e) => { PulseCompteur.setEnabled(e.target.checked); flash(e.target.checked ? 'Comptage anonyme activé' : 'Comptage anonyme désactivé'); });
     const dc = modal.querySelector('#setDiagCopy');
     if (dc) dc.addEventListener('click', async () => {
         const txt = diagLog().map(d => `${d.t} ${d.kind} : ${d.detail}`).join('\n') || 'Rien dans le journal';
@@ -5243,7 +5246,7 @@ async function removeTune(clip, noUndo = false) {
     flash('Auto-Tune retiré — tu retrouves ta voix d\'origine');
 }
 
-// === Son de la piste : presets Ridwane + 3 curseurs simples (PRESETS.md) ===
+// === Son de la piste : presets Pulse + 3 curseurs simples (PRESETS.md) ===
 const SOUND_PRESETS = {
     lead:     { label: 'Voix lead', eq: { hpf: 80,  midGain: -2, presence: 2, air: 1 },   hold: 35, drive: 0,  space: 0,  deess: 30 },
     doublage: { label: 'Doublage',  eq: { hpf: 120, midGain: -2, presence: 1, air: 0 },   hold: 40, drive: 0,  space: 0,  deess: 40 },
