@@ -1,0 +1,21 @@
+import { boot, instru, RAP, mouse, pos } from './qa-lib.mjs';
+export default async (c) => {
+  const { ev, sleep, send, shot } = c;
+  await boot(c, RAP);
+  const Ms = mouse(send);
+  await instru(ev, 8, 0, 0); await sleep(300);
+  const S = async (name, w = null) => { await shot(`/private/tmp/claude-501/qa/pan-${name}.jpg`); };
+  await ev(`openSettings()`); await sleep(500); await S('reglages');
+  console.log('réglages: scroll', await ev(`(()=>{const m=document.querySelector('.settings-modal, .modal, #settingsModal'); if(!m) return 'none'; return m.className+' '+m.scrollHeight+'/'+m.clientHeight})()`));
+  await ev(`document.querySelectorAll('.modal-overlay,#settingsModal,.settings-overlay').forEach(e=>e.remove())`);
+  await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }); await sleep(200);
+  await ev(`exportProject()`); await sleep(500); await S('export');
+  await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }); await sleep(200);
+  await ev(`closeExportModal && closeExportModal()`);
+  await ev(`openCheatSheet()`); await sleep(500); await S('raccourcis');
+  await ev(`closeCheatSheet()`); await sleep(200);
+  await ev(`setLyricsOpen(true)`); await sleep(500); await S('texte');
+  await ev(`setLyricsOpen(false)`); await sleep(200);
+  await ev(`openTunePanel(2,-1,600,300,true)`); await sleep(600); await S('tune');
+  console.log('tune panel text:', await ev(`document.querySelector('.tune-panel, .fx-panel')?.innerText.slice(0,400)`));
+};

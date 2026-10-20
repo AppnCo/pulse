@@ -1,0 +1,25 @@
+export default async ({ ev, nav, send, sleep }) => {
+  await send('Network.enable'); await send('Network.setCacheDisabled', { cacheDisabled: true });
+  await nav('http://localhost:8765/index.html');
+  await ev(`localStorage.clear(); localStorage.setItem('pulse_onboarded_v1','1'); localStorage.setItem('pulse_tip_headphones','1'); localStorage.setItem('pulse_current_project', JSON.stringify({id:'cp1',name:'Capture',bpm:120,buses:[],tracks:[{name:'Voix',type:'audio',armed:true,color:'#A855F7'}]}))`);
+  await nav('http://localhost:8765/studio.html');
+  await ev(`(async()=>{ const ctx=await PulseAudio.init(); const md=ctx.createMediaStreamDestination(); const o=ctx.createOscillator(); o.frequency.value=220; const g=ctx.createGain(); g.gain.value=0.2; o.connect(g); g.connect(md); o.start(); navigator.mediaDevices.getUserMedia=async()=>md.stream; navigator.permissions.query=async()=>({state:'granted'}); PulseAudio.setCountIn(false); })()`);
+  const R = async (label, code) => console.log(label + ':', await ev(`(async()=>{${code}})()`));
+  const dump = `const t=state.project.tracks[0]; const f=c=>(c.recording?'(en attente)':takeLetter(c.take))+'['+c.start.toFixed(2)+'→'+(c.start+c.duration).toFixed(2)+' off'+(c.offset||0).toFixed(2)+' src'+PulseAudio.getBufferDuration(c.id).toFixed(2)+']'; return 'devant: '+t.clips.slice().sort((a,b)=>a.start-b.start).map(f).join(' ')+' | rangé: '+(t.takes||[]).map(f).join(' ')+' | lecture:'+state.playing+' rec:'+state.recording+' capture:'+PulseAudio.isCapturing();`;
+  await ev(`toggleRec()`); await sleep(1700);
+  await ev(`toggleRec()`); await sleep(300);
+  await R('1. R puis R (sortie)', dump);
+  await sleep(700); await ev(`toggleRec()`); await sleep(1000); await ev(`toggleRec()`); await sleep(600);
+  await R('2. 2e entrée/sortie même passage', dump);
+  await ev(`togglePlay()`); await sleep(500);
+  await R('3. Espace (pause)', dump);
+  await ev(`(async()=>{ state.playhead=0; updatePlayhead(); await togglePlay(); })()`); await sleep(1200);
+  await R('4. lecture seule', `return 'capture arrière-plan:'+PulseAudio.isCapturing()+' cap:'+!!state._cap`);
+  await ev(`toggleRec()`); await sleep(1000); await ev(`toggleRec()`); await sleep(1000); await ev(`togglePlay()`); await sleep(500);
+  await R('5. Espace → R → R → Espace', dump);
+  await ev(`(async()=>{ state.playhead=0; updatePlayhead(); await togglePlay(); })()`); await sleep(900); await ev(`togglePlay()`); await sleep(400);
+  await R('6. simple écoute, rien gardé', `return state.project.tracks[0].clips.length+' clips devant, capture:'+PulseAudio.isCapturing()+' cap:'+!!state._cap`);
+  await R('7. étirer le bord gauche', `const t=state.project.tracks[0]; const c=t.clips.find(c=>(c.offset||0)>0.5); return c ? 'clip '+takeLetter(c.take)+' : '+(c.offset).toFixed(2)+' s récupérables avant, '+(PulseAudio.getBufferDuration(c.id)-c.offset-c.duration).toFixed(2)+' s après' : 'aucun'`);
+  await ev(`state.selection={start:4.5,end:5.5}; toggleRec()`); await sleep(6200);
+  await R('8. punch zone', dump);
+};

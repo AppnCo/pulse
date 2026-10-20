@@ -1,0 +1,25 @@
+<!doctype html><meta charset="utf-8"><title>selftest</title><body style="margin:0;background:#111;color:#0f0;font:18px monospace"><pre id="o" style="position:fixed;z-index:9;top:60px;left:10px;background:#000c;padding:10px"></pre>
+<iframe id="f" src="studio.html" style="width:100vw;height:100vh;border:0"></iframe>
+<script>
+const o=document.getElementById('o'); const log=t=>{ o.textContent+=t+'\n'; try{ window.__TAURI__.core.invoke('test_log',{text:t}); }catch{} };
+const f=document.getElementById('f'); const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+(async()=>{ try{
+  await sleep(2500); const w=f.contentWindow; w.__TAURI__=window.__TAURI__;
+  w.localStorage.setItem('pulse_native_play','1');
+  log('PulseNative.available='+w.PulseNative.available+' enabled='+w.PulseNative.isEnabled());
+  // un projet avec un clip de 4 s
+  const ST=w.eval('state'); log('init…'); const ctx=await w.PulseAudio.init(); log('init ok'); const sr=48000,b=ctx.createBuffer(1,sr*4,sr); const d=b.getChannelData(0); for(let i=0;i<d.length;i++)d[i]=Math.sin(i/sr*6.2832*330)*0.3;
+  w.PulseAudio.registerBuffer('stest',b);
+  log('save…'); await w.PulsePersist.saveBlob('stest', new Blob([w.PulseAudio.audioBufferToWav(b)],{type:'audio/wav'}),{kind:'import'});
+  ST.project.tracks[0].clips=[{id:'stest',start:0,duration:4,offset:0}];
+  log('saved'); ST.playhead=1;
+  await w.togglePlay();
+  await sleep(1200);
+  log('playing='+ST.playing+' isNative='+w.PulseAudio.isNative()+' pos='+w.PulseAudio.getPlaybackPosition().toFixed(2)+' (≈2.2 attendu)');
+  log('micro: secureContext='+w.isSecureContext+' mediaDevices='+(typeof w.navigator.mediaDevices)+' getUserMedia='+(w.navigator.mediaDevices&&typeof w.navigator.mediaDevices.getUserMedia)+' appareils='+(w.navigator.mediaDevices?(await w.navigator.mediaDevices.enumerateDevices()).map(d=>d.kind).join(','):'?'));
+  { const ports = await window.__TAURI__.core.invoke('midi_ports'); const opened = await window.__TAURI__.core.invoke('midi_start'); log('midi: ports='+JSON.stringify(ports)+' ouverts='+JSON.stringify(opened)); }
+  log('rust: '+JSON.stringify(await w.__TAURI__.core.invoke('native_info')));
+  await w.togglePlay(); await sleep(300);
+  log('après stop: rust playing='+(await w.__TAURI__.core.invoke('native_info')).playing+' isNative='+w.PulseAudio.isNative()); log('FIN'); window.__TAURI__.core.invoke('test_exit');
+ }catch(e){ log('ERREUR '+String(e)+' | '+(e&&e.name)+' | '+(e&&e.message)+' | '+JSON.stringify(e)); } })();
+</script>

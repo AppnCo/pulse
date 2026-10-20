@@ -1,0 +1,44 @@
+// Petite fenêtre 1000x640 : débordements / textes coupés dans plusieurs états
+import { boot, RAP, instru, J, key, pos, mouse, CMD, INVARIANTS } from './qa-lib.mjs';
+export default async (c) => {
+  const { ev, sleep, send, shot } = c; const K = key(send); const Mo = mouse(send);
+  const W = +process.env.QA_W || 1000, H = +process.env.QA_H || 640;
+  const proj = JSON.parse(JSON.stringify(RAP));
+  proj.tracks.push({ name: 'Piano', type: 'keys', midiInst: 'piano', color: '#22D3EE', output: 'master', clips: [] }, { name: 'Batterie', type: 'drums', midiInst: 'drums', color: '#F59E0B', output: 'master', clips: [] });
+  proj.lyrics = 'Premier couplet qui est un peu long pour voir comment ça se comporte dans le panneau\nDeuxième ligne';
+  await boot(c, proj, { w: W, h: H });
+  await instru(ev, 8, 0, 0); await sleep(400);
+  const scan = `(()=>{ const out=[]; const vw=innerWidth, vh=innerHeight;
+    const vis=(e)=>{ const r=e.getBoundingClientRect(); if(r.width<2||r.height<2) return null; const cs=getComputedStyle(e); if(cs.visibility==='hidden'||cs.display==='none'||+cs.opacity===0) return null; return r; };
+    document.querySelectorAll('body *').forEach(e=>{ if(e.closest('svg,canvas,.timeline,#timelineTracks,.clip,.ruler')) return; const r=vis(e); if(!r) return;
+      const txt=(e.childNodes.length&&[...e.childNodes].some(n=>n.nodeType===3&&n.textContent.trim()))?e.textContent.trim():null;
+      const cs=getComputedStyle(e);
+      if(txt){ const clip=e.scrollWidth>e.clientWidth+1 && (cs.overflow!=='visible'||cs.overflowX!=='visible'||cs.textOverflow==='ellipsis');
+        if(clip) out.push('COUPÉ '+(e.className||e.tagName)+' « '+txt.slice(0,40)+' » '+e.clientWidth+'<'+e.scrollWidth);
+        if(r.right>vw+1||r.left<-1) out.push('HORS-ÉCRAN '+(e.className||e.tagName)+' « '+txt.slice(0,30)+' » r='+Math.round(r.right)+' b='+Math.round(r.bottom)); }
+      else if((e.tagName==='BUTTON'||e.tagName==='INPUT'||e.tagName==='SELECT')&&(r.right>vw+1||r.left<-1)) out.push('HORS-ÉCRAN '+e.tagName+'.'+e.className+' '+(e.id||'')+' r='+Math.round(r.right)+' b='+Math.round(r.bottom));
+    });
+    return [...new Set(out)].slice(0,40); })()`;
+  const step = async (label, code, wait = 500, img = true) => { if (code) await ev(code); await sleep(wait);
+    const o = await ev(`JSON.stringify(${scan})`); console.log('--- ' + label + ' (' + W + 'x' + H + ')'); JSON.parse(o).forEach(l => console.log('   ' + l));
+    if (img) await shot(`/private/tmp/claude-501/qa/petit-${W}-${label.replace(/\W+/g, '_')}.jpg`); };
+  await step('base', null);
+  await step('mixeur', `toggleMixer()`);
+  await step('mixeur+inspecteur', `setInspectorOpen(true)`);
+  await step('texte', `toggleMixer(); setLyricsOpen(true)`);
+  await step('texte+inspecteur', null);
+  await step('suivre', `document.getElementById('lyricsFollow').click()`);
+  await step('export', `openExportModal()`);
+  await step('export-ferme', `closeExportModal(); setLyricsOpen(false)`, 400, false);
+  await step('editeur-piano', `selectTrack(5); createMidiClip(5,0,true)`, 900);
+  await step('editeur-piano-options', `document.querySelector('.me-more').click()`, 300);
+  await step('editeur-batterie', `PulsePianoRoll.close(); createMidiClip(6,0,true)`, 900);
+  await step('reglages', `PulsePianoRoll.close(); openSettings()`, 500);
+  await ev(`document.querySelectorAll('.modal-backdrop,.settings-modal,#settingsModal').forEach(e=>e.remove())`);
+  await step('menu-piste', `(()=>{ const t=state.project.tracks[1]; openTrackContextMenu(300, 560, 1, t) })()`, 300);
+  await step('panneau-eq', `closeAllMenus(); openEffectPanel(2,'eq', document.body)`, 500);
+  await step('panneau-comp', `document.querySelectorAll('.fx-panel').forEach(p=>p.remove()); openEffectPanel(2,'comp', document.body)`, 500);
+  await step('panneau-son', `document.querySelectorAll('.fx-panel').forEach(p=>p.remove()); openSoundPanel(2, document.querySelector('.track-item[data-i="2"]'))`, 500);
+  await step('panneau-tune', `document.querySelectorAll('.fx-panel').forEach(p=>p.remove()); openTunePanel(2,-1,300,200,true)`, 500);
+  await step('aide', `document.querySelectorAll('.fx-panel').forEach(p=>p.remove()); openCheatSheet()`, 500);
+};

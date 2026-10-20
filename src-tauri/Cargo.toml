@@ -1,0 +1,15 @@
+[package]
+name = "pulse-app"
+version = "0.1.1"
+edition = "2021"
+license = "GPL-3.0-or-later"
+description = "Pulse : le DAW simple (coque de bureau Tauri)"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+pulse-engine = { path = "../engine" }
+midir = "0.10"

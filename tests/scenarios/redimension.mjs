@@ -1,0 +1,34 @@
+// Hauteur par piste, largeur du panneau des pistes, double-clic = valeur d'origine
+export default async ({ ev, nav, send, sleep }) => {
+  await send('Network.enable'); await send('Network.setCacheDisabled', { cacheDisabled: true });
+  await nav('http://localhost:8765/index.html');
+  await ev(`localStorage.clear(); localStorage.setItem('pulse_onboarded_v1','1'); localStorage.setItem('pulse_tip_headphones','1'); localStorage.setItem('pulse_current_project', JSON.stringify({id:'rd1',name:'Taille',bpm:120,buses:[],tracks:[{name:'Voix',type:'audio',armed:true,color:'#A855F7'},{name:'Back',type:'audio',color:'#22D3EE'}]}))`);
+  await nav('http://localhost:8765/studio.html');
+  await sleep(600);
+  const R = async (label, code) => console.log(label + ':', await ev(`(async()=>{${code}})()`));
+  const me = (t, x, y, extra = '') => `new MouseEvent('${t}',{bubbles:true,clientX:${x},clientY:${y},button:0${extra}})`;
+  const H = `(i)=>[document.querySelector('.track-item[data-i="'+i+'"]').getBoundingClientRect().height, document.querySelector('.timeline-track[data-i="'+i+'"]').getBoundingClientRect().height]`;
+  await R('hauteurs de départ', `return JSON.stringify([(${H})(0),(${H})(1)])`);
+  await R('tirer le bord de la piste 1 de +40 px', `const h=document.querySelector('.track-resize[data-i="0"]'); h.dispatchEvent(${me('mousedown',100,100)});
+    document.dispatchEvent(${me('mousemove',100,140)}); document.dispatchEvent(${me('mouseup',100,140)}); await new Promise(r=>setTimeout(r,100));
+    return JSON.stringify([(${H})(0),(${H})(1)])+' height='+state.project.tracks[0].height+' piste2='+state.project.tracks[1].height`);
+  await R('double-clic = taille normale', `document.querySelector('.track-resize[data-i="0"]').dispatchEvent(new MouseEvent('dblclick',{bubbles:true})); await new Promise(r=>setTimeout(r,100)); return JSON.stringify((${H})(0))+' height='+state.project.tracks[0].height`);
+  await R('Alt = toutes les pistes', `const h=document.querySelector('.track-resize[data-i="0"]'); h.dispatchEvent(${me('mousedown',100,100,',altKey:true')});
+    document.dispatchEvent(${me('mousemove',100,130,',altKey:true')}); document.dispatchEvent(${me('mouseup',100,130)}); await new Promise(r=>setTimeout(r,100));
+    return JSON.stringify([(${H})(0),(${H})(1)])+' globale='+state.trackHeight`);
+  await R('largeur du panneau', `const p=document.querySelector('.tracks-panel'); const w0=p.offsetWidth; const b=document.getElementById('panelResizer'); const x=p.getBoundingClientRect().right;
+    b.dispatchEvent(${me('mousedown','x','50')}); document.dispatchEvent(${me('mousemove','x+80','50')}); document.dispatchEvent(${me('mouseup','x+80','50')}); await new Promise(r=>setTimeout(r,100));
+    const w1=p.offsetWidth; b.dispatchEvent(new MouseEvent('dblclick',{bubbles:true})); await new Promise(r=>setTimeout(r,100));
+    return w0+' → '+w1+' → '+p.offsetWidth+' stocké='+localStorage.getItem('pulse_tracks_w')`);
+  await R('timeline suit le panneau', `const p=document.querySelector('.tracks-panel'), t=document.querySelector('.timeline'); return Math.abs(p.getBoundingClientRect().right - t.getBoundingClientRect().left)<=2`);
+  await R('⌘ + clic sur un fader = valeur d\'origine', `document.getElementById('btnMixer')?.click(); await new Promise(r=>setTimeout(r,400));
+    const f=[...document.querySelectorAll('.mixer-strips .strip[data-kind="track"] input.fader')][0]; if(!f) return 'pas de fader'; f.value=30; f.dispatchEvent(new Event('input',{bubbles:true}));
+    const a=state.project.tracks[0].volume; f.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,metaKey:true,button:0})); await new Promise(r=>setTimeout(r,100));
+    return 'avant='+a+' après='+state.project.tracks[0].volume+' fader='+f.value`);
+  await R('double-clic = on écrit -6 dB', `const f=[...document.querySelectorAll('.mixer-strips .strip[data-kind="track"] input.fader')][0];
+    f.dispatchEvent(new MouseEvent('dblclick',{bubbles:true})); await new Promise(r=>setTimeout(r,100));
+    const inp=document.querySelector('.value-entry'); if(!inp) return 'FAIL pas de case'; inp.value='-6'; inp.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true})); await new Promise(r=>setTimeout(r,100));
+    return 'volume='+state.project.tracks[0].volume+' (attendu 50) case fermée='+!document.querySelector('.value-entry')`);
+  await R('double-clic sur le pan : g15', `const pan=document.querySelector('.insp-pan-input, .bus-pan'); if(!pan) return 'pas de pan'; pan.dispatchEvent(new MouseEvent('dblclick',{bubbles:true})); await new Promise(r=>setTimeout(r,100));
+    const inp=document.querySelector('.value-entry'); inp.value='g15'; inp.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true})); await new Promise(r=>setTimeout(r,100)); return 'pan='+pan.value+' (attendu -15)'`);
+};
