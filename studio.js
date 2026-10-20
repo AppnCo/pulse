@@ -1085,7 +1085,7 @@ function renderInstruDropzone(trackIdx) {
                     <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                     Fichier local
                 </button>
-                ${window.PULSE_URL_IMPORT ? `                <button class="dz-tab" data-tab="url">
+                ${urlImportAvailable() ? `                <button class="dz-tab" data-tab="url">
                     <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
                     Lien YouTube / SoundCloud
                 </button>` : ''}
@@ -1104,8 +1104,8 @@ function renderInstruDropzone(trackIdx) {
                     <button class="dz-url-btn">Importer</button>
                 </div>
                 <div class="dz-url-note">
-                    💡 L'import d'URL fonctionne dans l'app desktop Pulse (via yt-dlp intégré).
-                    Pour l'instant, télécharge le fichier et dépose-le ici.
+                    <span>Usage personnel : vérifie que tu as le droit d'utiliser cette instru (licence du beatmaker, crédit « prod by »).</span>
+                    <span>La 1re fois, Pulse télécharge son outil d'import (quelques secondes).</span>
                 </div>
             </div>
         </div>
@@ -1162,12 +1162,9 @@ function bindDropzones() {
             e.stopPropagation();
             const url = urlInput.value.trim();
             if (!url) { flash('Colle d\'abord le lien de ton instru dans la case'); return; }
-            if (window.pulse && window.pulse.isElectron) {
-                // Hook futur Tauri/Electron pour yt-dlp
-                flash('Téléchargement de ton instru en cours…');
-            } else {
-                flash('Les liens ne marchent pas encore ici — télécharge ton instru, puis dépose le fichier dans Pulse');
-            }
+            if (!urlImportAvailable()) { flash('Les liens marchent dans le logiciel Pulse installé — ici, télécharge ton instru puis dépose le fichier'); return; }
+            if (!/^https:\/\/(www\.|m\.|music\.|on\.)?(youtube\.com|youtu\.be|soundcloud\.com)\//i.test(url)) { flash('Colle un lien YouTube ou SoundCloud (qui commence par https://)'); return; }
+            importFromUrl(url, trackIdx, urlBtn);
         });
         urlInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') { e.preventDefault(); urlBtn.click(); }
@@ -1177,6 +1174,26 @@ function bindDropzones() {
         // Stopper les clics sur la dropzone pour qu'ils ne placent pas le playhead
         dz.addEventListener('mousedown', (e) => e.stopPropagation());
     });
+}
+
+// === Import d'une instru par lien (logiciel installé seulement : yt-dlp côté Rust) ===
+function urlImportAvailable() { return !!(window.__TAURI__ && window.__TAURI__.core); }
+async function importFromUrl(url, trackIdx, btn) {
+    const inv = window.__TAURI__.core.invoke;
+    if (btn) { btn.disabled = true; btn.textContent = 'Téléchargement…'; }
+    flash('Téléchargement de ton instru… (la 1re fois, Pulse installe aussi son outil d\'import)');
+    try {
+        const path = await inv('import_url', { url });
+        const bytes = await inv('read_import_file', { path });
+        const name = String(path).split(/[\\/]/).pop() || 'instru.m4a';
+        const ext = (name.split('.').pop() || '').toLowerCase();
+        const file = new File([bytes], name.replace(/_/g, ' '), { type: ext === 'm4a' || ext === 'mp4' ? 'audio/mp4' : ext === 'webm' ? 'audio/webm' : 'audio/mpeg' });
+        await importAudioFile(file, trackIdx);
+    } catch (err) {
+        flash('Import impossible : ' + (err && err.message ? err.message : err));
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Importer'; }
+    }
 }
 
 // === Import d'un fichier audio local ===
@@ -2652,6 +2669,12 @@ function openSettings() {
             <h2 class="modal-title">Réglages</h2>
             <p class="modal-sub">Pulse est réglé comme en studio. Change seulement si tu préfères travailler autrement.</p>
 
+            <h4 class="set-title no-tx">Langue · Language</h4>
+            <div class="set-lang no-tx">
+                <button class="set-lang-btn ${(!window.PulseI18n || PulseI18n.current() !== 'en') ? 'on' : ''}" data-lang="fr">Français</button>
+                <button class="set-lang-btn ${window.PulseI18n && PulseI18n.current() === 'en' ? 'on' : ''}" data-lang="en">English (beta)</button>
+            </div>
+
             <h4 class="set-title">Quand j'enregistre par-dessus une prise</h4>
             ${opt('recmode', 'takes', mode === 'takes', 'Ranger l\'ancienne prise', 'La nouvelle passe devant, l\'ancienne reste sous la piste (A, B, C…).')}
             ${opt('recmode', 'overlap', mode === 'overlap', 'Superposer les deux', 'Les deux prises s\'entendent en même temps.')}
@@ -2743,6 +2766,12 @@ function openSettings() {
         localStorage.setItem('pulse_bg_capture', e.target.checked ? '1' : '0');
         flash(e.target.checked ? 'Le micro captera dès la lecture' : 'Le micro ne captera qu\'à partir de R');
     });
+    modal.querySelectorAll('.set-lang-btn').forEach(b => b.addEventListener('click', () => {
+        if (!window.PulseI18n || PulseI18n.current() === b.dataset.lang) return;
+        try { localStorage.setItem('pulse_lang', b.dataset.lang); } catch {}
+        flushProjectDocSave(); saveProject(); _skipUnloadGuard = true;
+        location.reload();
+    }));
     modal.querySelector('#setComping').addEventListener('change', (e) => {
         try { localStorage.setItem(COMPING_KEY, e.target.checked ? '1' : '0'); } catch {}
         rerenderTracks();
@@ -3221,7 +3250,10 @@ async function finalizeCapture() {
         const ti = state.project.tracks.indexOf(t);
         setTimeout(() => tuneWholeTrack(ti, done.filter(c => !c.midi), true), 300);
     }
-    if (aside > 0) flash(`✓ ${name} — l'ancienne est rangée juste dessous, clique dessus pour la reprendre`);
+    if (aside > 0) {
+        flash(`✓ ${name} — l'ancienne est rangée juste dessous, clique dessus pour la reprendre`);
+        if (!compingOn()) tipOnce('pulse_tip_comping', 'Astuce : pour garder le meilleur passage de chaque prise, active « Comping » dans les Réglages', 4500);
+    }
     else if (!localStorage.getItem('pulse_tip_stretch')) {
         localStorage.setItem('pulse_tip_stretch', '1');
         flash(`✓ ${name} — astuce : tire les bords du clip pour récupérer ce que tu as dit juste avant ou après`);
@@ -3589,12 +3621,14 @@ const SHORTCUT_GROUPS = [
     {
         title: 'Transport',
         items: [
-            ['Espace', 'Écouter · 1re fois = pause là où tu es · 2e fois = repart du point de départ'],
+            ['Espace', 'Écouter · 1re fois = pause là où tu es · 2e fois = repart du point de départ (s\'il y en a un) · la lecture ne s\'arrête pas toute seule à la fin des régions'],
             ['R', 'Enregistrer — R à nouveau : sortir de la prise, la lecture continue'],
             ['Espace pendant l\'enregistrement', 'Tout arrêter'],
             ['Shift + glisser puis R', 'Enregistrer seulement dans la zone choisie'],
-            ['Entrée', 'Retour au début'],
-            ['L', 'Répéter un passage en boucle (oui / non)'],
+            ['Entrée (aussi celle du pavé numérique)', 'Retour au début'],
+            ['L ou C', 'Répéter un passage en boucle (oui / non)'],
+            ['Règle (haut) · glisser', 'Dessiner la boucle ; clic dessus = l\'allumer / l\'éteindre ; tirer un bord = l\'étirer ; tirer le milieu = la déplacer'],
+            ['Règle (en dessous) · clic ou glisser', 'Placer le curseur'],
             ['⌘↵', 'Jouer depuis le début de la boucle'],
             ['K', 'Métronome'],
             ['T', 'Trouver le tempo en tapant le rythme (puis Espace)'],
@@ -3617,13 +3651,16 @@ const SHORTCUT_GROUPS = [
             ['⌘C', 'Copier la région choisie'],
             ['⌘V', 'Coller à la position du curseur'],
             ['⌘Z / ⌘⇧Z', 'Annuler / Rétablir (30 niveaux) — marche aussi sur une prise ratée'],
-            ['Tirer le bord d\'une prise', 'Récupérer ce qui a été dit avant ou après'],
+            ['Tirer le bord d\'une prise', 'Récupérer ce qui a été dit avant ou après (curseur « barre et flèches » = étirer la région ; curseur « courbe » = fondu, dans le coin du haut)'],
             ['⌘ + clic sur une région', 'La muter / la démuter (réglable)'],
             ['Clic droit + glisser sur une région', 'Volume de la région : vers le haut = plus fort (⌥ + clic droit : remet 0 dB ; un clic sans bouger = menu)'],
             ['⌘← / ⌘→', 'Décaler la région choisie d\'un cran'],
             ['⌘⇧← / ⌘⇧→', 'Décaler la région très finement'],
             ['Shift (en tenant un clip)', 'Verrou d\'axe : surtout vers le bas = tu changes de piste sans bouger dans le temps ; surtout de côté = tu restes sur la piste · Shift de nouveau = libère'],
-            ['Plage glissée sur plusieurs pistes', 'Les régions touchées sont choisies : elles se déplacent ensemble, clic droit pour leur volume'],
+            ['Clic dans la moitié BASSE d\'une piste', 'Place le curseur et le point de départ (curseur en croix)'],
+            ['Clic dans la moitié HAUTE d\'une piste', 'Choisit la région et retire le point de départ : Espace reprend là où la lecture s\'est arrêtée (flèche)'],
+            ['⌘A · ⌥⌘A', 'Choisir toutes les régions de toutes les pistes · seulement celles de la piste choisie'],
+            ['Plage glissée sur plusieurs pistes', 'Les régions touchées sont choisies : elles se déplacent ensemble (même vers une autre piste), ⌘X les coupe, clic droit pour leur volume'],
             ['⌥C', 'Panneau de couleurs (régions choisies, sinon pistes choisies)'],
             ['⌘G', 'Aimant : Libre ↔ Intelligent (les régions et le curseur se calent sur le rythme et sur le bord des régions)'],
             ['⌘ + glisser une région', 'La placer librement, sans aimant'],
@@ -3641,8 +3678,9 @@ const SHORTCUT_GROUPS = [
             ['⌘⇧S', 'Tout réécouter (annule les « seulement celle-ci »)'],
             ['⌘⇧T', 'Nouvelle piste audio'],
             ['⌘S · ⌘⌥S · ⌘Q', 'Sauvegarder (dans l\'appli : choisir le dossier la 1re fois) · Enregistrer sous… · Quitter'],
-            ['⌘ + clic sur un réglage', 'Le remettre à sa valeur d\'origine · double-clic = écrire la valeur (dB, g15 / -15, 0-100)'],
-            ['⌥ + molette', 'Hauteur des pistes : celle qu\'on survole (les pistes choisies si elles sont plusieurs), ou toutes en dehors · ⌥⌘ + molette = zoom sur le curseur'],
+            ['⌘ ou ⌥ + clic sur un réglage', 'Le remettre à sa valeur d\'origine · double-clic = écrire la valeur (dB, g15 / -15, 0-100)'],
+            ['⌥ + molette', 'Hauteur des pistes : sur la liste de gauche, celle qu\'on survole (les pistes choisies si elles sont plusieurs) · sur la timeline, toutes les pistes · ⌥⌘ + molette = zoom sur le curseur'],
+            ['Croix × sur un effet · clic droit', 'Supprimer l\'effet de la piste (+ Effet pour en ajouter, Auto-Tune compris)'],
             ['⌘D', 'Dupliquer la piste (sans clips)'],
             ['⌘⌫', 'Supprimer la piste sélectionnée'],
             ['↑ / ↓', 'Changer de piste'],
@@ -3653,7 +3691,8 @@ const SHORTCUT_GROUPS = [
         title: 'Vue',
         items: [
             ['⌘ + scroll', 'Zoomer autour du pointeur'],
-            ['⌥ + scroll', 'Au-dessus d\'une piste : seule cette piste grandit / rétrécit · ailleurs : toutes les pistes'],
+            ['⌥ + scroll', 'Sur la liste de gauche : seule la piste survolée grandit / rétrécit · sur la timeline : toutes les pistes'],
+            ['Maj + molette', 'Défiler la timeline de gauche à droite (Magic Mouse / trackpad : glisser latéralement)'],
                         ['E / Z', 'Zoomer / dézoomer au clavier'],
             ['F', 'Zoom sur le clip sélectionné (ou tout le projet)'],
             ['⌘⇧F', 'Voir tout le morceau'],
@@ -3677,6 +3716,10 @@ const SHORTCUT_GROUPS = [
             ['Double-clic sur la région', 'Ouvrir l\'éditeur de notes'],
             ['Clic · glisser', 'Poser une note · la déplacer (bord droit = l\'étirer)'],
             ['Double-clic · clic droit', 'Effacer la note'],
+            ['1 · 2 · 3 · 4', 'Outils : Crayon (poser) · Pointeur (choisir, double-clic = poser) · Gomme (effacer en glissant) · Ciseaux (couper une note en deux)'],
+            ['Q', 'Caler les notes choisies sur la grille (toutes si rien n\'est choisi)'],
+            ['Règle de l\'éditeur', 'Clic = placer le curseur · double-clic = écouter d\'ici · bande du haut = la boucle du projet'],
+            ['Touches du clavier foncées', 'Notes hors de la gamme choisie ; la note de départ est en violet'],
             ['⌘ / Maj + glisser', 'Sélectionner plusieurs notes'],
             ['← → ↑ ↓', 'Déplacer la sélection (Maj = mesure / octave)'],
             ['⌘D · ⌘A · ⌘Z', 'Dupliquer · tout choisir · annuler'],
@@ -4050,6 +4093,12 @@ function computeRms(byteArr) {
     return Math.min(1, rms * 2.2);
 }
 
+// Astuce affichée une seule fois (mémorisée dans le navigateur) — pour faire découvrir un geste au moment où il sert
+function tipOnce(key, msg, delay = 0) {
+    try { if (localStorage.getItem(key)) return; localStorage.setItem(key, '1'); } catch { return; }
+    setTimeout(() => flash(msg), delay);
+}
+
 // === Onboarding première visite ===
 const ONBOARD_KEY = 'pulse_onboarded_v1';
 
@@ -4064,7 +4113,13 @@ const ONBOARDING_STEPS = [
         target: '#btnPlay',
         placement: 'bottom',
         title: 'Écoute',
-        text: '<kbd>Espace</kbd> pour lire, <kbd>Espace</kbd> pour mettre en pause, et encore pour repartir du début de ton passage. Clique dans la timeline pour choisir d\'où ça part.',
+        text: '<kbd>Espace</kbd> pour lire, <kbd>Espace</kbd> pour mettre en pause, et encore pour repartir de là où tu avais cliqué. Pour choisir d\'où ça part : clique dans la <strong>moitié basse</strong> d\'une piste (curseur en croix) ou dans la règle.',
+    },
+    {
+        target: '#timelineRuler',
+        placement: 'bottom',
+        title: 'Répète un passage',
+        text: 'Pour bosser un refrain en boucle : glisse dans la <strong>bande du haut</strong> de la règle. Clique sur la boucle pour l\'allumer ou l\'éteindre (touche <kbd>C</kbd>), tire ses bords pour l\'ajuster.',
     },
     {
         target: '#btnExport',
@@ -4675,6 +4730,7 @@ function openMidiEditor(trackIdx, clipIdx, fresh) {
         onClose: () => { _midiSession = null; renderTimelineTracks(); }
     });
     if (fresh) flash('Clique dans la grille pour poser des notes — Espace pour écouter, Échap pour fermer');
+    tipOnce('pulse_tip_roll_tools', 'Astuce : touches 1 Crayon · 2 Pointeur · 3 Gomme · 4 Ciseaux — Q cale tes notes sur la grille', fresh ? 4000 : 600);
     // L'éditeur prend le bas de l'écran : la piste en cours d'édition doit rester visible au-dessus
     setTimeout(() => {
         const row = document.querySelector(`#timelineTracks .timeline-track[data-i="${trackIdx}"]`);
@@ -5163,6 +5219,7 @@ const presetsFor = (t) => isBusTarget(t) ? { ...VOICE_ONLY, ...GROUP_PRESETS } :
 
 // Traduit le réglage simple (preset + ton / tenue / grain) en vrais paramètres d'effets
 function applySound(t) {
+    if (!t || !t.sound) return;   // piste sans réglage de son : rien à appliquer (évite une exception)
     const snd = t.sound;
     const set = presetsFor(t);
     const P = set[snd.preset] || set.lead || set.raw;
@@ -6792,6 +6849,36 @@ async function bounceTrack(trackIdx) {
 
 // Panneau flottant de gain pour un clip individuel
 // Les régions sur lesquelles agit une action : toute la sélection multiple si cette région en fait partie, sinon elle seule
+// Cale le début des régions sur la grille la plus proche (finesse de la grille, même si l'aimant est sur Libre)
+function quantizeClipsToGrid(clips) {
+    clips = (clips || []).filter(c => c && !c.recording);
+    if (!clips.length) return;
+    const beatSec = 60 / state.project.bpm, res = state.gridRes || 'auto';
+    let eff = res;
+    if (res === 'auto') {
+        const beatPx = state.pxPerSecond * beatSec;
+        eff = beatPx >= 120 ? 'division' : beatPx >= 40 ? 'beat' : 'bar';
+    }
+    const unit = eff === 'bar' ? beatSec * bpb() : eff === 'fine' ? beatSec / 8 : eff === 'division' ? beatSec / 4 : beatSec;
+    const label = eff === 'bar' ? 'la mesure' : eff === 'beat' ? 'le temps' : eff === 'fine' ? '1/32' : '1/16';
+    pushUndo();
+    let moved = 0;
+    clips.forEach(c => {
+        const ns = Math.max(0, Math.round(c.start / unit) * unit), d = ns - c.start;
+        if (Math.abs(d) < 1e-4) return;
+        c.start = ns;
+        if (c.loopEnd) c.loopEnd += d;
+        moved++;
+        const t = state.project.tracks.find(tr => (tr.clips || []).includes(c));
+        if (t) {
+            carveBehind(t, c, c.start, (c.loopEnd && c.loopEnd > c.start + c.duration) ? c.loopEnd : c.start + c.duration);
+            t.clips.sort((a, b) => a.start - b.start);
+        }
+    });
+    state.selectedClip = null; state.selectedClips.clear();
+    renderTimelineTracks(); saveProject(); refreshPlaybackSoon();
+    flash(moved ? `${moved > 1 ? moved + ' régions calées' : 'Région calée'} sur ${label} — ⌘Z pour annuler` : 'Déjà calé sur la grille');
+}
 function clipsActedOn(trackIdx, clipIdx) {
     const key = `${trackIdx}:${clipIdx}`;
     const one = state.project.tracks[trackIdx]?.clips[clipIdx];
@@ -7094,6 +7181,7 @@ function openClipContextMenu(x, y, trackIdx, clipIdx) {
             renderTimelineTracks(); saveProject();
         }},
         { label: 'Scinder ici', action: () => splitClipAt(trackIdx, clipIdx, state.playhead) },
+        { label: 'Caler le début sur la grille', action: () => quantizeClipsToGrid(clipsActedOn(trackIdx, clipIdx)) },
         { sep: true },
         { label: clip.muted ? 'Remettre le son du clip' : 'Couper le son du clip', action: () => {
             const all = clipsActedOn(trackIdx, clipIdx), m = !clip.muted;
@@ -8466,6 +8554,7 @@ function startLoopSelection(startEvent, eventToTime) {
         if (Math.abs(state.loop.end - state.loop.start) < 0.1) state.loop = null;
         else {
             state.looping = true;
+            tipOnce('pulse_tip_loop', 'Boucle allumée — clique dessus pour l\'éteindre (touche C), tire ses bords pour l\'ajuster');
             // La lecture part du début de la boucle, sauf si le curseur (le point de départ) est déjà posé à l'intérieur
             const la = Math.min(state.loop.start, state.loop.end), lb = Math.max(state.loop.start, state.loop.end);
             if (!(state.playhead >= la && state.playhead < lb) && !state.playing) { state.playhead = la; state.baseCleared = false; updatePlayhead(); updateChrono(); }
@@ -9486,6 +9575,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (window.PulseI18n) {
         await PulseI18n.load();
         applyI18n();
+        if (PulseI18n.startAuto) await PulseI18n.startAuto();   // anglais : traduit les textes affichés
     }
     initProjectName();
     await PulseAudio.init();

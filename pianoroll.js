@@ -84,7 +84,7 @@
             <div class="me-grip" data-tooltip="Tire pour agrandir ou réduire l'éditeur (double-clic : taille normale)"></div>
             <div class="me-bar">
                 <span class="me-title"></span>
-                ${isDrums ? '' : `<div class="me-seg me-toolseg" role="group"><button data-tool="draw" data-tooltip="Crayon : un clic pose une note, glisser l'étire (touche 1)">Crayon</button><button data-tool="select" data-tooltip="Pointeur : glisser dans le vide = choisir plusieurs notes ; double-clic = poser une note (touche 2)">Pointeur</button><button data-tool="erase" data-tooltip="Gomme : clique ou glisse sur des notes pour les effacer (touche 3)">Gomme</button></div>`}
+                ${isDrums ? '' : `<div class="me-seg me-toolseg" role="group"><button data-tool="draw" data-tooltip="Crayon : un clic pose une note, glisser l'étire (touche 1)">Crayon</button><button data-tool="select" data-tooltip="Pointeur : glisser dans le vide = choisir plusieurs notes ; double-clic = poser une note (touche 2)">Pointeur</button><button data-tool="erase" data-tooltip="Gomme : clique ou glisse sur des notes pour les effacer (touche 3)">Gomme</button><button data-tool="cut" data-tooltip="Ciseaux : clique sur une note pour la couper en deux à cet endroit (touche 4)">Ciseaux</button></div>`}
                 ${isDrums ? '' : `<select class="me-inst" data-tooltip="Le son de cette région">${insts.map(([k, v]) => `<option value="${k}" ${S.midi.inst === k ? 'selected' : ''}>${v.label}</option>`).join('')}</select>`}
                 ${isDrums ? `<div class="me-seg" role="group"><button data-view="steps" data-tooltip="Séquenceur de pas : une case = un coup">Pas</button><button data-view="roll" data-tooltip="Piano roll : placer les coups librement">Piano roll</button></div>` : ''}
                 <label class="me-lbl me-adv">Grille <select class="me-snap">${SNAPS.map(([n], i) => `<option value="${i}" ${i === S.snap ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
@@ -580,7 +580,7 @@
             if (x < leftW()) c = 'pointer';
             else if (y > RULER && y < RULER + gridH()) {
                 const n = noteAt(x, y);
-                c = S.tool === 'erase' ? (n ? 'pointer' : 'default') : n ? (xb(x) > n.s + n.d - 7 / S.pxBeat ? 'ew-resize' : 'grab') : (S.tool === 'select' ? 'default' : 'crosshair');
+                c = S.tool === 'cut' ? (n ? 'col-resize' : 'default') : S.tool === 'erase' ? (n ? 'pointer' : 'default') : n ? (xb(x) > n.s + n.d - 7 / S.pxBeat ? 'ew-resize' : 'grab') : (S.tool === 'select' ? 'default' : 'crosshair');
             }
         } else if (x > leftW() && y > RULER) c = 'pointer'; else if (x < leftW()) c = 'pointer';
         cv.style.cursor = c;
@@ -599,6 +599,17 @@
         if (y >= RULER + gh) return downVel(x, y);                // zone de force
         const n = noteAt(x, y);
         if (isRight) { if (n) { snapshot(); remove(n); changed('del'); } return; }
+        if (S.tool === 'cut') {   // Ciseaux : une note cliquée est coupée en deux à cet endroit (la grille aimante)
+            if (!n) return;
+            const u = unit(), at = Math.round(xb(x) / u) * u;
+            if (at <= n.s + 1e-6 || at >= n.s + n.d - 1e-6) { S.o.flash && S.o.flash('Clique plus loin du bord de la note pour la couper'); return; }
+            snapshot();
+            const tail = { s: at, d: n.s + n.d - at, p: n.p, v: n.v };
+            n.d = at - n.s;
+            S.notes.push(tail); S.sel = new Set([n, tail]);
+            changed('cut');
+            return;
+        }
         if (S.tool === 'erase') {   // Gomme : clic ou glissé sur des notes
             snapshot();
             S.drag = { kind: 'erase', moved: false };
@@ -874,10 +885,10 @@
             const f = [...S.sel][0]; if (k === 'ArrowUp' || k === 'ArrowDown') audition(f.p, f.v);
             changed('nudge'); return;
         }
-        // 1 / 2 / 3 : Crayon / Pointeur / Gomme
-        if (!mod && !e.altKey && !S.rec && S.midi.inst !== 'drums' && S.view === 'roll' && (k === '1' || k === '2' || k === '3')) {
-            eat(); S.tool = ({ 1: 'draw', 2: 'select', 3: 'erase' })[k]; syncBar(); draw();
-            S.o.flash && S.o.flash(({ draw: 'Crayon : un clic pose une note', select: 'Pointeur : glisse pour choisir, double-clic pour poser', erase: 'Gomme : clique ou glisse sur les notes à effacer' })[S.tool]); return;
+        // 1 / 2 / 3 / 4 : Crayon / Pointeur / Gomme / Ciseaux
+        if (!mod && !e.altKey && !S.rec && S.midi.inst !== 'drums' && S.view === 'roll' && (k === '1' || k === '2' || k === '3' || k === '4')) {
+            eat(); S.tool = ({ 1: 'draw', 2: 'select', 3: 'erase', 4: 'cut' })[k]; syncBar(); draw();
+            S.o.flash && S.o.flash(({ draw: 'Crayon : un clic pose une note', select: 'Pointeur : glisse pour choisir, double-clic pour poser', erase: 'Gomme : clique ou glisse sur les notes à effacer', cut: 'Ciseaux : clique sur une note pour la couper en deux' })[S.tool]); return;
         }
         // Q : quantifier la sélection (ou tout le motif), comme dans Logic
         if (!mod && !e.altKey && !S.rec && k.toLowerCase() === 'q') {

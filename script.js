@@ -339,6 +339,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (window.PulseI18n) {
         await PulseI18n.load();
         applyI18n();
+        if (PulseI18n.startAuto) PulseI18n.startAuto();   // anglais : traduit les textes affichés
         // Appliquer aussi les labels dynamiques des templates
         TEMPLATES.forEach(t => {
             const tr = PulseI18n.t(`templates.${t.id}`);
