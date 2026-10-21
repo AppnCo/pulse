@@ -4,6 +4,7 @@ const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const P = (fr, en) => [fr.split('§').map(esc).join('(.+?)'), en];
 
 const exact = {
+  'Compter mon installation (anonyme)': 'Count my install (anonymous)', 'Envoie un numéro tiré au hasard, la version et ton système, jamais tes projets ni tes sons. Ça nous dit seulement combien de personnes utilisent Pulse.': 'Sends a random number, the version and your system, never your projects or sounds. It only tells us how many people use Pulse.', 'Comptage anonyme activé': 'Anonymous counting on', 'Comptage anonyme désactivé': 'Anonymous counting off',
   'Ajouter un effet sur ce groupe': 'Add an effect to this group', 'Ajouter un effet sur cette piste': 'Add an effect to this track',
   // groupes et bus
   'Dupliquer le groupe (pour un feat, par exemple)': 'Duplicate the group (for a feature, for example)',
@@ -102,7 +103,7 @@ const exact = {
   'Gain du clip': 'Clip gain',
   '🎹 Créer une région ici (piano roll / pas)': '🎹 Create a region here (piano roll / steps)',
   '⬆ Importer un fichier .mid ici…': '⬆ Import a .mid file here…', '⬇ Exporter cette piste en .mid': '⬇ Export this track as .mid',
-  'Poser un marqueur ici': 'Add a marker here', 'Couper à gauche du curseur (S)': 'Cut to the left of the cursor (S)', 'Couper à droite du curseur (D)': 'Cut to the right of the cursor (D)',
+  'Poser un marqueur ici': 'Add a marker here', 'Couper à gauche du curseur (D)': 'Cut to the left of the cursor (D)', 'Couper à droite du curseur (F)': 'Cut to the right of the cursor (F)',
   'Ajouter une piste audio': 'Add an audio track', 'Ajouter une piste instrument (piano roll)': 'Add an instrument track (piano roll)', 'Ajouter une piste batterie (séquenceur)': 'Add a drum track (sequencer)',
   'la région': 'the region', 'la piste': 'the track', 'Couleur de la piste': 'Track color',
   'Désactiver Mute': 'Turn Mute off', 'Désactiver Solo': 'Turn Solo off',

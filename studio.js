@@ -1103,6 +1103,11 @@ function renderInstruDropzone(trackIdx) {
                     <input type="url" class="dz-url-input" placeholder="https://youtube.com/watch?v=…">
                     <button class="dz-url-btn">Importer</button>
                 </div>
+                <div class="dz-url-wrap dz-url-convert">
+                    <span class="dz-url-or">ou garder le fichier :</span>
+                    <button class="dz-url-btn dz-url-dl" data-fmt="mp3">Convertir en MP3</button>
+                    <button class="dz-url-btn dz-url-dl" data-fmt="wav">Convertir en WAV</button>
+                </div>
                 <div class="dz-url-note">
                     <span>Usage personnel : vérifie que tu as le droit d'utiliser cette instru (licence du beatmaker, crédit « prod by »).</span>
                     <span>La 1re fois, Pulse télécharge son outil d'import (quelques secondes).</span>
@@ -1166,6 +1171,13 @@ function bindDropzones() {
             if (!/^https:\/\/(www\.|m\.|music\.|on\.)?(youtube\.com|youtu\.be|soundcloud\.com)\//i.test(url)) { flash('Colle un lien YouTube ou SoundCloud (qui commence par https://)'); return; }
             importFromUrl(url, trackIdx, urlBtn);
         });
+        dz.querySelectorAll('.dz-url-dl').forEach(b => b.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const url = urlInput.value.trim();
+            if (!url) { flash('Colle d\'abord un lien YouTube ou SoundCloud dans la case'); return; }
+            if (!/^https:\/\/(www\.|m\.|music\.|on\.)?(youtube\.com|youtu\.be|soundcloud\.com)\//i.test(url)) { flash('Colle un lien YouTube ou SoundCloud (qui commence par https://)'); return; }
+            convertFromUrl(url, b.dataset.fmt, b);
+        }));
         urlInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') { e.preventDefault(); urlBtn.click(); }
             e.stopPropagation();
@@ -1187,12 +1199,39 @@ async function importFromUrl(url, trackIdx, btn) {
         const bytes = await inv('read_import_file', { path });
         const name = String(path).split(/[\\/]/).pop() || 'instru.m4a';
         const ext = (name.split('.').pop() || '').toLowerCase();
-        const file = new File([bytes], name.replace(/_/g, ' '), { type: ext === 'm4a' || ext === 'mp4' ? 'audio/mp4' : ext === 'webm' ? 'audio/webm' : 'audio/mpeg' });
+        const file = new File([bytes], name.replace(/_/g, ' '), { type: ext === 'm4a' || ext === 'mp4' ? 'audio/mp4' : ext === 'webm' ? 'audio/webm' : ext === 'wav' ? 'audio/wav' : 'audio/mpeg' });
         await importAudioFile(file, trackIdx);
     } catch (err) {
         flash('Import impossible : ' + (err && err.message ? err.message : err));
     } finally {
         if (btn) { btn.disabled = false; btn.textContent = 'Importer'; }
+    }
+}
+
+// Lien → fichier MP3 ou WAV rangé dans Téléchargements (sans toucher au projet)
+async function convertFromUrl(url, fmt, btn) {
+    const inv = window.__TAURI__.core.invoke;
+    const label = btn ? btn.textContent : '';
+    document.querySelectorAll('.dz-url-btn').forEach(b => { b.disabled = true; });
+    if (btn) btn.textContent = 'Conversion…';
+    flash(`Téléchargement et conversion en ${fmt.toUpperCase()}… (la 1re fois, Pulse installe aussi son outil d'import)`);
+    try {
+        if (fmt === 'mp3' && !window.lamejs) throw new Error('le MP3 n\'est pas prêt — recharge la page, ou choisis WAV');
+        const path = await inv('import_url', { url });
+        const bytes = await inv('read_import_file', { path });
+        await PulseAudio.init();
+        const buf = await PulseAudio.getContext().decodeAudioData(bytes.slice(0));
+        const wavBlob = PulseAudio.audioBufferToWav(buf);
+        const outBlob = fmt === 'mp3' ? await encodeToMp3(wavBlob, 320) : wavBlob;
+        const base = (String(path).split(/[\\/]/).pop() || 'son').replace(/\.[^.]+$/, '').replace(/_/g, ' ');
+        const data = new Uint8Array(await outBlob.arrayBuffer());
+        await inv('save_download', data, { headers: { name: encodeURIComponent(`${base}.${fmt}`) } });
+        flash(`✓ ${base}.${fmt} rangé dans ton dossier Téléchargements`);
+    } catch (err) {
+        flash('Conversion impossible : ' + (err && err.message ? err.message : err));
+    } finally {
+        document.querySelectorAll('.dz-url-btn').forEach(b => { b.disabled = false; });
+        if (btn) btn.textContent = label;
     }
 }
 
@@ -2591,8 +2630,11 @@ async function togglePlay(fromRec = false) {
         } else if (state.looping && state.loop) {
             const ls = Math.min(state.loop.start, state.loop.end);
             const le = Math.max(state.loop.start, state.loop.end);
-            if (state.playhead < ls || state.playhead >= le) {
-                state.playhead = ls;
+            // Chaque Espace repart du début de la boucle, sauf si tu as posé toi-même un curseur de départ dans la boucle
+            const ub = state.userBaseSec;
+            const start = (ub != null && !state.baseCleared && ub >= ls && ub < le) ? ub : ls;
+            if (Math.abs(state.playhead - start) > 1e-6) {
+                state.playhead = start;
                 updatePlayhead(); updateChrono();
             }
         } else {
@@ -2715,6 +2757,7 @@ function openSettings() {
             ${toggle('setReturn', returnOnStop(), 'Espace : pause, puis relance depuis le départ', 'Un premier Espace met en pause là où tu en es, le deuxième relance depuis l\'endroit où tu avais posé le curseur (la petite marque pointillée). Décoché : Espace reprend toujours là où le son s\'est arrêté.')}
             ${toggle('setShowAll', showAll(), 'Afficher les réglages avancés de la sortie', 'Montre aussi les bus de sortie, pour les régler ou dessiner leur volume. Pas besoin pour enregistrer.')}
 
+            ${window.PulseCompteur && PulseCompteur.configured ? toggle('setCompteur', PulseCompteur.enabled(), 'Compter mon installation (anonyme)', 'Envoie un numéro tiré au hasard, la version et ton système, jamais tes projets ni tes sons. Ça nous dit seulement combien de personnes utilisent Pulse.') : ''}
             <h4 class="set-title">En cas de problème</h4>
             <div class="set-row">
                 <span>Si Pulse redémarre tout seul ou affiche une erreur, ça s'écrit ici <em>${diagLog().length ? esc(diagLog().slice(-4).map(d => `${d.t.slice(5, 16).replace('T', ' ')} — ${d.kind} : ${d.detail}`).join(' | ')) : '(rien pour l\'instant : tout va bien)'}</em></span>
@@ -2781,6 +2824,8 @@ function openSettings() {
         try { localStorage.setItem('pulse_return_on_stop', e.target.checked ? '1' : '0'); } catch {}
         flash(e.target.checked ? 'Espace : pause là où tu en es, puis relance depuis le départ' : 'Espace reprend toujours là où le son s\'est arrêté');
     });
+    const cpt = modal.querySelector('#setCompteur');
+    if (cpt) cpt.addEventListener('change', (e) => { PulseCompteur.setEnabled(e.target.checked); flash(e.target.checked ? 'Comptage anonyme activé' : 'Comptage anonyme désactivé'); });
     const dc = modal.querySelector('#setDiagCopy');
     if (dc) dc.addEventListener('click', async () => {
         const txt = diagLog().map(d => `${d.t} ${d.kind} : ${d.detail}`).join('\n') || 'Rien dans le journal';
@@ -3410,6 +3455,7 @@ function updateChrono() {
 // Point de départ (base du curseur) : posé par un clic dans la moitié BASSE d'une piste, dans la règle ou le vide ; retiré par un clic dans la moitié HAUTE.
 // Sans base, la lecture reprend là où elle s'est arrêtée (Espace ne revient plus en arrière).
 function clearPlayBase() {
+    state.userBaseSec = null;
     if (state.baseCleared) return;
     const had = state.playOrigin != null;
     state.baseCleared = true; state.playOrigin = null;
@@ -3421,6 +3467,7 @@ function seekPlayhead(sec) {
     if (state.recording) { flash('Arrête l\'enregistrement avant de déplacer le curseur'); return; }
     state.playhead = Math.max(0, sec);
     state.baseCleared = false;
+    state.userBaseSec = state.playhead;
     if (state.playing) state.playOrigin = state.playhead;
     updatePlayhead(); updateChrono();
     // Le curseur doit rester visible même à l'arrêt
@@ -3511,10 +3558,14 @@ function toggleMixer() {
 function trimLeft()  { trimAtPlayhead('left');  }
 function trimRight() { trimAtPlayhead('right'); }
 
+// Point de coupe : le curseur de base (point de départ posé) pendant la lecture, sinon la tête de lecture
+function cutPointSec() {
+    return (state.playing && !state.baseCleared && state.playOrigin != null) ? state.playOrigin : state.playhead;
+}
 function trimAtPlayhead(side) {
     const t = state.project.tracks[state.selectedTrack];
     if (!t) return;
-    const ph = state.playhead;
+    const ph = cutPointSec();
     const clips = t.clips || [];
     let touched = 0;
 
@@ -5195,7 +5246,7 @@ async function removeTune(clip, noUndo = false) {
     flash('Auto-Tune retiré — tu retrouves ta voix d\'origine');
 }
 
-// === Son de la piste : presets Ridwane + 3 curseurs simples (PRESETS.md) ===
+// === Son de la piste : presets Pulse + 3 curseurs simples (PRESETS.md) ===
 const SOUND_PRESETS = {
     lead:     { label: 'Voix lead', eq: { hpf: 80,  midGain: -2, presence: 2, air: 1 },   hold: 35, drive: 0,  space: 0,  deess: 30 },
     doublage: { label: 'Doublage',  eq: { hpf: 120, midGain: -2, presence: 1, air: 0 },   hold: 40, drive: 0,  space: 0,  deess: 40 },
@@ -6978,8 +7029,8 @@ function openTimelineEmptyContextMenu(x, y, trackIdx, atSec) {
         (['keys', 'drums'].includes(state.project.tracks[trackIdx]?.type)) ? { label: '⬇ Exporter cette piste en .mid', action: () => exportMidiTrack(trackIdx) } : null,
         { label: 'Poser un marqueur ici', action: () => addMarker(atSec) },
         { sep: true },
-        { label: 'Couper à gauche du curseur (S)', action: () => { state.playhead = atSec; updatePlayhead(); trimLeft(); }},
-        { label: 'Couper à droite du curseur (D)', action: () => { state.playhead = atSec; updatePlayhead(); trimRight(); }},
+        { label: 'Couper à gauche du curseur (D)', action: () => { state.playhead = atSec; updatePlayhead(); trimLeft(); }},
+        { label: 'Couper à droite du curseur (F)', action: () => { state.playhead = atSec; updatePlayhead(); trimRight(); }},
         { sep: true },
         { label: 'Ajouter une piste audio', action: () => _doAddTrack('audio') },
         { label: 'Ajouter une piste instrument (piano roll)', action: () => _doAddTrack('keys') },
@@ -7627,6 +7678,7 @@ function bindTimelineClick() {
         state.baseCleared = false;   // placer le curseur = poser un point de départ
         // Le curseur se cale sur la grille comme les clips (Shift = placement libre)
         state.playhead = snapPlayheadToEdges(snapTime(eventToTime(e), e.shiftKey), e.shiftKey);
+        state.userBaseSec = state.playhead;
         if (state.playing) {
             state.playOrigin = state.playhead;
             state.startTime = performance.now() - state.playhead * 1000;
@@ -7722,7 +7774,7 @@ function bindTimelineClick() {
         const relY = e.clientY - rect.top;
         const edgeZone = 7;   // même largeur que le clic (étirer la région)
         // Zone fade = top 45% du clip, 30% de la largeur ou 36px min
-        const fadeZone = Math.max(36, rect.width * 0.3);
+        const fadeZone = Math.min(32, rect.width * 0.3);   // petite zone fixe en pixels (comme .clip-fade-zone en CSS)
         const inTopHalf = relY < rect.height * 0.45;
 
         // Bords = étirer ; coins hauts = fondu ; poignée bas-droite = répéter
@@ -7929,7 +7981,7 @@ function bindTimelineClick() {
                     if (relX > rect.width - edge) return startClipTrim(e, clipEl, trackIdx, _ci, 'right');
                     // Fondu (zone haute) : il ne démarre que si on glisse. Un simple clic choisit la région, comme ailleurs.
                     const fadeZoneEl = e.target.closest('.clip-fade-zone');
-                    const fadeZone = Math.max(36, rect.width * 0.3);
+                    const fadeZone = Math.min(32, rect.width * 0.3);   // petite zone fixe en pixels (comme .clip-fade-zone en CSS)
                     const inTopHalf = relY < rect.height * 0.45;
                     const fadeDir = fadeZoneEl ? fadeZoneEl.dataset.fade
                         : (inTopHalf && relX < fadeZone ? 'in' : (inTopHalf && relX > rect.width - fadeZone ? 'out' : null));
@@ -8557,7 +8609,7 @@ function startLoopSelection(startEvent, eventToTime) {
             tipOnce('pulse_tip_loop', 'Boucle allumée — clique dessus pour l\'éteindre (touche C), tire ses bords pour l\'ajuster');
             // La lecture part du début de la boucle, sauf si le curseur (le point de départ) est déjà posé à l'intérieur
             const la = Math.min(state.loop.start, state.loop.end), lb = Math.max(state.loop.start, state.loop.end);
-            if (!(state.playhead >= la && state.playhead < lb) && !state.playing) { state.playhead = la; state.baseCleared = false; updatePlayhead(); updateChrono(); }
+            if (!(state.playhead >= la && state.playhead < lb) && !state.playing) { state.playhead = la; state.baseCleared = false; state.userBaseSec = null; updatePlayhead(); updateChrono(); }
         }
         renderLoopOverlay();
         updateLoopButton();
@@ -9750,10 +9802,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (e.code === 'Enter' || e.code === 'NumpadEnter')  { e.preventDefault(); rewind(); return; }
         if (k === 'r') { toggleRec(); return; }
 
-        // Édition (coupes rapides) : S efface ce qui est à gauche du curseur, D ce qui est à droite (Z / E = zoom, tout sous la main gauche)
+        // Édition (coupes rapides) : D efface ce qui est à gauche du curseur de base, F ce qui est à droite (Z / E = zoom : tout reste près de R)
         if (k === 'q' && !mod) { e.preventDefault(); trimLeft();  return; }
-        if (k === 's' && !shift && !mod) { e.preventDefault(); trimLeft(); return; }
-        if (k === 'd' && !shift && !mod && !e.altKey) { e.preventDefault(); trimRight(); return; }
+        if (k === 'd' && !shift && !mod && !e.altKey) { e.preventDefault(); trimLeft(); return; }
+        if (k === 'f' && !shift && !mod && !e.altKey) { e.preventDefault(); trimRight(); return; }
         // ⌘X / Ctrl+X : couper la région (la copier et l'effacer d'un coup), main droite restée sur la souris
         // Une plage glissée part comme avec Suppr (les bords des régions sont coupés, sur toutes les pistes de la plage)
         if (mod && k === 'x' && !shift) { e.preventDefault(); if (!state.selectedClip && state.selection) deleteSelection(); else cutSelectedClip(); return; }
@@ -9761,7 +9813,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (mod && k === 'q') { e.preventDefault(); quitApp(); return; }
 
         // Piste sélectionnée
-        if (k === 's' && shift && !mod) { e.preventDefault(); selectedTrackIdxs().forEach(i => toggleSolo(i)); return; }
+        if (k === 's' && !mod && !e.altKey) { e.preventDefault(); selectedTrackIdxs().forEach(i => toggleSolo(i)); return; }   // S = solo / désolo de la piste choisie (M = mute)
         if (e.altKey && e.code === 'KeyC' && !mod) { e.preventDefault(); openColorPanel(); return; }   // ⌥C = panneau de couleurs (⌥+C donne « ç » sur Mac)
         if (e.altKey && e.code === 'KeyS' && !mod) { e.preventDefault(); selectedTrackIdxs().forEach(i => toggleSolo(i)); return; }  // ⌥S = solo (⌥+S donne « ß » sur Mac)
         if (k === 'm') { selectedTrackIdxs().forEach(i => toggleMute(i)); return; }
@@ -9816,8 +9868,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (e.altKey && e.code === 'ArrowLeft'  && !mod) { e.preventDefault(); navigateMarker(-1); return; }
         if (e.altKey && e.code === 'ArrowRight' && !mod) { e.preventDefault(); navigateMarker(+1); return; }
 
-        // F = Zoom sur le clip sélectionné (Logic style)
-        if (k === 'f' && !mod) {
+        // ⇧F = Zoom sur le clip sélectionné (F seul = couper à droite)
+        if (k === 'f' && shift && !mod) {
             e.preventDefault();
             if (state.selectedClip) {
                 const { trackIdx, clipIdx } = state.selectedClip;

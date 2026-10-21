@@ -404,7 +404,6 @@
     position: absolute;
     top: 6px;
     bottom: 6px;
-    background: var(--clip-color, var(--violet-1));   /* secours : Safari sans color-mix */
     background: linear-gradient(180deg, var(--clip-color, var(--violet-1)) 0%, color-mix(in oklab, var(--clip-color, var(--violet-1)) 60%, var(--bg-0)) 100%);
     border-radius: 8px;
     overflow: hidden;
@@ -416,12 +415,12 @@
 
 .clip:active { cursor: grabbing; }
 
-/* Zones invisibles de prise des fades (Pro Tools style — grande zone) */
+/* Zones invisibles de prise des fades (Pro Tools style) : petite zone fixe en pixels, facile à attraper même en dézoom */
 .clip-fade-zone {
     position: absolute;
     top: 0;
     height: 45%;
-    width: max(36px, 30%);
+    width: min(32px, 30%);
     z-index: 4;
     cursor: var(--cur-fade);
 }
@@ -468,7 +467,6 @@ body.is-dragging * { cursor: grabbing !important; }
 }
 
 .clip-wave-svg rect, .clip-wave-svg path {
-    fill: rgba(255, 255, 255, 0.8);   /* secours : Safari sans color-mix */
     fill: color-mix(in srgb, var(--clip-color, #A855F7) 35%, white 65%);
     opacity: 0.9;
 }
@@ -507,7 +505,6 @@ body.is-dragging * { cursor: grabbing !important; }
     overflow: hidden;
 }
 .clip-loop-repeat .loop-wave rect {
-    fill: rgba(255, 255, 255, 0.8);   /* secours : Safari sans color-mix */
     fill: color-mix(in srgb, var(--clip-color, #A855F7) 35%, white 65%);
     opacity: 0.45;
 }
@@ -2956,3 +2953,6 @@ body.is-splitting, body.is-splitting * { cursor: col-resize !important; }
 .set-lang { display: flex; gap: 8px; margin: 4px 0 10px; }
 .set-lang-btn { background: var(--bg-3); color: var(--text-2); border: 1px solid var(--border); border-radius: 8px; padding: 6px 14px; font: inherit; font-size: 13px; cursor: pointer; }
 .set-lang-btn.on { background: var(--violet-2, #7C3AED); color: #fff; border-color: transparent; }
+.dz-url-convert { margin-top: 8px; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dz-url-or { font-size: 12px; opacity: .7; }
+.dz-url-dl { background: transparent; border: 1px solid currentColor; color: inherit; opacity: .9; }
