@@ -105,6 +105,167 @@ window.PulseAudio = (function() {
         }
         registerProcessor('pulse-deesser', PulseDeesser);
 
+        // Gate : coupe le bruit entre deux phrases. Mêmes calculs que Gate dans engine/src/fx.rs.
+        // Écoute le plus fort des canaux (pistes liées) ; ouvert = gain 1, fermé = baisse de « reduction » dB, 50 ms de maintien.
+        class PulseGate extends AudioWorkletProcessor {
+            constructor(options) {
+                super();
+                const p = (options && options.processorOptions) || {};
+                const coef = (sec) => 1 - Math.exp(-1 / (sec * sampleRate));
+                this.thr = Math.pow(10, (p.threshold ?? -45) / 20);
+                this.floor = Math.pow(10, -(p.reduction ?? 40) / 20);
+                this.hold = Math.round(0.05 * sampleRate);
+                this.att = coef(0.0005); this.envRel = coef(0.02);
+                this.gAtt = coef(0.002); this.gRel = coef(Math.max(0.005, (p.release ?? 150) / 1000));
+                this.env = 0; this.left = 0; this.gain = 1;
+            }
+            process(inputs, outputs) {
+                const inp = inputs[0], out = outputs[0];
+                if (!inp || !inp.length) return true;
+                const n = inp[0].length, nc = Math.min(inp.length, out.length);
+                for (let i = 0; i < n; i++) {
+                    let pk = 0;
+                    for (let ch = 0; ch < nc; ch++) { const a = inp[ch][i] < 0 ? -inp[ch][i] : inp[ch][i]; if (a > pk) pk = a; }
+                    this.env += (pk - this.env) * (pk > this.env ? this.att : this.envRel);
+                    if (this.env > this.thr) this.left = this.hold; else if (this.left > 0) this.left--;
+                    const target = this.left > 0 ? 1 : this.floor;
+                    this.gain += (target - this.gain) * (target > this.gain ? this.gAtt : this.gRel);
+                    for (let ch = 0; ch < nc; ch++) out[ch][i] = inp[ch][i] * this.gain;
+                }
+                return true;
+            }
+        }
+        registerProcessor('pulse-gate', PulseGate);
+
+        // Effets de mouvement : chorus, flanger, phaser, trémolo, doubleur de voix, slapback.
+        // Mêmes calculs que ModFx dans engine/src/fx.rs (une ligne à retard par canal, un LFO commun décalé d'un canal à l'autre).
+        const MOD_DEFAULTS = {
+            chorus:   { rate: 0.8,  depth: 5,  feedback: 0,  mix: 50 },
+            flanger:  { rate: 0.25, depth: 2,  feedback: 50, mix: 50 },
+            phaser:   { rate: 0.4,  depth: 70, feedback: 40, mix: 50 },
+            tremolo:  { rate: 5,    depth: 50, feedback: 0,  mix: 100 },
+            doubler:  { rate: 0.35, depth: 50, feedback: 0,  mix: 50 },
+            slapback: { rate: 0,    depth: 0,  feedback: 12, mix: 25 }
+        };
+        class PulseMod extends AudioWorkletProcessor {
+            constructor(options) {
+                super();
+                const o = (options && options.processorOptions) || {};
+                this.kind = o.kind;
+                const d = MOD_DEFAULTS[this.kind] || MOD_DEFAULTS.chorus;
+                this.rate = o.rate ?? d.rate;
+                this.depth = o.depth ?? d.depth;
+                this.fb = (o.feedback ?? d.feedback) / 100;
+                this.mix = (o.mix ?? d.mix) / 100;
+                this.time = (o.time ?? 110) / 1000;
+                this.width = o.width ?? d.depth;
+                this.off = this.kind === 'doubler' ? 0.5 : 0.25;
+                this.size = Math.ceil(0.35 * sampleRate) + 4;
+                this.buf = [new Float64Array(this.size), new Float64Array(this.size)];
+                this.w = 0; this.ph = 0;
+                this.z = [[0, 0, 0, 0], [0, 0, 0, 0]]; this.prev = [0, 0];
+            }
+            process(inputs, outputs) {
+                const inp = inputs[0], out = outputs[0];
+                if (!inp || !inp.length) return true;
+                const n = inp[0].length, nc = Math.min(inp.length, out.length, 2), kind = this.kind;
+                for (let i = 0; i < n; i++) {
+                    for (let ch = 0; ch < nc; ch++) {
+                        const x = inp[ch][i];
+                        const lfo = Math.sin(2 * Math.PI * (this.ph + this.off * ch));
+                        if (kind === 'tremolo') {
+                            out[ch][i] = x * (1 - this.depth / 100 * (0.5 - 0.5 * lfo));
+                            continue;
+                        }
+                        if (kind === 'phaser') {
+                            const f = 300 * Math.pow(10, (0.5 + 0.5 * lfo) * this.depth / 100);
+                            const t = Math.tan(Math.PI * f / sampleRate), a = (t - 1) / (t + 1);
+                            let v = x + this.fb * this.prev[ch];
+                            const z = this.z[ch];
+                            for (let s = 0; s < 4; s++) { const y = a * v + z[s]; z[s] = v - a * y; v = y; }
+                            this.prev[ch] = v;
+                            out[ch][i] = x * (1 - this.mix) + v * this.mix;
+                            continue;
+                        }
+                        let dsec;
+                        if (kind === 'chorus') dsec = 0.012 + this.depth / 1000 * lfo;
+                        else if (kind === 'flanger') dsec = 0.0005 + this.depth / 1000 * (0.5 + 0.5 * lfo);
+                        else if (kind === 'doubler') dsec = 0.025 + this.width / 100 * 0.006 * lfo;
+                        else dsec = this.time;
+                        const b = this.buf[ch];
+                        let pos = this.w - dsec * sampleRate;
+                        pos = ((pos % this.size) + this.size) % this.size;
+                        const i0 = Math.floor(pos), fr = pos - i0;
+                        const wet = b[i0] + (b[(i0 + 1) % this.size] - b[i0]) * fr;
+                        b[this.w] = x + this.fb * wet;
+                        out[ch][i] = x * (1 - this.mix) + wet * this.mix;
+                    }
+                    this.w = (this.w + 1) % this.size;
+                    this.ph += this.rate / sampleRate; if (this.ph >= 1) this.ph -= 1;
+                }
+                return true;
+            }
+        }
+        registerProcessor('pulse-mod', PulseMod);
+
+        // Bitcrusher : moins de bits et moins d'échantillons par seconde (son lo-fi)
+        class PulseCrush extends AudioWorkletProcessor {
+            constructor(options) {
+                super();
+                const o = (options && options.processorOptions) || {};
+                this.q = Math.pow(2, (o.bits ?? 8) - 1);
+                this.down = Math.max(1, Math.round(o.down ?? 4));
+                this.mix = (o.mix ?? 100) / 100;
+                this.c = 0; this.held = [0, 0];
+            }
+            process(inputs, outputs) {
+                const inp = inputs[0], out = outputs[0];
+                if (!inp || !inp.length) return true;
+                const n = inp[0].length, nc = Math.min(inp.length, out.length, 2);
+                for (let i = 0; i < n; i++) {
+                    for (let ch = 0; ch < nc; ch++) {
+                        const x = inp[ch][i];
+                        if (this.c === 0) this.held[ch] = Math.floor(x * this.q + 0.5) / this.q;
+                        out[ch][i] = x * (1 - this.mix) + this.held[ch] * this.mix;
+                    }
+                    this.c = (this.c + 1) % this.down;
+                }
+                return true;
+            }
+        }
+        registerProcessor('pulse-crush', PulseCrush);
+
+        // Utilitaire (mono, inversion de phase, gain) et largeur stéréo (milieu / côtés)
+        class PulseUtil extends AudioWorkletProcessor {
+            constructor(options) {
+                super();
+                const o = (options && options.processorOptions) || {};
+                this.kind = o.kind;
+                this.g = Math.pow(10, (o.gain ?? 0) / 20) * (o.invert ? -1 : 1);
+                this.mono = !!o.mono;
+                this.width = (o.width ?? 100) / 100;
+            }
+            process(inputs, outputs) {
+                const inp = inputs[0], out = outputs[0];
+                if (!inp || !inp.length) return true;
+                const n = inp[0].length, nc = Math.min(inp.length, out.length);
+                for (let i = 0; i < n; i++) {
+                    if (this.kind === 'width') {
+                        if (nc < 2) { out[0][i] = inp[0][i]; continue; }
+                        const m = (inp[0][i] + inp[1][i]) / 2, s = (inp[0][i] - inp[1][i]) / 2 * this.width;
+                        out[0][i] = m + s; out[1][i] = m - s;
+                    } else if (this.mono && nc >= 2) {
+                        const m = (inp[0][i] + inp[1][i]) / 2 * this.g;
+                        out[0][i] = m; out[1][i] = m;
+                    } else {
+                        for (let ch = 0; ch < nc; ch++) out[ch][i] = inp[ch][i] * this.g;
+                    }
+                }
+                return true;
+            }
+        }
+        registerProcessor('pulse-util', PulseUtil);
+
         // Compresseur : resserre l'écart entre les mots forts et les mots faibles.
         // Rattrapage de volume modéré et connu d'avance (le compresseur du navigateur, lui, ajoutait jusqu'à +18 dB).
         class PulseComp extends AudioWorkletProcessor {
@@ -288,7 +449,7 @@ window.PulseAudio = (function() {
         }
         registerProcessor('pulse-width', PulseWidth);`;
 
-    const FX_CHAIN = ['eq', 'sat', 'deess', 'comp', 'master', 'limit', 'delay', 'reverb']; // ordre habituel des effets
+    const FX_CHAIN = ['filter', 'gate', 'eq', 'sat', 'crush', 'deess', 'comp', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'reverb']; // ordre habituel des effets
     const SEND_REVERB_TRIM = 1 / 3; // la reverb seule sort 3 fois trop fort par rapport au son direct : on la ramène à niveau
 
     // Temps de l'écho en secondes : calé sur le rythme (beats = nombre de temps) ou donné en millisecondes
@@ -316,9 +477,10 @@ window.PulseAudio = (function() {
     }
     async function doInit() {
         if (ctx) return ctx;
+        // Fréquence : celle de la carte son (jamais forcée). Imposer 48 kHz sur une sortie en 44,1 kHz fait rééchantillonner
+        // le navigateur en direct, d'où des craquements dans l'appli Mac (WebKit) alors que YouTube passe sans souci.
         ctx = new (window.AudioContext || window.webkitAudioContext)({
-            latencyHint: 'interactive',
-            sampleRate: 48000
+            latencyHint: 'interactive'
         });
         await ensureFx(ctx);
         masterGain = ctx.createGain();
@@ -1218,6 +1380,46 @@ window.PulseAudio = (function() {
 
         // Chaque effet est un bloc ; on les branche dans l'ordre demandé (ordre habituel si rien n'est précisé)
         const B = {};
+
+        // Filtre : coupe les graves (coupe-bas) et / ou les aigus (coupe-haut). Pente 12 ou 24 dB par octave (Butterworth).
+        // Mêmes formules que engine/src/fx.rs (Biquad passe-haut / passe-bas) : voir la parité dans lib.rs.
+        B.filter = () => {
+            if (!enabled.includes('filter')) return;
+            const p = params.filter || {};
+            const hpf = p.hpf ?? 80, lpf = p.lpf ?? 20000;
+            const qdb = (lin) => 20 * Math.log10(lin);
+            const qs = p.slope === 24 ? [0.5412, 1.3066] : [Math.SQRT1_2];
+            const add = (type, freq) => qs.forEach((q) => {
+                const f = actx.createBiquadFilter(); f.type = type; f.frequency.value = freq; f.Q.value = qdb(q); connect(f);
+            });
+            if (hpf > 20) add('highpass', Math.min(hpf, 20000));
+            if (lpf < 20000) add('lowpass', Math.max(lpf, 20));
+        };
+
+        // Effets maison simples : un nœud par effet (voir les worklets pulse-mod / pulse-crush / pulse-util)
+        const node = (name, kind) => {
+            if (!enabled.includes(kind) || !fxReady.has(actx)) return;
+            connect(new AudioWorkletNode(actx, name, {
+                numberOfInputs: 1, numberOfOutputs: 1,
+                channelCountMode: 'max', // une voix mono reste mono
+                processorOptions: { kind, ...(params[kind] || {}) }
+            }));
+        };
+        ['chorus', 'flanger', 'phaser', 'tremolo', 'doubler', 'slapback'].forEach((k) => { B[k] = () => node('pulse-mod', k); });
+        B.crush = () => node('pulse-crush', 'crush');
+        B.util = () => node('pulse-util', 'util');
+        B.width = () => node('pulse-util', 'width');
+
+        // Gate : coupe le bruit entre deux phrases (voir le worklet pulse-gate)
+        B.gate = () => {
+            if (!enabled.includes('gate') || !fxReady.has(actx)) return;
+            const p = params.gate || {};
+            connect(new AudioWorkletNode(actx, 'pulse-gate', {
+                numberOfInputs: 1, numberOfOutputs: 1,
+                channelCountMode: 'max', // une voix mono reste mono
+                processorOptions: { threshold: p.threshold ?? -45, release: p.release ?? 150, reduction: p.reduction ?? 40 }
+            }));
+        };
 
         // EQ 4-bandes
         B.eq = () => {

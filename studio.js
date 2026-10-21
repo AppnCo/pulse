@@ -1561,8 +1561,8 @@ function migrateProject() {
 
 // === Tranche à gauche (inspecteur) : la piste sélectionnée et, à sa droite, là où elle sort ===
 // Évite d'ouvrir le mixer pour voir les effets d'une piste ou régler son volume.
-const FX_NAMES = { eq: 'EQ', sat: 'Saturation', deess: 'De-esser', comp: 'Compresseur', master: 'Finition', limit: 'Limiteur', delay: 'Écho', reverb: 'Reverb' };
-const FX_ORDER = ['eq', 'sat', 'deess', 'comp', 'master', 'limit', 'delay', 'reverb'];
+const FX_NAMES = { crush: 'Bitcrusher', util: 'Utilitaire', width: 'Largeur', tremolo: 'Trémolo', phaser: 'Phaser', flanger: 'Flanger', chorus: 'Chorus', doubler: 'Doubleur', slapback: 'Slapback', filter: 'Filtre', gate: 'Gate', eq: 'EQ', sat: 'Saturation', deess: 'De-esser', comp: 'Compresseur', master: 'Finition', limit: 'Limiteur', delay: 'Écho', reverb: 'Reverb' };
+const FX_ORDER = ['filter', 'gate', 'eq', 'sat', 'crush', 'deess', 'comp', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'reverb'];
 function inspectorOpen() { try { return localStorage.getItem('pulse_inspector') !== '0'; } catch { return true; } }
 function setInspectorOpen(open) {
     try { localStorage.setItem('pulse_inspector', open ? '1' : '0'); } catch {}
@@ -1921,8 +1921,25 @@ function openOutputMenu(anchor, kind, x, idx) {
     dismissMenuOnOutside(menu);
 }
 // Effets qu'on peut poser sur une piste ou un bus (chacun a son panneau)
-const ADD_FX_CHOICES = [['eq', 'EQ'], ['comp', 'Compresseur'], ['deess', 'De-esser'], ['sat', 'Saturation'], ['delay', 'Écho'], ['reverb', 'Reverb']];
-const FX_START = { sat: { drive: 25 }, deess: { amount: 40, freq: 5500 }, delay: { beats: 0.5, feedback: 35, wet: 25 } };
+const ADD_FX_CHOICES = [['crush', 'Bitcrusher (son lo-fi)'], ['util', 'Utilitaire (gain, mono, phase)'], ['width', 'Largeur stéréo'],
+    ['tremolo', 'Trémolo (volume qui pulse)'], ['phaser', 'Phaser'], ['flanger', 'Flanger'], ['chorus', 'Chorus'],
+    ['doubler', 'Doubleur de voix'], ['slapback', 'Slapback (écho court)'], ['gate', 'Gate (coupe le bruit entre les phrases)'], ['filter', 'Filtre (coupe-bas / coupe-haut)'], ['eq', 'EQ'], ['comp', 'Compresseur'], ['deess', 'De-esser'], ['sat', 'Saturation'], ['delay', 'Écho'], ['reverb', 'Reverb']];
+// Rangés par catégorie comme dans Logic (voir PLUGINS-CATALOGUE.md) : un nouvel effet = une ligne dans sa catégorie
+const ADD_FX_CATEGORIES = [
+    ['Dynamique', ['comp', 'deess', 'gate']],
+    ['Égaliseur et filtre', ['eq', 'filter']],
+    ['Distorsion', ['sat', 'crush']],
+    ['Mouvement', ['chorus', 'flanger', 'phaser', 'tremolo']],
+    ['Voix et hauteur', ['doubler']],
+    ['Écho et espace', ['delay', 'slapback', 'reverb']],
+    ['Stéréo', ['width']],
+    ['Utilitaires', ['util']]
+];
+const FX_START = {
+    crush: { bits: 8, down: 4, mix: 100 }, util: { gain: 0, invert: 0, mono: 0 }, width: { width: 100 },
+    tremolo: { rate: 5, depth: 50 }, phaser: { rate: 0.4, depth: 70, feedback: 40, mix: 50 }, flanger: { rate: 0.25, depth: 2, feedback: 50, mix: 50 },
+    chorus: { rate: 0.8, depth: 5, mix: 50 }, doubler: { width: 50, mix: 50 }, slapback: { time: 110, feedback: 12, mix: 25 },
+    gate: { threshold: -45, release: 150, reduction: 40 }, filter: { hpf: 80, lpf: 20000, slope: 12 }, sat: { drive: 25 }, deess: { amount: 40, freq: 5500 }, delay: { beats: 0.5, feedback: 35, wet: 25 } };
 function openAddEffectMenu(anchor, target, x) {
     closeAllMenus();
     const r = anchor.getBoundingClientRect();
@@ -1930,8 +1947,10 @@ function openAddEffectMenu(anchor, target, x) {
     menu.className = 'track-ctx-menu';
     menu.style.cssText = `position:fixed;left:${Math.max(8, r.left)}px;top:${Math.max(8, r.bottom + 4)}px;z-index:300;min-width:170px`;
     // Auto-Tune en tête : c'est le 1er maillon de la chaîne d'une voix
+    const fxHead = (txt) => { const h = document.createElement('div'); h.className = 'ctx-head'; h.textContent = txt; menu.appendChild(h); };
     {
         if (isVoiceTrack(x)) {
+            fxHead('Voix');
             const el = document.createElement('div'); el.className = 'ctx-item';
             el.textContent = showTuneSlot(x) ? '✓  Auto-Tune (déjà là — ouvrir)' : '+  Auto-Tune';
             el.addEventListener('click', () => {
@@ -1947,7 +1966,12 @@ function openAddEffectMenu(anchor, target, x) {
             menu.appendChild(el);
         }
     }
-    ADD_FX_CHOICES.forEach(([n, label]) => {
+    const fxLabel = Object.fromEntries(ADD_FX_CHOICES);
+    const ordered = [];
+    ADD_FX_CATEGORIES.forEach(([cat, names]) => names.forEach(n => { if (fxLabel[n]) ordered.push([n, fxLabel[n], cat]); }));
+    let lastCat = null;
+    ordered.forEach(([n, label, cat]) => {
+        if (cat !== lastCat) { fxHead(cat); lastCat = cat; }
         const el = document.createElement('div');
         el.className = 'ctx-item';
         el.textContent = (x.effects || []).includes(n) ? `✓  ${label} (déjà là — ouvrir)` : `+  ${label}`;
@@ -1968,6 +1992,14 @@ function openAddEffectMenu(anchor, target, x) {
         menu.appendChild(el);
     });
     document.body.appendChild(menu);
+    // Le menu tient dans la fenêtre : il remonte si besoin et défile au-delà
+    {
+        const h = Math.min(menu.scrollHeight, window.innerHeight - 16);
+        const top = Math.max(8, Math.min(r.bottom + 4, window.innerHeight - h - 8));
+        menu.style.top = top + 'px';
+        menu.style.maxHeight = (window.innerHeight - top - 8) + 'px';
+        menu.style.overflowY = 'auto';
+    }
     dismissMenuOnOutside(menu);
 }
 // Change la place d'un effet dans la chaîne (dir : -1 = plus tôt, +1 = plus tard)
@@ -5984,6 +6016,59 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
             { key: 'size',  label: 'Taille',     unit: 's',  min: 0.3, max: 5,   def: 1.8, step: 0.1 },
             { key: 'decay', label: 'Déclin',     unit: '',   min: 0.5, max: 5,   def: 2.5, step: 0.1 }
         ],
+        crush: [
+            { key: 'bits', label: 'Finesse du son', unit: ' bits', min: 4, max: 16, def: 8, step: 1 },
+            { key: 'down', label: 'Son haché',      unit: '',      min: 1, max: 32, def: 4, step: 1 },
+            { key: 'mix',  label: 'Mélange',        unit: '%',     min: 0, max: 100, def: 100, step: 1 }
+        ],
+        util: [
+            { key: 'gain',   label: 'Volume',           unit: ' dB', min: -24, max: 24, def: 0, step: 0.5 },
+            { key: 'invert', label: 'Inverser la phase', unit: '',   min: 0,   max: 1,  def: 0, step: 1 },
+            { key: 'mono',   label: 'Passer en mono',    unit: '',   min: 0,   max: 1,  def: 0, step: 1 }
+        ],
+        width: [
+            { key: 'width', label: 'Largeur', unit: '%', min: 0, max: 200, def: 100, step: 1 }
+        ],
+        tremolo: [
+            { key: 'rate',  label: 'Vitesse',  unit: ' Hz', min: 0.5, max: 15,  def: 5,  step: 0.5 },
+            { key: 'depth', label: 'Intensité', unit: '%',   min: 0,   max: 100, def: 50, step: 1 }
+        ],
+        phaser: [
+            { key: 'rate',     label: 'Vitesse',     unit: ' Hz', min: 0.05, max: 3,   def: 0.4, step: 0.05 },
+            { key: 'depth',    label: 'Étendue',     unit: '%',   min: 0,    max: 100, def: 70,  step: 1 },
+            { key: 'feedback', label: 'Résonance',   unit: '%',   min: 0,    max: 90,  def: 40,  step: 1 },
+            { key: 'mix',      label: 'Mélange',     unit: '%',   min: 0,    max: 100, def: 50,  step: 1 }
+        ],
+        flanger: [
+            { key: 'rate',     label: 'Vitesse',     unit: ' Hz', min: 0.05, max: 2,   def: 0.25, step: 0.05 },
+            { key: 'depth',    label: 'Profondeur',  unit: ' ms', min: 0.5,  max: 5,   def: 2,    step: 0.5 },
+            { key: 'feedback', label: 'Résonance',   unit: '%',   min: 0,    max: 90,  def: 50,   step: 1 },
+            { key: 'mix',      label: 'Mélange',     unit: '%',   min: 0,    max: 100, def: 50,   step: 1 }
+        ],
+        chorus: [
+            { key: 'rate',  label: 'Vitesse',    unit: ' Hz', min: 0.1, max: 3,   def: 0.8, step: 0.1 },
+            { key: 'depth', label: 'Profondeur', unit: ' ms', min: 1,   max: 10,  def: 5,   step: 0.5 },
+            { key: 'mix',   label: 'Mélange',    unit: '%',   min: 0,   max: 100, def: 50,  step: 1 }
+        ],
+        doubler: [
+            { key: 'width', label: 'Épaisseur', unit: '%', min: 0, max: 100, def: 50, step: 1 },
+            { key: 'mix',   label: 'Mélange',   unit: '%', min: 0, max: 100, def: 50, step: 1 }
+        ],
+        slapback: [
+            { key: 'time',     label: 'Retard',      unit: ' ms', min: 30, max: 300, def: 110, step: 5 },
+            { key: 'feedback', label: 'Répétitions', unit: '%',   min: 0,  max: 50,  def: 12,  step: 1 },
+            { key: 'mix',      label: 'Mélange',     unit: '%',   min: 0,  max: 100, def: 25,  step: 1 }
+        ],
+        gate: [
+            { key: 'threshold', label: 'Seuil (en dessous = coupé)', unit: ' dB', min: -70, max: -20, def: -45, step: 1 },
+            { key: 'release',   label: 'Retour du son',             unit: ' ms', min: 20,  max: 500, def: 150, step: 5 },
+            { key: 'reduction', label: 'Coupure',                   unit: ' dB', min: 6,   max: 80,  def: 40,  step: 1 }
+        ],
+        filter: [
+            { key: 'hpf',   label: 'Coupe-bas (graves)',  unit: ' Hz', min: 20,  max: 1000,  def: 80,    step: 5 },
+            { key: 'lpf',   label: 'Coupe-haut (aigus)',  unit: ' Hz', min: 1000, max: 20000, def: 20000, step: 100 },
+            { key: 'slope', label: 'Pente',                unit: ' dB', min: 12,  max: 24,    def: 12,    step: 12 }
+        ],
         sat: [
             { key: 'drive', label: 'Chaleur', unit: '%', min: 0, max: 100, def: 25, step: 1 }
         ],
@@ -6003,7 +6088,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
 
     const panel = document.createElement('div');
     panel.className = 'fx-panel';
-    const FX_LABELS = { eq: 'EQ 4 bandes', comp: 'Compresseur', reverb: 'Réverbération', sat: 'Saturation', deess: 'De-esser', delay: 'Écho' };
+    const FX_LABELS = { crush: 'Bitcrusher', util: 'Utilitaire', width: 'Largeur stéréo', tremolo: 'Trémolo', phaser: 'Phaser', flanger: 'Flanger', chorus: 'Chorus', doubler: 'Doubleur de voix', slapback: 'Slapback', gate: 'Gate', filter: 'Filtre', eq: 'EQ 4 bandes', comp: 'Compresseur', reverb: 'Réverbération', sat: 'Saturation', deess: 'De-esser', delay: 'Écho' };
     panel.innerHTML = `
         <div class="fx-panel-header">
             <span>${FX_LABELS[fxName] || fxName.toUpperCase()}</span>

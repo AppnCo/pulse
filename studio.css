@@ -2956,3 +2956,10 @@ body.is-splitting, body.is-splitting * { cursor: col-resize !important; }
 .dz-url-convert { margin-top: 8px; align-items: center; gap: 8px; flex-wrap: wrap; }
 .dz-url-or { font-size: 12px; opacity: .7; }
 .dz-url-dl { background: transparent; border: 1px solid currentColor; color: inherit; opacity: .9; }
+
+/* En-tête de catégorie dans le menu « + Effet » */
+.track-ctx-menu .ctx-head { padding: 7px 12px 3px; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-3, #8a7aa8); pointer-events: none; }
+.track-ctx-menu .ctx-head:not(:first-child) { margin-top: 4px; border-top: 1px solid rgba(168, 85, 247, .18); padding-top: 9px; }
+
+/* Menu « + Effet » : une vingtaine d'effets, il défile au lieu de sortir de l'écran */
+.track-ctx-menu:has(.ctx-head) { max-height: min(72vh, 640px); overflow-y: auto; }
