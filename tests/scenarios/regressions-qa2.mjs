@@ -47,7 +47,7 @@ export default async (c) => {
 
   // 25. Le fader Master est sauvegardé avec le projet
   await boot(c, { id: 'm1', name: 'M', bpm: 120, buses: [], tracks: [{ name: 'A', type: 'audio', color: '#A855F7', clips: [] }] });
-  await val(`const f=document.querySelector('.mixer-master .fader'); f.value=60; f.dispatchEvent(new Event('input')); f.dispatchEvent(new Event('change'))`); await sleep(300);
+  await val(`const f=document.querySelector('.mixer-master .fader'); f.value=45; /* position 45 = volume 60 : 0 dB aux 3/4 de la course */ f.dispatchEvent(new Event('input')); f.dispatchEvent(new Event('change'))`); await sleep(300);
   await c.nav('http://localhost:8765/studio.html'); await sleep(900);
   ok(await val(`return Math.round(PulseAudio.getMasterVolume())===60`), 'fader Master : retrouvé à la réouverture');
 

@@ -158,8 +158,43 @@ function timeAgo(ts) {
 }
 
 // === Modal Template ===
-// L'ordre d'affichage est intentionnel : Rap Studio en 1er (template signature).
+// L'ordre d'affichage est intentionnel : Studio en 1er (le circuit du studio Red Records), Rap Studio en version simple.
 const TEMPLATES = [
+    {
+        id: 'studio',
+        name: 'Studio',
+        desc: 'Le circuit du studio : tu enregistres sur REC, ta voix passe dans Vocal 1 puis All Vocal, et tout finit dans les Mix Bus. Back et Ambiance ont leur Auto-Tune. Les effets ponctuels (Del, Pitch, Phone) se créent quand tu en as besoin, avec le bouton ✦ de Vocal 1.',
+        icon: 'star',
+        bpm: 120,
+        // Disposition B (validée le 22/10) : l'essentiel visible, le reste n'apparaît qu'à l'usage
+        tracks: [
+            { name: 'Prod',          type: 'audio', preset: 'instru', output: 'mixbus1',  color: '#C084FC' },
+            { name: 'REC',           type: 'audio', isCapture: true, armed: true, output: 'vocal1', color: '#A855F7', tuneSlot: true },
+            { name: 'Back Auto-Tune', type: 'audio', output: 'back',     color: '#D8B4FE', tuneSlot: true },
+            { name: 'Amb Auto-Tune',  type: 'audio', output: 'ambiance', color: '#F0ABFC', tuneSlot: true }
+        ],
+        buses: [
+            { id: 'vocal1',   name: 'Vocal 1',   isGroup: true, spots: true, output: 'allvocal', color: '#A855F7', sound: { preset: 'lead', tone: 0, hold: 35, drive: 10, space: 0, deess: 30 },
+              sends: { revroom: 12, revlong: 10, del14: 8 } },
+            { id: 'back',     name: 'Back',      isGroup: true, output: 'allvocal', color: '#D8B4FE', sound: { preset: 'back', tone: 0, hold: 55, drive: 10, space: 0, deess: 40 },
+              sends: { revroom: 15, revlong: 20, del14: 10 } },
+            { id: 'ambiance', name: 'Ambiance',  isGroup: true, output: 'allvocal', color: '#F0ABFC', sound: { preset: 'adlib', tone: 0, hold: 50, drive: 15, space: 0, deess: 30 },
+              sends: { revamb: 30, delamb: 18 } },
+            { id: 'allvocal', name: 'All Vocal', isGroup: true, preset: 'bus-allvocal', output: 'mixbus1', color: '#7C3AED', sound: { preset: 'glue', tone: 0, hold: 25, drive: 0, space: 0, deess: 0 } },
+            { id: 'mixbus1',  name: 'Mix Bus 1', preset: 'bus-mix1',   output: 'mixbus2', noFolder: true, row: true, premaster: true, color: '#7C3AED' },
+            { id: 'mixbus2',  name: 'Mix Bus 2', preset: 'bus-safety', output: 'master', locked: true, hidden: true, effects: ['limit'], color: '#7C3AED' }
+        ],
+        // Retours d'effets de la template (P/Comp et Slap : en insert dans Pulse, pas en envoi)
+        sends: [
+            { id: 'revroom', name: 'Rev Room', type: 'reverb', size: 1.4, pre: 0,  volume: 100 },
+            { id: 'revlong', name: 'Rev Long', type: 'reverb', size: 3.2, pre: 20, volume: 100 },
+            { id: 'del18',   name: 'Del 1/8',  type: 'delay', beats: 0.5, feedback: 30, volume: 100 },
+            { id: 'del14',   name: 'Del 1/4',  type: 'delay', beats: 1,   feedback: 35, volume: 100 },
+            { id: 'del12',   name: 'Del 1/2',  type: 'delay', beats: 2,   feedback: 30, volume: 100 },
+            { id: 'revamb',  name: 'Rev Amb',  type: 'reverb', size: 2.6, pre: 10, volume: 100 },
+            { id: 'delamb',  name: 'Del Amb',  type: 'delay', beats: 0.75, feedback: 40, pp: 1, volume: 100 }
+        ]
+    },
     {
         id: 'rap-studio',
         name: 'Rap Studio',
@@ -171,9 +206,9 @@ const TEMPLATES = [
         tracks: [
             { name: 'Instru',   type: 'audio', preset: 'instru', output: 'mixbus1', color: '#60A5FA' },
             { name: 'Rec',      type: 'audio', isCapture: true, armed: true, output: 'allvocal', color: '#F472B6' },
-            { name: 'Lead',     type: 'audio', output: 'vocal1',   color: '#A855F7', tuneSlot: true },
-            { name: 'Back',     type: 'audio', output: 'back',     color: '#C084FC', sends: { revlong: 20 }, tuneSlot: true },
-            { name: 'Ambiance', type: 'audio', output: 'ambiance', color: '#F0ABFC', sends: { revlong: 25 }, tuneSlot: true }
+            { name: 'Lead',     type: 'audio', output: 'vocal1',   color: '#A855F7' },
+            { name: 'Back',     type: 'audio', output: 'back',     color: '#C084FC', sends: { revlong: 20 } },
+            { name: 'Ambiance', type: 'audio', output: 'ambiance', color: '#F0ABFC', sends: { revlong: 25 } }
         ],
         buses: [
             { id: 'vocal1',   name: 'Vocal 1',   isGroup: true, output: 'allvocal', color: '#A855F7', sound: { preset: 'lead', tone: 0, hold: 35, drive: 0, space: 0, deess: 30 } },
@@ -295,7 +330,8 @@ function createProjectFromTemplate(id) {
         name: tpl.name,
         templateId: tpl.id,
         tracks: tpl.tracks.map(t => ({ ...t, clips: [] })),
-        buses: (tpl.buses || []).map(b => ({ ...b })),
+        buses: (tpl.buses || []).map(b => ({ ...b, ...(b.sends ? { sends: { ...b.sends } } : {}) })),
+        ...(tpl.sends ? { sends: tpl.sends.map(sd => ({ ...sd })) } : {}),
         bpm: tpl.bpm || 120,
         createdAt: Date.now(),
         lastOpen: Date.now()

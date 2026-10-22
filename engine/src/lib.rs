@@ -329,6 +329,62 @@ mod tests {
         assert!((gain_db(&t, 300.0, 0.7) + 5.1).abs() < 0.3, "voix forte : {}", gain_db(&t, 300.0, 0.7));
     }
 
+    /// Mêmes chiffres que tests/scenarios/comp-genou.mjs (mesurés dans Chrome).
+    #[test]
+    fn compresseur_genou_et_rattrapage() {
+        let mk = |knee: f64, makeup: f64| -> Track {
+            serde_json::from_str(&format!(r#"{{"effects":["comp"],"effectParams":{{"comp":{{"threshold":-20,"ratio":4,"attack":10,"release":50,"knee":{knee},"makeup":{makeup}}}}}}}"#)).unwrap()
+        };
+        let g = |t: &Track, amp: f64| gain_db(t, 300.0, amp);
+        assert!(g(&mk(0.0, 0.0), 0.1).abs() < 0.05, "au seuil, genou net : {}", g(&mk(0.0, 0.0), 0.1));
+        assert!((g(&mk(24.0, 0.0), 0.1) + 1.70).abs() < 0.05, "au seuil, genou doux : {}", g(&mk(24.0, 0.0), 0.1));
+        assert!((g(&mk(0.0, 0.0), 0.5) + 8.80).abs() < 0.05, "voix forte : {}", g(&mk(0.0, 0.0), 0.5));
+        assert!((g(&mk(0.0, 6.0), 0.5) + 2.80).abs() < 0.05, "rattrapage +6 dB : {}", g(&mk(0.0, 6.0), 0.5));
+    }
+
+    /// Caractères du compresseur (Propre, Opto, FET, Bus) : compression et harmoniques ajoutées,
+    /// mêmes chiffres que tests/scenarios/comp-genou.mjs (Chrome, export WAV).
+    #[test]
+    fn compresseur_caracteres() {
+        let sr = SR as f64;
+        let run = |mode: Option<u8>| -> Vec<f32> {
+            let mut buf: Vec<f32> = (0..2 * SR as usize).map(|i| (0.5 * (2.0 * std::f64::consts::PI * 300.0 * i as f64 / sr).sin()) as f32).collect();
+            if let Some(m) = mode {
+                let t: Track = serde_json::from_str(&format!(r#"{{"effects":["comp"],"effectParams":{{"comp":{{"threshold":-20,"ratio":4,"attack":10,"release":50,"knee":0,"makeup":0,"mode":{m}}}}}}}"#)).unwrap();
+                crate::fx::Chain::for_track(&t, sr, 90.0).process(&mut buf, &mut [], true);
+            }
+            buf
+        };
+        let amp = |x: &[f32], f: f64| {
+            let (mut re, mut im) = (0.0, 0.0);
+            for i in SR as usize..(SR as f64 * 1.8) as usize {
+                let a = 2.0 * std::f64::consts::PI * f * i as f64 / sr;
+                re += x[i] as f64 * a.cos();
+                im += x[i] as f64 * a.sin();
+            }
+            (re * re + im * im).sqrt()
+        };
+        let r = amp(&run(None), 300.0);
+        {
+            let t: Track = serde_json::from_str(r#"{"effects":["comp"],"effectParams":{"comp":{"threshold":-20,"ratio":4,"attack":10,"release":50,"knee":0,"makeup":0,"mode":3,"autoRel":1}}}"#).unwrap();
+            let mut buf: Vec<f32> = (0..2 * SR as usize).map(|i| (0.5 * (2.0 * std::f64::consts::PI * 300.0 * i as f64 / sr).sin()) as f32).collect();
+            crate::fx::Chain::for_track(&t, sr, 90.0).process(&mut buf, &mut [], true);
+            let g = 20.0 * (amp(&buf, 300.0) / r).log10();
+            assert!((g + 10.63).abs() < 0.05, "bus, relâchement auto : {g}");
+        }
+        // (mode, compression dB, harmonique 2 dB, harmonique 3 dB) ; les harmoniques sous -70 dB ne sont pas comparées (bruit du WAV 16 bits de l'export)
+        for (m, g, h2, h3) in [(0u8, -8.80, -120.0, -52.2), (1, -10.59, -41.2, -78.7), (2, -9.79, -103.9, -47.5), (3, -10.57, -102.0, -89.4)] {
+            let x = run(Some(m));
+            let f = amp(&x, 300.0);
+            let db = |v: f64| 20.0 * v.log10();
+            assert!((db(f / r) - g).abs() < 0.05, "caractère {m} : compression {}", db(f / r));
+            for (h, want) in [(600.0, h2), (900.0, h3)] {
+                let got = db(amp(&x, h) / f);
+                if want > -70.0 { assert!((got - want).abs() < 0.5, "caractère {m} : harmonique {h} Hz {got}"); } else { assert!(got < -70.0, "caractère {m} : harmonique {h} Hz {got}"); }
+            }
+        }
+    }
+
     #[test]
     fn compresseur_parallele() {
         let mk = |mix: f64| -> Track {
@@ -373,6 +429,62 @@ mod tests {
         assert!((eq_gain_db(&t, 40.0) + 4.0).abs() < 0.8, "-4 dB dans les graves : {}", eq_gain_db(&t, 40.0));
         assert!(eq_gain_db(&t, 16000.0) < -6.0, "coupe-haut 8 kHz : {}", eq_gain_db(&t, 16000.0));
         assert!(eq_gain_db(&t, 3000.0).abs() < 1.0, "bande coupée sans effet : {}", eq_gain_db(&t, 3000.0));
+    }
+
+    /// Filtre : coupe-bas / coupe-haut Butterworth. -3 dB à la coupure, 12 puis 24 dB par octave ; éteint = transparent.
+    /// Mêmes valeurs que tests/scenarios/filtre.mjs (navigateur).
+    #[test]
+    fn filtre_coupe_bas_et_haut() {
+        let t12: Track = serde_json::from_str(r#"{"effects":["filter"],"effectParams":{"filter":{"hpf":200,"lpf":5000,"slope":12}}}"#).unwrap();
+        assert!((eq_gain_db(&t12, 200.0) + 3.0).abs() < 0.5, "coupure bas -3 dB : {}", eq_gain_db(&t12, 200.0));
+        assert!((eq_gain_db(&t12, 100.0) + 13.0).abs() < 1.5, "12 dB/oct vers le bas : {}", eq_gain_db(&t12, 100.0));
+        assert!((eq_gain_db(&t12, 5000.0) + 3.0).abs() < 0.5, "coupure haut -3 dB : {}", eq_gain_db(&t12, 5000.0));
+        assert!(eq_gain_db(&t12, 1000.0).abs() < 0.5, "milieu intact : {}", eq_gain_db(&t12, 1000.0));
+        let t24: Track = serde_json::from_str(r#"{"effects":["filter"],"effectParams":{"filter":{"hpf":200,"slope":24}}}"#).unwrap();
+        assert!((eq_gain_db(&t24, 200.0) + 3.0).abs() < 0.5, "24 dB : coupure -3 dB : {}", eq_gain_db(&t24, 200.0));
+        assert!(eq_gain_db(&t24, 100.0) < -22.0, "24 dB/oct vers le bas : {}", eq_gain_db(&t24, 100.0));
+        let off: Track = serde_json::from_str(r#"{"effects":["filter"],"effectParams":{"filter":{"hpf":20,"lpf":20000}}}"#).unwrap();
+        assert!(eq_gain_db(&off, 30.0).abs() < 0.01 && eq_gain_db(&off, 12000.0).abs() < 0.01, "éteint = transparent");
+    }
+
+    /// Gate : un son sous le seuil est baissé de `reduction` dB, un son au-dessus passe intact (voir tests/scenarios/gate.mjs).
+    #[test]
+    fn gate_coupe_sous_le_seuil() {
+        let t: Track = serde_json::from_str(r#"{"effects":["gate"],"effectParams":{"gate":{"threshold":-35,"release":50,"reduction":24}}}"#).unwrap();
+        assert!(gain_db(&t, 440.0, 0.3).abs() < 0.1, "au-dessus du seuil : {}", gain_db(&t, 440.0, 0.3));
+        assert!((gain_db(&t, 440.0, 0.01) + 24.0).abs() < 0.5, "sous le seuil : {}", gain_db(&t, 440.0, 0.01));
+    }
+
+    /// Effets de mouvement : niveau (dB) d'un La 440 puis d'un 1 kHz à 0,25 après chaque effet réglé par défaut.
+    /// Les mêmes chiffres sont vérifiés dans le navigateur par tests/scenarios/mouvement.mjs.
+    #[test]
+    fn mouvement_comme_le_navigateur() {
+        let refs = [("chorus", -3.501, -2.838), ("flanger", 0.860, -3.512), ("phaser", -2.256, -4.896), ("tremolo", -2.264, -2.264),
+            ("doubler", -2.365, -3.127), ("slapback", -4.868, 0.291), ("crush", -0.005, 0.045), ("util", 0.0, 0.0)];
+        for (fx, a, b) in refs {
+            let t: Track = serde_json::from_str(&format!(r#"{{"effects":["{fx}"]}}"#)).unwrap();
+            let (x, y) = (gain_db(&t, 440.0, 0.25), gain_db(&t, 1000.0, 0.25));
+            assert!((x - a).abs() < 0.05 && (y - b).abs() < 0.05, "{fx} : {x:.3} / {y:.3} au lieu de {a} / {b}");
+        }
+    }
+
+    /// Largeur (milieu / côtés) et Utilitaire (mono, phase, volume) sur une piste stéréo.
+    #[test]
+    fn largeur_et_utilitaire_en_stereo() {
+        let run = |json: &str, l: f32, r: f32| {
+            let t: Track = serde_json::from_str(json).unwrap();
+            let (mut a, mut b) = (vec![l; 64], vec![r; 64]);
+            crate::fx::Chain::for_track(&t, SR as f64, 90.0).process(&mut a, &mut b, false);
+            (a[63] as f64, b[63] as f64)
+        };
+        let (l, r) = run(r#"{"effects":["width"],"effectParams":{"width":{"width":0}}}"#, 0.5, -0.5);
+        assert!(l.abs() < 1e-6 && r.abs() < 1e-6, "largeur 0 : deux canaux opposés s'annulent ({l}, {r})");
+        let (l, r) = run(r#"{"effects":["width"],"effectParams":{"width":{"width":200}}}"#, 0.4, 0.0);
+        assert!((l - 0.6).abs() < 1e-6 && (r + 0.2).abs() < 1e-6, "largeur 200 % : {l} {r}");
+        let (l, r) = run(r#"{"effects":["util"],"effectParams":{"util":{"mono":1,"gain":6.0206}}}"#, 0.4, 0.0);
+        assert!((l - 0.4).abs() < 1e-3 && (r - 0.4).abs() < 1e-3, "mono + 6 dB : {l} {r}");
+        let (l, r) = run(r#"{"effects":["util"],"effectParams":{"util":{"invert":1}}}"#, 0.3, -0.1);
+        assert!((l + 0.3).abs() < 1e-6 && (r - 0.1).abs() < 1e-6, "phase inversée : {l} {r}");
     }
 
     #[test]

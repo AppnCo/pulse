@@ -9,7 +9,7 @@ export default async ({ ev, nav, send, shot, sleep }) => {
   await nav('http://localhost:8765/studio.html');
   const R = async (label, code) => console.log(label + ':', await ev(`(async()=>{${code}})()`));
   await R('moteur', `const ctx=await PulseAudio.init(); const sr=48000,buf=ctx.createBuffer(1,sr*10,sr),d=buf.getChannelData(0); for(let i=0;i<d.length;i++)d[i]=0.4*i/d.length; PulseAudio.registerBuffer('a',buf);
-    const dec=async(bl)=>ctx.decodeAudioData(await bl.arrayBuffer()); const at=(b,t)=>b.getChannelData(0)[Math.round(t*sr)]; const k=0.8*Math.SQRT1_2*0.4;
+    const dec=async(bl)=>ctx.decodeAudioData(await bl.arrayBuffer()); const at=(b,t)=>b.getChannelData(0)[Math.round(t*b.sampleRate)]; const k=0.8*Math.SQRT1_2*0.4;
     const P=(clip,tr={},buses=[])=>({buses,tracks:[{volume:100,clips:[{id:'a',...clip}],...tr}]}); const o=[];
     const chk=(n,v,exp,tol=0.004)=>o.push((Math.abs(v-exp)<tol?'PASS ':'FAIL ')+n+' '+v.toFixed(4)+'/'+exp.toFixed(4));
     let b=await dec(await PulseAudio.exportWav(P({start:1,duration:2,offset:3}))); chk('offset',at(b,1.5)/k,0.35);

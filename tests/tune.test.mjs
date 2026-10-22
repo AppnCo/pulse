@@ -92,4 +92,30 @@ r = await T.process([x], sr, { notes: only, strength: 1 });
 g0 = await T.trackPitch(r.channels[0], sr);
 const m9 = median(g0);
 ok('notes au clavier', Math.abs(cents(m9, 261.63)) < 12, `sortie ${m9.toFixed(1)} Hz (Ré interdit → Do 261,6)`);
+
+// --- Réglages « Pro » (PulseTune) : on mesure la note visée par la courbe de correction (sans PSOLA)
+{
+  const A4 = 440, hz = (m) => 440 * 2 ** ((m - 69) / 12), N = 300;   // 3 s de mesures (une toutes les 10 ms)
+  const outMidi = (f0, ratio) => Array.from(f0, (f, i) => 69 + 12 * Math.log2(f * ratio[i] / 440));
+  const sd = (a) => { const v = a.slice(50); const m = v.reduce((p, q) => p + q, 0) / v.length; return Math.sqrt(v.reduce((p, q) => p + (q - m) ** 2, 0) / v.length); };
+  const all = new Array(12).fill(true);
+  // Vibrato de ±0,4 demi-ton à 5,5 Hz autour d'un La juste
+  const vib = Float32Array.from({ length: N }, (_, i) => hz(69 + 0.4 * Math.sin(2 * Math.PI * 5.5 * i * 0.01)));
+  const flat = sd(outMidi(vib, T.correctionCurve(vib, all, 1).ratio)), kept = sd(outMidi(vib, T.correctionCurve(vib, all, 1, { vibrato: 1 }).ratio));
+  ok('Vibrato 0 % : aplati comme avant', flat < 0.05, `écart ${flat.toFixed(3)} demi-ton`);
+  ok('Vibrato 100 % : le vibrato reste', kept > 0.2, `écart ${kept.toFixed(3)} demi-ton (voix : ${sd(Array.from(vib, f => 69 + 12 * Math.log2(f / 440))).toFixed(3)})`);
+  // Souplesse : voix tenue 0,35 demi-ton trop haut
+  const off = new Float32Array(N).fill(hz(69.35));
+  const corr = (more) => 69.35 - outMidi(off, T.correctionCurve(off, all, 1, more).ratio)[N - 1];
+  ok('Souplesse 0 : corrigé jusqu’à la note', Math.abs(corr({}) - 0.35) < 0.02, corr({}).toFixed(3) + ' demi-ton corrigé');
+  ok('Souplesse 100 % : loin de la note, la voix reste libre', corr({ flex: 1 }) < 0.05, corr({ flex: 1 }).toFixed(3) + ' demi-ton corrigé');
+  // Humain : note tenue qui dérive doucement de +0,3 demi-ton sur 3 s
+  const drift = Float32Array.from({ length: N }, (_, i) => hz(69 + 0.3 * i / N));
+  const dRobot = outMidi(drift, T.correctionCurve(drift, all, 1).ratio)[N - 1] - 69, dHuman = outMidi(drift, T.correctionCurve(drift, all, 1, { human: 1 }).ratio)[N - 1] - 69;
+  ok('Humain : la note tenue garde un peu de sa vie', dHuman > dRobot + 0.005, `fin de note : ${dRobot.toFixed(3)} (sans) → ${dHuman.toFixed(3)} demi-ton (avec)`);
+  // Type de voix : une voix grave (65 Hz) n'est trouvée qu'en « Grave »
+  const low = voice(() => 65, 1);
+  const fMid = median(await T.trackPitch(low, sr, null, 'mid')), fLow = median(await T.trackPitch(low, sr, null, 'low'));
+  ok('Type de voix « Grave » : trouve un Do grave à 65 Hz', Math.abs(cents(fLow, 65)) < 30, `médium : ${fMid ? fMid.toFixed(1) : 'rien'} Hz · grave : ${fLow.toFixed(1)} Hz`);
+}
 process.exit(fail ? 1 : 0);

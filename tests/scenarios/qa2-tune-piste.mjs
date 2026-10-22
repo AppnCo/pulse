@@ -13,7 +13,7 @@ export default async (c) => {
   await ev(`state.project.tracks[0].type='audio'; renderAll()`);
   await ev(`openTunePanel(0,-1,300,200,true)`); await sleep(300);
   await ev(`document.querySelector('.tune-quick [data-q="all"]').click()`);
-  await ev(`document.querySelector('.tune-apply').click()`);
+  await ev(`document.querySelector('.tb-power').click()`);
   await sleep(6000);
   const st = () => ev(`JSON.stringify({auto:state.project.tracks[0].autotune&&state.project.tracks[0].autotune.on, tuned:state.project.tracks[0].clips.map(c=>!!c.tune), undo:_undoStack.length, tag:document.querySelectorAll('.clip-gain-tag').length})`);
   console.log('après activation', await st());
@@ -26,7 +26,7 @@ export default async (c) => {
   console.log('après 3 ⌘Z', await st(), await ev(`document.getElementById('flash').textContent`));
   // Nouveau clip importé après activation : est-il corrigé ?
   await ev(`openTunePanel(0,-1,300,200,true)`); await sleep(200);
-  await ev(`document.querySelector('.tune-quick [data-q="all"]').click(); document.querySelector('.tune-apply').click()`); await sleep(5000);
+  await ev(`document.querySelector('.tune-quick [data-q="all"]').click(); document.querySelector('.tb-power').click()`); await sleep(5000);
   await ev(voice(8)); await sleep(1500);
   console.log('3e clip importé sur piste Tune : corrigé ?', await st());
   console.log('inv', await ev(`JSON.stringify(${INVARIANTS})`));

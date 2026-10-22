@@ -394,7 +394,49 @@ async fn import_url(app: tauri::AppHandle, url: String) -> Result<String, String
             .filter_map(|e| e.ok().map(|e| e.path()))
             .find(|p| p.is_file() && p.extension().and_then(|x| x.to_str()) != Some("part"))
             .ok_or("le son n'a pas été trouvé après le téléchargement")?;
+        // macOS : le m4a « DASH » de YouTube n'est pas décodable par la webview → conversion en WAV avec afconvert (livré avec macOS)
+        #[cfg(target_os = "macos")]
+        {
+            let wav = file.with_extension("wav");
+            let ok = Command::new("/usr/bin/afconvert")
+                .args(["-f", "WAVE", "-d", "LEI16"]).arg(&file).arg(&wav)
+                .status().map(|s| s.success()).unwrap_or(false);
+            if ok && wav.is_file() {
+                let _ = std::fs::remove_file(&file);
+                return Ok(wav.to_string_lossy().into_owned());
+            }
+        }
         Ok(file.to_string_lossy().into_owned())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Range un fichier converti (octets bruts) dans le dossier Téléchargements et le montre. En-tête : `name` (encodé)
+#[tauri::command]
+async fn save_download(request: Request<'_>) -> Result<String, String> {
+    let InvokeBody::Raw(bytes) = request.body() else {
+        return Err("le fichier doit arriver en octets bruts".into());
+    };
+    let name = request.headers().get("name").and_then(|v| v.to_str().ok()).map(percent_decode).unwrap_or_default();
+    let clean: String = name.chars().map(|c| if c.is_alphanumeric() || " ._-()".contains(c) { c } else { '_' }).collect();
+    let clean = clean.trim_matches(|c| c == '.' || c == ' ').to_string();
+    if clean.is_empty() { return Err("nom de fichier refusé".into()); }
+    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).ok_or("dossier personnel introuvable")?;
+    let dir = std::path::PathBuf::from(home).join("Downloads");
+    let bytes = bytes.clone();
+    tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let (stem, ext) = match clean.rsplit_once('.') { Some((a, b)) => (a.to_string(), format!(".{b}")), None => (clean.clone(), String::new()) };
+        let mut target = dir.join(&clean);
+        let mut n = 2;
+        while target.exists() { target = dir.join(format!("{stem} ({n}){ext}")); n += 1; }
+        std::fs::write(&target, &bytes).map_err(|e| format!("écriture impossible : {e}"))?;
+        #[cfg(target_os = "macos")]
+        let _ = std::process::Command::new("open").arg("-R").arg(&target).spawn();
+        #[cfg(target_os = "windows")]
+        let _ = std::process::Command::new("explorer").arg(format!("/select,{}", target.display())).spawn();
+        Ok(target.to_string_lossy().into_owned())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -442,7 +484,7 @@ fn main() {
         .manage(PendingOpen(Mutex::new(pending)))
         .manage(Midi(Mutex::new(Vec::new())))
         .manage(PickedRoot(Mutex::new(None)))
-        .invoke_handler(tauri::generate_handler![native_info, native_play, native_stop, midi_ports, midi_start, pick_folder, create_project_folder, project_folder_ok, save_file, reveal_project_folder, take_pending_open, read_pulse_file, import_url, read_import_file, test_log, test_exit])
+        .invoke_handler(tauri::generate_handler![native_info, native_play, native_stop, midi_ports, midi_start, pick_folder, create_project_folder, project_folder_ok, save_file, reveal_project_folder, take_pending_open, read_pulse_file, import_url, read_import_file, save_download, test_log, test_exit])
         .build(context)
         .expect("Pulse n'a pas pu démarrer la fenêtre")
         .run(|app, event| {

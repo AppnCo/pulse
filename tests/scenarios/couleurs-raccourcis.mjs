@@ -12,12 +12,12 @@ export default async ({ ev, nav, send, sleep }) => {
   await R('panneau ouvert', `return document.querySelectorAll('.color-panel .ctx-swatch').length+' couleurs'`);
   await R('clic sur une couleur', `const sw=document.querySelectorAll('.color-panel .ctx-swatch[data-c]')[7]; sw.click(); return 'clip.color='+state.project.tracks[0].clips[0].color+' (attendu '+sw.dataset.c+')'`);
   await key('Escape', 'Escape'); 
-  await R('S efface à gauche du curseur', `state.selectedClip=null; state.playhead=2; updatePlayhead(); return 'ok'`);
-  await key('s', 'KeyS');
-  await R('après S', `const c=state.project.tracks[0].clips; return JSON.stringify(c.map(x=>[+x.start.toFixed(2),+x.duration.toFixed(2)]))+' (attendu [[2,4]])'`);
-  await R('D efface à droite', `state.playhead=5; updatePlayhead(); return 'ok'`);
+  await R('D efface à gauche du curseur', `state.selectedClip=null; state.playhead=2; updatePlayhead(); return 'ok'`);
   await key('d', 'KeyD');
-  await R('après D', `const c=state.project.tracks[0].clips; return JSON.stringify(c.map(x=>[+x.start.toFixed(2),+x.duration.toFixed(2)]))+' (attendu [[2,3]])'`);
+  await R('après D (gauche)', `const c=state.project.tracks[0].clips; return JSON.stringify(c.map(x=>[+x.start.toFixed(2),+x.duration.toFixed(2)]))+' (attendu [[2,4]])'`);
+  await R('F efface à droite', `state.playhead=5; updatePlayhead(); return 'ok'`);
+  await key('f', 'KeyF');
+  await R('après F (droite)', `const c=state.project.tracks[0].clips; return JSON.stringify(c.map(x=>[+x.start.toFixed(2),+x.duration.toFixed(2)]))+' (attendu [[2,3]])'`);
   await R('⌘X coupe la région', `state.selectedClip={trackIdx:0,clipIdx:0}; return 'ok'`);
   await key('x', 'KeyX', 4);   // Meta+X
   await R('après ⌘X', `return 'clips='+state.project.tracks[0].clips.length+' presse-papier='+!!state.clipboard+' (attendu 0 et true)'`);

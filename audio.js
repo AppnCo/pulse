@@ -338,7 +338,8 @@ window.PulseAudio = (function() {
                 const p = (o && o.processorOptions) || {};
                 this.wet = Math.max(0, Math.min(1, p.wet ?? 0.18));
                 const size = p.size ?? 1.8;
-                this.fb = 0.72 + 0.2 * Math.max(0, Math.min(1, (size - 1.2) / 2));
+                // Déclin (0,5 à 5, 2,5 = neutre) : allonge ou raccourcit la queue. Même calcul que engine/src/fx.rs (Reverb::new)
+                this.fb = Math.max(0.5, Math.min(0.97, 0.72 + 0.2 * Math.max(0, Math.min(1, (size - 1.2) / 2)) + ((p.decay ?? 2.5) - 2.5) * 0.025));
                 this.damp = 0.35;
                 const k = sampleRate / 44100, len = (n) => Math.max(1, Math.round(n * k));
                 const mk = (n) => ({ buf: new Float64Array(len(n)), i: 0, store: 0 });
@@ -385,6 +386,45 @@ window.PulseAudio = (function() {
             }
         }
         registerProcessor('pulse-reverb', PulseReverb);
+
+        // Pitch −/+ : deux têtes de lecture glissent dans une mémoire de 50 ms, en fondu croisé (sin²)
+        // Même calcul que engine/src/fx.rs (Pitch::tick)
+        class PulsePitch extends AudioWorkletProcessor {
+            constructor(o) {
+                super();
+                const p = (o && o.processorOptions) || {};
+                const semi = Math.max(-12, Math.min(12, p.semi ?? 0));
+                this.W = Math.round(0.05 * sampleRate);
+                this.L = this.W * 2 + 8;
+                this.step = (1 - Math.pow(2, semi / 12)) / this.W;
+                this.mix = Math.max(0, Math.min(1, (p.mix ?? 100) / 100));
+                this.ph = 0; this.i = 0; this.buf = [];
+            }
+            read(b, d) {
+                let pos = this.i - d - 1; while (pos < 0) pos += this.L;
+                const i0 = Math.floor(pos), f = pos - i0, i1 = (i0 + 1) % this.L;
+                return b[i0] + (b[i1] - b[i0]) * f;
+            }
+            process(inputs, outputs) {
+                const inp = inputs[0], out = outputs[0];
+                const n = out[0].length, nc = out.length, ni = inp ? inp.length : 0;
+                while (this.buf.length < nc) this.buf.push(new Float64Array(this.L));
+                for (let i = 0; i < n; i++) {
+                    const p1 = this.ph, p2 = (p1 + 0.5) % 1;
+                    const g1 = Math.sin(Math.PI * p1) ** 2, g2 = Math.sin(Math.PI * p2) ** 2;
+                    for (let ch = 0; ch < nc; ch++) {
+                        const x = ch < ni ? inp[ch][i] : (ni ? inp[0][i] : 0), b = this.buf[ch];
+                        b[this.i] = x;
+                        const wet = this.read(b, p1 * this.W) * g1 + this.read(b, p2 * this.W) * g2;
+                        out[ch][i] = x * (1 - this.mix) + wet * this.mix;
+                    }
+                    this.ph += this.step; this.ph -= Math.floor(this.ph);
+                    if (++this.i >= this.L) this.i = 0;
+                }
+                return true;
+            }
+        }
+        registerProcessor('pulse-pitch', PulsePitch);
 
         // Limiteur de sécurité du master : ne touche à rien sous -1 dB, retient seulement les crêtes qui satureraient.
         // Il « voit venir » la crête 1,5 ms à l'avance, donc il baisse en douceur au lieu d'écraser.
@@ -437,12 +477,29 @@ window.PulseAudio = (function() {
                 this.wet = Math.max(0, Math.min(1, p.wet ?? 0.25));
                 this.dry = p.dry ?? 1; // 0 sur un envoi : on ne veut que l'écho
                 this.k = Math.exp(-2 * Math.PI * 4000 / sampleRate); // chaque répétition perd des aigus
+                this.pp = !!p.pp;   // ping-pong : les répétitions alternent gauche / droite
                 this.buf = []; this.lp = []; this.i = 0;
             }
             process(inputs, outputs) {
                 const inp = inputs[0], out = outputs[0];
                 const n = out[0].length, nc = out.length, ni = inp ? inp.length : 0;
-                while (this.buf.length < nc) { this.buf.push(new Float64Array(this.D)); this.lp.push(0); }
+                while (this.buf.length < Math.max(2, nc)) { this.buf.push(new Float64Array(this.D)); this.lp.push(0); }
+                if (this.pp && nc >= 2) {
+                    // Même calcul que le moteur Rust (engine/src/fx.rs, Delay::tick)
+                    const bl = this.buf[0], br = this.buf[1];
+                    for (let i = 0; i < n; i++) {
+                        const xl = ni > 0 ? inp[0][i] : 0, xr = ni > 1 ? inp[1][i] : xl;
+                        const dl = bl[this.i], dr = br[this.i];
+                        this.lp[0] = dl + (this.lp[0] - dl) * this.k;
+                        this.lp[1] = dr + (this.lp[1] - dr) * this.k;
+                        bl[this.i] = 0.5 * (xl + xr) + this.lp[1] * this.fb;
+                        br[this.i] = this.lp[0] * this.fb;
+                        out[0][i] = xl * this.dry + dl * this.wet;
+                        out[1][i] = xr * this.dry + dr * this.wet;
+                        if (++this.i >= this.D) this.i = 0;
+                    }
+                    return true;
+                }
                 for (let i = 0; i < n; i++) {
                     for (let ch = 0; ch < nc; ch++) {
                         const x = ch < ni ? inp[ch][i] : 0, b = this.buf[ch];
@@ -474,7 +531,7 @@ window.PulseAudio = (function() {
         }
         registerProcessor('pulse-width', PulseWidth);`;
 
-    const FX_CHAIN = ['filter', 'gate', 'eq', 'sat', 'crush', 'deess', 'comp', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'reverb']; // ordre habituel des effets
+    const FX_CHAIN = ['pitch', 'filter', 'gate', 'eq', 'sat', 'crush', 'deess', 'comp', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'reverb']; // ordre habituel des effets
     const SEND_REVERB_TRIM = 1 / 3; // la reverb seule sort 3 fois trop fort par rapport au son direct : on la ramène à niveau
 
     // Temps de l'écho en secondes : calé sur le rythme (beats = nombre de temps) ou donné en millisecondes
@@ -1060,7 +1117,7 @@ window.PulseAudio = (function() {
             if (sd && !sd.muted && fxReady.has(actx)) {
                 const common = { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCount: 2, channelCountMode: 'explicit' };
                 const node = sd.type === 'delay'
-                    ? new AudioWorkletNode(actx, 'pulse-delay', { ...common, processorOptions: { time: delaySeconds(sd, project.bpm), feedback: (sd.feedback ?? 35) / 100, wet: 1, dry: 0 } })
+                    ? new AudioWorkletNode(actx, 'pulse-delay', { ...common, processorOptions: { time: delaySeconds(sd, project.bpm), feedback: (sd.feedback ?? 35) / 100, wet: 1, dry: 0, pp: !!sd.pp } })
                     : new AudioWorkletNode(actx, 'pulse-reverb', { ...common, processorOptions: { wet: 1, size: sd.size ?? 3.2, pre: (sd.pre || 0) / 1000 } });
                 const ret = actx.createGain();
                 ret.gain.value = (sd.volume ?? 100) / 100 * (sd.type === 'delay' ? 1 : SEND_REVERB_TRIM);
@@ -1435,6 +1492,7 @@ window.PulseAudio = (function() {
         };
         ['chorus', 'flanger', 'phaser', 'tremolo', 'doubler', 'slapback'].forEach((k) => { B[k] = () => node('pulse-mod', k); });
         B.crush = () => node('pulse-crush', 'crush');
+        B.pitch = () => { if ((params.pitch || {}).semi) node('pulse-pitch', 'pitch'); };
         B.util = () => node('pulse-util', 'util');
         B.width = () => node('pulse-util', 'width');
 
@@ -1606,7 +1664,8 @@ window.PulseAudio = (function() {
                 const dp = params.delay || {};
                 connect(new AudioWorkletNode(actx, 'pulse-delay', {
                     numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max',
-                    processorOptions: { time: delaySeconds(dp, bpm), feedback: (dp.feedback ?? 35) / 100, wet: (dp.wet ?? 25) / 100 }
+                    ...(dp.pp ? { outputChannelCount: [2] } : {}),
+                    processorOptions: { time: delaySeconds(dp, bpm), feedback: (dp.feedback ?? 35) / 100, wet: (dp.wet ?? 25) / 100, dry: (dp.dry ?? 100) / 100, pp: !!dp.pp }
                 }));
             }
         };
@@ -1617,7 +1676,7 @@ window.PulseAudio = (function() {
                 const rp = params.reverb || {};
                 connect(new AudioWorkletNode(actx, 'pulse-reverb', {
                     numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCountMode: 'max',
-                    processorOptions: { wet: rp.wet !== undefined ? rp.wet / 100 : 0.18, size: rp.size }
+                    processorOptions: { wet: rp.wet !== undefined ? rp.wet / 100 : 0.18, size: rp.size, decay: rp.decay }
                 }));
             } else if (enabled.includes('reverb')) {
                 const rp = params.reverb || {};

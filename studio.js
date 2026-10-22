@@ -122,7 +122,7 @@ function redoAction() {
     if (window.PulsePianoRoll && PulsePianoRoll.isOpen() && PulsePianoRoll.redoNote()) { flash('↪ Note refaite'); return; }
     if (!_redoStack.length) { flash('Rien à refaire'); return; }
     if (window.PulsePianoRoll && PulsePianoRoll.isOpen()) PulsePianoRoll.close(true);
-    document.querySelectorAll('.fx-panel').forEach(p => p.remove());
+    document.querySelectorAll('.fx-panel').forEach(p => p.remove());   // elles pointaient l'ancien état
     _undoStack.push(JSON.stringify(state.project));
     const lyrics = state.project.lyrics, lmap = state.project.lyricsMap;
     state.project = JSON.parse(_redoStack.pop());
@@ -397,11 +397,105 @@ function renderGroupHeader(bus) {
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
         </button>
         <div class="group-name" contenteditable="true" spellcheck="false">${esc(bus.name)}</div>
+        ${bus.spots ? '<button class="g-mini g-spots" data-tooltip="Effets ponctuels : choisis un passage de ta prise, puis un effet (Del, Pitch, Phone)">✦</button>' : ''}
         <button class="g-mini g-son ${(bus.effects || []).length ? 'active' : ''}" data-tooltip="${bus.premaster ? 'Finition : le réglage final de tout le morceau' : 'Son du groupe : un réglage pour toutes ses pistes'}">♪</button>
         <button class="g-mini g-m ${bus.muted ? 'active' : ''}" data-tooltip="Couper tout le groupe">M</button>
         <button class="g-mini g-s ${allSolo ? 'active' : ''}" data-tooltip="Écouter seulement ce groupe">S</button>
         <input type="range" class="group-vol" min="0" max="100" step="0.5" data-default="${volToPos(100)}" value="${volToPos(bus.volume ?? 100)}" data-tooltip="Volume du groupe">
     </div>`;
+}
+
+// === Effets ponctuels (méthode de la template Logic) ===
+// Une piste d'effet n'existe que quand on s'en sert : on choisit un passage de la prise, puis l'effet ;
+// Pulse crée la piste déjà réglée sous le groupe et y pose le passage. Vidée, elle disparaît toute seule.
+// copy = la voix d'origine reste (un écho s'ajoute) ; move = le passage part sur la piste d'effet (sinon on l'entendrait en double)
+const SPOT_KINDS = {
+    del18:  { name: 'Del 1/8 P-Pong', desc: 'écho 1/8 qui rebondit gauche / droite', mode: 'copy', effects: ['delay'], params: () => ({ delay: { ...FX_PRESETS.delay[0].params, wet: 100, dry: 0, _preset: FX_PRESETS.delay[0].name } }) },
+    del14:  { name: 'Del 1/4',        desc: 'écho 1/4 sur le dernier mot', mode: 'copy', effects: ['delay'], params: () => ({ delay: { ...FX_PRESETS.delay[2].params, wet: 100, dry: 0, _preset: FX_PRESETS.delay[2].name } }) },
+    pitchm: { name: 'Pitch −',        desc: 'voix plus grave sur ce passage', mode: 'move', effects: ['pitch'], params: () => ({ pitch: { ...FX_PRESETS.pitch[0].params, _preset: FX_PRESETS.pitch[0].name } }) },
+    pitchp: { name: 'Pitch +',        desc: 'voix plus aiguë sur ce passage', mode: 'move', effects: ['pitch'], params: () => ({ pitch: { ...FX_PRESETS.pitch[1].params, _preset: FX_PRESETS.pitch[1].name } }) },
+    phone:  { name: 'Phone',          desc: 'voix de téléphone', mode: 'move', effects: ['filter'], params: () => ({ filter: { ...FX_PRESETS.filter[0].params, _preset: FX_PRESETS.filter[0].name } }) }
+};
+function openSpotMenu(bus, anchor) {
+    closeAllMenus();
+    const r = anchor.getBoundingClientRect();
+    const menu = document.createElement('div');
+    menu.className = 'track-ctx-menu spot-menu';
+    menu.style.cssText = `position:fixed;left:${r.left}px;top:${r.bottom + 4}px;z-index:3000;min-width:220px`;
+    menu.innerHTML = `<div class="ctx-head">Effet ponctuel sur le passage choisi</div>` + Object.entries(SPOT_KINDS).map(([k, d]) =>
+        `<div class="ctx-item" data-spot="${k}"><span class="fam-nm">${esc(d.name)}</span><span class="fam-ds">${esc(d.desc)}</span></div>`).join('');
+    menu.querySelectorAll('[data-spot]').forEach(el => el.addEventListener('click', () => { menu.remove(); addSpotEffect(bus, el.dataset.spot); }));
+    document.body.appendChild(menu);
+    if (typeof dismissMenuOnOutside === 'function') dismissMenuOnOutside(menu);
+    else setTimeout(() => document.addEventListener('mousedown', function c(ev) { if (!menu.contains(ev.target)) { menu.remove(); document.removeEventListener('mousedown', c); } }), 50);
+}
+// Les morceaux de prise à traiter : la plage choisie (sur les pistes du groupe), sinon les clips choisis
+function spotSourcePieces(bus) {
+    const members = groupTracksDeep(bus).filter(i => !state.project.tracks[i].spot);
+    const pieces = [];
+    if (state.selection) {
+        const a = Math.min(state.selection.start, state.selection.end), b = Math.max(state.selection.start, state.selection.end);
+        const range = state.selection.tracks;
+        members.filter(i => !range || (i >= range[0] && i <= range[1])).forEach(ti => (state.project.tracks[ti].clips || []).forEach(c => {
+            const s = Math.max(a, c.start), e = Math.min(b, c.start + c.duration);
+            if (e - s > 0.01) pieces.push({ ti, c, s, e });
+        }));
+    }
+    if (!pieces.length) {
+        const keys = new Set(state.selectedClips || []);
+        if (state.selectedClip) keys.add(`${state.selectedClip.trackIdx}:${state.selectedClip.clipIdx}`);
+        keys.forEach(k => { const [ti, ci] = k.split(':').map(Number); const c = state.project.tracks[ti]?.clips?.[ci];
+            if (c && members.includes(ti)) pieces.push({ ti, c, s: c.start, e: c.start + c.duration }); });
+    }
+    return pieces;
+}
+function addSpotEffect(bus, kind) {
+    const d = SPOT_KINDS[kind]; if (!d) return;
+    if (state.recording || state._cap) { flash('Une prise est en cours : arrête-la avant'); return; }
+    const pieces = spotSourcePieces(bus);
+    if (!pieces.length) { flash(`Choisis d'abord le passage : glisse sur ta prise (ou clique un clip), puis ${d.name}`); return; }
+    pushUndo();
+    const tracks = state.project.tracks;
+    const srcTracks = [...new Set(pieces.map(p => tracks[p.ti]))];
+    // Piste d'effet : on réutilise celle du même effet dans ce groupe, sinon on la crée juste sous la dernière piste du groupe
+    let spot = tracks.find(t => t.spot === kind && t.output === bus.id);
+    if (!spot) {
+        const src = srcTracks[0];
+        spot = { name: d.name, type: 'audio', output: bus.id, color: '#7C3AED', spot: kind, clips: [],
+            effects: [...d.effects], effectParams: d.params(), sends: { ...(src.sends || {}) } };
+        if (src.autotune) { spot.tuneSlot = true; spot.autotune = JSON.parse(JSON.stringify(src.autotune)); }
+        const last = Math.max(...groupTracksDeep(bus));
+        tracks.splice(last + 1, 0, spot);
+    }
+    pieces.forEach(({ c, s, e }) => spot.clips.push({ ...c, start: s, duration: e - s, offset: (c.offset || 0) + (s - c.start), fadeIn: 0, fadeOut: 0, loopEnd: undefined }));
+    if (d.mode === 'move') {
+        // on retire le passage de la prise d'origine (découpe comme « Supprimer la plage »)
+        srcTracks.forEach(t => {
+            const mine = pieces.filter(p => tracks[p.ti] === t || p.c && (t.clips || []).includes(p.c));
+            t.clips = (t.clips || []).flatMap(c => {
+                const p = mine.find(m => m.c === c); if (!p) return [c];
+                const out = [];
+                if (p.s - c.start > 0.01) out.push({ ...c, duration: p.s - c.start, loopEnd: undefined, fadeOut: 0 });
+                if (c.start + c.duration - p.e > 0.01) out.push({ ...c, start: p.e, duration: c.start + c.duration - p.e, offset: (c.offset || 0) + (p.e - c.start), fadeIn: 0 });
+                return out;
+            });
+        });
+    }
+    clearRangeSelection(); state.selectedClip = null; state.selectedClips = new Set();
+    state.selectedTrack = tracks.indexOf(spot);
+    renderAll(); saveProject(); refreshPlaybackSoon();
+    flash(`${d.name} : ${pieces.length > 1 ? pieces.length + ' passages posés' : 'passage posé'} sur sa piste${d.mode === 'move' ? ' (retiré de la prise)' : ''} — ⌘Z pour annuler`);
+}
+// Une piste d'effet ponctuel vidée disparaît (jamais pendant une prise : les numéros de piste ne doivent pas bouger)
+function pruneEmptySpots() {
+    if (state.recording || state._cap) return;
+    const tr = state.project.tracks;
+    if (!tr.some(t => t.spot && !(t.clips || []).length && !t.armed)) return;
+    const sel = tr[state.selectedTrack];
+    state.project.tracks = tr.filter(t => !(t.spot && !(t.clips || []).length && !t.armed));
+    const ni = state.project.tracks.indexOf(sel);
+    state.selectedTrack = ni >= 0 ? ni : Math.min(state.selectedTrack, state.project.tracks.length - 1);
+    state.selectedTracks = new Set();
 }
 
 function renderGroupTimelineRow(bus, widthPx) {
@@ -431,6 +525,8 @@ function bindGroupEvents() {
             bus.collapsed = !bus.collapsed;
             rerenderTracks(); saveProject();
         });
+        const spotsBtn = h.querySelector('.g-spots');
+        if (spotsBtn) spotsBtn.addEventListener('click', (e) => { e.stopPropagation(); openSpotMenu(bus, spotsBtn); });
         h.querySelector('.g-son').addEventListener('click', (e) => {
             e.stopPropagation();
             if (bus.premaster) openMasterPanel(bus, e.currentTarget); else openSoundPanel(bus, e.currentTarget);
@@ -693,6 +789,7 @@ function renderTracksPanel() {
     list.innerHTML = tracks.map((t, i) => {
         const classes = [
             'track-item',
+            isPendDel(t) ? 'pend-del' : '',
             (i === state.selectedTrack && state.deselectedAt !== i) || state.selectedTracks.has(i) ? 'selected' : '',
             t.isCapture ? 'is-capture' : '',
             isInstruTrack(t) ? 'is-instru' : '',
@@ -767,7 +864,7 @@ function renderTimelineTracks() {
         const showRecHint = i === recTargetIdx && clips.length === 0 && !needsDropzone;
 
         return `${groupsStartingAt(i).map(g => renderGroupTimelineRow(g, timelineWidthPx)).join('')}
-        <div class="timeline-track ${isInstru ? 'is-instru' : ''} ${isTrackFolded(t) ? 'is-group-collapsed' : ''}" data-i="${i}" style="width: ${timelineWidthPx}px${t.height ? `; --track-h: ${t.height}px` : ''}">
+        <div class="timeline-track ${isPendDel(t) ? 'pend-del' : ''} ${isInstru ? 'is-instru' : ''} ${isTrackFolded(t) ? 'is-group-collapsed' : ''}" data-i="${i}" style="width: ${timelineWidthPx}px${t.height ? `; --track-h: ${t.height}px` : ''}">
             ${clips.map((c, ci) => renderClip(t, c, ci)).join('')}
             ${needsDropzone ? renderInstruDropzone(i) : ''}
             ${showRecHint ? '<div class="track-empty-hint"><span class="rec-dot"></span>Appuie sur <kbd>R</kbd> pour t\'enregistrer ici</div>' : ''}
@@ -1562,8 +1659,8 @@ function migrateProject() {
 
 // === Tranche à gauche (inspecteur) : la piste sélectionnée et, à sa droite, là où elle sort ===
 // Évite d'ouvrir le mixer pour voir les effets d'une piste ou régler son volume.
-const FX_NAMES = { crush: 'Bitcrusher', util: 'Utilitaire', width: 'Largeur', tremolo: 'Trémolo', phaser: 'Phaser', flanger: 'Flanger', chorus: 'Chorus', doubler: 'Doubleur', slapback: 'Slapback', filter: 'Filtre', gate: 'Gate', eq: 'EQ', sat: 'Saturation', deess: 'De-esser', comp: 'Compresseur', master: 'Finition', limit: 'Limiteur', delay: 'Écho', reverb: 'Reverb' };
-const FX_ORDER = ['filter', 'gate', 'eq', 'sat', 'crush', 'deess', 'comp', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'reverb'];
+const FX_NAMES = { pitch: 'Pitch', crush: 'Bitcrusher', util: 'Utilitaire', width: 'Largeur', tremolo: 'Trémolo', phaser: 'Phaser', flanger: 'Flanger', chorus: 'Chorus', doubler: 'Doubleur', slapback: 'Slapback', filter: 'Filtre', gate: 'Gate', eq: 'EQ', sat: 'Saturation', deess: 'De-esser', comp: 'Compresseur', master: 'Finition', limit: 'Limiteur', delay: 'Écho', reverb: 'Reverb' };
+const FX_ORDER = ['pitch', 'filter', 'gate', 'eq', 'sat', 'crush', 'deess', 'comp', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'reverb'];
 function inspectorOpen() { try { return localStorage.getItem('pulse_inspector') !== '0'; } catch { return true; } }
 function setInspectorOpen(open) {
     try { localStorage.setItem('pulse_inspector', open ? '1' : '0'); } catch {}
@@ -1635,14 +1732,13 @@ function inspectorStrip(kind, x, idx) {
         ${isMaster ? '<div class="insp-note">Tout le morceau sort ici</div>' : `<button class="strip-sound insp-sound" data-tooltip="${x.premaster ? 'Le réglage final de tout le morceau' : 'Choisir le son'}">${esc(soundLabel)} ▾</button>`}
         ${isMaster ? '' : `<div class="insp-fx">
             <div class="strip-sends-title">Effets</div>
-            ${kind === 'track' && showTuneSlot(x) ? `<div class="insp-fx-row insp-tune-row ${x.autotune && x.autotune.on ? 'on' : ''}" data-fx="tune" data-tooltip="Corrige les notes de ta voix, sur toute la piste">
-                <span>Auto-Tune</span><em class="insp-state">${x.autotune && x.autotune.on ? 'actif' : 'off'}</em><i class="insp-del" data-tooltip="Supprimer l'Auto-Tune de cette piste">×</i>
+            ${kind === 'track' && showTuneSlot(x) ? `<div class="insp-fx-row insp-tune-row ${x.autotune && x.autotune.on ? 'on' : 'is-off'}" data-fx="tune" data-tooltip="${x.autotune && x.autotune.on ? 'Auto-Tune : clic pour régler' : 'Auto-Tune éteint : clic pour le régler et l\'allumer'}">
+                <span>PulseTune</span><i class="insp-del" data-tooltip="Retirer PulseTune (Auto-Tune) de cette piste">×</i>
             </div>` : ''}
             ${chain.length ? chain.map((n, k) => `
-            <div class="insp-fx-row" data-fx="${n}" data-tooltip="Clic pour régler · clic droit pour copier ou supprimer">
+            <div class="insp-fx-row ${x.premaster || n === 'limit' || n === 'master' ? '' : 'can-drag'}" data-fx="${n}" data-tooltip="Clic pour régler · clic maintenu et glisser pour changer l'ordre · clic droit pour copier ou supprimer">
                 <span>${FX_NAMES[n] || n}</span>
                 ${x.premaster || x.locked || n === 'limit' || n === 'master' ? '' : '<i class="insp-del" data-tooltip="Supprimer cet effet">×</i>'}
-                ${x.premaster || n === 'limit' || n === 'master' ? '' : `<em class="insp-move"><b data-move="-1" class="${k === 0 ? 'off' : ''}" data-tooltip="Avant">▲</b><b data-move="1" class="${k === chain.length - 1 ? 'off' : ''}" data-tooltip="Après">▼</b></em>`}
             </div>`).join('') : (kind === 'track' && showTuneSlot(x) ? '' : '<div class="insp-empty">Aucun</div>')}
             ${x.premaster || x.locked ? '' : '<button class="insp-add-fx" data-tooltip="Ajouter un effet sur ' + (kind === 'bus' ? 'ce groupe' : 'cette piste') + '">+ Effet</button>'}
         </div>`}
@@ -1650,8 +1746,8 @@ function inspectorStrip(kind, x, idx) {
             <div class="strip-sends-title">Envois</div>
             ${sends.map(sd => `
             <label class="strip-send-row ${(x.sends || {})[sd.id] > 0 ? 'on' : ''}" data-send="${esc(sd.id)}">
-                <span>${esc(sd.name)}</span>
-                <input type="range" class="insp-send" min="0" max="100" data-default="0" value="${(x.sends || {})[sd.id] || 0}">
+                ${sendKnobHtml((x.sends || {})[sd.id] || 0)}<span>${esc(sd.name)}</span>
+                <input type="range" class="insp-send" min="0" max="100" data-default="0" value="${(x.sends || {})[sd.id] || 0}" hidden>
             </label>`).join('')}
         </div>` : ''}
         ${(kind === 'track' || (kind === 'bus' && !x.premaster && !x.locked)) ? `<label class="insp-pan"><span>G</span><input type="range" class="insp-pan-input" min="-100" max="100" step="1" data-default="0" value="${x.pan || 0}" data-tooltip="Gauche / droite (⌘ + clic = centre, double-clic = écrire la valeur)"><span>D</span></label>` : ''}
@@ -1753,21 +1849,20 @@ function renderInspector() {
         });
         strip.querySelectorAll('.insp-fx-row').forEach(row => {
             row.addEventListener('click', (e) => {
-                if (e.target.closest('.insp-move')) return;
+                if (row._dragged) { row._dragged = false; return; }   // c'était un glisser, pas un clic
                 const n = row.dataset.fx;
                 if (e.target.closest('.insp-del')) { e.stopPropagation(); removeFx(n, x); return; }
                 if (n === 'tune') { const r = row.getBoundingClientRect(); openTunePanel(idx, -1, r.left - 290, r.top - 20, true); return; }
                 if (kind === 'bus' && x.premaster) openMasterPanel(x, row);
-                else if (n === 'eq' || n === 'comp' || n === 'reverb') openEffectPanel(kind === 'track' ? idx : x, n, row);
-                else openSoundPanel(kind === 'track' ? idx : x, row);
+                else {
+                    // Chaque effet ouvre son plug ; le panneau « Son » seulement pour ce qui n'a pas de fenêtre
+                    openEffectPanel(kind === 'track' ? idx : x, n, row);
+                    if (!findPlugWin(x, n)) openSoundPanel(kind === 'track' ? idx : x, row);
+                }
             });
             row.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); openFxCopyMenu(e.clientX, e.clientY, row.dataset.fx, x); });
-            row.querySelectorAll('[data-move]').forEach(b => b.addEventListener('click', (e) => {
-                e.stopPropagation();
-                if (b.classList.contains('off')) return;
-                moveEffect(x, row.dataset.fx, parseInt(b.dataset.move));
-            }));
         });
+        bindFxDrag(strip, x);
         strip.querySelectorAll('.insp-send').forEach(sl => {
             const id = sl.closest('.strip-send-row').dataset.send;
             let undoPushed = false;
@@ -1852,7 +1947,7 @@ async function removeFx(fx, x) {
         x.effects = (x.effects || []).filter(n => n !== fx);
         saveProject(); refreshPlaybackSoon();
     }
-    document.querySelectorAll('.fx-panel').forEach(p => p.remove());
+    closeTransientPanels(); const fw = findPlugWin(x, fx); if (fw) fw.remove();   // seule la fenêtre de l'effet retiré se ferme
     renderInspector();
     if (state.mixerOpen) { renderMixer(); bindMixerEvents(); }
     flash(`${name} supprimé de « ${x.name} » — ⌘Z pour annuler`);
@@ -1931,18 +2026,18 @@ const ADD_FX_CATEGORIES = [
     ['Égaliseur et filtre', ['eq', 'filter']],
     ['Distorsion', ['sat', 'crush']],
     ['Mouvement', ['chorus', 'flanger', 'phaser', 'tremolo']],
-    ['Voix et hauteur', ['doubler']],
+    ['Voix et hauteur', ['pitch', 'doubler']],
     ['Écho et espace', ['delay', 'slapback', 'reverb']],
     ['Stéréo', ['width']],
     ['Utilitaires', ['util']]
 ];
 // Une phrase par effet dans le menu « + Effet », et les mots qu'on tape pour le trouver
-const FX_DESC = { comp: 'resserre l\'écart entre les passages forts et faibles', deess: 'adoucit les « s » qui sifflent', eq: 'corrige les graves, médiums et aigus',
+const FX_DESC = { pitch: 'monte ou descend la voix (demi-tons), pour un effet sur un passage', comp: 'resserre l\'écart entre les passages forts et faibles', deess: 'adoucit les « s » qui sifflent', eq: 'corrige les graves, médiums et aigus',
     sat: 'chaleur et grain, comme une bande ou une lampe', delay: 'répétitions calées sur le tempo (1/8, 1/4…)', reverb: 'ajoute de l\'espace, une pièce',
     width: 'élargit ou resserre l\'image stéréo', chorus: 'épaissit le son en le dédoublant légèrement', flanger: 'balayage métallique qui tourne',
     phaser: 'balayage doux et rond', tremolo: 'le volume pulse en rythme', doubler: 'donne l\'impression de deux prises', slapback: 'écho court, très utilisé en rap',
     crush: 'son lo-fi, numérique abîmé', util: 'volume, phase, passage en mono', filter: 'coupe les graves ou les aigus' };
-const FX_WORDS = { comp: 'compressor compression dynamique', deess: 'deesser sibilance', gate: 'noise gate bruit', eq: 'equalizer egaliseur', filter: 'hpf lpf high pass low pass coupe-bas coupe-haut',
+const FX_WORDS = { pitch: 'pitch shift hauteur transpose alterboy grave aigu', comp: 'compressor compression dynamique', deess: 'deesser sibilance', gate: 'noise gate bruit', eq: 'equalizer egaliseur', filter: 'hpf lpf high pass low pass coupe-bas coupe-haut',
     sat: 'saturation distortion saturator drive', crush: 'bitcrusher lofi', delay: 'delay echo', reverb: 'reverb reverberation', slapback: 'slap delay echo',
     chorus: 'modulation', flanger: 'modulation', phaser: 'modulation', tremolo: 'modulation', doubler: 'doubler double', width: 'stereo imager', util: 'utility gain mono phase', tune: 'autotune pitch justesse' };
 const FX_START = {
@@ -2004,7 +2099,7 @@ function openAddEffectMenu(anchor, target, x) {
     cats.forEach(([c, names]) => names.forEach(n => {
         const el = document.createElement('div');
         el.className = 'ctx-item fam-fx'; el.dataset.cat = c; el.dataset.fx = n;
-        el.innerHTML = `<span class="fam-nm">${esc(n === 'tune' ? 'Auto-Tune' : nameOf(n))}${has(n) ? '<i class="fam-tag">déjà là · ouvrir</i>' : ''}</span><span class="fam-ds">${esc(n === 'tune' ? 'corrige la justesse de la voix' : descOf(n))}</span>`;
+        el.innerHTML = `<span class="fam-nm">${esc(n === 'tune' ? 'PulseTune' : nameOf(n))}${has(n) ? '<i class="fam-tag">déjà là · ouvrir</i>' : ''}</span><span class="fam-ds">${esc(n === 'tune' ? 'Auto-Tune : corrige la justesse de la voix' : descOf(n))}</span>`;
         el.addEventListener('click', () => pick(n));
         right.appendChild(el);
     }));
@@ -2060,6 +2155,49 @@ function openAddEffectMenu(anchor, target, x) {
     dismissMenuOnOutside(menu);
 }
 // Change la place d'un effet dans la chaîne (dir : -1 = plus tôt, +1 = plus tard)
+// Place un effet à une position donnée dans la chaîne (glisser-déposer dans l'inspecteur)
+function moveEffectTo(x, name, to) {
+    const chain = chainOf(x);
+    const i = chain.indexOf(name);
+    if (i < 0 || to === i) return;
+    pushUndo();
+    chain.splice(i, 1); chain.splice(Math.max(0, Math.min(chain.length, to)), 0, name);
+    x.fxOrder = [...chain, ...FX_ORDER.filter(n => !chain.includes(n))];
+    renderInspector(); refreshPlaybackSoon(); saveProject();
+    flash(`${FX_NAMES[name]} déplacé : le son passe maintenant par ${chain.map(n => FX_NAMES[n]).join(' → ')}`);
+}
+// Clic maintenu sur un effet puis glisser vers le haut ou le bas : la ligne suit la souris, un trait montre où elle va tomber
+function bindFxDrag(strip, x) {
+    const rows = () => [...strip.querySelectorAll('.insp-fx-row.can-drag')];
+    rows().forEach(row => row.addEventListener('mousedown', (e) => {
+        if (e.button !== 0 || e.target.closest('.insp-del')) return;
+        const y0 = e.clientY; let on = false, target = -1, mark = null;
+        const list = rows(), from = list.indexOf(row);
+        const move = (ev) => {
+            if (!on && Math.abs(ev.clientY - y0) < 4) return;   // petit seuil : un simple clic ouvre toujours l'effet
+            if (!on) { on = true; row.classList.add('fx-dragging'); document.body.classList.add('fx-drag-on');
+                mark = document.createElement('div'); mark.className = 'fx-drop-mark'; row.parentNode.appendChild(mark); }
+            row.style.transform = `translateY(${ev.clientY - y0}px)`;
+            // position visée : avant la première ligne dont le milieu est sous la souris
+            const others = list.filter(r => r !== row);
+            let k = others.findIndex(r => { const b = r.getBoundingClientRect(); return ev.clientY < b.top + b.height / 2; });
+            if (k < 0) k = others.length;
+            target = k;
+            const ref = others[k] || others[others.length - 1];
+            if (ref) { const b = ref.getBoundingClientRect(), pb = row.parentNode.getBoundingClientRect();
+                mark.style.top = ((others[k] ? b.top : b.bottom) - pb.top - 1) + 'px'; }
+        };
+        const up = () => {
+            document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up);
+            if (!on) return;
+            row._dragged = true; setTimeout(() => { row._dragged = false; }, 0);
+            row.classList.remove('fx-dragging'); row.style.transform = ''; document.body.classList.remove('fx-drag-on');
+            if (mark) mark.remove();
+            if (target >= 0 && target !== from) moveEffectTo(x, row.dataset.fx, target);
+        };
+        document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+    }));
+}
 function moveEffect(x, name, dir) {
     const chain = chainOf(x);
     const i = chain.indexOf(name), j = i + dir;
@@ -2094,7 +2232,7 @@ function applyMaster(bus) {
     bus.effectParams = active ? { master: params } : {};
 }
 function openMasterPanel(bus, anchorEl) {
-    document.querySelectorAll('.fx-panel').forEach(p => p.remove());
+    closeTransientPanels();
     if (!bus) return;
     const cur = bus.master || { preset: 'off', ...MASTER_PRESETS.off };
     const panel = document.createElement('div');
@@ -2154,6 +2292,52 @@ function openMasterPanel(bus, anchorEl) {
 
 // === Envois : des effets communs (reverb, écho) à part des effets de la piste ===
 // Chaque piste y envoie la dose qu'elle veut. L'effet est toujours à 100 % : c'est la dose qui compte.
+// Envois en petits boutons ronds (DA Pulse : capuchon sombre, arc violet). Le bouton pilote un curseur caché,
+// donc toute la logique des envois (annulation, plusieurs pistes choisies…) reste la même.
+function sendKnobSvg(v) {
+    const a0 = -135, a = a0 + (Math.max(0, Math.min(100, v)) / 100) * 270, r = 10, c = 13;
+    const pt = (deg, rr = r) => { const t = (deg - 90) * Math.PI / 180; return [(c + rr * Math.cos(t)).toFixed(2), (c + rr * Math.sin(t)).toFixed(2)]; };
+    const arc = (from, to) => { const [x1, y1] = pt(from), [x2, y2] = pt(to); return `M${x1} ${y1} A${r} ${r} 0 ${to - from > 180 ? 1 : 0} 1 ${x2} ${y2}`; };
+    const [px, py] = pt(a, 6.2);
+    return `<svg viewBox="0 0 26 26" width="26" height="26" aria-hidden="true">
+        <path d="${arc(a0, 135)}" class="sk-track"/>${v > 0 ? `<path d="${arc(a0, a)}" class="sk-val"/>` : ''}
+        <circle cx="13" cy="13" r="7.4" class="sk-cap"/><line x1="13" y1="13" x2="${px}" y2="${py}" class="sk-ptr"/></svg>`;
+}
+function sendKnobHtml(v) { return `<span class="send-knob" data-tooltip="Glisser vers le haut ou le bas · double-clic = 0">${sendKnobSvg(v)}<em>${Math.round(v)}</em></span>`; }
+(function bindSendKnobs() {
+    document.addEventListener('mousedown', (e) => {
+        const k = e.target.closest && e.target.closest('.send-knob'); if (!k || e.button !== 0) return;
+        const inp = k.closest('.strip-send-row').querySelector('input[type="range"]'); if (!inp) return;
+        e.preventDefault(); e.stopPropagation();
+        let y0 = e.clientY, v = parseFloat(inp.value) || 0;
+        k.classList.add('turning');
+        const move = (ev) => {
+            const nv = Math.max(0, Math.min(100, v + (y0 - ev.clientY) * (ev.shiftKey ? 0.1 : 0.6)));
+            if (Math.round(nv) === Math.round(parseFloat(inp.value))) return;
+            inp.value = Math.round(nv); inp.dispatchEvent(new Event('input', { bubbles: true }));
+        };
+        const up = () => {
+            k.classList.remove('turning');
+            document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up);
+            inp.dispatchEvent(new Event('change', { bubbles: true }));
+        };
+        document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+    }, true);
+    document.addEventListener('dblclick', (e) => {
+        const k = e.target.closest && e.target.closest('.send-knob'); if (!k) return;
+        const inp = k.closest('.strip-send-row').querySelector('input[type="range"]'); if (!inp) return;
+        inp.value = 0; inp.dispatchEvent(new Event('input', { bubbles: true })); inp.dispatchEvent(new Event('change', { bubbles: true }));
+    }, true);
+    // Le bouton suit son curseur, quelle que soit la façon dont la valeur a changé
+    document.addEventListener('input', (e) => {
+        const inp = e.target; if (!inp.closest) return;
+        const row = inp.closest('.strip-send-row'); if (!row) return;
+        const k = row.querySelector('.send-knob'); if (!k) return;
+        const v = parseFloat(inp.value) || 0;
+        k.innerHTML = sendKnobSvg(v) + `<em>${Math.round(v)}</em>`;
+        row.classList.toggle('on', v > 0);
+    }, true);
+})();
 const DEFAULT_SENDS = () => [
     { id: 'revlong', name: 'Rev Long', type: 'reverb', size: 3.2, pre: 0, volume: 100 },
     { id: 'del14', name: 'Del 1/4', type: 'delay', beats: 1, feedback: 35, volume: 100 }
@@ -2172,20 +2356,20 @@ function renderMixer() {
         const panDeg = ((t.pan || 0) / 100) * 135;
         const panLabel = t.pan === undefined || t.pan === 0 ? 'C' : (t.pan > 0 ? `R${Math.abs(t.pan)}` : `L${Math.abs(t.pan)}`);
         return `
-        <div class="strip ${t.isCapture?'strip-capture':''}" style="--track-color: ${t.color}" data-kind="track" data-i="${i}">
+        <div class="strip ${t.isCapture?'strip-capture':''} ${isPendDel(t) ? 'pend-del' : ''}" style="--track-color: ${t.color}" data-kind="track" data-i="${i}">
             <div class="strip-name">${esc(t.name)}</div>
             <button class="strip-sound" data-tooltip="Choisir le son de la piste">${t.sound && SOUND_PRESETS[t.sound.preset] ? esc(SOUND_PRESETS[t.sound.preset].label) : 'Son'} ▾</button>
             <div class="strip-fx">
                 <div class="strip-fx-slot ${(t.effects||[]).includes('eq') ? 'active' : ''}" data-fx="eq">EQ</div>
                 <div class="strip-fx-slot ${(t.effects||[]).includes('comp') ? 'active' : ''}" data-fx="comp">Comp</div>
-                ${showTuneSlot(t) ? `<div class="strip-fx-slot ${t.autotune && t.autotune.on ? 'active' : ''}" data-fx="tune" data-tooltip="Auto-Tune : corrige les notes de la voix de cette piste">Auto-Tune</div>` : ''}
+                ${showTuneSlot(t) ? `<div class="strip-fx-slot ${t.autotune && t.autotune.on ? 'active' : ''}" data-fx="tune" data-tooltip="PulseTune (Auto-Tune) : corrige les notes de la voix de cette piste">PulseTune</div>` : ''}
             </div>
             <div class="strip-sends">
                 <div class="strip-sends-title">Envois</div>
                 ${sends.map(sd => `
                 <label class="strip-send-row" data-send="${esc(sd.id)}" data-tooltip="Dose de « ${esc(sd.name)} » sur cette piste">
-                    <span>${esc(sd.name)}</span>
-                    <input type="range" class="send-level" min="0" max="100" data-default="0" value="${(t.sends || {})[sd.id] || 0}">
+                    ${sendKnobHtml((t.sends || {})[sd.id] || 0)}<span>${esc(sd.name)}</span>
+                    <input type="range" class="send-level" min="0" max="100" data-default="0" value="${(t.sends || {})[sd.id] || 0}" hidden>
                 </label>`).join('')}
             </div>
             <div class="strip-pan">
@@ -2221,8 +2405,8 @@ function renderMixer() {
                     <div class="strip-sends-title">Envois</div>
                     ${sends.map(sd => `
                     <label class="strip-send-row" data-send="${esc(sd.id)}" data-tooltip="Dose de « ${esc(sd.name)} » sur ce groupe">
-                        <span>${esc(sd.name)}</span>
-                        <input type="range" class="send-level" min="0" max="100" data-default="0" value="${(b.sends || {})[sd.id] || 0}">
+                        ${sendKnobHtml((b.sends || {})[sd.id] || 0)}<span>${esc(sd.name)}</span>
+                        <input type="range" class="send-level" min="0" max="100" data-default="0" value="${(b.sends || {})[sd.id] || 0}" hidden>
                     </label>`).join('')}
                 </div>
                 <label class="insp-pan strip-bus-pan"><span>G</span><input type="range" class="bus-pan" min="-100" max="100" step="1" data-default="0" value="${b.pan || 0}" data-tooltip="Gauche / droite du groupe (⌘ + clic = centre, double-clic = écrire la valeur)"><span>D</span></label>`}
@@ -2239,7 +2423,7 @@ function renderMixer() {
     const sendStrips = `
         <div class="strip-sep"></div>
         ${sends.map(sd => `
-            <div class="strip strip-return ${sd.muted ? 'is-muted' : ''}" data-kind="send" data-send="${esc(sd.id)}" style="--track-color: ${sd.type === 'delay' ? '#38BDF8' : '#34D399'}">
+            <div class="strip strip-return ${sd.muted ? 'is-muted' : ''}" data-kind="send" data-send="${esc(sd.id)}" style="--track-color: ${sd.type === 'delay' ? 'var(--violet-3)' : 'var(--violet-2)'}">
                 <div class="strip-name">${esc(sd.name)}</div>
                 <button class="return-edit" data-tooltip="Régler cet envoi">${sd.type === 'delay' ? 'Écho' : 'Reverb'} ▾</button>
                 <div class="return-note">100 % effet</div>
@@ -2285,7 +2469,7 @@ function removeSend(id) {
 }
 
 function openSendPanel(id, anchorEl) {
-    document.querySelectorAll('.fx-panel').forEach(p => p.remove());
+    closeTransientPanels();
     const sd = projectSends().find(x => x.id === id);
     if (!sd) return;
     const isDelay = sd.type === 'delay';
@@ -2727,14 +2911,8 @@ async function togglePlay(fromRec = false) {
                 updatePlayhead(); updateChrono();
             }
         } else {
-            // Curseur à la fin du projet → retour au début (Logic behavior)
-            const projEnd = computeProjectEndSec();
-            // (sauf juste après une pause : la relance part alors de la base du curseur, voir plus bas)
-            const resumeFromBase = returnOnStop() && state.paused && state.playOrigin != null && Math.abs(state.playhead - state.paused.pos) < 0.02;
-            if (projEnd > 0 && state.playhead >= projEnd - 0.05 && !resumeFromBase) {
-                state.playhead = 0;
-                updatePlayhead(); updateChrono();
-            }
+            // Comme Logic : la lecture part toujours de là où tu as posé le curseur, même après la dernière région
+            // (avant, un curseur posé juste derrière une prise renvoyait au début du morceau)
         }
         // Après une pause : le 1er Espace a arrêté le son là où il en était, le 2e relance depuis le point de départ
         if (!fromRec && returnOnStop() && state.paused && state.playOrigin != null
@@ -3309,6 +3487,10 @@ function showCountOverlay(bpm, beats) {
 
 // Fin du passage (pause, fin du projet…) : la capture devient de vrais clips
 async function finalizeCapture() {
+    state._finalizing = true;
+    try { return await _finalizeCapture(); } finally { state._finalizing = false; }
+}
+async function _finalizeCapture() {
     const cap = state._cap;
     if (!cap) return;
     if (state.recording) closeOpenRegion();
@@ -3819,7 +4001,7 @@ const SHORTCUT_GROUPS = [
             ['⌘⇧T', 'Nouvelle piste audio'],
             ['⌘S · ⌘⌥S · ⌘Q', 'Sauvegarder (dans l\'appli : choisir le dossier la 1re fois) · Enregistrer sous… · Quitter'],
             ['⌘ ou ⌥ + clic sur un réglage', 'Le remettre à sa valeur d\'origine · double-clic = écrire la valeur (dB, g15 / -15, 0-100)'],
-            ['⌥ + molette', 'Hauteur des pistes : sur la liste de gauche, celle qu\'on survole (les pistes choisies si elles sont plusieurs) · sur la timeline, toutes les pistes · ⌥⌘ + molette = zoom sur le curseur'],
+            ['⌥ + molette', 'Hauteur des pistes : sur la liste de gauche, celle qu\'on survole (les pistes choisies si elles sont plusieurs) · sur la timeline, toutes les pistes · ⌘ + molette = zoom, le curseur au milieu de l\'écran'],
             ['Croix × sur un effet · clic droit', 'Supprimer l\'effet de la piste (+ Effet pour en ajouter, Auto-Tune compris)'],
             ['⌘D', 'Dupliquer la piste (sans clips)'],
             ['⌘⌫', 'Supprimer la piste sélectionnée'],
@@ -3833,7 +4015,7 @@ const SHORTCUT_GROUPS = [
             ['⌘ + scroll', 'Zoomer autour du pointeur'],
             ['⌥ + scroll', 'Sur la liste de gauche : seule la piste survolée grandit / rétrécit · sur la timeline : toutes les pistes'],
             ['Maj + molette', 'Défiler la timeline de gauche à droite (Magic Mouse / trackpad : glisser latéralement)'],
-                        ['E / Z', 'Zoomer / dézoomer au clavier'],
+                        ['E / Z', 'Zoomer / dézoomer : le curseur (de base si tu as cliqué) se met au milieu de l\'écran'],
             ['F', 'Zoom sur le clip sélectionné (ou tout le projet)'],
             ['⌘⇧F', 'Voir tout le morceau'],
             ['⌘A', 'Sélectionner tous les clips de la piste'],
@@ -4606,6 +4788,36 @@ function scaleLabel(tonic, minor) {
 const scaleMask = (tonic, minor) => PulseTune.toMask(minor ? (tonic + 3) % 12 : tonic);
 
 // Petite note de piano, pour comparer à l'oreille avec la prod
+// Touche tenue (clavier de l'Auto-Tune) : la note sonne tant qu'on reste appuyé, comme sur un piano, puis s'éteint au relâchement
+function holdKeyNote(pc) {
+    const ctx = PulseAudio.getContext();
+    if (!ctx) return () => {};
+    const t = ctx.currentTime, g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.22, t + 0.008);
+    g.gain.setTargetAtTime(0.05, t + 0.05, 2.5);   // décroît doucement, comme une corde de piano
+    g.connect(ctx.destination);
+    const oscs = [1, 2].map((h, i) => {
+        const o = ctx.createOscillator();
+        o.type = 'triangle';
+        o.frequency.value = 261.63 * Math.pow(2, pc / 12) * h;
+        const og = ctx.createGain(); og.gain.value = i ? 0.3 : 1;
+        o.connect(og); og.connect(g);
+        o.start(t);
+        return o;
+    });
+    let done = false;
+    const release = () => {
+        if (done) return; done = true;
+        const r = ctx.currentTime;
+        g.gain.cancelScheduledValues(r);
+        g.gain.setValueAtTime(Math.max(0.0001, g.gain.value), r);
+        g.gain.exponentialRampToValueAtTime(0.0001, r + 0.25);
+        oscs.forEach(o => o.stop(r + 0.3));
+    };
+    setTimeout(release, 12000);   // sécurité : jamais une note coincée
+    return release;
+}
 function playKeyNote(pc) {
     const ctx = PulseAudio.getContext();
     if (!ctx) return;
@@ -4625,7 +4837,7 @@ function playKeyNote(pc) {
 }
 
 function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false) {
-    document.querySelectorAll('.fx-panel').forEach(p => p.remove());
+    closeTransientPanels();
     const trk = state.project.tracks[trackIdx];
     // Mode « piste » : l'Auto-Tune est un effet de la piste, il corrige toutes ses prises (et les nouvelles)
     const clip = trackMode ? (trk ? { name: trk.name, tune: trk.autotune && trk.autotune.on ? { src: 'piste', ...trk.autotune } : null } : null) : trk?.clips[clipIdx];
@@ -4641,113 +4853,228 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false) {
     let tonic = k0.tonic ?? 9, minor = k0.minor ?? true;
     const BLACK = [1, 3, 6, 8, 10], WHITE = [0, 2, 4, 5, 7, 9, 11];
     const blackLeft = { 1: 1, 3: 2, 6: 4, 8: 5, 10: 6 }; // après quelle touche blanche
+    // Déjà ouvert (mode piste) : on le ramène devant
+    if (trackMode) { const open = findPlugWin(trk, 'tune'); if (open) { plugFront(open); return; } }
+    const isOn = () => trackMode ? !!(trk.autotune && trk.autotune.on) : !!clip.tune;
+    const saved = (trackMode ? trk.autotune : clip.tune) || {};
+    // PulseTune (planche « Pro » du 22/10) : 4 boutons, valeurs 0 à 100
+    const K = {
+        strength: Math.round(((saved.strength ?? cur.strength) ?? 0.85) * 100),
+        human: Math.round((saved.human || 0) * 100),
+        flex: Math.round((saved.flex || 0) * 100),
+        vibrato: Math.round((saved.vibrato || 0) * 100)
+    };
+    let voice = saved.voice || 'mid';
+    const KNOBS = [
+        { key: 'strength', label: 'Vitesse', def: 85, desc: 'Naturel → Robot', fmt: (v) => (v < 35 ? 'Naturel' : v < 70 ? 'Moyen' : v < 90 ? 'Rapide' : 'Robot') + ' · ' + v + ' %' },
+        { key: 'human', label: 'Humain', def: 0, desc: 'laisse vivre les notes tenues', fmt: (v) => v + ' %' },
+        { key: 'flex', label: 'Souplesse', def: 0, desc: 'ne corrige que près de la note', fmt: (v) => v + ' %' },
+        { key: 'vibrato', label: 'Vibrato naturel', def: 0, desc: 'garde ton vibrato', fmt: (v) => v + ' %' }
+    ];
     const panel = document.createElement('div');
-    panel.className = 'fx-panel sound-panel tune-panel';
+    panel.className = 'fx-panel tune-panel tune-b tune-pro' + (isOn() ? ' is-on' : '');
+    panel.style.setProperty('--fx-accent', 'var(--violet-2)');
     panel.innerHTML = `
-        <div class="fx-panel-header"><span>🎤 Auto-Tune — ${trackMode ? 'piste ' : ''}${esc(clip.name || 'Clip')}</span><button class="fx-panel-close">×</button></div>
-        <div class="fx-panel-body">
-            <div class="sound-row">
-                <div class="sound-ends"><span>Gamme du morceau</span><span class="tune-status"></span></div>
-                <div class="tune-scale">
-                    <select class="tune-tonic">${NOTE_LETTERS.map((l, i) => `<option value="${i}">${l} · ${PulseTune.NOTE_NAMES[i]}</option>`).join('')}</select>
-                    <div class="tune-mode"><button data-minor="1">Mineur</button><button data-minor="0">Majeur</button></div>
-                </div>
-                <div class="tune-keys">
-                    ${WHITE.map(pc => `<button class="tune-key-btn white" data-pc="${pc}"><em>${PulseTune.NOTE_NAMES[pc]}</em></button>`).join('')}
-                    ${BLACK.map(pc => `<button class="tune-key-btn black" data-pc="${pc}" style="left: calc(${blackLeft[pc]} * 100% / 7)"></button>`).join('')}
-                </div>
-                <div class="tune-hint">Une note sonne faux sur la prod ? Clique dessus pour l'éteindre.</div>
-                <div class="tune-quick">
-                    <button data-q="instru">Lire sur l'instru</button>
-                    <button data-q="all">Toutes les notes</button>
-                </div>
-            </div>
-            <div class="sound-row">
-                <div class="sound-ends"><span>Naturel</span><span>Robot</span></div>
-                <input type="range" class="fx-slider tune-strength" min="0" max="100" step="1" data-default="85" value="${Math.round((cur.strength ?? 0.85) * 100)}">
-            </div>
+        <div class="fx-panel-header">
+            <button class="tb-power" data-tooltip="Allumer ou éteindre PulseTune">⏻</button>
+            <span class="tp-brand"><i>Voix et hauteur</i><b>Pulse<span>Tune</span></b>${trackMode ? '' : `<em>${esc(clip.name || 'Clip')}</em>`}</span>
+            <button class="fx-panel-close">×</button>
         </div>
-        <div class="fx-panel-footer tune-actions">
-            ${trackMode ? '<div class="tune-note">S\'applique à toutes les prises de la piste, et aux prochaines.</div>' : ''}
-            ${trackMode ? '<label class="tune-all"><input type="checkbox" class="tune-all-box"> Même réglage sur tous les Auto-Tune du projet <span>(⌥ + Appliquer aussi)</span></label>' : ''}
-            ${clip.tune ? '<button class="tune-remove">Retirer</button>' : ''}
-            <button class="tune-apply">${clip.tune ? 'Réappliquer' : (trackMode ? 'Activer sur la piste' : 'Appliquer')}</button>
+        <div class="tp-bar">
+            <div class="tp-f"><label>Tonalité</label><select class="tune-tonic">${PulseTune.NOTE_NAMES.map((n, i) => `<option value="${i}">${n}</option>`).join('')}</select></div>
+            <div class="tp-f"><label>Gamme</label><div class="tune-mode tp-seg"><button data-minor="1">Mineur</button><button data-minor="0">Majeur</button><button data-chroma="1">Chromatique</button></div></div>
+            <div class="tp-f"><label>Type de voix</label><div class="tp-voice tp-seg"><button data-v="high">Aiguë</button><button data-v="mid">Médium</button><button data-v="low">Grave</button></div></div>
+            <div class="tp-f tp-right"><button class="tp-btn" data-q="instru">Lire l'instru</button></div>
+        </div>
+        <div class="tune-scale"><span class="tune-status"></span></div>
+        <div class="tp-meter" data-tooltip="Pendant la lecture ou la prise : la note que tu chantes et son écart avec la note juste">
+            <svg class="tp-scale" viewBox="0 0 600 64" preserveAspectRatio="none"></svg>
+            <div class="tp-side tp-left">VOIX<b class="tp-in">—</b></div>
+            <div class="tp-side tp-rt">ÉCART<b class="tp-gap">—</b></div>
+            <div class="tp-target"><b>—</b><span>note juste</span></div>
+        </div>
+        <div class="tp-knobs">${KNOBS.map(k => `<div class="tp-k" data-k="${k.key}"><span class="tp-lbl">${k.label}</span><div class="tp-knob fx-knob" tabindex="0" data-tooltip="Glisser vers le haut ou le bas · double-clic = ${k.def} %"></div><b class="tp-val"></b><em>${k.desc}</em></div>`).join('')}
+            <input type="range" class="tune-strength" min="0" max="100" value="${K.strength}" hidden></div>
+        <div class="tb-keys-wrap">
+            <div class="tune-keys">
+                ${WHITE.map(pc => `<button class="tune-key-btn white" data-pc="${pc}"><em>${PulseTune.NOTE_NAMES[pc]}</em></button>`).join('')}
+                ${BLACK.map(pc => `<button class="tune-key-btn black" data-pc="${pc}" style="left: calc(${blackLeft[pc]} * 100% / 7)"></button>`).join('')}
+            </div>
+            <div class="tune-hint">Clic : jouer · <kbd>⌘</kbd> + clic : retirer / remettre la note — elle compte à toutes les octaves</div>
+        </div>
+        <div class="fx-panel-footer tb-foot">
+            ${trackMode ? '<label class="tune-all" data-tooltip="Copie ce réglage sur toutes les pistes qui ont PulseTune allumé"><input type="checkbox" class="tune-all-box"> Même réglage partout</label>' : '<span></span>'}
+            <div class="tune-quick"><button data-q="all">Toutes les notes</button></div>
         </div>`;
     document.body.appendChild(panel);
-    panel.style.left = Math.max(8, Math.min(window.innerWidth - 300, x)) + 'px';
+    panel.style.left = Math.max(8, Math.min(window.innerWidth - panel.offsetWidth - 8, x)) + 'px';
     panel.style.top = Math.max(8, Math.min(window.innerHeight - panel.offsetHeight - 8, y)) + 'px';
+    if (trackMode) makePlugWindow(panel, trk, 'tune', trackIdx);
     const status = panel.querySelector('.tune-status');
+    const chroma = () => !!mask && mask.every(Boolean);
     const paint = () => {
-        panel.querySelectorAll('.tune-key-btn').forEach(k => k.classList.toggle('on', !!(mask && mask[+k.dataset.pc])));
+        panel.querySelectorAll('.tune-key-btn').forEach(k => {
+            k.classList.toggle('on', !mask || !!mask[+k.dataset.pc]);
+            k.classList.toggle('tonic', +k.dataset.pc === tonic && !!(mask && mask[tonic]) && !chroma());
+        });
         const named = source === 'instru' || source === 'gamme';
-        status.textContent = !mask ? '' : source === 'instru' ? 'Lue sur l\'instru' : source === 'gamme' ? '' : mask.every(Boolean) ? 'Toutes les notes' : 'Manuel';
+        status.textContent = !mask ? 'Gamme devinée sur ta voix' : source === 'instru' ? `Lue sur l'instru : ${scaleLabel(tonic, minor)}` : source === 'gamme' || chroma() ? '' : 'Notes choisies à la main';
         panel.querySelector('.tune-tonic').value = String(tonic);
         panel.querySelector('.tune-scale').classList.toggle('is-manual', !!mask && !named);
-        panel.querySelectorAll('.tune-mode button').forEach(b => b.classList.toggle('active', (b.dataset.minor === '1') === minor));
+        panel.querySelectorAll('.tune-mode button').forEach(b => b.classList.toggle('on', b.dataset.chroma ? chroma() : !chroma() && (b.dataset.minor === '1') === minor));
+        panel.querySelectorAll('.tp-voice button').forEach(b => b.classList.toggle('on', b.dataset.v === voice));
+        panel.classList.toggle('is-on', isOn());
     };
-    const pickScale = () => { mask = scaleMask(tonic, minor); source = 'gamme'; paint(); };
+    // --- Appliquer (allumé) : en différé, pour ne pas recalculer à chaque petit mouvement
+    let applyTimer = null;
+    const more = () => ({ strength: K.strength / 100, human: K.human / 100, flex: K.flex / 100, vibrato: K.vibrato / 100, voice });
+    const settings = () => mask ? { notes: mask.slice(), source, tonic, minor, ...more() } : { root: 'auto', ...more() };
+    const apply = (withUndo = true) => {
+        if (mask && !mask.some(Boolean)) { flash('Toutes les notes sont retirées — remets au moins une note (⌘ + clic)'); return; }
+        if (mask) { const named = source === 'instru' || source === 'gamme'; state.project.key = { notes: mask.slice(), tonic, minor, label: named ? scaleLabel(tonic, minor) : '', source }; }
+        if (trackMode) {
+            if (withUndo) pushUndo();
+            trk.autotune = { on: true, ...settings() }; trk.tuneSlot = true; saveProject();
+            tuneWholeTrack(trackIdx, null, true);
+            if ((panel.querySelector('.tune-all-box') || {}).checked) setTimeout(() => {
+                let n = 0;
+                state.project.tracks.forEach((o, i) => { if (o !== trk && o.autotune && o.autotune.on) { o.autotune = JSON.parse(JSON.stringify(trk.autotune)); tuneWholeTrack(i, null, true); n++; } });
+                if (n) { saveProject(); flash(`Même réglage PulseTune posé sur ${n} autre${n > 1 ? 's' : ''} piste${n > 1 ? 's' : ''}`); }
+            }, 50);
+        } else applyTune(clip, tuneOpts(settings()));
+        paint(); renderInspector();
+    };
+    const changed = () => { if (!isOn()) return; clearTimeout(applyTimer); applyTimer = setTimeout(() => apply(false), 600); };
+    const turnOff = async () => {
+        if (trackMode) {
+            const keep = { ...(trk.autotune || {}), ...settings(), on: false };
+            await untuneWholeTrack(trackIdx);
+            trk.autotune = keep; trk.tuneSlot = true; saveProject();   // éteint, mais il garde ses réglages
+        } else await removeTune(clip);
+        paint(); renderInspector();
+    };
+    panel.querySelector('.tb-power').addEventListener('click', () => { if (isOn()) turnOff(); else { pushUndo(); apply(false); } });
+    // --- Gamme, type de voix
+    const pickScale = () => { mask = scaleMask(tonic, minor); source = 'gamme'; paint(); changed(); };
     panel.querySelector('.tune-tonic').addEventListener('change', (e) => { tonic = parseInt(e.target.value); e.target.blur(); playKeyNote(tonic); pickScale(); });
     panel.querySelectorAll('.tune-mode button').forEach(b => {
         b.addEventListener('mousedown', (e) => e.preventDefault());
-        b.addEventListener('click', () => { minor = b.dataset.minor === '1'; pickScale(); });
+        b.addEventListener('click', () => {
+            if (b.dataset.chroma) { mask = new Array(12).fill(true); source = 'clavier'; paint(); changed(); return; }
+            minor = b.dataset.minor === '1'; pickScale();
+        });
+    });
+    panel.querySelectorAll('.tp-voice button').forEach(b => {
+        b.addEventListener('mousedown', (e) => e.preventDefault());
+        b.addEventListener('click', () => { voice = b.dataset.v; paint(); changed(); });
     });
     const readInstru = async (quiet) => {
         status.textContent = 'Je lis la gamme sur l\'instru…';
         const k = await detectProjectKey(trackIdx);
         if (!document.body.contains(panel)) return;
-        if (k.notes) { mask = k.notes.slice(); tonic = k.tonic; minor = k.minor; source = 'instru'; paint(); if (!quiet) flash(`Gamme lue sur l'instru : ${k.label} — si ce n'est pas la bonne, change-la ou éteins des notes au clavier`); return; }
+        if (k.notes) { mask = k.notes.slice(); tonic = k.tonic; minor = k.minor; source = 'instru'; paint(); changed(); if (!quiet) flash(`Gamme lue sur l'instru : ${k.label} — si ce n'est pas la bonne, change-la ou retire des notes (⌘ + clic sur une touche)`); return; }
         paint();
-        if (!mask) status.textContent = 'Sera devinée sur ta voix';
         if (!quiet) flash(k.reason === 'no-instru'
             ? 'Je ne trouve pas d\'instru dans le projet — dépose ta prod sur une piste, ou choisis les notes au clavier'
             : 'Je n\'arrive pas à lire la gamme sur cette instru (pas assez de notes) — choisis les notes au clavier');
     };
+    // --- Les 4 boutons métal
+    panel.querySelectorAll('.tp-k').forEach(box => {
+        const kd = KNOBS.find(k => k.key === box.dataset.k), knob = box.querySelector('.tp-knob'), val = box.querySelector('.tp-val');
+        const def = { key: kd.key, label: kd.label, unit: '%', min: 0, max: 100, def: kd.def, step: 1 };
+        const draw = () => { knob.innerHTML = fxKnobSvg(def, K[kd.key], true, 'P'); val.textContent = kd.fmt(K[kd.key]); if (kd.key === 'strength') panel.querySelector('.tune-strength').value = K.strength; };
+        knob.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return; e.preventDefault();
+            const y0 = e.clientY, v0 = K[kd.key];
+            const mv = (ev) => { const nv = Math.round(Math.max(0, Math.min(100, v0 + (y0 - ev.clientY) * (ev.shiftKey ? 0.1 : 0.5)))); if (nv !== K[kd.key]) { K[kd.key] = nv; draw(); } };
+            const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); changed(); };
+            document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
+        });
+        knob.addEventListener('dblclick', () => { K[kd.key] = kd.def; draw(); changed(); });
+        draw();
+    });
+    // --- Indicateur : la note chantée en direct (lecture ou prise) et son écart avec la note juste de la gamme
+    const sc = panel.querySelector('.tp-scale');
+    let g = '';
+    for (let c = -50; c <= 50; c += 5) { const xx = 300 + c * 5.6, big = c % 25 === 0; g += `<line x1="${xx}" y1="${big ? 14 : 20}" x2="${xx}" y2="30" class="${c === 0 ? 'z' : big ? 'b' : ''}"/>`; if (big) g += `<text x="${xx}" y="10">${c > 0 ? '+' : ''}${c}</text>`; }
+    sc.innerHTML = g + '<rect class="tp-bar-gap" x="300" y="36" width="0" height="9" rx="3"/><line class="tp-needle" x1="300" y1="12" x2="300" y2="50"/>';
+    const inEl = panel.querySelector('.tp-in'), gapEl = panel.querySelector('.tp-gap'), tgEl = panel.querySelector('.tp-target b'), bar = sc.querySelector('.tp-bar-gap'), needle = sc.querySelector('.tp-needle');
+    let tbuf = null, lastT = 0, shownC = 0;
+    const pitchOf = (b, sr) => {
+        let rms = 0; for (let i = 0; i < b.length; i++) rms += b[i] * b[i];
+        if (Math.sqrt(rms / b.length) < 0.01) return 0;
+        const minL = Math.floor(sr / 1000), maxL = Math.min(b.length >> 1, Math.floor(sr / 60));
+        let best = 0, bestL = 0; const n = b.length - maxL;
+        for (let L = minL; L <= maxL; L++) {
+            let c = 0, e1 = 0, e2 = 0;
+            for (let i = 0; i < n; i++) { c += b[i] * b[i + L]; e1 += b[i] * b[i]; e2 += b[i + L] * b[i + L]; }
+            const r = c / Math.sqrt(e1 * e2 + 1e-12); if (r > best) { best = r; bestL = L; }
+        }
+        return best > 0.85 && bestL ? sr / bestL : 0;
+    };
+    const NN = PulseTune.NOTE_NAMES;
+    const live = (ts) => {
+        if (!panel.isConnected) return;
+        if (ts - lastT > 60) {
+            lastT = ts;
+            const an = (state.playing || state.recording) && PulseAudio.getTrackAnalyser ? PulseAudio.getTrackAnalyser(trackIdx) : null;
+            let f = 0;
+            if (an) {
+                if (an.fftSize < 2048) an.fftSize = 2048;   // assez long pour une voix grave
+                if (!tbuf || tbuf.length !== an.fftSize) tbuf = new Float32Array(an.fftSize);
+                an.getFloatTimeDomainData(tbuf);
+                f = pitchOf(tbuf, an.context.sampleRate);
+            }
+            if (f) {
+                const m = 69 + 12 * Math.log2(f / 440), r = Math.round(m);
+                // note juste la plus proche dans la gamme choisie
+                let t = r; if (mask && mask.some(Boolean)) { for (let d = 0; d <= 6; d++) { if (mask[((r + d) % 12 + 12) % 12]) { t = r + d; break; } if (mask[((r - d) % 12 + 12) % 12]) { t = r - d; break; } } }
+                const cents = Math.max(-50, Math.min(50, Math.round((m - t) * 100)));
+                shownC += (cents - shownC) * 0.5;
+                inEl.textContent = `${NN[((r % 12) + 12) % 12]} ${Math.round((m - r) * 100) >= 0 ? '+' : ''}${Math.round((m - r) * 100)}`;
+                tgEl.textContent = NN[((t % 12) + 12) % 12];
+                gapEl.textContent = `${cents >= 0 ? '+' : ''}${cents} cents`;
+            } else { shownC *= 0.7; inEl.textContent = '—'; gapEl.textContent = '—'; if (!state.playing && !state.recording) tgEl.textContent = '—'; }
+            const xx = 300 + shownC * 5.6;
+            needle.setAttribute('x1', xx); needle.setAttribute('x2', xx);
+            bar.setAttribute('x', Math.min(300, xx)); bar.setAttribute('width', Math.abs(xx - 300));
+        }
+        requestAnimationFrame(live);
+    };
+    requestAnimationFrame(live);
     paint();
     if (!mask) readInstru(true);
     panel.addEventListener('mousedown', (e) => e.stopPropagation());
     panel.querySelectorAll('.tune-key-btn').forEach(k => {
-        k.addEventListener('mousedown', (e) => e.preventDefault()); // pas de focus : Espace reste la lecture
-        k.addEventListener('click', () => {
+        // Clic = jouer la note (tenue tant qu'on reste appuyé) ; ⌘ + clic = retirer / remettre la note (toutes les octaves)
+        k.addEventListener('mousedown', (e) => {
+            e.preventDefault();   // pas de focus : Espace reste la lecture
+            if (e.button !== 0) return;
             const pc = +k.dataset.pc;
-            if (!mask) mask = new Array(12).fill(true);
-            mask[pc] = !mask[pc];
-            source = 'clavier';
-            playKeyNote(pc);
-            paint();
+            if (e.metaKey || e.ctrlKey) {
+                if (!mask) mask = new Array(12).fill(true);
+                mask[pc] = !mask[pc];
+                source = 'clavier';
+                playKeyNote(pc);
+                paint(); changed();
+                return;
+            }
+            const release = holdKeyNote(pc);
+            k.classList.add('pressed');
+            const up = () => { release(); k.classList.remove('pressed'); document.removeEventListener('mouseup', up); k.removeEventListener('mouseleave', up); };
+            document.addEventListener('mouseup', up); k.addEventListener('mouseleave', up);
         });
     });
-    panel.querySelectorAll('.tune-quick button').forEach(b => {
+    panel.querySelectorAll('[data-q]').forEach(b => {
         b.addEventListener('mousedown', (e) => e.preventDefault());
         b.addEventListener('click', () => {
-            if (b.dataset.q === 'all') { mask = new Array(12).fill(true); source = 'clavier'; paint(); }
+            if (b.dataset.q === 'all') { mask = new Array(12).fill(true); source = 'clavier'; paint(); changed(); }
             else readInstru(false);
         });
     });
     panel.querySelector('.fx-panel-close').addEventListener('click', () => panel.remove());
-    panel.querySelector('.tune-apply').addEventListener('click', (ev) => {
-        const strength = parseInt(panel.querySelector('.tune-strength').value) / 100;
-        const toAll = trackMode && (ev.altKey || (panel.querySelector('.tune-all-box') || {}).checked);
-        if (toAll) setTimeout(() => {
-            // le réglage qu'on vient de poser sur cette piste est copié sur toutes les autres pistes qui ont déjà un Auto-Tune
-            const src = trk && trk.autotune; if (!src || !src.on) return;
-            let n = 0;
-            state.project.tracks.forEach((o, i) => { if (o !== trk && o.autotune && o.autotune.on) { o.autotune = JSON.parse(JSON.stringify(src)); tuneWholeTrack(i, null, true); n++; } });
-            if (n) { saveProject(); flash(`Même Auto-Tune posé sur ${n} autre${n > 1 ? 's' : ''} piste${n > 1 ? 's' : ''}`); } else flash('Pas d\'autre piste avec un Auto-Tune actif dans ce projet');
-        }, 50);
-        if (mask && !mask.some(Boolean)) { flash('Toutes les notes sont éteintes — rallume au moins une note au clavier'); return; }
-        panel.remove();
-        // Le choix vaut pour tout le morceau : les prochains clips repartiront de ces notes
-        if (mask) {
-            const named = source === 'instru' || source === 'gamme';
-            state.project.key = { notes: mask.slice(), tonic, minor, label: named ? scaleLabel(tonic, minor) : '', source };
-            if (trackMode) { pushUndo(); trk.autotune = { on: true, notes: mask.slice(), source, strength, tonic, minor }; saveProject(); tuneWholeTrack(trackIdx, null, true); }
-            else applyTune(clip, { notes: mask.slice(), source, strength, tonic, minor });
-        } else if (trackMode) { pushUndo(); trk.autotune = { on: true, root: 'auto', strength }; saveProject(); tuneWholeTrack(trackIdx, null, true); }
-        else applyTune(clip, { root: 'auto', strength });
-    });
-    const rm = panel.querySelector('.tune-remove');
-    if (rm) rm.addEventListener('click', () => { panel.remove(); if (trackMode) untuneWholeTrack(trackIdx); else removeTune(clip); });
-    setTimeout(() => {
+    // Réglage d'un seul clip : la fenêtre se ferme quand on clique ailleurs (mode piste : elle reste, comme les plugs)
+    if (!trackMode) setTimeout(() => {
         document.addEventListener('mousedown', function closeTune(ev) {
             if (!panel.contains(ev.target)) panel.remove();
             if (!document.body.contains(panel)) document.removeEventListener('mousedown', closeTune);
@@ -5160,7 +5487,7 @@ function watchWarpTempo() {
 }
 
 function openWarpPanel(trackIdx, clipIdx, x, y) {
-    document.querySelectorAll('.fx-panel').forEach(p => p.remove());
+    closeTransientPanels();
     const clip = state.project.tracks[trackIdx]?.clips[clipIdx];
     if (!clip || clip.recording) return;
     const srcId = clip.warp ? clip.warp.src : clip.id;
@@ -5298,7 +5625,9 @@ async function applyTune(clip, opts) {
 
 // Auto-Tune de piste : corrige toutes les prises de la piste, l'une après l'autre
 function tuneOpts(a) {
-    return a.notes ? { notes: a.notes.slice(), source: a.source, strength: a.strength, tonic: a.tonic, minor: a.minor } : { root: 'auto', strength: a.strength };
+    // PulseTune : Humain, Souplesse, Vibrato naturel et type de voix suivent jusqu'au moteur (tune.js)
+    const more = { human: a.human || 0, flex: a.flex || 0, vibrato: a.vibrato || 0, voice: a.voice || 'mid' };
+    return a.notes ? { notes: a.notes.slice(), source: a.source, strength: a.strength, tonic: a.tonic, minor: a.minor, ...more } : { root: 'auto', strength: a.strength, ...more };
 }
 async function tuneWholeTrack(trackIdx, onlyClips = null, noUndo = false) {
     const t = state.project.tracks[trackIdx];
@@ -5414,7 +5743,7 @@ function applySound(t) {
 }
 
 function openSoundPanel(trackIdx, anchorEl) {
-    document.querySelectorAll('.fx-panel').forEach(p => p.remove());
+    closeTransientPanels();
     // trackIdx : numéro de piste, ou directement un groupe
     const t = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;
     if (!t) return;
@@ -5751,10 +6080,12 @@ const EQ_PRESETS = {
 };
 
 function openEqPanel(trackIdx, anchorEl) {
-    document.querySelectorAll('.fx-panel').forEach(p => p.remove());
+    closeTransientPanels();
     // trackIdx : numéro de piste, ou directement un groupe
     const t = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;
     if (!t) return;
+    const already = findPlugWin(t, 'eq');
+    if (already) { plugFront(already); return; }
     t.effectParams = t.effectParams || {};
     const W = 420, H = 200, DB = 18, FMIN = 20, FMAX = 20000;
     const fx = (f) => Math.log(f / FMIN) / Math.log(FMAX / FMIN) * W;
@@ -5972,6 +6303,7 @@ function openEqPanel(trackIdx, anchorEl) {
     // Suppr / ⌫ : retire les points choisis (et n'efface pas une région derrière)
     const eqKeys = (ev) => {
         if (!panel.isConnected) { document.removeEventListener('keydown', eqKeys, true); return; }
+        if (!isFrontPlug(panel)) return;   // plusieurs plugs ouverts : seule la fenêtre de devant écoute le clavier
         if (ev.target && /INPUT|TEXTAREA|SELECT/.test(ev.target.tagName)) return;
         if (ev.key === 'Delete' || ev.key === 'Backspace') {
             ev.preventDefault(); ev.stopPropagation();
@@ -6042,13 +6374,7 @@ function openEqPanel(trackIdx, anchorEl) {
     if (left + pw > window.innerWidth) left = Math.max(8, rect.left - pw - 8);
     panel.style.left = left + 'px';
     panel.style.top = Math.max(8, Math.min(rect.top - 20, window.innerHeight - panel.offsetHeight - 8)) + 'px';
-    setTimeout(() => {
-        document.addEventListener('mousedown', function closeEq(ev) {
-            if (!panel.isConnected) { document.removeEventListener('mousedown', closeEq); return; }
-            // composedPath : la cible a pu être redessinée pendant le clic (les points se refont à chaque mouvement)
-            if (!ev.composedPath().includes(panel) && ev.target !== anchorEl) { panel.remove(); document.removeEventListener('mousedown', closeEq); }
-        });
-    }, 100);
+    makePlugWindow(panel, t, 'eq', trackIdx);   // reste ouverte, déplaçable, à côté des autres plugs
 }
 
 // === Panneaux d'effets : un cadre commun pour tous (boutons rotatifs, Simple / Avancé, A / B) ===
@@ -6152,6 +6478,38 @@ function fxKnobCap(skin, c, R, id, a, p) {
 }
 const FX_SKINS = ['P', 'O', 'F', 'U'];
 const FX_SIZES = [1, 1.25, 1.5];
+// Préréglages Red Records : PROVISOIRES. Ridwane les refera lui-même après ses tests avec de vraies pistes
+// (« Enregistrer le réglage actuel » dans le plug, puis on les recopie ici). L'utilisateur peut toujours tout retoucher.
+const FX_PRESETS = {
+    delay: [
+        { name: 'Del 1/8 ping-pong', params: { beats: 0.5, feedback: 35, wet: 30, pp: 1 } },
+        { name: 'Del 1/16 ping-pong', params: { beats: 0.25, feedback: 30, wet: 25, pp: 1 } },
+        { name: 'Del 1/4', params: { beats: 1, feedback: 35, wet: 25, pp: 0 } },
+        { name: 'Del 1/2', params: { beats: 2, feedback: 30, wet: 22, pp: 0 } }
+    ],
+    pitch: [
+        { name: 'Pitch −', params: { semi: -5, mix: 100 } },
+        { name: 'Pitch +', params: { semi: 5, mix: 100 } },
+        { name: 'Octave en dessous', params: { semi: -12, mix: 100 } }
+    ],
+    filter: [
+        { name: 'Phone', params: { hpf: 500, lpf: 3000, slope: 24 } },
+        { name: 'Radio', params: { hpf: 300, lpf: 5000, slope: 12 } }
+    ],
+    reverb: [
+        { name: 'Rev Room', params: { size: 1.4, wet: 18 } },
+        { name: 'Rev Long', params: { size: 3.2, wet: 22 } }
+    ],
+    slapback: [
+        { name: 'Slap', params: {} }
+    ]
+};
+function userFxPresets() { try { return JSON.parse(localStorage.getItem('pulse_fx_user_presets') || '{}'); } catch { return {}; } }
+function saveUserFxPreset(fx, name, params) {
+    const all = userFxPresets();
+    all[fx] = [...(all[fx] || []).filter(p => p.name !== name), { name, params }];
+    try { localStorage.setItem('pulse_fx_user_presets', JSON.stringify(all)); } catch {}
+}
 const FX_SKIN_SEED = { O: 23, F: 37, U: 51 };
 // Hasard reproductible : chaque machine garde « ses » rayures d'une ouverture à l'autre
 function fxRnd(seed) { let x = seed; return () => ((x = (x * 16807) % 2147483647) / 2147483647); }
@@ -6196,13 +6554,59 @@ function fxAbStore(t, fxName) {
     return m[fxName] || (m[fxName] = { cur: 'A', A: null, B: null });
 }
 
+// Fenêtres de plugs façon Logic : plusieurs ouvertes à la fois, déplaçables par le bandeau du haut,
+// la dernière touchée passe devant. Elles restent ouvertes quand on clique ailleurs (fermeture : ×).
+// Place une fenêtre à une position d'écran, en tenant compte de son zoom (qui multiplie aussi left / top)
+function plugSetPos(panel, x, y) {
+    const z = parseFloat(panel.style.zoom) || 1;
+    panel.style.left = (x / z) + 'px'; panel.style.top = (y / z) + 'px';
+}
+function plugWins() { return [...document.querySelectorAll('.fx-panel.plug-win')]; }
+function plugFront(p) {
+    const others = plugWins().filter(x => x !== p).sort((a, b) => (+a.style.zIndex || 0) - (+b.style.zIndex || 0));
+    [...others, p].forEach((x, i) => { x.style.zIndex = 2000 + i; });
+}
+function isFrontPlug(p) { return plugWins().every(x => x === p || (+x.style.zIndex || 0) < (+p.style.zIndex || 0)); }
+// Les autres panneaux (Son, Envoi, Auto-Tune…) restent « un à la fois » mais ne ferment plus les plugs
+function closeTransientPanels() { document.querySelectorAll('.fx-panel:not(.plug-win)').forEach(p => p.remove()); }
+function findPlugWin(t, fxName) { return plugWins().find(p => p._plugT === t && p.dataset.fx === fxName); }
+function makePlugWindow(panel, t, fxName, trackIdx) {
+    panel.classList.add('plug-win');
+    panel._plugT = t; panel.dataset.fx = fxName;
+    plugFront(panel);
+    panel.addEventListener('mousedown', () => { if (!isFrontPlug(panel)) plugFront(panel); }, true);
+    const head = panel.querySelector('.fx-panel-header');
+    if (head) head.addEventListener('mousedown', (e) => {
+        if (e.button !== 0 || e.target.closest('button, input, label, select')) return;
+        e.preventDefault();
+        const r = panel.getBoundingClientRect(), dx = e.clientX - r.left, dy = e.clientY - r.top;
+        const move = (ev) => {
+            // toujours un bout du bandeau à l'écran pour pouvoir la rattraper
+            const x = Math.max(80 - r.width, Math.min(window.innerWidth - 80, ev.clientX - dx));
+            const y = Math.max(0, Math.min(window.innerHeight - 30, ev.clientY - dy));
+            plugSetPos(panel, Math.round(x), Math.round(y));
+        };
+        const up = () => { panel.classList.remove('dragging'); document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
+        panel.classList.add('dragging');
+        document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+    });
+    // Si la piste ou le groupe disparaît (suppression, autre projet), sa fenêtre se ferme
+    const alive = () => typeof trackIdx === 'number' ? state.project.tracks[trackIdx] === t : (state.project.buses || []).includes(t);
+    const watch = setInterval(() => {
+        if (!panel.isConnected) return clearInterval(watch);
+        if (!alive()) { panel.remove(); clearInterval(watch); }
+    }, 500);
+}
+
 function openEffectPanel(trackIdx, fxName, anchorEl) {
     if (fxName === 'eq') return openEqPanel(trackIdx, anchorEl);
-    // Fermer un éventuel panneau déjà ouvert
-    document.querySelectorAll('.fx-panel').forEach(p => p.remove());
+    closeTransientPanels();
     // trackIdx : numéro de piste, ou directement un groupe
     const t = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;
     if (!t) return;
+    // Déjà ouvert : on le ramène devant au lieu d'en ouvrir un deuxième
+    const already = findPlugWin(t, fxName);
+    if (already) { plugFront(already); return; }
     t.effectParams = t.effectParams || {};
 
     const DEFS = {
@@ -6292,10 +6696,16 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
             { key: 'amount', label: 'Force',      unit: '%',  min: 0,    max: 100,  def: 40,   step: 1 },
             { key: 'freq',   label: 'Fréquence', unit: ' Hz', min: 3000, max: 9000, def: 5500, step: 100 }
         ],
+        pitch: [
+            { key: 'semi', label: 'Hauteur', unit: ' dt', min: -12, max: 12, def: 0, step: 1, tip: 'En demi-tons : -12 = une octave plus grave, +12 = une octave plus aiguë' },
+            { key: 'mix',  label: 'Mélange', unit: '%',   min: 0,   max: 100, def: 100, step: 1, tip: '100 % = seulement la voix transposée' }
+        ],
         delay: [
             { key: 'beats',    label: 'Retour', unit: '',  min: 0.125, max: 2,  def: 0.5, step: 0.125, fmt: beatsLabel },
             { key: 'feedback', label: 'Répétitions',    unit: '%', min: 0,     max: 85, def: 35,  step: 1 },
-            { key: 'wet',      label: 'Quantité',       unit: '%', min: 0,     max: 100, def: 25, step: 1 }
+            { key: 'wet',      label: 'Quantité',       unit: '%', min: 0,     max: 100, def: 25, step: 1 },
+            { key: 'dry',      label: 'Voix d\'origine', unit: '%', min: 0,     max: 100, def: 100, step: 1, adv: true, tip: '0 % = seulement l\'écho (piste d\'effet ponctuel)' },
+            { key: 'pp',       label: 'Ping-pong',      unit: '',  min: 0,     max: 1,   def: 0,  step: 1, toggle: true, tip: 'Les répétitions rebondissent de gauche à droite' }
         ]
     };
     const defs = DEFS[fxName];
@@ -6303,7 +6713,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
     const params = t.effectParams[fxName] || {};
 
     const panel = document.createElement('div');
-    const FX_LABELS = { crush: 'Bitcrusher', util: 'Utilitaire', width: 'Largeur stéréo', tremolo: 'Trémolo', phaser: 'Phaser', flanger: 'Flanger', chorus: 'Chorus', doubler: 'Doubleur de voix', slapback: 'Slapback', gate: 'Gate', filter: 'Filtre', eq: 'EQ 4 bandes', comp: 'Compresseur', reverb: 'Réverbération', sat: 'Saturation', deess: 'De-esser', delay: 'Écho' };
+    const FX_LABELS = { pitch: 'Pitch', crush: 'Bitcrusher', util: 'Utilitaire', width: 'Largeur stéréo', tremolo: 'Trémolo', phaser: 'Phaser', flanger: 'Flanger', chorus: 'Chorus', doubler: 'Doubleur de voix', slapback: 'Slapback', gate: 'Gate', filter: 'Filtre', eq: 'EQ 4 bandes', comp: 'Compresseur', reverb: 'Réverbération', sat: 'Saturation', deess: 'De-esser', delay: 'Écho' };
     // Mode Simple (l'essentiel) ou Avancé (tous les réglages), retenu d'une fois sur l'autre
     const hasAdv = defs.some(d => d.adv);
     let advanced = false;
@@ -6326,6 +6736,15 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
             ${hasAdv ? `<div class="fx-seg fx-mode"><button data-mode="simple" class="${advanced ? '' : 'on'}">Simple</button><button data-mode="adv" class="${advanced ? 'on' : ''}">Avancé</button></div>` : '<span></span>'}
             ${fxName === 'comp' ? '<button class="fx-view" data-tooltip="Changer l\'affichage : courbe ou vumètre analogique">Analogique</button>' : ''}
             <div class="fx-seg fx-ab" data-tooltip="Deux réglages à comparer : passe de A à B pour écouter la différence"><button data-ab="A" class="on">A</button><button data-ab="B">B</button></div>
+        </div>
+        <div class="fx-presets-bar">
+            <select class="fx-preset" data-tooltip="Un point de départ réglé à la sauce Red Records : tu peux ensuite tout retoucher">
+                <option value="">Préréglages…</option>
+                ${(FX_PRESETS[fxName] || []).length ? `<optgroup label="Red Records">${FX_PRESETS[fxName].map((p, i) => `<option value="f${i}" ${params._preset === p.name ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</optgroup>` : ''}
+                ${(userFxPresets()[fxName] || []).length ? `<optgroup label="Les miens">${userFxPresets()[fxName].map((p, i) => `<option value="u${i}" ${params._preset === p.name ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</optgroup>` : ''}
+                <option value="__save">＋ Enregistrer le réglage actuel…</option>
+            </select>
+            <input class="fx-preset-name" type="text" maxlength="28" placeholder="Nom du préréglage, puis Entrée" hidden>
         </div>
         <div class="fx-face">
         ${fxName === 'comp' ? '<div class="fx-viz"></div>' : ''}
@@ -6359,29 +6778,69 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
         </div>`;
 
     document.body.appendChild(panel);
+    makePlugWindow(panel, t, fxName, trackIdx);
+
+    // Préréglages : on applique, puis on rouvre la fenêtre au même endroit pour que tous les boutons suivent
+    const presetSel = panel.querySelector('.fx-preset'), presetName = panel.querySelector('.fx-preset-name');
+    presetSel.addEventListener('change', () => {
+        const v = presetSel.value;
+        if (v === '__save') {
+            presetSel.hidden = true; presetName.hidden = false; presetName.value = params._preset || ''; presetName.focus();
+            return;
+        }
+        const pr = v[0] === 'f' ? (FX_PRESETS[fxName] || [])[+v.slice(1)] : v[0] === 'u' ? (userFxPresets()[fxName] || [])[+v.slice(1)] : null;
+        if (!pr) return;
+        pushUndo();
+        t.effectParams[fxName] = { ...pr.params, _preset: pr.name };
+        t.effects = t.effects || [];
+        if (!t.effects.includes(fxName)) t.effects.push(fxName);   // choisir un préréglage, c'est vouloir l'effet
+        refreshPlaybackSoon(); saveProject();
+        const L = panel.style.left, T = panel.style.top;
+        panel.remove();
+        openEffectPanel(trackIdx, fxName, anchorEl);
+        const np = findPlugWin(t, fxName); if (np) { np.style.left = L; np.style.top = T; }
+        renderInspector(); if (state.mixerOpen) { renderMixer(); bindMixerEvents(); }
+        flash(`Préréglage « ${pr.name} » : retouche ce que tu veux`);
+    });
+    presetName.addEventListener('keydown', (e) => {
+        e.stopPropagation();
+        if (e.key === 'Escape') { presetName.hidden = true; presetSel.hidden = false; presetSel.value = ''; return; }
+        if (e.key !== 'Enter') return;
+        const name = presetName.value.trim(); if (!name) return;
+        const cur = { ...(t.effectParams[fxName] || {}) }; delete cur._preset;
+        saveUserFxPreset(fxName, name, cur);
+        t.effectParams[fxName] = { ...cur, _preset: name }; saveProject();
+        const L = panel.style.left, T = panel.style.top;
+        panel.remove(); openEffectPanel(trackIdx, fxName, anchorEl);
+        const np = findPlugWin(t, fxName); if (np) { np.style.left = L; np.style.top = T; }
+        flash(`« ${name} » enregistré dans tes préréglages`);
+    });
 
     // Taille fixe de la fenêtre (100 / 125 / 150 %), comme « Afficher » dans Logic : tout est dessiné, donc reste net
     let zoom = 1;
     try { zoom = FX_SIZES.includes(+localStorage.getItem('pulse_fx_size')) ? +localStorage.getItem('pulse_fx_size') : 1; } catch {}
     const rect = anchorEl.getBoundingClientRect();
     const fits = (z) => panel.offsetWidth * z <= window.innerWidth - 16 && panel.offsetHeight * z <= window.innerHeight - 16;
+    // Agrandi avec « zoom » (et non une transformation) : la fenêtre est redessinée à sa vraie taille, donc nette
+    // (une transformation faisait agrandir une image à 100 % par la carte graphique du Mac : flou).
+    // Avec zoom, left / top sont aussi multipliés : on les divise (plugSetPos).
     const place = (keepLeft) => {
+        const curTop = panel.style.top ? panel.getBoundingClientRect().top : null;
         if (!fits(zoom)) zoom = [...FX_SIZES].reverse().find(fits) || 1;   // jamais de fenêtre coupée par l'écran
         panel.querySelectorAll('.fx-size button').forEach(b => { b.disabled = !fits(+b.dataset.z); b.title = b.disabled ? 'Pas assez de place à l\'écran pour cette taille' : ''; });
-        panel.style.transformOrigin = 'top left';
-        panel.style.transform = zoom === 1 ? '' : `scale(${zoom})`;
+        panel.style.transform = '';
+        panel.style.zoom = zoom === 1 ? '' : String(zoom);
         const pw = panel.offsetWidth * zoom, ph = panel.offsetHeight * zoom;
         let left = keepLeft !== undefined ? keepLeft : rect.right + 8;
         if (left + pw > window.innerWidth - 8) left = keepLeft !== undefined ? window.innerWidth - pw - 8 : rect.left - pw - 8;
-        panel.style.left = Math.max(8, left) + 'px';
-        panel.style.top = Math.max(8, Math.min(parseFloat(panel.style.top) || rect.top - 20, window.innerHeight - ph - 8)) + 'px';
+        plugSetPos(panel, Math.max(8, left), Math.max(8, Math.min(curTop != null ? curTop : rect.top - 20, window.innerHeight - ph - 8)));
         panel.querySelectorAll('.fx-size button').forEach(b => b.classList.toggle('on', +b.dataset.z === zoom));
     };
     place();
     panel.querySelectorAll('.fx-size button').forEach(b => b.addEventListener('click', () => {
         zoom = +b.dataset.z;
         try { localStorage.setItem('pulse_fx_size', String(zoom)); } catch {}
-        place(parseFloat(panel.style.left));
+        place(panel.getBoundingClientRect().left);
     }));
 
     // Interface graphique : la courbe suit les curseurs, et les points se tirent à la souris
@@ -6497,7 +6956,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
         ['P', 'O', 'F', 'U'].forEach(x => panel.classList.toggle('skin-' + x, x === sk));
         const face = panel.querySelector('.fx-face'), old = face.querySelector('.fx-wear');
         if (old) old.remove();
-        if (panel.style.left) place(parseFloat(panel.style.left));   // la façade Bus est plus large : on recale la fenêtre
+        if (panel.style.left) place(panel.getBoundingClientRect().left);   // la façade Bus est plus large : on recale la fenêtre
         if (sk !== 'P') face.insertAdjacentHTML('afterbegin', fxWearSvg(sk, FX_SKIN_SEED[sk], face.offsetWidth || 340, face.offsetHeight || 340));   // à la taille réelle : vis bien rondes
         if (viz) drawViz();
     };
@@ -6620,7 +7079,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
         flash(`Réglage ${to}`);
     }));
     refreshAll();
-    place(parseFloat(panel.style.left));   // la hauteur réelle est connue une fois l'écran dessiné
+    place(panel.getBoundingClientRect().left);   // la hauteur réelle est connue une fois l'écran dessiné
     // Vumètre de sortie (crête, retombée douce) : vide à l'arrêt
     const meterBars = panel.querySelectorAll('.fx-meter b');
     let mBuf = null, mLvl = 0;
@@ -6649,15 +7108,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
         flash(`${FX_LABELS[fxName]} réinitialisé`);
     });
 
-    // Fermer si clic ailleurs
-    setTimeout(() => {
-        document.addEventListener('mousedown', function closeFx(ev) {
-            if (!panel.contains(ev.target) && ev.target !== anchorEl) {
-                panel.remove();
-                document.removeEventListener('mousedown', closeFx);
-            }
-        });
-    }, 100);
+    // Plus de fermeture au clic ailleurs : la fenêtre reste ouverte comme dans Logic (fermeture : ×)
 }
 
 // Seul le volume s'automatise pour l'instant (les effets viendront avec le moteur natif)
@@ -7012,6 +7463,11 @@ function zoomAnchorSec() {
             return Math.max(0, (_ptr.x - r.left + tl.scrollLeft) / state.pxPerSecond);
         }
     }
+    return baseCursorSec();
+}
+// Le curseur de base (là où la lecture revient à l'arrêt) plutôt que celui qui défile ; sans base, le curseur de lecture
+function baseCursorSec() {
+    if ((state.playing || state.paused) && state.playOrigin != null && returnOnStop()) return state.playOrigin;
     return state.playhead;
 }
 // Pendant une lecture ou une prise : si tu zoomes ou défiles toi-même, la timeline arrête de suivre le curseur
@@ -7021,7 +7477,8 @@ function suspendFollow() {
         flash('Le défilement automatique est en pause pour que tu travailles où tu veux — il revient au prochain Espace');
     }
 }
-function setZoom(px, anchorSec) {
+// center = true : le point visé finit pile au milieu de l'écran (E / Z et molette, sur le curseur)
+function setZoom(px, anchorSec, center = false) {
     const timeline = document.querySelector('.timeline');
     const oldPx = state.pxPerSecond;
     const newPx = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, px));
@@ -7038,7 +7495,7 @@ function setZoom(px, anchorSec) {
     updatePlayhead();
 
     const anchorPxAfter = anchor * newPx;
-    timeline.scrollLeft = anchorPxAfter - screenOffset;
+    timeline.scrollLeft = center ? Math.max(0, anchorPxAfter - timeline.clientWidth / 2) : anchorPxAfter - screenOffset;
     saveViewState();
 }
 
@@ -7068,8 +7525,45 @@ function duplicateTrack(idx) {
 }
 
 // --- Supprimer la piste sélectionnée (⌘⌫) ---
+// Supprimer pendant une prise : les numéros de piste ne doivent pas bouger tant que la capture tourne
+// (elle repère sa piste par son numéro). La piste disparaît et se tait tout de suite, et elle est
+// vraiment retirée dès que la prise est finie.
+const _pendDel = new Set();
+function isPendDel(t) { return _pendDel.has(t); }
+let _pendDelTimer = null;
+function deleteTracksDuringRec(idxs) {
+    const capIdx = state._cap ? state._cap.trackIdx : -1;
+    const lcIdx = state._livingClip ? state._livingClip.trackIdx : -1;
+    const ok = idxs.filter(i => i !== capIdx && i !== lcIdx && state.project.tracks[i] && !state.project.tracks[i].isCapture);
+    if (!ok.length) { flash('C\'est la piste qui enregistre : arrête la prise (Espace) pour la supprimer'); return; }
+    ok.forEach(i => { const t = state.project.tracks[i]; _pendDel.add(t); t._wasMuted = !!t.muted; t.muted = true; });
+    PulseAudio.refreshAudibility(state.project);
+    if (ok.includes(state.selectedTrack)) state.selectedTrack = capIdx >= 0 ? capIdx : state.selectedTrack;
+    state.selectedTracks = new Set();
+    renderAll();
+    flash(ok.length > 1 ? `${ok.length} pistes supprimées` : `Piste « ${state.project.tracks[ok[0]].name} » supprimée`);
+    if (!_pendDelTimer) _pendDelTimer = setInterval(flushPendingDeletes, 400);
+}
+function flushPendingDeletes() {
+    if (state.recording || state._cap || state._finalizing) return;   // la prise n'est pas encore rangée
+    clearInterval(_pendDelTimer); _pendDelTimer = null;
+    const idxs = state.project.tracks.map((t, i) => _pendDel.has(t) ? i : -1).filter(i => i >= 0);
+    _pendDel.clear();
+    if (!idxs.length) return;
+    const sel = state.project.tracks[state.selectedTrack];
+    idxs.forEach(i => { state.project.tracks[i].muted = !!state.project.tracks[i]._wasMuted; delete state.project.tracks[i]._wasMuted; });
+    pushUndo();   // ⌘Z remet les pistes telles qu'avant (avec la prise déjà rangée)
+    for (let k = idxs.length - 1; k >= 0; k--) state.project.tracks.splice(idxs[k], 1);
+    const ni = state.project.tracks.indexOf(sel);
+    state.selectedTrack = ni >= 0 ? ni : Math.max(0, Math.min(state.selectedTrack, state.project.tracks.length - 1));
+    state.selectedClip = null;
+    renderAll(); saveProject();
+}
 function deleteSelectedTrack() {
-    if (state.recording) { flash('Une prise est en cours : arrête-la (Espace) avant de supprimer'); return; }
+    if (state.recording || state._cap) {
+        const sel = selectedTrackIdxs();
+        return deleteTracksDuringRec(sel.length ? sel : [state.selectedTrack]);
+    }
     const many = selectedTrackIdxs().filter(i => !state.project.tracks[i]?.isCapture);
     if (many.length > 1) {
         pushUndo();
@@ -7161,6 +7655,7 @@ function _doAddTrack(type = 'audio') {
 
 // --- Rendu complet ---
 function renderAll() {
+    pruneEmptySpots();
     renderTracksPanel();
     renderTimelineTracks();
     renderRuler();
@@ -8209,16 +8704,15 @@ function bindTimelineClick() {
         e.preventDefault();
         suspendFollow();
         if (hZoom) {
-            // Opt + Cmd : le zoom vise le curseur de lecture ; Cmd seul : il vise la souris
-            const rect = timeline.getBoundingClientRect();
-            _zoomAcc.sec = vZoom ? state.playhead : Math.max(0, (e.clientX - rect.left + timeline.scrollLeft) / state.pxPerSecond);
+            // Molette : comme E / Z, le zoom se cale sur le curseur (de base si tu as cliqué), au milieu de l'écran
+            _zoomAcc.sec = baseCursorSec();
             _zoomAcc.h *= Math.pow(1.15, Math.max(-1, Math.min(1, -e.deltaY / 100)));
         } else {
             heightWheel(e);
         }
         if (_zoomAcc.h !== 1 && !_zoomAcc.raf) _zoomAcc.raf = requestAnimationFrame(() => {
             const a = _zoomAcc; _zoomAcc = { h: 1, sec: 0, raf: 0 };
-            if (a.h !== 1) setZoom(state.pxPerSecond * a.h, a.sec);
+            if (a.h !== 1) setZoom(state.pxPerSecond * a.h, a.sec, true);
         });
     };
     timeline.addEventListener('wheel', handleZoomWheel, { passive: false });
@@ -8519,7 +9013,35 @@ function bindTimelineClick() {
                         document.addEventListener('mouseup', onUpF);
                         return;
                     }
-                    // Moitié basse : place le curseur au point de clic ; moitié haute : outil de sélection, retire le point de départ
+                    // Moitié basse d'une région : comme dans le vide. Un clic pose le curseur (et choisit la région),
+                    // clic enfoncé + glisser = sélection d'une plage. Moitié haute : on attrape la région pour la déplacer.
+                    // (dans une plage déjà choisie, on garde le geste habituel : glisser déplace toute la plage)
+                    const inRange = (() => { const sl = state.selection; if (!sl) return false;
+                        const tt = eventToTime(e), a0 = Math.min(sl.start, sl.end), b0 = Math.max(sl.start, sl.end);
+                        return tt >= a0 && tt <= b0 && (!sl.tracks || (trackIdx >= sl.tracks[0] && trackIdx <= sl.tracks[1])); })();
+                    if (relY >= rect.height / 2 && !e.altKey && !inRange) {
+                        placeOrSelect(e);
+                        const sx0 = e.clientX, sy0 = e.clientY;
+                        const onMvL = (ev) => {
+                            if (Math.hypot(ev.clientX - sx0, ev.clientY - sy0) < 4) return;
+                            document.removeEventListener('mousemove', onMvL); document.removeEventListener('mouseup', onUpL);
+                            if (state.selection) clearRangeSelection();
+                            state.selectedClip = null; state.selectedClips.clear();
+                            document.querySelectorAll('.clip.is-selected').forEach(x => x.classList.remove('is-selected'));
+                            startRangeSelection(e, eventToTime);
+                            document.dispatchEvent(new MouseEvent('mousemove', { clientX: ev.clientX, clientY: ev.clientY, bubbles: true }));
+                        };
+                        const onUpL = () => {
+                            document.removeEventListener('mousemove', onMvL); document.removeEventListener('mouseup', onUpL);
+                            if (state.selection) clearRangeSelection();
+                            state.selectedClip = { trackIdx, clipIdx: _ci };
+                            document.querySelectorAll('.clip.is-selected').forEach(x => x.classList.remove('is-selected'));
+                            clipEl.classList.add('is-selected');
+                        };
+                        document.addEventListener('mousemove', onMvL); document.addEventListener('mouseup', onUpL);
+                        return;
+                    }
+                    // Moitié haute : outil de sélection (retire le point de départ) et déplacement de la région
                     placeOrSelect(e);
                     return startClipDrag(e, clipEl, trackIdx);
                 }
@@ -10337,8 +10859,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (k === 't') { e.preventDefault(); toggleTapMode(); return; }              // T = toggle mode tap (puis Espace tape)
 
         // Zoom (Pro Tools style, adapté : E = zoom in, Z = zoom out)
-        if (k === 'e') { e.preventDefault(); setZoom(state.pxPerSecond * 1.25); return; }
-        if (k === 'z' && !mod) { e.preventDefault(); setZoom(state.pxPerSecond / 1.25); return; }
+        // E / Z : zoom calé sur la souris si elle est sur la timeline, sinon sur le curseur de base ; le défilement auto se met en pause
+        if (k === 'e') { e.preventDefault(); suspendFollow(); setZoom(state.pxPerSecond * 1.25, baseCursorSec(), true); return; }
+        if (k === 'z' && !mod) { e.preventDefault(); suspendFollow(); setZoom(state.pxPerSecond / 1.25, baseCursorSec(), true); return; }
 
         // Mode automation
         if (k === 'a' && !mod) { e.preventDefault(); toggleAutomationMode(); return; }

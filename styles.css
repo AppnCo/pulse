@@ -653,7 +653,7 @@ input[type="number"] { -moz-appearance: textfield; }
 }
 :where(input[type="range"]:not(.fader)):hover::-webkit-slider-thumb { transform: scale(1.18); }
 :where(input[type="range"]:not(.fader)):disabled { opacity: .4; cursor: default; }
-.strip-send-row input[type="range"] { color: #34D399; }
+.strip-send-row input[type="range"] { color: var(--violet-2); }
 .group-vol { color: var(--group-color, var(--violet-2)); }
 
 /* Choix de fichier */

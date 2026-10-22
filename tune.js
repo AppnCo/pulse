@@ -7,13 +7,16 @@
 (function(root) {
     const HOP_SEC = 0.01;          // une mesure de note toutes les 10 ms
     const F_MIN = 70, F_MAX = 800; // étendue d'une voix (Hz)
+    // Type de voix : où chercher la note (évite de confondre une voix grave avec son octave, etc.)
+    const VOICE_RANGE = { high: [150, 1100], mid: [70, 800], low: [50, 450] };
     const MAJOR = [0, 2, 4, 5, 7, 9, 11];
     const NOTE_NAMES = ['Do', 'Do#', 'Ré', 'Ré#', 'Mi', 'Fa', 'Fa#', 'Sol', 'Sol#', 'La', 'La#', 'Si'];
 
     const tick = () => new Promise(r => setTimeout(r, 0));
 
     // --- 1. Suivi de la note : f0[i] en Hz toutes les 10 ms (0 = pas de note : souffle, consonne, silence)
-    async function trackPitch(x, sr, onProgress) {
+    async function trackPitch(x, sr, onProgress, voice) {
+        const [fMin, fMax] = VOICE_RANGE[voice] || [F_MIN, F_MAX];
         // Copie allégée (~16 kHz) : la détection n'a pas besoin des aigus
         const D = Math.max(1, Math.round(sr / 16000));
         const sr2 = sr / D;
@@ -25,7 +28,7 @@
             y[i] = s / D;
         }
         const W = Math.round(0.03 * sr2);
-        const tauMin = Math.floor(sr2 / F_MAX), tauMax = Math.ceil(sr2 / F_MIN);
+        const tauMin = Math.floor(sr2 / fMax), tauMax = Math.ceil(sr2 / fMin);
         const hop = Math.round(HOP_SEC * sr2);
         const frames = Math.max(0, Math.floor((n2 - W - tauMax) / hop));
         const f0 = new Float32Array(Math.ceil(x.length / (HOP_SEC * sr)) + 1);
@@ -235,21 +238,40 @@
 
     // --- 2. Correction voulue à chaque instant, en rapport de fréquence (1 = on ne touche pas)
     // strength : 0 = très naturel (la correction glisse doucement) … 1 = effet robot (saut immédiat)
-    function correctionCurve(f0, root, strength) {
+    // more (0 à 1, facultatifs) : humain = les notes tenues sont corrigées plus doucement (elles restent vivantes),
+    // souplesse = on ne corrige que quand la voix est déjà près de la note, vibrato = garde le vibrato de la voix.
+    function correctionCurve(f0, root, strength, more = {}) {
         const ratio = new Float32Array(f0.length).fill(1);
+        const clamp01 = (v) => Math.max(0, Math.min(1, v || 0));
+        const human = clamp01(more.human), flex = clamp01(more.flex), vib = clamp01(more.vibrato);
         const tau = Math.pow(1 - Math.max(0, Math.min(1, strength)), 2) * 0.25; // temps de glissement (s)
-        const alpha = tau <= 0.0005 ? 1 : 1 - Math.exp(-HOP_SEC / tau);
+        const alphaOf = (t) => t <= 0.0005 ? 1 : 1 - Math.exp(-HOP_SEC / t);
+        const alpha = alphaOf(tau);
         root = toMask(root);
-        let cur = 0, sumAbs = 0, voiced = 0, lastTarget = null;
+        // Tendance de la note (moyenne sur ~150 ms) : ce qui dépasse autour, c'est le vibrato
+        const midi = new Float32Array(f0.length), trend = new Float32Array(f0.length);
+        for (let i = 0; i < f0.length; i++) midi[i] = f0[i] > 0 ? hzToMidi(f0[i]) : 0;
+        if (vib > 0) for (let i = 0; i < f0.length; i++) {
+            if (f0[i] <= 0) continue;
+            let s = 0, k = 0; for (let j = i - 7; j <= i + 7; j++) if (j >= 0 && j < f0.length && f0[j] > 0) { s += midi[j]; k++; }
+            trend[i] = s / k;
+        }
+        let cur = 0, sumAbs = 0, voiced = 0, lastTarget = null, held = 0;
         for (let i = 0; i < f0.length; i++) {
-            if (f0[i] <= 0) { ratio[i] = 1; continue; }
-            const m = hzToMidi(f0[i]);
+            if (f0[i] <= 0) { ratio[i] = 1; held = 0; continue; }
+            const m = midi[i], base = vib > 0 ? trend[i] : m;
             // Hystérésis : on ne change de note cible que si on s'en éloigne franchement (évite le gargouillis)
-            let target = snapMidi(m, root);
-            if (lastTarget !== null && target !== lastTarget && Math.abs(m - lastTarget) < 0.62 && snapMidi(lastTarget, root) === lastTarget) target = lastTarget;
+            let target = snapMidi(base, root);
+            if (lastTarget !== null && target !== lastTarget && Math.abs(base - lastTarget) < 0.62 && snapMidi(lastTarget, root) === lastTarget) target = lastTarget;
+            held = target === lastTarget ? held + 1 : 0;
             lastTarget = target;
-            const want = target - m;          // demi-tons
-            cur += (want - cur) * alpha;
+            // Vibrato : la note visée suit le vibrato de la voix (0 = corrigé à plat comme avant, 1 = gardé entier)
+            let want = target + vib * (m - base) - m;          // demi-tons
+            // Souplesse : loin de la note (plus d'un demi-ton près), on laisse la voix libre
+            if (flex > 0) { const d = Math.abs(target - base), win = 0.5 * (1 - flex) + 0.02; if (d > win) want *= Math.max(0, 1 - (d - win) / 0.15); }
+            // Humain : plus la note dure, plus la correction ralentit (jusqu'à +0,35 s de glissement)
+            const a = human > 0 ? alphaOf(tau + human * 0.35 * Math.min(1, held * HOP_SEC / 0.4)) : alpha;
+            cur += (want - cur) * a;
             ratio[i] = Math.pow(2, cur / 12);
             sumAbs += Math.abs(cur); voiced++;
         }
@@ -313,10 +335,10 @@
             mono = new Float32Array(n);
             for (const c of channels) for (let i = 0; i < n; i++) mono[i] += c[i] / channels.length;
         }
-        const f0 = await trackPitch(mono, sr, onProgress);
+        const f0 = await trackPitch(mono, sr, onProgress, opts.voice);
         // opts.notes (12 cases, choisies au clavier ou lues sur l'instru) passe avant tout
         const root = opts.notes ? null : (opts.root === 'auto' || opts.root === undefined ? detectKey(f0) : opts.root);
-        const { ratio, voicedPct, avgCents } = correctionCurve(f0, opts.notes || root, opts.strength ?? 1);
+        const { ratio, voicedPct, avgCents } = correctionCurve(f0, opts.notes || root, opts.strength ?? 1, { human: opts.human, flex: opts.flex, vibrato: opts.vibrato });
         const out = [];
         for (let c = 0; c < channels.length; c++) {
             out.push(psola(channels[c], sr, f0, ratio));

@@ -49,7 +49,7 @@ export default async ({ ev, nav, send, sleep, check }) => {
   await boot({ id: 'v3', name: 'V3', bpm: 120, buses: [], tracks: tracks(1, { effects: ['eq', 'comp'] }) });
   await R(`state.selectedTrack=0; renderInspector(); return 1`);
   check('projet vide : pas d\'Auto-Tune par défaut', (await R(`return document.querySelectorAll('#inspector [data-fx="tune"]').length`)) === 0);
-  await R(`document.querySelector('.insp-add-fx').click(); await new Promise(r=>setTimeout(r,100)); [...document.querySelectorAll('.track-ctx-menu .ctx-item')][0].click(); await new Promise(r=>setTimeout(r,250)); document.querySelectorAll('.fx-panel').forEach(p=>p.remove()); return 1`);
+  await R(`document.querySelector('.insp-add-fx').click(); await new Promise(r=>setTimeout(r,100)); const cat=[...document.querySelectorAll('.track-ctx-menu .ctx-item')].find(e=>/Voix et hauteur/.test(e.textContent)); if(cat){cat.dispatchEvent(new MouseEvent('mouseenter',{bubbles:true})); cat.click();} await new Promise(r=>setTimeout(r,100)); document.querySelector('.track-ctx-menu .ctx-item[data-fx="tune"]').click(); await new Promise(r=>setTimeout(r,250)); document.querySelectorAll('.fx-panel').forEach(p=>p.remove()); return 1`);
   check('+ Effet > Auto-Tune : il apparaît en 1er', (await R(`return [...document.querySelectorAll('#inspector .insp-fx-row')].map(r=>r.dataset.fx)[0]`)) === 'tune');
   await R(`document.querySelector('#inspector [data-fx="comp"] .insp-del').click(); await new Promise(r=>setTimeout(r,200)); return 1`);
   check('croix × : l\'effet est supprimé', (await R(`return JSON.stringify(state.project.tracks[0].effects)`)) === '["eq"]');

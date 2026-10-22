@@ -35,6 +35,7 @@ pub struct Send {
     pub beats: Option<f64>,
     pub ms: Option<f64>,
     pub feedback: Option<f64>,
+    pub pp: Option<f64>,
     pub volume: Option<f64>,
     pub muted: bool,
 }
@@ -64,6 +65,17 @@ pub struct Track {
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 pub struct EffectParams {
+    pub filter: Option<FilterParams>,
+    pub gate: Option<GateParams>,
+    pub chorus: Option<ModParams>,
+    pub flanger: Option<ModParams>,
+    pub phaser: Option<ModParams>,
+    pub tremolo: Option<ModParams>,
+    pub doubler: Option<ModParams>,
+    pub slapback: Option<ModParams>,
+    pub crush: Option<CrushParams>,
+    pub util: Option<UtilParams>,
+    pub width: Option<WidthParams>,
     pub eq: Option<EqParams>,
     pub sat: Option<SatParams>,
     pub deess: Option<DeessParams>,
@@ -72,6 +84,71 @@ pub struct EffectParams {
     pub delay: Option<DelayParams>,
     pub master: Option<MasterParams>,
     pub limit: Option<LimitParams>,
+    pub pitch: Option<PitchParams>,
+}
+
+/// Pitch : `semi` en demi-tons (-12 à +12), `mix` en pourcentage (100 = seulement la voix transposée).
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct PitchParams {
+    pub semi: Option<f64>,
+    pub mix: Option<f64>,
+}
+
+/// Filtre : coupe-bas `hpf` et coupe-haut `lpf` en Hz (≤ 20 et ≥ 20 000 = éteint), pente 12 ou 24 dB par octave.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct FilterParams {
+    pub hpf: Option<f64>,
+    pub lpf: Option<f64>,
+    pub slope: Option<f64>,
+}
+
+/// Effets de mouvement (chorus, flanger, phaser, trémolo, doubleur, slapback) : tous les curseurs sont optionnels,
+/// chaque effet a ses valeurs de départ (mêmes que dans audio.js).
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct ModParams {
+    pub rate: Option<f64>,
+    pub depth: Option<f64>,
+    pub feedback: Option<f64>,
+    pub mix: Option<f64>,
+    pub time: Option<f64>,
+    pub width: Option<f64>,
+}
+
+/// Bitcrusher : bits conservés, un échantillon sur `down`, mélange en %.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct CrushParams {
+    pub bits: Option<f64>,
+    pub down: Option<f64>,
+    pub mix: Option<f64>,
+}
+
+/// Utilitaire : volume en dB, inversion de phase et mono (0 ou 1).
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct UtilParams {
+    pub gain: Option<f64>,
+    pub invert: Option<f64>,
+    pub mono: Option<f64>,
+}
+
+/// Largeur stéréo en % (100 = inchangé, 0 = mono).
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct WidthParams {
+    pub width: Option<f64>,
+}
+
+/// Gate : seuil en dB, retour du son en ms, coupure en dB (positive = de combien on baisse).
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct GateParams {
+    pub threshold: Option<f64>,
+    pub release: Option<f64>,
+    pub reduction: Option<f64>,
 }
 
 /// Finition (premaster) : graves et clarté en dB, colle et chaleur de 0 à 100, largeur (1 = inchangé), volume en dB.
@@ -100,6 +177,10 @@ pub struct DelayParams {
     pub feedback: Option<f64>,
     pub ms: Option<f64>,
     pub beats: Option<f64>,
+    /// Ping-pong : 1 = les répétitions alternent gauche / droite
+    pub pp: Option<f64>,
+    /// Voix d'origine en pourcentage (100 par défaut ; 0 = seulement l'écho, pour une piste d'effet ponctuel)
+    pub dry: Option<f64>,
 }
 
 /// `wet` en pourcentage (0-100), `size` de 1.2 (petite pièce) à 3.2 (grande salle).
@@ -108,6 +189,8 @@ pub struct DelayParams {
 pub struct ReverbParams {
     pub wet: Option<f64>,
     pub size: Option<f64>,
+    /// Déclin de 0,5 à 5 (2,5 = neutre) : queue plus courte ou plus longue
+    pub decay: Option<f64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -125,7 +208,14 @@ pub struct CompParams {
     pub ratio: Option<f64>,
     pub attack: Option<f64>,
     pub release: Option<f64>,
+    /// Genou doux en dB (défaut 10, 0 = net)
+    pub knee: Option<f64>,
     pub makeup: Option<f64>,
+    /// Caractère : 0 Propre, 1 Opto, 2 FET, 3 Bus (défaut 0)
+    pub mode: Option<f64>,
+    /// Bus : relâchement automatique (0,1 s → 1,2 s)
+    #[serde(rename = "autoRel")]
+    pub auto_rel: Option<f64>,
     /// Mélange compressé / d'origine, 0–100 (défaut 100)
     pub mix: Option<f64>,
 }

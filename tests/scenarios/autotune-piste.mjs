@@ -15,9 +15,9 @@ export default async ({ ev, nav, send, sleep, shot }) => {
   await ev(`renderMixer(); bindMixerEvents()`);
   await R('slot Tune sur la piste', `const s=document.querySelector('.strip[data-kind="track"] [data-fx="tune"]'); return s? 'présent '+s.textContent : 'absent'`);
   await ev(`document.querySelector('.strip[data-kind="track"] [data-fx="tune"]').click()`); await sleep(400);
-  await R('fenêtre', `const p=document.querySelector('.tune-panel'); return p? (p.querySelector('.fx-panel-header span').textContent+' ; bouton='+p.querySelector('.tune-apply').textContent) : 'absente'`);
+  await R('fenêtre', `const p=document.querySelector('.tune-panel'); return p? (p.querySelector('.fx-title').textContent+' ; bouton='+(p.classList.contains('is-on')?'allumé':'éteint')) : 'absente'`);
   // toutes les notes (Auto-Tune libre) puis activer
-  await ev(`document.querySelector('.tune-quick button[data-q="all"]').click(); document.querySelector('.tune-apply').click()`); await sleep(6000);
+  await ev(`document.querySelector('.tune-quick button[data-q="all"]').click(); document.querySelector('.tb-power').click()`); await sleep(6000);
   await R('après activation', `const t=state.project.tracks[0]; return 'autotune='+JSON.stringify({on:t.autotune&&t.autotune.on,strength:t.autotune&&t.autotune.strength})+' ; clip corrigé='+!!(t.clips[0]&&t.clips[0].tune)`);
   if (process.env.SHOTS) await shot(process.env.SHOTS + '/autotune-piste.jpg');
 };

@@ -9,7 +9,7 @@ description = "Moteur audio natif de Pulse : lecture des projets .pulse et mixag
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 hound = "3"
-zip = { version = "2", default-features = false }
+zip = { version = "9", default-features = false }
 cpal = "0.15"
 
 [profile.release]

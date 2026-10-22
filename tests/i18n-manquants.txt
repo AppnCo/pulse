@@ -1,45 +1,19 @@
 0.0 dB
 2 microphones, clean vocal preset. For an interview or a dialogue.
-50 ms
+29 ms
 A step drum machine and a keyboard bass. To lay a foundation without playing.
 A+
 All Vocal
-Alt + wheel
-Alt+C
-Alt+M
-Alt+← / Alt+→
 Ambiance
 Auto-Tune
 A−
 Back
 Back ▾
-Ctrl + click
-Ctrl + click a region
-Ctrl + drag a region
-Ctrl / Shift + drag
-Ctrl or Alt + click a control
-Ctrl+A
-Ctrl+A · Alt+Ctrl+A
-Ctrl+Alt+S
-Ctrl+C
-Ctrl+D
-Ctrl+D · Ctrl+A · Ctrl+Z
-Ctrl+E
-Ctrl+G
-Ctrl+N
-Ctrl+S
-Ctrl+S · Ctrl+Alt+S · Ctrl+Q
-Ctrl+V
-Ctrl+X
-Ctrl+← / Ctrl+→
-Ctrl↵
-Ctrl⌫
-Cut the region: copy and erase it in one go (Ctrl+V pastes it back)
+Convertir en MP3
+Convertir en WAV
 Del 1/4
 E / Z
-Group left / right (Ctrl + click = center, double-click = type the value)
 IV
-Left / right (Ctrl + click = center, double-click = type the value)
 Mix Bus 1
 Mon morceau
 New project
@@ -47,26 +21,21 @@ Piano 1 — 2.00s @ 0:00.000
 Pick up where you left off
 Rap Studio
 Recent projects
-Region volume: up = louder (Alt + right-click: back to 0 dB; a click without moving = menu)
 Rev Long
 Simple Beat
 Simple setup: 1 vocal + 1 instrumental. Perfect for a quick first track.
-Solo (S) — Ctrl+click = exclusive
 Start from scratch
 The base model: your beat on top, one track to record, then your vocals sorted by group (lead, backs, ambience). Add or remove whatever you want.
-The regions it touches are chosen: they move together (even to another track), Ctrl+X cuts them, right-click for their volume
 The simple studio.
-Track height: on the left list, the one under the mouse (the chosen tracks if there are several) · on the timeline, all tracks · Alt+Ctrl + wheel = zoom on the cursor
 Tracks
-Undo (Ctrl+Z) — 1 action(s)
 Vocal + Beat
 Vocal 1
-Volume: 0.0 dB (Ctrl + click = 0 dB, double-click = type the value)
 dB
 https://youtube.com/watch?v=…
 ii
 iii
 ms
+ou garder le fichier :
 vi
 vii°
 ×2

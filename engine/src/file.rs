@@ -61,7 +61,7 @@ pub fn open<R: Read + Seek>(reader: R) -> Result<(Project, Media), PulseError> {
     let mut media = Media::new();
     for i in 0..zip.len() {
         let mut entry = zip.by_index(i)?;
-        let name = entry.name().to_owned();
+        let name = entry.name()?.into_owned();
         let mut bytes = Vec::with_capacity(entry.size() as usize);
         entry.read_to_end(&mut bytes)?;
         if name == "project.json" {

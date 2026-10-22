@@ -12,8 +12,8 @@ export default async ({ ev, nav, send, shot, sleep }) => {
     const beat=60/100; for(let i=0;i<n;i++){ const t=(i/sr)%beat; v.setInt16(44+i*2, t<0.04? Math.sin(2*Math.PI*70*t)*(1-t/0.04)*26000 : 0, true); }
     startFromInstru(new File([buf],'Mon instru trap.wav',{type:'audio/wav'})); })()`);
   await sleep(4000);
-  console.log(await ev(`(()=>{ const p=state.project; return JSON.stringify({page:location.pathname, nom:p.name, bpm:p.bpm, pistes:p.tracks.map(t=>t.name+':'+t.clips.length+(t.armed?' (armée)':'')), dureeInstru:p.tracks[1].clips[0]?.duration, enAttente:!!p.pendingInstru, hintRec:!!document.querySelector('.track-empty-hint'), son:p.tracks[0].sound?.preset}); })()`));
+  console.log(await ev(`(()=>{ const p=state.project; return JSON.stringify({page:location.pathname, nom:p.name, bpm:p.bpm, pistes:p.tracks.map(t=>t.name+':'+t.clips.length+(t.armed?' (armée)':'')), dureeInstru:p.tracks[0].clips[0]?.duration, enAttente:!!p.pendingInstru, hintRec:!!document.querySelector('.track-empty-hint'), son:p.tracks[0].sound?.preset}); })()`));
   if (SHOTS) await shot(SHOTS + '/shot-start.jpg');
   await nav('http://localhost:8765/studio.html');
-  console.log('rechargement:', await ev(`state.project.tracks[1].clips.length+' clip instru, audio présent: '+PulseAudio.hasBuffer(state.project.tracks[1].clips[0].id)`));
+  console.log('rechargement:', await ev(`state.project.tracks[0].clips.length+' clip instru, audio présent: '+PulseAudio.hasBuffer(state.project.tracks[0].clips[0].id)`));
 };

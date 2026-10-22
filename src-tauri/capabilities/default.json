@@ -9,7 +9,24 @@
     "core:default",
     "core:window:allow-start-dragging",
     "core:window:allow-close",
-    "core:window:allow-destroy"
+    "core:window:allow-destroy",
+    "allow-native-info",
+    "allow-native-play",
+    "allow-native-stop",
+    "allow-midi-ports",
+    "allow-midi-start",
+    "allow-pick-folder",
+    "allow-create-project-folder",
+    "allow-project-folder-ok",
+    "allow-save-file",
+    "allow-reveal-project-folder",
+    "allow-take-pending-open",
+    "allow-read-pulse-file",
+    "allow-import-url",
+    "allow-read-import-file",
+    "allow-test-log",
+    "allow-test-exit",
+    "allow-save-download"
   ],
   "remote": {
     "urls": [
