@@ -695,6 +695,7 @@ function renderTracksPanel() {
             'track-item',
             (i === state.selectedTrack && state.deselectedAt !== i) || state.selectedTracks.has(i) ? 'selected' : '',
             t.isCapture ? 'is-capture' : '',
+            isInstruTrack(t) ? 'is-instru' : '',
             t.armed ? 'is-armed' : '',
             t.muted ? 'is-muted' : '',
             t.solo ? 'is-solo' : '',
@@ -1547,7 +1548,7 @@ function migrateProject() {
     const mv = state.project.masterVolume ?? 100;
     PulseAudio.setMasterVolume(mv);
     const mf = document.querySelector('.mixer-master .fader');
-    if (mf) { mf.value = mv; const d = document.querySelector('.mixer-master .strip-db'); if (d) d.textContent = `${volumeToDb(mv)} dB`; }
+    if (mf) { mf.value = volToPos(mv); const d = document.querySelector('.mixer-master .strip-db'); if (d) d.textContent = `${volumeToDb(mv)} dB`; }
     applyShowAll();
     // Un modèle décrit le son voulu (« Voix lead » sur le groupe…) : on le traduit en vrais effets à la première ouverture
     [...state.project.tracks, ...(state.project.buses || [])].forEach(x => {
@@ -1655,7 +1656,7 @@ function inspectorStrip(kind, x, idx) {
         </div>` : ''}
         ${(kind === 'track' || (kind === 'bus' && !x.premaster && !x.locked)) ? `<label class="insp-pan"><span>G</span><input type="range" class="insp-pan-input" min="-100" max="100" step="1" data-default="0" value="${x.pan || 0}" data-tooltip="Gauche / droite (⌘ + clic = centre, double-clic = écrire la valeur)"><span>D</span></label>` : ''}
         <div class="strip-fader-wrap">
-            <input type="range" class="fader insp-fader" min="0" max="100" ${isMaster ? '' : `step="0.5" data-vmap="1"`} data-default="${isMaster ? 100 : volToPos(100)}" value="${isMaster ? vol : volToPos(vol)}" ${x && x.locked && !showAll() ? 'disabled' : ''}>
+            <input type="range" class="fader insp-fader" min="0" max="100" step="0.5" data-vmap="1" data-default="${volToPos(100)}" value="${volToPos(vol)}" ${x && x.locked && !showAll() ? 'disabled' : ''}>
             <div class="strip-db">${volumeToDb(vol)} dB</div>
         </div>
         ${isMaster ? '<div class="strip-output"></div>' : (x.locked ? `<div class="strip-output">→ ${esc(busLabel(x.output))}</div>` : `<button class="strip-output insp-output" data-tooltip="Où va le son de ${kind === 'bus' ? 'ce groupe' : 'cette piste'} : clique pour changer la direction">→ ${esc(busLabel(x.output))} ▾</button>`)}
@@ -1715,7 +1716,7 @@ function renderInspector() {
         fader.addEventListener('change', () => { faderUndo = false; });
         fader.addEventListener('input', () => {
             if (!faderUndo && kind !== 'master') { pushUndo(); faderUndo = true; }   // un mouvement de fader = une étape d'annulation
-            const v = kind === 'master' ? parseInt(fader.value) : posToVol(parseFloat(fader.value));
+            const v = posToVol(parseFloat(fader.value));   // la sortie stéréo aussi : 0 dB aux 3/4, +6 dB de marge au-dessus
             if (kind === 'track') {
                 const prev = t.volume ?? 100;
                 t.volume = v; PulseAudio.updateTrackVolume(idx, v); syncInspectorVolume(idx);
@@ -1935,6 +1936,15 @@ const ADD_FX_CATEGORIES = [
     ['Stéréo', ['width']],
     ['Utilitaires', ['util']]
 ];
+// Une phrase par effet dans le menu « + Effet », et les mots qu'on tape pour le trouver
+const FX_DESC = { comp: 'resserre l\'écart entre les passages forts et faibles', deess: 'adoucit les « s » qui sifflent', eq: 'corrige les graves, médiums et aigus',
+    sat: 'chaleur et grain, comme une bande ou une lampe', delay: 'répétitions calées sur le tempo (1/8, 1/4…)', reverb: 'ajoute de l\'espace, une pièce',
+    width: 'élargit ou resserre l\'image stéréo', chorus: 'épaissit le son en le dédoublant légèrement', flanger: 'balayage métallique qui tourne',
+    phaser: 'balayage doux et rond', tremolo: 'le volume pulse en rythme', doubler: 'donne l\'impression de deux prises', slapback: 'écho court, très utilisé en rap',
+    crush: 'son lo-fi, numérique abîmé', util: 'volume, phase, passage en mono', filter: 'coupe les graves ou les aigus' };
+const FX_WORDS = { comp: 'compressor compression dynamique', deess: 'deesser sibilance', gate: 'noise gate bruit', eq: 'equalizer egaliseur', filter: 'hpf lpf high pass low pass coupe-bas coupe-haut',
+    sat: 'saturation distortion saturator drive', crush: 'bitcrusher lofi', delay: 'delay echo', reverb: 'reverb reverberation', slapback: 'slap delay echo',
+    chorus: 'modulation', flanger: 'modulation', phaser: 'modulation', tremolo: 'modulation', doubler: 'doubler double', width: 'stereo imager', util: 'utility gain mono phase', tune: 'autotune pitch justesse' };
 const FX_START = {
     crush: { bits: 8, down: 4, mix: 100 }, util: { gain: 0, invert: 0, mono: 0 }, width: { width: 100 },
     tremolo: { rate: 5, depth: 50 }, phaser: { rate: 0.4, depth: 70, feedback: 40, mix: 50 }, flanger: { rate: 0.25, depth: 2, feedback: 50, mix: 50 },
@@ -1946,51 +1956,98 @@ function openAddEffectMenu(anchor, target, x) {
     const menu = document.createElement('div');
     menu.className = 'track-ctx-menu';
     menu.style.cssText = `position:fixed;left:${Math.max(8, r.left)}px;top:${Math.max(8, r.bottom + 4)}px;z-index:300;min-width:170px`;
-    // Auto-Tune en tête : c'est le 1er maillon de la chaîne d'une voix
-    const fxHead = (txt) => { const h = document.createElement('div'); h.className = 'ctx-head'; h.textContent = txt; menu.appendChild(h); };
-    {
-        if (isVoiceTrack(x)) {
-            fxHead('Voix');
-            const el = document.createElement('div'); el.className = 'ctx-item';
-            el.textContent = showTuneSlot(x) ? '✓  Auto-Tune (déjà là — ouvrir)' : '+  Auto-Tune';
-            el.addEventListener('click', () => {
-                menu.remove();
-                const ti = state.project.tracks.indexOf(x);
-                if (!x.tuneSlot) { pushUndo(); x.tuneSlot = true; saveProject(); }
-                renderInspector();
-                if (state.mixerOpen) { renderMixer(); bindMixerEvents(); }
-                const row = document.querySelector('#inspector .insp-strip .insp-fx-row[data-fx="tune"]');
-                const rr = (row || anchor).getBoundingClientRect();
-                openTunePanel(ti, -1, rr.left - 290, rr.top - 20, true);
-            });
-            menu.appendChild(el);
-        }
-    }
+    // Menu en deux colonnes (planche du 21/10, variante B) : recherche + récents + catégories à gauche,
+    // effets de la catégorie à droite avec une phrase d'explication
+    menu.classList.add('fx-add-menu');
+    menu.innerHTML = '';
     const fxLabel = Object.fromEntries(ADD_FX_CHOICES);
-    const ordered = [];
-    ADD_FX_CATEGORIES.forEach(([cat, names]) => names.forEach(n => { if (fxLabel[n]) ordered.push([n, fxLabel[n], cat]); }));
-    let lastCat = null;
-    ordered.forEach(([n, label, cat]) => {
-        if (cat !== lastCat) { fxHead(cat); lastCat = cat; }
-        const el = document.createElement('div');
-        el.className = 'ctx-item';
-        el.textContent = (x.effects || []).includes(n) ? `✓  ${label} (déjà là — ouvrir)` : `+  ${label}`;
-        el.addEventListener('click', () => {
-            menu.remove();
-            x.effects = x.effects || [];
-            if (!x.effects.includes(n)) {
-                pushUndo(); x.effects.push(n);
-                // l'effet démarre avec les valeurs affichées dans son panneau (sinon le curseur dit une chose et le son en fait une autre)
-                if (FX_START[n]) { x.effectParams = x.effectParams || {}; if (!x.effectParams[n]) x.effectParams[n] = { ...FX_START[n] }; }
-                saveProject(); refreshPlaybackSoon();
-            }
+    const nameOf = (n) => (fxLabel[n] || n).replace(/\s*\(.*\)$/, '');
+    const descOf = (n) => FX_DESC[n] || ((fxLabel[n] || '').match(/\((.*)\)$/) || [])[1] || '';
+    let recent = [];
+    try { recent = JSON.parse(localStorage.getItem('pulse_fx_recent') || '[]').filter(n => fxLabel[n]); } catch {}
+    const cats = ADD_FX_CATEGORIES.map(([c, names]) => [c, names.filter(n => fxLabel[n])]);
+    const voice = isVoiceTrack(x);
+    if (voice) { const vh = cats.find(([c]) => c === 'Voix et hauteur'); if (vh) vh[1] = ['tune', ...vh[1]]; }   // Auto-Tune en tête : 1er maillon d'une voix
+    const left = document.createElement('div'); left.className = 'fam-left';
+    const right = document.createElement('div'); right.className = 'fam-right';
+    menu.append(left, right);
+    left.innerHTML = `<input class="fam-search" type="text" placeholder="Chercher un effet…" spellcheck="false">`;
+    const search = left.querySelector('.fam-search');
+    const addHead = (box, txt) => { const h = document.createElement('div'); h.className = 'ctx-head'; h.textContent = txt; box.appendChild(h); };
+    const pick = (n) => {
+        menu.remove();
+        try { localStorage.setItem('pulse_fx_recent', JSON.stringify([n, ...recent.filter(r => r !== n)].slice(0, 3))); } catch {}
+        if (n === 'tune') {
+            const ti = state.project.tracks.indexOf(x);
+            if (!x.tuneSlot) { pushUndo(); x.tuneSlot = true; saveProject(); }
             renderInspector();
             if (state.mixerOpen) { renderMixer(); bindMixerEvents(); }
-            const row = document.querySelector(`#inspector .insp-strip .insp-fx-row[data-fx="${n}"]`);
-            openEffectPanel(target, n, row || anchor);
+            const row = document.querySelector('#inspector .insp-strip .insp-fx-row[data-fx="tune"]');
+            const rr = (row || anchor).getBoundingClientRect();
+            openTunePanel(ti, -1, rr.left - 290, rr.top - 20, true);
+            return;
+        }
+        x.effects = x.effects || [];
+        if (!x.effects.includes(n)) {
+            pushUndo(); x.effects.push(n);
+            // l'effet démarre avec les valeurs affichées dans son panneau (sinon le curseur dit une chose et le son en fait une autre)
+            if (FX_START[n]) { x.effectParams = x.effectParams || {}; if (!x.effectParams[n]) x.effectParams[n] = { ...FX_START[n] }; }
+            saveProject(); refreshPlaybackSoon();
+        }
+        renderInspector();
+        if (state.mixerOpen) { renderMixer(); bindMixerEvents(); }
+        const row = document.querySelector(`#inspector .insp-strip .insp-fx-row[data-fx="${n}"]`);
+        openEffectPanel(target, n, row || anchor);
+    };
+    const has = (n) => n === 'tune' ? showTuneSlot(x) : (x.effects || []).includes(n);
+    // Colonne de droite : tous les effets existent (rangés par catégorie), on montre ceux de la catégorie choisie ou de la recherche
+    cats.forEach(([c, names]) => names.forEach(n => {
+        const el = document.createElement('div');
+        el.className = 'ctx-item fam-fx'; el.dataset.cat = c; el.dataset.fx = n;
+        el.innerHTML = `<span class="fam-nm">${esc(n === 'tune' ? 'Auto-Tune' : nameOf(n))}${has(n) ? '<i class="fam-tag">déjà là · ouvrir</i>' : ''}</span><span class="fam-ds">${esc(n === 'tune' ? 'corrige la justesse de la voix' : descOf(n))}</span>`;
+        el.addEventListener('click', () => pick(n));
+        right.appendChild(el);
+    }));
+    const head = document.createElement('div'); head.className = 'ctx-head fam-title'; right.prepend(head);
+    const empty = document.createElement('div'); empty.className = 'fam-empty'; empty.textContent = 'Aucun effet ne correspond. Essaie « écho », « reverb », « compresseur »…'; right.appendChild(empty);
+    const showCat = (c) => {
+        head.textContent = c; empty.hidden = true;
+        right.querySelectorAll('.fam-fx').forEach(el => { el.hidden = el.dataset.cat !== c; });
+        left.querySelectorAll('.fam-cat').forEach(el => el.classList.toggle('on', el.dataset.cat === c));
+    };
+    if (recent.length) {
+        addHead(left, 'Récents');
+        recent.forEach(n => {
+            const el = document.createElement('div'); el.className = 'ctx-item fam-recent'; el.textContent = nameOf(n);
+            el.addEventListener('click', () => pick(n)); left.appendChild(el);
         });
-        menu.appendChild(el);
+        const sep = document.createElement('div'); sep.className = 'ctx-sep'; left.appendChild(sep);
+    }
+    cats.forEach(([c]) => {
+        const el = document.createElement('div'); el.className = 'ctx-item fam-cat'; el.dataset.cat = c; el.innerHTML = `<span class="fam-dot"></span>${esc(c)}`;
+        el.addEventListener('mouseenter', () => { if (!search.value) showCat(c); });
+        el.addEventListener('click', () => { search.value = ''; showCat(c); });
+        left.appendChild(el);
     });
+    // Recherche : nom, explication et mots courants (anglais compris : delay, reverb…)
+    const norm = (t) => t.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    search.addEventListener('input', () => {
+        const q = norm(search.value.trim());
+        if (!q) { showCat(left.querySelector('.fam-cat.on')?.dataset.cat || cats[0][0]); return; }
+        let n = 0;
+        right.querySelectorAll('.fam-fx').forEach(el => {
+            const ok = norm(el.textContent + ' ' + el.dataset.cat + ' ' + (FX_WORDS[el.dataset.fx] || '')).includes(q);
+            el.hidden = !ok; if (ok) n++;
+        });
+        head.textContent = 'Résultats'; empty.hidden = n > 0;
+    });
+    search.addEventListener('keydown', (e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') { const first = [...right.querySelectorAll('.fam-fx')].find(el => !el.hidden); if (first) first.click(); }
+        if (e.key === 'Escape') menu.remove();
+    });
+    showCat((recent[0] && cats.find(([, ns]) => ns.includes(recent[0]))?.[0]) || cats[0][0]);
+    setTimeout(() => search.focus(), 0);
     document.body.appendChild(menu);
     // Le menu tient dans la fenêtre : il remonte si besoin et défile au-delà
     {
@@ -5614,10 +5671,12 @@ function biquadDb(type, f0, g, q, f) {
 }
 const VIZ_W = 216;
 // Vue « analogique » du compresseur : un vumètre de réduction (0 dB à droite, 20 dB à gauche)
-function compAnalogSvg(gr = 0) {
-    const cx = 108, cy = 124, R = 88, a = (g) => (45 - Math.max(0, Math.min(20, g)) / 20 * 90) * Math.PI / 180;
+// rev = échelle façon console de bus : 0 à gauche, 20 à droite, aiguille dont on ne voit que la pointe
+function compNeedleDeg(g, rev) { const k = Math.max(0, Math.min(20, g)) / 20 * 90; return rev ? -45 + k : 45 - k; }
+function compAnalogSvg(gr = 0, rev = false) {
+    const cx = 108, cy = 124, R = 88, a = (g) => compNeedleDeg(g, rev) * Math.PI / 180;
     const pt = (r, ang) => [cx + r * Math.sin(ang), cy - r * Math.cos(ang)];
-    const ticks = [0, 1, 2, 3, 5, 7, 10, 15, 20].map(g => {
+    const ticks = (rev ? [0, 4, 8, 12, 16, 20] : [0, 1, 2, 3, 5, 7, 10, 15, 20]).map(g => {
         const [x1, y1] = pt(R - 9, a(g)), [x2, y2] = pt(R, a(g)), [tx, ty] = pt(R + 11, a(g));
         return `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" class="vu-tick ${g >= 10 ? 'hot' : ''}"/><text x="${tx.toFixed(1)}" y="${(ty + 3).toFixed(1)}" text-anchor="middle" class="vu-num ${g >= 10 ? 'hot' : ''}">${g}</text>`;
     }).join('');
@@ -5635,7 +5694,11 @@ function compAnalogSvg(gr = 0) {
 function compVizSvg(p) {
     const S = 132, LO = -48, xy = (d) => (d - LO) / -LO * (S - 14) + 7, yy = (d) => S - xy(d) + 0;
     const th = p.threshold, r = Math.max(1, p.ratio), out0 = th + (0 - th) / r;
-    const pathC = `M${xy(LO)},${yy(LO)}L${xy(th)},${yy(th)}L${xy(0)},${yy(out0)}`;
+    // Même calcul que le moteur : genou doux de part et d'autre du seuil
+    const sl = 1 - 1 / r, knee = Math.max(0, p.knee ?? 10), half = knee / 2;
+    const outOf = (i) => { const o = i - th; return i - (o >= half ? o * sl : (o > -half && knee > 0) ? sl * (o + half) * (o + half) / (2 * knee) : 0); };
+    let pathC = `M${xy(LO)},${yy(LO)}`;
+    for (let i = LO + 1; i <= 0; i++) pathC += `L${xy(i).toFixed(1)},${yy(outOf(i)).toFixed(1)}`;
     const gr = (0 - out0);
     return `<svg class="viz-svg viz-comp" width="${VIZ_W}" height="${S}" viewBox="0 0 ${VIZ_W} ${S}"><g transform="translate(${(VIZ_W - S) / 2},0)">
         <rect x="7" y="7" width="${S - 14}" height="${S - 14}" class="viz-box"/>
@@ -5988,6 +6051,151 @@ function openEqPanel(trackIdx, anchorEl) {
     }, 100);
 }
 
+// === Panneaux d'effets : un cadre commun pour tous (boutons rotatifs, Simple / Avancé, A / B) ===
+// Une couleur par catégorie, sur le fond violet de Pulse
+const FX_CAT_COLORS = { 'Dynamique': '#A855F7', 'Égaliseur et filtre': '#22D3EE', 'Distorsion': '#FB923C', 'Mouvement': '#F472B6',
+    'Voix et hauteur': '#A3E635', 'Écho et espace': '#60A5FA', 'Stéréo': '#2DD4BF', 'Utilitaires': '#9A8CB8' };
+// Position d'un réglage sur la course du bouton (0 à 1) ; les fréquences tournent en logarithmique, comme sur une console
+function fxFrac(d, v) {
+    const f = d.log ? Math.log(v / d.min) / Math.log(d.max / d.min) : (v - d.min) / (d.max - d.min);
+    return Math.max(0, Math.min(1, f));
+}
+function fxFromFrac(d, f) { return d.log ? d.min * Math.pow(d.max / d.min, f) : d.min + f * (d.max - d.min); }
+// Durée d'écho en notes, comme les noms de pistes du studio (DEL 1/8, DEL 1/4…)
+function beatsLabel(b) {
+    const N = { 0.125: '1/32', 0.25: '1/16', 0.375: '1/16 pointée', 0.5: '1/8', 0.75: '1/8 pointée', 1: '1/4', 1.5: '1/4 pointée', 2: '1/2' };
+    return N[b] || `${b} temps`;
+}
+function fxFmt(d, v, isAuto) {
+    if (d.toggle) return v ? 'Oui' : 'Non';
+    if (d.fmt) return d.fmt(v);
+    const dec = d.step < 1 ? Math.min(2, (String(d.step).split('.')[1] || '').length) : 0;
+    const txt = (/Hz/.test(d.unit) && v >= 1000) ? `${+(v / 1000).toFixed(v >= 10000 ? 1 : 2)} kHz` : `${+(+v).toFixed(dec)}${d.unit}`;
+    return isAuto ? `Auto (${txt.trim()})` : txt;
+}
+// Chiffre court pour la graduation autour d'un bouton (« 8k », « 1/8 »…)
+function fxShort(d, v) {
+    if (d.fmt) return d.fmt(v);
+    if (/Hz/.test(d.unit) && v >= 1000) return `${+(v / 1000).toFixed(1)}k`;
+    return `${+(+v).toFixed(Math.abs(v) < 10 && v % 1 ? 1 : 0)}`;
+}
+// Bouton rotatif façon console : capuchon en métal brossé, graduations et chiffres autour (DA « Studio sombre »)
+// Course de -135° à +135° ; l'arc de couleur part du zéro pour les réglages qui vont du négatif au positif
+let fxKnobId = 0;
+// Mode Bus : les boutons qui ont des crans tournent de cran en cran, comme sur une console
+function fxStepped(d, skin) { return skin === 'U' && d.busSteps; }
+function fxStepIdx(d, v, autoRel) {
+    if (autoRel && d.busSteps.includes('auto')) return d.busSteps.indexOf('auto');
+    let k = 0, best = Infinity;
+    d.busSteps.forEach((st, i) => { if (st !== 'auto' && Math.abs(Math.log(st / v)) < best) { best = Math.abs(Math.log(st / v)); k = i; } });
+    return k;
+}
+function fxKnobSvg(d, v, big = !d.adv, skin = 'P', autoRel = false) {
+    if (fxStepped(d, skin)) return fxKnobSteppedSvg(d, v, skin, autoRel);
+    const S = big ? 76 : 62, c = S / 2, R = S * 0.25, ang = (f) => -135 + 270 * f, id = 'km' + (++fxKnobId);
+    const p = (deg, r) => [c + r * Math.sin(deg * Math.PI / 180), c - r * Math.cos(deg * Math.PI / 180)];
+    const arc = (a, b, r) => {
+        if (b < a) [a, b] = [b, a];
+        const [x1, y1] = p(a, r), [x2, y2] = p(b, r);
+        return `M${x1.toFixed(1)},${y1.toFixed(1)}A${r},${r} 0 ${b - a > 180 ? 1 : 0} 1 ${x2.toFixed(1)},${y2.toFixed(1)}`;
+    };
+    const f = fxFrac(d, v), from = (d.min < 0 && d.max > 0) ? fxFrac(d, 0) : 0;
+    let ticks = '';
+    for (let i = 0; i <= 10; i++) {
+        const [x1, y1] = p(ang(i / 10), R + 4), [x2, y2] = p(ang(i / 10), R + (i % 5 ? 6.5 : 9));
+        ticks += `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" class="kn-tick${i % 5 ? '' : ' major'}"/>`;
+    }
+    // Chiffres : début, milieu (ou zéro), fin
+    const mid = (d.min < 0 && d.max > 0) ? 0 : fxFromFrac(d, 0.5);
+    const lab = (big ? [[0, d.min], [fxFrac(d, mid), mid], [1, d.max]] : [[0, d.min], [1, d.max]]).map(([fr, val]) => {
+        const [x, y] = p(ang(fr), R + 15);
+        return `<text x="${x.toFixed(1)}" y="${(y + 3).toFixed(1)}" class="kn-num">${esc(fxShort(d, val))}</text>`;
+    }).join('');
+    const [hx, hy] = p(ang(f), R * 0.78);
+    return `<svg width="${S}" height="${S}" viewBox="0 0 ${S} ${S}">
+        <defs><radialGradient id="${id}" cx="38%" cy="32%" r="75%"><stop offset="0" stop-color="#fbfaff"/><stop offset=".5" stop-color="#bdb8c9"/><stop offset="1" stop-color="#5f5a6c"/></radialGradient></defs>
+        ${ticks}${lab}
+        ${Math.abs(f - from) > 0.003 ? `<path d="${arc(ang(from), ang(f), R + 2)}" class="kn-val"/>` : ''}
+        ${fxKnobCap(skin, c, R, id, ang(f), p)}</svg>`;
+}
+function fxKnobSteppedSvg(d, v, skin, autoRel) {
+    const S = 84, c = S / 2, R = 18, n = d.busSteps.length, id = 'km' + (++fxKnobId), ang = (i) => -135 + 270 * i / (n - 1);
+    const p = (deg, r) => [c + r * Math.sin(deg * Math.PI / 180), c - r * Math.cos(deg * Math.PI / 180)];
+    const lab = (st) => st === 'auto' ? 'Auto' : (st >= 1000 ? `${+(st / 1000).toFixed(1)}s` : st >= 100 && d.key === 'release' ? `.${String(st / 100)}`.replace('.12', '1.2') : String(st));
+    let marks = '';
+    d.busSteps.forEach((st, i) => {
+        const [x, y] = p(ang(i), R + 6), [tx, ty] = p(ang(i), R + 16);
+        marks += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="1.4" class="kn-dot"/><text x="${tx.toFixed(1)}" y="${(ty + 3).toFixed(1)}" class="kn-num">${esc(lab(st))}</text>`;
+    });
+    return `<svg width="${S}" height="${S}" viewBox="0 0 ${S} ${S}">${marks}${fxKnobCap(skin, c, R, id, ang(fxStepIdx(d, v, autoRel)), p)}</svg>`;
+}
+// Capuchon du bouton selon la façade : P métal brossé, O gros bouton noir strié (opto),
+// F noir à bague violette (FET), U gris de console à capuchon violet (bus)
+function fxKnobCap(skin, c, R, id, a, p) {
+    const hand = (r, cls) => { const [x, y] = p(a, r); return `<line x1="${c}" y1="${c}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}" class="${cls}"/>`; };
+    const grad = (stops) => `<defs><radialGradient id="${id}c" cx="40%" cy="30%" r="80%">${stops.map(([o, col]) => `<stop offset="${o}" stop-color="${col}"/>`).join('')}</radialGradient></defs>`;
+    if (skin === 'O') {
+        const R2 = R * 1.12; let ribs = '';
+        for (let j = 0; j < 24; j++) { const an = j * 15 * Math.PI / 180; ribs += `<line x1="${(c + R2 * Math.sin(an)).toFixed(1)}" y1="${(c - R2 * Math.cos(an)).toFixed(1)}" x2="${(c + (R2 - 3) * Math.sin(an)).toFixed(1)}" y2="${(c - (R2 - 3) * Math.cos(an)).toFixed(1)}" class="kn-rib"/>`; }
+        return `${grad([[0, '#4a4452'], [1, '#0c0a0f']])}<circle cx="${c}" cy="${c + 3}" r="${R2}" class="kn-shadow"/><circle cx="${c}" cy="${c}" r="${R2}" fill="url(#${id}c)"/>${ribs}${hand(R2 * 0.85, 'kn-hand')}`;
+    }
+    if (skin === 'F') return `${grad([[0, '#4a4452'], [1, '#0c0a0f']])}<circle cx="${c}" cy="${c + 2}" r="${R + 1}" class="kn-shadow"/><circle cx="${c}" cy="${c}" r="${R + 1}" class="kn-bague"/><circle cx="${c}" cy="${c}" r="${R - 1.5}" fill="url(#${id}c)"/>${hand(R * 0.78, 'kn-hand')}`;
+    // Bus : bouton de la planche « capuchons violets » — jupe argentée, gros capuchon violet bombé, reflet, trait blanc
+    if (skin === 'U') return `<defs><radialGradient id="${id}c" cx="40%" cy="28%" r="80%"><stop offset="0" stop-color="#c4a3ff"/><stop offset="1" stop-color="#5b21b6"/></radialGradient>
+        <linearGradient id="${id}j" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#cfd1d6"/><stop offset="1" stop-color="#6b6e76"/></linearGradient></defs>
+        <circle cx="${c}" cy="${c + 3}" r="${R + 3}" class="kn-shadow"/><circle cx="${c}" cy="${c + 2}" r="${R + 2}" fill="url(#${id}j)"/>
+        <circle cx="${c}" cy="${c}" r="${R - 1}" fill="url(#${id}c)"/><ellipse cx="${c - 4}" cy="${c - 7}" rx="7" ry="4" fill="#fff" opacity=".25"/>
+        ${hand(R - 3, 'kn-hand kn-hand-u')}`;
+    return `<circle cx="${c}" cy="${c + 2}" r="${R}" class="kn-shadow"/>
+        <circle cx="${c}" cy="${c}" r="${R}" fill="url(#${id})" class="kn-cap"/>
+        <circle cx="${c}" cy="${c}" r="${(R * 0.72).toFixed(1)}" class="kn-ring"/>${hand(R * 0.78, 'kn-hand')}`;
+}
+const FX_SKINS = ['P', 'O', 'F', 'U'];
+const FX_SIZES = [1, 1.25, 1.5];
+const FX_SKIN_SEED = { O: 23, F: 37, U: 51 };
+// Hasard reproductible : chaque machine garde « ses » rayures d'une ouverture à l'autre
+function fxRnd(seed) { let x = seed; return () => ((x = (x * 16807) % 2147483647) / 2147483647); }
+// Usure d'une machine qui a vécu (tout en dessin, aucune image) : grain, taches, rayures, traces de doigts, vis
+function fxWearSvg(sk, seed, W = 340, H = 340) {
+    W = Math.round(W); H = Math.round(H);
+    const r = fxRnd(seed), dark = { O: .3, F: .5, U: .38 }[sk], light = { O: '#ffffff', F: '#bba9d8', U: '#e7ebf3' }[sk], paint = { O: '#8f8798', F: '#6b6077', U: '#9aa0ad' }[sk];
+    let s = `<svg class="fx-wear" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><defs>
+        <filter id="wg${seed}" x="0" y="0" width="100%" height="100%"><feTurbulence type="fractalNoise" baseFrequency=".85" numOctaves="2" seed="${seed}"/><feColorMatrix values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 .32 -.05"/></filter>
+        <filter id="wb${seed}" x="0" y="0" width="100%" height="100%"><feTurbulence type="fractalNoise" baseFrequency=".02 .03" numOctaves="3" seed="${seed + 7}"/><feColorMatrix values="0 0 0 0 .12  0 0 0 0 .08  0 0 0 0 .04  0 0 0 ${dark * 1.1} -${dark * .42}"/></filter>
+        <radialGradient id="wv${seed}" cx="50%" cy="45%" r="75%"><stop offset=".55" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#1a1005" stop-opacity="${dark * .75}"/></radialGradient>
+        <radialGradient id="ws${seed}" cx="35%" cy="30%"><stop offset="0" stop-color="#e6e6e6"/><stop offset="1" stop-color="#5c5c5c"/></radialGradient></defs>
+        <rect width="${W}" height="${H}" filter="url(#wb${seed})"/><rect width="${W}" height="${H}" fill="url(#wv${seed})"/><rect width="${W}" height="${H}" filter="url(#wg${seed})"/>`;
+    // Bus (console) : ni rayures ni traces de doigts, juste le grain et les vis
+    for (let i = 0; i < (sk === 'U' ? 0 : 26); i++) {
+        const x = r() * W, y = r() * H, l = 6 + r() * 40, a = (r() - .5) * .9;
+        s += `<line x1="${x.toFixed(1)}" y1="${y.toFixed(1)}" x2="${(x + l * Math.cos(a)).toFixed(1)}" y2="${(y + l * Math.sin(a)).toFixed(1)}" stroke="${r() < .6 ? light : '#000'}" stroke-opacity="${(.12 + r() * .25).toFixed(2)}" stroke-width="${(.4 + r() * .5).toFixed(2)}"/>`;
+    }
+    for (let i = 0; i < (sk === 'U' ? 0 : 4); i++) s += `<ellipse cx="${(W * .15 + r() * W * .7).toFixed(0)}" cy="${(H * .5 + r() * H * .45).toFixed(0)}" rx="${(6 + r() * 8).toFixed(0)}" ry="${(4 + r() * 5).toFixed(0)}" fill="#000" opacity="${(.05 + r() * .06).toFixed(2)}"/>`;
+    [[8, 8], [W - 8, 8], [8, H - 8], [W - 8, H - 8]].forEach(([x, y]) => {
+        const a = r() * 180;
+        s += `<circle cx="${x}" cy="${y + 1}" r="4" fill="#000" opacity=".5"/><circle cx="${x}" cy="${y}" r="4" fill="url(#ws${seed})" stroke="#2a2a2a" stroke-width=".6"/><circle cx="${x}" cy="${y}" r="4" fill="${paint}" opacity=".35"/>
+            <line x1="${x - 2.9}" y1="${y}" x2="${x + 2.9}" y2="${y}" stroke="#1a1a1a" stroke-width="1.1" transform="rotate(${a.toFixed(0)} ${x} ${y})"/>${r() < .5 ? `<circle cx="${x + 1.2}" cy="${y + 1.6}" r="1.8" fill="#7a3d12" opacity=".45"/>` : ''}`;
+    });
+    return s + '</svg>';
+}
+// Vitre du vumètre : jaunie, reflet en biais, poussière
+function fxGlassSvg(seed) {
+    const r = fxRnd(seed + 11);
+    let s = `<svg class="viz-glass" viewBox="0 0 216 132" preserveAspectRatio="none"><defs>
+        <linearGradient id="gr${seed}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".28"/><stop offset=".35" stop-color="#fff" stop-opacity=".05"/><stop offset=".36" stop-color="#fff" stop-opacity="0"/></linearGradient>
+        <radialGradient id="gy${seed}" cx="50%" cy="40%" r="80%"><stop offset=".5" stop-color="#a87a1c" stop-opacity="0"/><stop offset="1" stop-color="#6b4a0c" stop-opacity=".35"/></radialGradient></defs>
+        <rect width="216" height="132" fill="url(#gy${seed})"/><rect width="216" height="132" fill="url(#gr${seed})"/>`;
+    for (let i = 0; i < 30; i++) s += `<circle cx="${(r() * 216).toFixed(0)}" cy="${(r() * 132).toFixed(0)}" r="${(.3 + r() * 1).toFixed(1)}" fill="${r() < .5 ? '#fff' : '#3a2a10'}" opacity="${(.15 + r() * .35).toFixed(2)}"/>`;
+    return s + '</svg>';
+}
+// Mémoires A / B par piste et par effet (le temps de la séance, pas dans le projet)
+const FX_AB = new WeakMap();
+function fxAbStore(t, fxName) {
+    if (!FX_AB.has(t)) FX_AB.set(t, {});
+    const m = FX_AB.get(t);
+    return m[fxName] || (m[fxName] = { cur: 'A', A: null, B: null });
+}
+
 function openEffectPanel(trackIdx, fxName, anchorEl) {
     if (fxName === 'eq') return openEqPanel(trackIdx, anchorEl);
     // Fermer un éventuel panneau déjà ouvert
@@ -6005,11 +6213,19 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
             { key: 'air',      label: 'Air 10k',      unit: 'dB', min: -8,  max: 8,   def: 1,   step: 0.5 }
         ],
         comp: [
-            { key: 'threshold', label: 'Seuil',    unit: 'dB', min: -40, max: 0,  def: -22, step: 1 },
-            { key: 'ratio',     label: 'Ratio',     unit: ':1', min: 1,   max: 20, def: 3,   step: 0.5 },
-            { key: 'attack',    label: 'Attaque',   unit: 'ms', min: 1,   max: 100, def: 10, step: 1 },
-            { key: 'release',   label: 'Relâchement',   unit: 'ms', min: 10,  max: 500, def: 50, step: 5 },
-            { key: 'mix',       label: 'Mélange',   unit: '%',  min: 0,   max: 100, def: 100, step: 1 }
+            { key: 'mode', label: 'Caractère', unit: '', min: 0, max: 3, def: 0, step: 1, choices: [0, 1, 2, 3], choiceLabels: ['Propre', 'Opto', 'FET', 'Bus'],
+              tip: 'Propre : sans couleur · Opto : lent et doux, chaleur de lampe (voix) · FET : très rapide, ça claque (rap, batterie) · Bus : colle le mix' },
+            { key: 'threshold', label: 'Seuil',    unit: ' dB', min: -40, max: 0,  def: -22, step: 1 },
+            { key: 'ratio',     label: 'Ratio',     unit: ':1', min: 1,   max: 20, def: 3,   step: 0.5, busSteps: [1.5, 2, 4, 10, 20] },
+            { key: 'mix',       label: 'Mélange',   unit: '%',  min: 0,   max: 100, def: 100, step: 1 },
+            { key: 'attack',    label: 'Attaque',   unit: ' ms', min: 0.1, max: 100, def: 10, step: 0.1, adv: true, log: true, busSteps: [0.1, 0.3, 1, 3, 10, 30] },
+            { key: 'release',   label: 'Relâchement', unit: ' ms', min: 10,  max: 1200, def: 50, step: 5, adv: true, log: true, busSteps: [100, 300, 600, 1200, 'auto'] },
+            { key: 'knee',      label: 'Genou',     unit: ' dB', min: 0,   max: 24, def: 10,  step: 1, adv: true,
+              tip: 'Douceur de l\'entrée en compression : 0 = net, 24 = très progressif' },
+            // Rattrapage : sans réglage, Pulse remonte le volume tout seul (« Auto »), comme avant
+            { key: 'makeup',    label: 'Rattrapage', unit: ' dB', min: -12, max: 24, def: 0, step: 0.5, adv: true,
+              auto: (p) => Math.round(-p.threshold * (1 - 1 / Math.max(1, p.ratio)) * 0.35 * 2) / 2,
+              tip: 'Volume rendu après compression. Alt-clic : revenir en automatique' }
         ],
         reverb: [
             { key: 'wet',   label: 'Quantité',    unit: '%',  min: 0,   max: 100, def: 18, step: 1 },
@@ -6023,8 +6239,8 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
         ],
         util: [
             { key: 'gain',   label: 'Volume',           unit: ' dB', min: -24, max: 24, def: 0, step: 0.5 },
-            { key: 'invert', label: 'Inverser la phase', unit: '',   min: 0,   max: 1,  def: 0, step: 1 },
-            { key: 'mono',   label: 'Passer en mono',    unit: '',   min: 0,   max: 1,  def: 0, step: 1 }
+            { key: 'invert', label: 'Inverser la phase', unit: '',   min: 0,   max: 1,  def: 0, step: 1, toggle: true },
+            { key: 'mono',   label: 'Passer en mono',    unit: '',   min: 0,   max: 1,  def: 0, step: 1, toggle: true }
         ],
         width: [
             { key: 'width', label: 'Largeur', unit: '%', min: 0, max: 200, def: 100, step: 1 }
@@ -6065,9 +6281,9 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
             { key: 'reduction', label: 'Coupure',                   unit: ' dB', min: 6,   max: 80,  def: 40,  step: 1 }
         ],
         filter: [
-            { key: 'hpf',   label: 'Coupe-bas (graves)',  unit: ' Hz', min: 20,  max: 1000,  def: 80,    step: 5 },
-            { key: 'lpf',   label: 'Coupe-haut (aigus)',  unit: ' Hz', min: 1000, max: 20000, def: 20000, step: 100 },
-            { key: 'slope', label: 'Pente',                unit: ' dB', min: 12,  max: 24,    def: 12,    step: 12 }
+            { key: 'hpf',   label: 'Coupe-bas (graves)',  unit: ' Hz', min: 20,  max: 1000,  def: 80,    step: 5, log: true },
+            { key: 'lpf',   label: 'Coupe-haut (aigus)',  unit: ' Hz', min: 1000, max: 20000, def: 20000, step: 100, log: true },
+            { key: 'slope', label: 'Pente',                unit: ' dB', min: 12,  max: 24,    def: 12,    step: 12, choices: [12, 24] }
         ],
         sat: [
             { key: 'drive', label: 'Chaleur', unit: '%', min: 0, max: 100, def: 25, step: 1 }
@@ -6077,7 +6293,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
             { key: 'freq',   label: 'Fréquence', unit: ' Hz', min: 3000, max: 9000, def: 5500, step: 100 }
         ],
         delay: [
-            { key: 'beats',    label: 'Retour (temps)', unit: '',  min: 0.125, max: 2,  def: 0.5, step: 0.125 },
+            { key: 'beats',    label: 'Retour', unit: '',  min: 0.125, max: 2,  def: 0.5, step: 0.125, fmt: beatsLabel },
             { key: 'feedback', label: 'Répétitions',    unit: '%', min: 0,     max: 85, def: 35,  step: 1 },
             { key: 'wet',      label: 'Quantité',       unit: '%', min: 0,     max: 100, def: 25, step: 1 }
         ]
@@ -6087,43 +6303,86 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
     const params = t.effectParams[fxName] || {};
 
     const panel = document.createElement('div');
-    panel.className = 'fx-panel';
     const FX_LABELS = { crush: 'Bitcrusher', util: 'Utilitaire', width: 'Largeur stéréo', tremolo: 'Trémolo', phaser: 'Phaser', flanger: 'Flanger', chorus: 'Chorus', doubler: 'Doubleur de voix', slapback: 'Slapback', gate: 'Gate', filter: 'Filtre', eq: 'EQ 4 bandes', comp: 'Compresseur', reverb: 'Réverbération', sat: 'Saturation', deess: 'De-esser', delay: 'Écho' };
+    // Mode Simple (l'essentiel) ou Avancé (tous les réglages), retenu d'une fois sur l'autre
+    const hasAdv = defs.some(d => d.adv);
+    let advanced = false;
+    try { advanced = localStorage.getItem('pulse_fx_adv') === '1'; } catch {}
+    const cat = (ADD_FX_CATEGORIES.find(c => c[1].includes(fxName)) || ['Effet'])[0];
+    panel.className = 'fx-panel fx-pro' + (hasAdv && !advanced ? ' simple' : '');
+    panel.style.setProperty('--fx-accent', FX_CAT_COLORS[cat] || 'var(--violet-2)');
+    const valOf = (d) => params[d.key] !== undefined ? params[d.key] : d.def;
+    // Façade : seul le compresseur change d'habillage selon son caractère (Propre reste net, numérique)
+    const skinOf = () => fxName === 'comp' ? (FX_SKINS[Math.round((t.effectParams.comp || {}).mode || 0)] || 'P') : 'P';
     panel.innerHTML = `
         <div class="fx-panel-header">
-            <span>${FX_LABELS[fxName] || fxName.toUpperCase()}</span>
-            ${fxName === 'comp' ? '<button class="fx-view" data-tooltip="Changer l\'affichage : courbe ou vumètre analogique">Analogique</button>' : ''}
-            <label class="fx-bypass-label">
-                <input type="checkbox" class="fx-bypass" ${t.effects?.includes(fxName) ? 'checked' : ''}> Actif
+            <label class="fx-bypass-label fx-power" data-tooltip="Allumer ou éteindre l'effet">
+                <input type="checkbox" class="fx-bypass" ${t.effects?.includes(fxName) ? 'checked' : ''}><span class="fx-power-btn">⏻</span>
             </label>
+            <span class="fx-title"><i class="fx-cat">${esc(cat)}</i>${FX_LABELS[fxName] || fxName.toUpperCase()}</span>
             <button class="fx-panel-close">×</button>
         </div>
+        <div class="fx-toolbar">
+            ${hasAdv ? `<div class="fx-seg fx-mode"><button data-mode="simple" class="${advanced ? '' : 'on'}">Simple</button><button data-mode="adv" class="${advanced ? 'on' : ''}">Avancé</button></div>` : '<span></span>'}
+            ${fxName === 'comp' ? '<button class="fx-view" data-tooltip="Changer l\'affichage : courbe ou vumètre analogique">Analogique</button>' : ''}
+            <div class="fx-seg fx-ab" data-tooltip="Deux réglages à comparer : passe de A à B pour écouter la différence"><button data-ab="A" class="on">A</button><button data-ab="B">B</button></div>
+        </div>
+        <div class="fx-face">
         ${fxName === 'comp' ? '<div class="fx-viz"></div>' : ''}
-        <div class="fx-panel-body">
+        <div class="fx-main">
+        <div class="fx-panel-body fx-knobs">
             ${defs.map(d => {
-                const val = params[d.key] !== undefined ? params[d.key] : d.def;
+                const val = valOf(d);
+                const ctl = d.toggle
+                    ? `<button class="fx-toggle ${val ? 'on' : ''}" data-key="${d.key}">${val ? 'Oui' : 'Non'}</button>`
+                    : d.choices
+                    ? `<div class="fx-seg fx-choice" data-key="${d.key}">${d.choices.map((c, i) => `<button data-v="${c}" class="${c === val ? 'on' : ''}">${d.choiceLabels ? d.choiceLabels[i] : c + d.unit}</button>`).join('')}</div>`
+                    : `<div class="fx-knob" data-key="${d.key}" tabindex="0">${fxKnobSvg(d, val, undefined, skinOf())}</div>`;
                 return `
-                <div class="fx-row">
+                <div class="fx-row ${d.adv ? 'fx-adv' : ''} ${d.toggle || d.choices ? 'fx-wide' : ''}" data-key="${d.key}" ${d.tip ? `data-tooltip="${esc(d.tip)}"` : ''}>
+                    ${ctl}
+                    <span class="fx-val" data-key="${d.key}" title="Double-clic : taper une valeur">${fxFmt(d, val, d.auto && params[d.key] === undefined)}</span>
                     <label class="fx-label">${d.label}</label>
-                    <input type="range" class="fx-slider" data-key="${d.key}" data-default="${d.def}"
+                    <input type="range" class="fx-slider" data-key="${d.key}" data-default="${d.def}" hidden
                         min="${d.min}" max="${d.max}" step="${d.step}" value="${val}">
-                    <span class="fx-val" data-key="${d.key}">${val}${d.unit}</span>
                 </div>`;
             }).join('')}
+            ${fxName === 'comp' ? '<div class="fx-row fx-in-row"><button class="fx-in" data-tooltip="Allumer ou éteindre le compresseur">IN</button></div>' : ''}
+        </div>
+        <div class="fx-meter" data-tooltip="Niveau en sortie de la piste"><i><b></b></i><i><b></b></i><span>SORTIE</span></div>
+        </div>
         </div>
         <div class="fx-panel-footer">
+            <div class="fx-seg fx-size" data-tooltip="Taille de la fenêtre">${FX_SIZES.map(z => `<button data-z="${z}">${Math.round(z * 100)} %</button>`).join('')}</div>
+            <span class="fx-hint" data-tooltip="Glisser vers le haut ou le bas · Maj = réglage fin · Alt-clic ou double-clic = valeur de départ · double-clic sur le chiffre = le taper">?</span>
             <button class="fx-reset">Réinitialiser</button>
         </div>`;
 
     document.body.appendChild(panel);
 
-    // Positionner près du slot
+    // Taille fixe de la fenêtre (100 / 125 / 150 %), comme « Afficher » dans Logic : tout est dessiné, donc reste net
+    let zoom = 1;
+    try { zoom = FX_SIZES.includes(+localStorage.getItem('pulse_fx_size')) ? +localStorage.getItem('pulse_fx_size') : 1; } catch {}
     const rect = anchorEl.getBoundingClientRect();
-    const pw = 220;
-    let left = rect.right + 8;
-    if (left + pw > window.innerWidth) left = rect.left - pw - 8;
-    panel.style.left = left + 'px';
-    panel.style.top = Math.max(8, Math.min(rect.top - 20, window.innerHeight - panel.offsetHeight - 8)) + 'px';
+    const fits = (z) => panel.offsetWidth * z <= window.innerWidth - 16 && panel.offsetHeight * z <= window.innerHeight - 16;
+    const place = (keepLeft) => {
+        if (!fits(zoom)) zoom = [...FX_SIZES].reverse().find(fits) || 1;   // jamais de fenêtre coupée par l'écran
+        panel.querySelectorAll('.fx-size button').forEach(b => { b.disabled = !fits(+b.dataset.z); b.title = b.disabled ? 'Pas assez de place à l\'écran pour cette taille' : ''; });
+        panel.style.transformOrigin = 'top left';
+        panel.style.transform = zoom === 1 ? '' : `scale(${zoom})`;
+        const pw = panel.offsetWidth * zoom, ph = panel.offsetHeight * zoom;
+        let left = keepLeft !== undefined ? keepLeft : rect.right + 8;
+        if (left + pw > window.innerWidth - 8) left = keepLeft !== undefined ? window.innerWidth - pw - 8 : rect.left - pw - 8;
+        panel.style.left = Math.max(8, left) + 'px';
+        panel.style.top = Math.max(8, Math.min(parseFloat(panel.style.top) || rect.top - 20, window.innerHeight - ph - 8)) + 'px';
+        panel.querySelectorAll('.fx-size button').forEach(b => b.classList.toggle('on', +b.dataset.z === zoom));
+    };
+    place();
+    panel.querySelectorAll('.fx-size button').forEach(b => b.addEventListener('click', () => {
+        zoom = +b.dataset.z;
+        try { localStorage.setItem('pulse_fx_size', String(zoom)); } catch {}
+        place(parseFloat(panel.style.left));
+    }));
 
     // Interface graphique : la courbe suit les curseurs, et les points se tirent à la souris
     const viz = panel.querySelector('.fx-viz');
@@ -6132,7 +6391,14 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
     try { analog = localStorage.getItem('pulse_comp_view') === 'analog'; } catch {}
     let needle = 0;
     const viewBtn = panel.querySelector('.fx-view');
-    const drawViz = () => { if (viz) viz.innerHTML = analog ? compAnalogSvg(needle) : compVizSvg(curP()); if (viewBtn) viewBtn.textContent = analog ? 'Courbe' : 'Analogique'; };
+    const drawViz = () => {
+        if (viz) {
+            viz.innerHTML = analog ? compAnalogSvg(needle, skinOf() === 'U') : compVizSvg(curP());
+            const sv = viz.querySelector('.viz-svg'), sk = skinOf();
+            if (sv && sk !== 'P') { const w = document.createElement('div'); w.className = 'viz-screen'; sv.replaceWith(w); w.appendChild(sv); w.insertAdjacentHTML('beforeend', fxGlassSvg(FX_SKIN_SEED[sk])); }
+        }
+        if (viewBtn) viewBtn.textContent = analog ? 'Courbe' : 'Analogique';
+    };
     const setParam = (key, val) => {
         const sl = panel.querySelector(`.fx-slider[data-key="${key}"]`); if (!sl) return;
         const d = defs.find(x => x.key === key);
@@ -6147,7 +6413,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
             const key = pt.dataset.key, svg = viz.querySelector('svg'), g = svg.querySelector('g');
             const move = (ev) => {
                 const r = svg.getBoundingClientRect(), gx = g ? (VIZ_W - 132) / 2 : 0;
-                const x = ev.clientX - r.left - gx, y = ev.clientY - r.top;
+                const x = (ev.clientX - r.left) / zoom - gx, y = (ev.clientY - r.top) / zoom;
                 const S = 132, toDb = (v) => -48 + (v - 7) / (S - 14) * 48;
                 if (key === 'threshold') setParam('threshold', toDb(x));
                 else { const th = curP().threshold, out0 = toDb(S - y); if (th < -1) setParam('ratio', -th / Math.max(0.05, out0 - th)); }
@@ -6167,7 +6433,11 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
             if (!panel.isConnected) return;
             if (analog) {
                 let target = 0;
-                const an = (state.playing || state.recording) ? (typeof trackIdx === 'number' ? PulseAudio.getTrackSpectrum(trackIdx) : (t.id && PulseAudio.getBusSpectrum ? PulseAudio.getBusSpectrum(t.id) : null)) : null;
+                // La vraie réduction, envoyée par le compresseur lui-même ; à défaut, une estimation d'après le son qui sort
+                const real = (state.playing || state.recording) && t.effects && t.effects.includes('comp') && PulseAudio.getCompReduction
+                    ? PulseAudio.getCompReduction(typeof trackIdx === 'number' ? 't' + trackIdx : 'b' + t.id) : null;
+                if (real !== null) target = Math.min(20, real);
+                const an = (real === null && (state.playing || state.recording)) ? (typeof trackIdx === 'number' ? PulseAudio.getTrackSpectrum(trackIdx) : (t.id && PulseAudio.getBusSpectrum ? PulseAudio.getBusSpectrum(t.id) : null)) : null;
                 if (an && t.effects && t.effects.includes('comp')) {
                     if (!buf || buf.length !== an.fftSize) buf = new Float32Array(an.fftSize);
                     an.getFloatTimeDomainData(buf);
@@ -6178,7 +6448,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
                 }
                 needle += (target - needle) * (target > needle ? 0.35 : 0.12);
                 const nd = viz.querySelector('.vu-needle');
-                if (nd) nd.setAttribute('transform', `rotate(${(45 - Math.min(20, needle) / 20 * 90).toFixed(1)} 108 124)`);
+                if (nd) nd.setAttribute('transform', `rotate(${compNeedleDeg(needle, skinOf() === 'U').toFixed(1)} 108 124)`);
                 const vv = viz.querySelector('.vu-val'); if (vv) vv.textContent = needle.toFixed(1) + ' dB';
             }
             requestAnimationFrame(tick);
@@ -6188,7 +6458,12 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
 
     // Events
     panel.querySelector('.fx-panel-close').addEventListener('click', () => panel.remove());
+    // Bouton IN (façade Bus) : le même interrupteur que le bouton marche, en version console
+    const inBtn = panel.querySelector('.fx-in');
+    const syncIn = () => { if (inBtn) inBtn.classList.toggle('on', panel.querySelector('.fx-bypass').checked); };
+    if (inBtn) { syncIn(); inBtn.addEventListener('click', () => panel.querySelector('.fx-bypass').click()); }
     panel.querySelector('.fx-bypass').addEventListener('change', (e) => {
+        syncIn();
         t.effects = t.effects || [];
         if (e.target.checked) { if (!t.effects.includes(fxName)) t.effects.push(fxName); }
         else { const i = t.effects.indexOf(fxName); if (i >= 0) t.effects.splice(i, 1); }
@@ -6196,21 +6471,174 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
         refreshPlaybackSoon();
         saveProject();
     });
+    // Remet l'affichage d'un réglage (bouton, valeur, interrupteur) d'accord avec le projet
+    const refreshCell = (key) => {
+        const d = defs.find(x => x.key === key); if (!d) return;
+        const cur = t.effectParams[fxName] || {};
+        const isAuto = d.auto && cur[key] === undefined;
+        const val = isAuto ? d.auto(curP()) : (cur[key] !== undefined ? cur[key] : d.def);
+        const sl = panel.querySelector(`.fx-slider[data-key="${key}"]`); if (sl) sl.value = val;
+        const autoRel = key === 'release' && skinOf() === 'U' && !!cur.autoRel;
+        const kn = panel.querySelector(`.fx-knob[data-key="${key}"]`); if (kn) kn.innerHTML = fxKnobSvg(d, val, undefined, skinOf(), autoRel);
+        const tg = panel.querySelector(`.fx-toggle[data-key="${key}"]`); if (tg) { tg.classList.toggle('on', !!val); tg.textContent = val ? 'Oui' : 'Non'; }
+        panel.querySelectorAll(`.fx-choice[data-key="${key}"] button`).forEach(b => b.classList.toggle('on', +b.dataset.v === val));
+        const vl = panel.querySelector(`.fx-val[data-key="${key}"]`); if (vl) vl.textContent = autoRel ? 'Auto' : fxFmt(d, val, isAuto);
+    };
+    let skinNow = null;
+    const applySkin = () => {
+        const sk = skinOf(); if (sk === skinNow) return;
+        skinNow = sk;
+        // Façade Bus : chaque réglage cranté se pose sur le cran le plus proche (le son suit ce qu'on voit)
+        if (sk === 'U') {
+            let moved = false;
+            defs.forEach(d => { if (d.busSteps) { const v = valOf2(d), st = d.busSteps[fxStepIdx(d, v, false)]; if (st !== v) { (t.effectParams[fxName] = t.effectParams[fxName] || {})[d.key] = st; moved = true; } } });
+            if (moved) commit();
+        }
+        ['P', 'O', 'F', 'U'].forEach(x => panel.classList.toggle('skin-' + x, x === sk));
+        const face = panel.querySelector('.fx-face'), old = face.querySelector('.fx-wear');
+        if (old) old.remove();
+        if (panel.style.left) place(parseFloat(panel.style.left));   // la façade Bus est plus large : on recale la fenêtre
+        if (sk !== 'P') face.insertAdjacentHTML('afterbegin', fxWearSvg(sk, FX_SKIN_SEED[sk], face.offsetWidth || 340, face.offsetHeight || 340));   // à la taille réelle : vis bien rondes
+        if (viz) drawViz();
+    };
+    const refreshAll = () => { applySkin(); defs.forEach(d => refreshCell(d.key)); if (viz && !analog) drawViz(); };
+    const commit = () => { refreshPlaybackSoon(); saveProject(); };
+    const valOf2 = (d) => { const v = (t.effectParams[fxName] || {})[d.key]; return v !== undefined ? v : d.def; };
     panel.querySelectorAll('.fx-slider').forEach(sl => {
         sl.addEventListener('change', () => { sl._undone = false; });
         sl.addEventListener('input', () => {
             const key = sl.dataset.key;
             const val = parseFloat(sl.value);
-            const def = defs.find(d => d.key === key);
             if (!sl._undone) { pushUndo(); sl._undone = true; }
             t.effectParams[fxName] = t.effectParams[fxName] || {};
             t.effectParams[fxName][key] = val;
             (t.proKeep = t.proKeep || {})[fxName] = true;   // réglé à la main : le curseur « Son » n'y touche plus
-            panel.querySelector(`.fx-val[data-key="${key}"]`).textContent = val + (def?.unit || '');
-            refreshPlaybackSoon();
-            saveProject();
+            if (key === 'mode') { applySkin(); defs.forEach(d => refreshCell(d.key)); }
+            refreshCell(key);
+            defs.forEach(d => { if (d.auto && d.key !== key) refreshCell(d.key); });   // le rattrapage auto suit le seuil et le ratio
+            commit();
         });
     });
+    // Retour à la valeur de départ (ou au mode automatique)
+    const resetKey = (key) => {
+        const d = defs.find(x => x.key === key); if (!d) return;
+        pushUndo();
+        t.effectParams[fxName] = t.effectParams[fxName] || {};
+        if (d.auto) delete t.effectParams[fxName][key]; else t.effectParams[fxName][key] = d.def;
+        refreshAll(); commit();
+    };
+    const endGesture = (key) => { const sl = panel.querySelector(`.fx-slider[data-key="${key}"]`); if (sl) sl._undone = false; };
+    const setStep = (d, i) => {
+        const st = d.busSteps[Math.max(0, Math.min(d.busSteps.length - 1, i))];
+        const ep = (t.effectParams[fxName] = t.effectParams[fxName] || {});
+        if (d.key === 'release') {
+            const auto = st === 'auto';
+            if (!!ep.autoRel !== auto) { pushUndo(); if (auto) ep.autoRel = 1; else delete ep.autoRel; commit(); }
+            if (auto) { refreshCell('release'); return; }
+        }
+        setParam(d.key, st);
+    };
+    // Boutons rotatifs : glisser vers le haut / le bas, Maj pour le réglage fin, molette, flèches du clavier
+    panel.querySelectorAll('.fx-knob').forEach(kn => {
+        const key = kn.dataset.key, d = defs.find(x => x.key === key);
+        const stepped = () => fxStepped(d, skinOf());
+        const idxNow = () => fxStepIdx(d, parseFloat(panel.querySelector(`.fx-slider[data-key="${key}"]`).value), key === 'release' && !!(t.effectParams[fxName] || {}).autoRel);
+        const fracNow = () => stepped() ? idxNow() / (d.busSteps.length - 1) : fxFrac(d, parseFloat(panel.querySelector(`.fx-slider[data-key="${key}"]`).value));
+        const toFrac = (f) => stepped() ? setStep(d, Math.round(f * (d.busSteps.length - 1))) : setParam(key, fxFromFrac(d, f));
+        kn.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            if (e.altKey) { resetKey(key); return; }
+            kn.focus();
+            const y0 = e.clientY, f0 = fracNow();
+            panel.classList.add('dragging');
+            const move = (ev) => toFrac(Math.max(0, Math.min(1, f0 + (y0 - ev.clientY) / (ev.shiftKey ? 800 : 160))));
+            const up = () => { panel.classList.remove('dragging'); endGesture(key); document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
+            document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+        });
+        kn.addEventListener('dblclick', () => resetKey(key));
+        kn.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            if (stepped()) setStep(d, idxNow() - Math.sign(e.deltaY));
+            else setParam(key, fxFromFrac(d, Math.max(0, Math.min(1, fracNow() - Math.sign(e.deltaY) * (e.shiftKey ? 0.005 : 0.025)))));
+            clearTimeout(kn._wt); kn._wt = setTimeout(() => endGesture(key), 400);
+        }, { passive: false });
+        kn.addEventListener('keydown', (e) => {
+            const dir = (e.key === 'ArrowUp' || e.key === 'ArrowRight') ? 1 : (e.key === 'ArrowDown' || e.key === 'ArrowLeft') ? -1 : 0;
+            if (!dir) return;
+            e.preventDefault(); e.stopPropagation();
+            if (stepped()) { setStep(d, idxNow() + dir); endGesture(key); return; }
+            setParam(key, parseFloat(panel.querySelector(`.fx-slider[data-key="${key}"]`).value) + dir * d.step * (e.shiftKey ? 1 : (d.max - d.min) / d.step > 60 ? 5 : 1));
+            endGesture(key);
+        });
+    });
+    panel.querySelectorAll('.fx-toggle').forEach(b => b.addEventListener('click', () => {
+        setParam(b.dataset.key, b.classList.contains('on') ? 0 : 1); endGesture(b.dataset.key);
+    }));
+    panel.querySelectorAll('.fx-choice button').forEach(b => b.addEventListener('click', () => {
+        const key = b.closest('.fx-choice').dataset.key; setParam(key, +b.dataset.v); endGesture(key);
+    }));
+    // Double-clic sur la valeur : on tape le chiffre exact (« 8k » = 8000)
+    panel.querySelectorAll('.fx-val').forEach(v => v.addEventListener('dblclick', () => {
+        const key = v.dataset.key, d = defs.find(x => x.key === key);
+        if (!d || d.toggle || d.choices) return;
+        const inp = document.createElement('input');
+        inp.className = 'fx-val-edit';
+        inp.value = panel.querySelector(`.fx-slider[data-key="${key}"]`).value;
+        v.replaceWith(inp); inp.focus(); inp.select();
+        let done = false;
+        const finish = (ok) => {
+            if (done) return; done = true;
+            inp.replaceWith(v);
+            if (!ok) return;
+            const m = String(inp.value).trim().replace(',', '.').match(/^(-?\d*\.?\d+)\s*(k?)/i);
+            if (!m) { flash('Valeur non comprise : tape un nombre, par exemple 4 ou 8k'); return; }
+            setParam(key, parseFloat(m[1]) * (m[2] ? 1000 : 1)); endGesture(key);
+        };
+        inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') finish(true); else if (e.key === 'Escape') finish(false); });
+        inp.addEventListener('blur', () => finish(true));
+    }));
+    // Simple / Avancé
+    panel.querySelectorAll('.fx-mode button').forEach(b => b.addEventListener('click', () => {
+        advanced = b.dataset.mode === 'adv';
+        try { localStorage.setItem('pulse_fx_adv', advanced ? '1' : '0'); } catch {}
+        panel.classList.toggle('simple', !advanced);
+        panel.querySelectorAll('.fx-mode button').forEach(x => x.classList.toggle('on', x === b));
+    }));
+    // A / B : deux réglages mémorisés le temps de la séance, pour comparer à l'oreille
+    const ab = fxAbStore(t, fxName);
+    panel.querySelectorAll('.fx-ab button').forEach(x => x.classList.toggle('on', x.dataset.ab === ab.cur));
+    panel.querySelectorAll('.fx-ab button').forEach(b => b.addEventListener('click', () => {
+        const to = b.dataset.ab; if (to === ab.cur) return;
+        ab[ab.cur] = { ...(t.effectParams[fxName] || {}) };
+        if (!ab[to]) ab[to] = { ...ab[ab.cur] };   // B part d'une copie de A
+        pushUndo();
+        t.effectParams[fxName] = { ...ab[to] };
+        ab.cur = to;
+        panel.querySelectorAll('.fx-ab button').forEach(x => x.classList.toggle('on', x.dataset.ab === to));
+        refreshAll(); commit();
+        flash(`Réglage ${to}`);
+    }));
+    refreshAll();
+    place(parseFloat(panel.style.left));   // la hauteur réelle est connue une fois l'écran dessiné
+    // Vumètre de sortie (crête, retombée douce) : vide à l'arrêt
+    const meterBars = panel.querySelectorAll('.fx-meter b');
+    let mBuf = null, mLvl = 0;
+    const meterTick = () => {
+        if (!panel.isConnected) return;
+        let pk = 0;
+        const an = (state.playing || state.recording) ? (typeof trackIdx === 'number' ? PulseAudio.getTrackSpectrum(trackIdx) : (t.id && PulseAudio.getBusSpectrum ? PulseAudio.getBusSpectrum(t.id) : null)) : null;
+        if (an) {
+            if (!mBuf || mBuf.length !== an.fftSize) mBuf = new Float32Array(an.fftSize);
+            an.getFloatTimeDomainData(mBuf);
+            for (let i = 0; i < mBuf.length; i++) { const a = Math.abs(mBuf[i]); if (a > pk) pk = a; }
+        }
+        const target = pk > 1e-4 ? Math.max(0, Math.min(1, (20 * Math.log10(pk) + 60) / 60)) : 0;
+        mLvl = target > mLvl ? target : mLvl * 0.92;
+        meterBars.forEach(b => { b.style.height = (mLvl * 100).toFixed(1) + '%'; });
+        requestAnimationFrame(meterTick);
+    };
+    requestAnimationFrame(meterTick);
     panel.querySelector('.fx-reset').addEventListener('click', () => {
         pushUndo();
         delete t.effectParams[fxName];
@@ -9830,7 +10258,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const masterDbEl  = document.querySelector('.mixer-master .strip-db');
     if (masterFader) {
         masterFader.addEventListener('input', () => {
-            const v = parseInt(masterFader.value);
+            const v = posToVol(parseFloat(masterFader.value));
             if (window.PulseAudio) PulseAudio.setMasterVolume(v);
             state.project.masterVolume = v;
             if (masterDbEl) masterDbEl.textContent = `${volumeToDb(v)} dB`;

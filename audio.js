@@ -281,25 +281,50 @@ window.PulseAudio = (function() {
                 // Mélange (compression parallèle) : 100 % = tout le signal compressé, 0 % = signal d'origine
                 this.mix = Math.max(0, Math.min(1, (p.mix ?? 100) / 100));
                 this.red = 0; // réduction en cours (dB, >= 0)
+                this.report = !!p.report; this.cnt = 0; // aiguille du panneau : la vraie réduction, envoyée régulièrement
+                // Caractère : 0 Propre (numérique, sans couleur), 1 Opto (lent, doux, chaleur de lampe),
+                // 2 FET (très rapide, harmoniques impaires qui montent avec la compression), 3 Bus (VCA de console, colle le mix)
+                this.mode = Math.round(p.mode ?? 0);
+                if (this.mode === 2) this.att = 1 - Math.exp(-1 / (Math.max(0.00005, (p.attack ?? 10) / 4000) * sampleRate));
+                this.rmsC = 1 - Math.exp(-1 / (0.005 * sampleRate));      // détection en valeur moyenne (Opto, Bus) sur 5 ms
+                this.slowC = 1 - Math.exp(-1 / (1.0 * sampleRate));       // Opto : la cellule « se charge » en 1 s
+                this.relSlow = 1 - Math.exp(-1 / (Math.max(0.005, (p.release ?? 50) / 1000) * 4 * sampleRate));
+                this.dcC = 1 - Math.exp(-1 / (0.05 * sampleRate));
+                this.env2 = 0; this.slow = 0; this.dc = [0, 0];
+                // Bus, relâchement Auto : 0,1 s sur les pointes, jusqu'à 1,2 s quand la compression dure
+                this.autoRel = this.mode === 3 && !!p.autoRel;
+                if (this.autoRel) { this.rel = 1 - Math.exp(-1 / (0.1 * sampleRate)); this.relSlow = 1 - Math.exp(-1 / (1.2 * sampleRate)); }
             }
             process(inputs, outputs) {
                 const inp = inputs[0], out = outputs[0];
                 if (!inp || !inp.length) return true;
                 const n = inp[0].length, nc = Math.min(inp.length, out.length);
                 const thr = this.thr, knee = this.knee, half = knee / 2;
+                const m = this.mode;
                 for (let i = 0; i < n; i++) {
-                    let pk = 0;
-                    for (let ch = 0; ch < nc; ch++) { const a = inp[ch][i] < 0 ? -inp[ch][i] : inp[ch][i]; if (a > pk) pk = a; }
+                    let pk = 0, sq = 0;
+                    for (let ch = 0; ch < nc; ch++) { const a = inp[ch][i] < 0 ? -inp[ch][i] : inp[ch][i]; if (a > pk) pk = a; if (a * a > sq) sq = a * a; }
+                    let lvl = pk;
+                    if (m === 1 || m === 3) { this.env2 += (sq - this.env2) * this.rmsC; lvl = Math.sqrt(this.env2) * Math.SQRT2; }
                     let want = 0;
-                    if (pk > 1e-5) {
-                        const over = 20 * Math.log10(pk) - thr;
+                    if (lvl > 1e-5) {
+                        const over = 20 * Math.log10(lvl) - thr;
                         if (over >= half) want = over * this.slopeC;
                         else if (over > -half) want = this.slopeC * (over + half) * (over + half) / (2 * knee); // genou doux
                     }
-                    this.red += (want - this.red) * (want > this.red ? this.att : this.rel);
-                    const g = (1 - this.mix) + this.mix * Math.pow(10, -this.red / 20) * this.makeup;
-                    for (let ch = 0; ch < nc; ch++) out[ch][i] = inp[ch][i] * g;
+                    let rc = this.rel;
+                    if (m === 1 || this.autoRel) { this.slow += ((this.red > 3 ? 1 : 0) - this.slow) * this.slowC; rc = this.rel + (this.relSlow - this.rel) * this.slow; }
+                    this.red += (want - this.red) * (want > this.red ? this.att : rc);
+                    const gr = Math.pow(10, -this.red / 20) * this.makeup, h3 = m === 2 ? 0.15 + 0.02 * Math.min(this.red, 15) : 0.04;
+                    for (let ch = 0; ch < nc; ch++) {
+                        const x = inp[ch][i];
+                        let w = x * gr;
+                        if (m === 1) { const e = 0.12 * w * w / (1 + w * w); this.dc[ch] += (e - this.dc[ch]) * this.dcC; w += e - this.dc[ch]; }
+                        else if (m >= 2) w -= h3 * w * w * w / (1 + w * w);
+                        out[ch][i] = (1 - this.mix) * x + this.mix * w;
+                    }
                 }
+                if (this.report && (this.cnt += n) >= 480) { this.cnt = 0; this.port.postMessage(this.red * this.mix); }
                 return true;
             }
         }
@@ -532,6 +557,9 @@ window.PulseAudio = (function() {
 
     function getMasterAnalyser() { return masterAnalyser; }
     // Spectre d'une piste en lecture (null à l'arrêt ou si la piste ne joue pas)
+    // Réduction réelle du compresseur (dB) par piste ('t' + numéro) ou groupe ('b' + id), mise à jour pendant la lecture
+    const compGR = new Map();
+    function getCompReduction(key) { return compGR.has(key) ? compGR.get(key) : null; }
     function getBusSpectrum(busId) { return liveBusSpec.get(busId) || null; }
     function getTrackSpectrum(trackIdx) { const n = liveNodes.get(trackIdx); return n && n.spec ? n.spec : null; }
 
@@ -974,7 +1002,7 @@ window.PulseAudio = (function() {
             const bus = (project.buses || []).find(b => b.id === id);
             if (!bus) return dest;
             // Effets communs du groupe (ex. une seule reverb pour toutes les voix) → volume du groupe → sortie
-            const fx = createEffectsChain(actx, bus.effects || [], { ...(bus.effectParams || {}), order: bus.fxOrder }, project.bpm, project.ceilingDb ?? ceilingDb);
+            const fx = createEffectsChain(actx, bus.effects || [], { ...(bus.effectParams || {}), order: bus.fxOrder, grKey: 'b' + id }, project.bpm, project.ceilingDb ?? ceilingDb);
             const g = actx.createGain();
             g.gain.value = bus.muted ? 0 : (bus.volume ?? 100) / 100;
             fx.output.connect(g);
@@ -1054,7 +1082,7 @@ window.PulseAudio = (function() {
             const trackGain = actx.createGain();
             trackGain.gain.value = audible ? vol : 0;
 
-            const fx = createEffectsChain(actx, track.effects || [], { ...(track.effectParams || {}), order: track.fxOrder }, project.bpm);
+            const fx = createEffectsChain(actx, track.effects || [], { ...(track.effectParams || {}), order: track.fxOrder, grKey: 't' + trackIdx }, project.bpm);
             fx.output.connect(trackGain);
             // Piste forcée en mono (bouton Mono / Stéréo) : les deux côtés se mélangent avant les effets
             let fxIn = fx.input;
@@ -1519,14 +1547,17 @@ window.PulseAudio = (function() {
             if (enabled.includes('comp')) {
                 const cp = params.comp || {};
                 if (fxReady.has(actx)) {
-                    connect(new AudioWorkletNode(actx, 'pulse-comp', {
+                    const live = !!params.grKey && !(typeof OfflineAudioContext !== 'undefined' && actx instanceof OfflineAudioContext);
+                    const node = new AudioWorkletNode(actx, 'pulse-comp', {
                         numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max',
-                        processorOptions: { threshold: cp.threshold, ratio: cp.ratio, attack: cp.attack, release: cp.release, makeup: cp.makeup, mix: cp.mix }
-                    }));
+                        processorOptions: { threshold: cp.threshold, ratio: cp.ratio, attack: cp.attack, release: cp.release, knee: cp.knee, makeup: cp.makeup, mix: cp.mix, mode: cp.mode, autoRel: cp.autoRel, report: live }
+                    });
+                    if (live) node.port.onmessage = (e) => compGR.set(params.grKey, e.data);
+                    connect(node);
                 } else {
                     const comp = actx.createDynamicsCompressor();
                     comp.threshold.value = cp.threshold !== undefined ? cp.threshold : -22;
-                    comp.knee.value = 10;
+                    comp.knee.value = cp.knee !== undefined ? cp.knee : 10;
                     comp.ratio.value = cp.ratio !== undefined ? cp.ratio : 3;
                     comp.attack.value = cp.attack !== undefined ? cp.attack / 1000 : 0.010;
                     comp.release.value = cp.release !== undefined ? cp.release / 1000 : 0.050;
@@ -1913,7 +1944,7 @@ window.PulseAudio = (function() {
         registerBuffer, hasBuffer, getBuffer, getBufferDuration, clearBuffers, computePeaks,
         play, stopAll, getPlaybackPosition, setNativeBackend, isNative, setBeatsPerBar,
         updateTrackVolume, updateTrackPan, refreshAudibility, clearLiveNodes,
-        getTrackAnalyser, getTrackMeters, trackChannelCount, getMasterAnalyser, getTrackSpectrum, getBusSpectrum, setMasterVolume,
+        getTrackAnalyser, getTrackMeters, trackChannelCount, getMasterAnalyser, getTrackSpectrum, getBusSpectrum, getCompReduction, setMasterVolume,
         setMetronome, setMetronomeBpm, setCountIn, isCountInEnabled,
         startMetronome, stopMetronome, playCountIn, stopCountIn, isCountingIn,
         exportWav, exportTrackWav, audioBufferToWav, computeNormalizeGain,

@@ -2426,7 +2426,7 @@ body.lyrics-open .workspace { grid-template-columns: var(--tracks-w, 240px) 1fr 
 .strip-send-row { display: flex; flex-direction: column; gap: 1px; font-size: 9px; color: var(--text-3, rgba(255, 255, 255, 0.45)); cursor: pointer; }
 .strip-send-row span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .strip-send-row.on { color: var(--text-1, #fff); }
-.strip-send-row input { width: 100%; height: 14px; margin: 0; accent-color: #34D399; cursor: pointer; }
+.strip-send-row input { width: 100%; height: 14px; margin: 0; accent-color: var(--violet-2); cursor: pointer; }
 .strip-return .strip-name { color: var(--track-color); }
 .return-edit { width: 100%; font-size: 10px; padding: 4px 2px; border-radius: 6px; background: transparent; color: var(--text-2, rgba(255, 255, 255, 0.75)); border: 1px solid rgba(255, 255, 255, 0.14); cursor: pointer; }
 .return-edit:hover { border-color: var(--track-color); color: #fff; }
@@ -2963,3 +2963,196 @@ body.is-splitting, body.is-splitting * { cursor: col-resize !important; }
 
 /* Menu « + Effet » : une vingtaine d'effets, il défile au lieu de sortir de l'écran */
 .track-ctx-menu:has(.ctx-head) { max-height: min(72vh, 640px); overflow-y: auto; }
+
+/* === Panneaux d'effets « pro » — DA « Studio sombre » (planche du 21/10, variante A) ===
+   Fond violet très sombre, boutons en métal brossé gradués, vumètre crème, une couleur d'accent par catégorie */
+.fx-panel.fx-pro { width: 340px; --fx-accent: var(--violet-2); padding-bottom: 0; overflow: hidden;
+    background: radial-gradient(ellipse at 50% 0%, #2c1f45 0%, #1a1226 65%); border: 1px solid rgba(168,85,247,.28); border-radius: 12px; }
+.fx-pro .fx-panel-header { background: #120c1c; border-bottom: 1px solid #2a1f3a; padding: 8px 10px; gap: 10px; }
+.fx-pro .fx-title { flex: 1; display: flex; flex-direction: column; line-height: 1.2; font-size: 13px; letter-spacing: .02em; color: #f1ebfb; }
+.fx-pro .fx-cat { font-style: normal; font-size: 9px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--fx-accent); }
+.fx-power { position: relative; cursor: pointer; }
+.fx-power input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.fx-power-btn { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-size: 13px; font-weight: 700;
+    background: #241a33; color: #6d5f88; border: 1px solid #3a2c50; transition: all .12s; }
+.fx-power input:checked + .fx-power-btn { background: var(--violet-1); color: #fff; border-color: var(--violet-2); box-shadow: 0 0 12px rgba(124,58,237,.8); }
+.fx-power input:focus-visible + .fx-power-btn { outline: 2px solid var(--violet-2); outline-offset: 2px; }
+.fx-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; background: #160f22; border-bottom: 1px solid #2a1f3a; }
+.fx-toolbar .fx-view { margin: 0; background: #241a33; border-color: #3a2c50; color: #d9cfee; font-size: 10.5px; }
+.fx-seg { display: inline-flex; background: #241a33; border: 1px solid #3a2c50; border-radius: 6px; padding: 2px; gap: 2px; }
+.fx-seg button { background: none; border: none; color: #a99bc4; font-size: 10.5px; font-weight: 600; padding: 3px 9px; border-radius: 4px; cursor: pointer; }
+.fx-seg button:hover { color: #fff; }
+.fx-seg button.on { background: #3b2a58; color: #fff; }
+.fx-pro .fx-viz { padding: 10px 12px 0; }
+.fx-main { display: grid; grid-template-columns: 1fr 30px; gap: 4px; padding: 6px 10px 4px 6px; }
+.fx-pro .fx-panel-body.fx-knobs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px 2px; padding: 4px 0 6px; align-items: start; }
+.fx-pro .fx-row { display: flex; flex-direction: column; align-items: center; gap: 0; grid-template-columns: none; min-width: 0; }
+.fx-pro .fx-row .fx-label { order: -1; font-size: 9.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: #cbbfe3; text-align: center; max-width: 100%; margin: 4px 0 1px; }
+.fx-pro .fx-row.fx-wide { grid-column: span 3; flex-direction: row; justify-content: space-between; padding: 6px 8px; }
+.fx-pro .fx-row.fx-wide .fx-label { order: -1; flex: 1; text-align: left; margin: 0; }
+.fx-pro .fx-row.fx-wide .fx-val { display: none; }
+.fx-pro.simple .fx-adv { display: none; }
+.fx-pro .fx-val { font-size: 11px; font-weight: 600; color: #fff; text-align: center; cursor: text; padding: 0 5px; border-radius: 4px; margin-top: -6px; }
+.fx-pro .fx-val:hover { background: #2c2140; }
+.fx-val-edit { width: 64px; font: inherit; font-size: 11px; text-align: center; background: #0e0916; color: #fff; border: 1px solid var(--fx-accent); border-radius: 4px; padding: 1px 2px; outline: none; margin-top: -6px; }
+.fx-knob { cursor: ns-resize; outline: none; touch-action: none; border-radius: 50%; line-height: 0; }
+.fx-knob:focus-visible .kn-ring { stroke: var(--fx-accent); stroke-width: 2; }
+.fx-knob .kn-tick { stroke: #8f82ab; stroke-width: 1; }
+.fx-knob .kn-tick.major { stroke: #cbbfe3; stroke-width: 1.5; }
+.fx-knob .kn-num { fill: #a99bc4; font-size: 8.5px; text-anchor: middle; font-variant-numeric: tabular-nums; }
+.fx-knob .kn-val { fill: none; stroke: var(--fx-accent); stroke-width: 2; stroke-linecap: round; opacity: .9; }
+.fx-knob .kn-shadow { fill: rgba(0,0,0,.55); }
+.fx-knob .kn-cap { stroke: #4a4458; stroke-width: 1; }
+.fx-knob .kn-ring { fill: none; stroke: rgba(255,255,255,.35); }
+.fx-knob .kn-hand { stroke: #1a1226; stroke-width: 3; stroke-linecap: round; }
+.fx-knob:hover .kn-ring { stroke: rgba(255,255,255,.7); }
+.fx-pro.dragging, .fx-pro.dragging * { cursor: ns-resize !important; user-select: none; }
+.fx-toggle { min-width: 56px; background: #241a33; border: 1px solid #3a2c50; color: #a99bc4; font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 6px; cursor: pointer; }
+.fx-toggle.on { background: var(--violet-1); border-color: var(--violet-2); color: #fff; box-shadow: 0 0 8px rgba(124,58,237,.6); }
+.fx-meter { display: flex; gap: 3px; justify-content: center; align-items: flex-end; position: relative; padding-bottom: 14px; }
+.fx-meter i { width: 7px; height: 100%; min-height: 90px; background: #0e0916; border-radius: 3px; position: relative; overflow: hidden; }
+.fx-meter b { position: absolute; left: 0; right: 0; bottom: 0; height: 0; background: linear-gradient(0deg, #A855F7 0%, #F472B6 75%, #F87171 100%); background-size: 100% 90px; background-position: bottom; }
+.fx-meter span { position: absolute; bottom: 0; font-size: 7.5px; letter-spacing: .08em; color: #8f82ab; font-weight: 700; }
+.fx-pro .fx-panel-footer { background: #120c1c; border-top: 1px solid #2a1f3a; justify-content: space-between; align-items: center; padding: 7px 10px; }
+.fx-pro .fx-reset { background: #241a33; border-color: #3a2c50; color: #d9cfee; }
+.fx-hint { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font-size: 10px; font-weight: 700; color: #a99bc4; background: #241a33; border: 1px solid #3a2c50; cursor: help; }
+.fx-pro .fx-panel-footer .fx-size { margin-right: auto; margin-left: 6px; order: 0; }
+.fx-pro .fx-panel-footer .fx-hint { order: -1; }
+/* Écran du compresseur : vumètre crème à aiguille, courbe sur fond crème */
+.fx-pro .viz-svg { background: linear-gradient(#f3ecdc, #d9cfb8); border-radius: 8px; box-shadow: inset 0 2px 10px rgba(0,0,0,.45), 0 0 0 5px #120c1c; display: block; margin: 0 auto; }
+.fx-pro .vu-face { fill: none; stroke: none; }
+.fx-pro .vu-arc { stroke: #2a1f3a; opacity: .8; }
+.fx-pro .vu-arc.hot, .fx-pro .vu-tick.hot { stroke: #b91c1c; }
+.fx-pro .vu-tick { stroke: #2a1f3a; }
+.fx-pro .vu-num { fill: #2a1f3a; }
+.fx-pro .vu-num.hot { fill: #b91c1c; }
+.fx-pro .vu-title { fill: #5a4d70; }
+.fx-pro .vu-hand { stroke: #111; stroke-width: 2.2; }
+.fx-pro .vu-pivot { fill: #2a1f3a; stroke: #d9cfb8; }
+.fx-pro .viz-box { stroke: rgba(42,31,58,.35); }
+.fx-pro .viz-grid { stroke: rgba(42,31,58,.25); }
+.fx-pro .viz-fill { fill: rgba(124,58,237,.16); }
+.fx-pro .viz-line { stroke: #6d28d9; stroke-width: 2; fill: none; }
+.fx-pro .viz-txt { fill: rgba(42,31,58,.6); }
+.fx-pro .viz-pt { fill: #7C3AED; stroke: #fff; }
+.fx-pro .viz-note { color: #a99bc4; padding: 8px 0 2px; }
+
+/* === Façades du compresseur selon le caractère (planche v3 du 21/10) : Propre = la A nette ; Opto, FET, Bus = machines qui ont vécu === */
+.fx-face { position: relative; }
+.fx-face > *:not(.fx-wear) { position: relative; z-index: 1; }
+.fx-wear { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; }
+.viz-screen { position: relative; width: max-content; margin: 0 auto; }
+.viz-glass { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; border-radius: 8px; }
+.fx-knob .kn-rib { stroke: #555; stroke-width: 1; }
+.fx-knob .kn-bague { fill: none; stroke: #A855F7; stroke-width: 2; }
+.fx-knob .kn-capc { fill: #7C3AED; }
+/* Opto : métal gris clair, écran crème chaud, gros boutons noirs */
+.fx-pro.skin-O .fx-face { background: linear-gradient(180deg, #d9d4dc, #bdb6c3); }
+.fx-pro.skin-O .fx-row .fx-label { color: #3a2c50; }
+.fx-pro.skin-O .fx-val { color: #1a1226; }
+.fx-pro.skin-O .fx-val:hover { background: rgba(0,0,0,.08); }
+.fx-pro.skin-O .fx-knob .kn-tick, .fx-pro.skin-O .fx-knob .kn-tick.major { stroke: #3a2c50; }
+.fx-pro.skin-O .fx-knob .kn-num { fill: #3a2c50; }
+.fx-pro.skin-O .fx-knob .kn-hand { stroke: #fff; }
+.fx-pro.skin-O .viz-svg { background: radial-gradient(ellipse at 50% 110%, #fff3d6, #f1dfb3 60%, #d8bf87); box-shadow: inset 0 2px 10px rgba(0,0,0,.35), 0 0 0 5px #3a2c50; }
+.fx-pro.skin-O .viz-note { color: #3a2c50; }
+.fx-pro.skin-O .viz-note b { color: #1a1226; }
+.fx-pro.skin-O .fx-meter i { background: #a59bb5; }
+.fx-pro.skin-O .fx-meter span { color: #3a2c50; }
+.fx-pro.skin-O .fx-seg.fx-choice { background: rgba(255,255,255,.35); border-color: rgba(58,44,80,.35); }
+.fx-pro.skin-O .fx-seg.fx-choice button { color: #3a2c50; }
+.fx-pro.skin-O .fx-seg.fx-choice button.on { background: #3a2c50; color: #fff; }
+/* FET : noir mat brossé, écran braise, boutons noirs à bague violette */
+.fx-pro.skin-F .fx-face { background: repeating-linear-gradient(90deg, #141018 0 2px, #17121c 2px 4px); }
+.fx-pro.skin-F .fx-row .fx-label { color: #b8aacd; }
+.fx-pro.skin-F .fx-val { color: #ffb38a; }
+.fx-pro.skin-F .fx-knob .kn-hand { stroke: #ffb38a; stroke-width: 2.5; }
+.fx-pro.skin-F .viz-svg { background: radial-gradient(ellipse at 50% 110%, #ffb38a, #f0703f 60%, #9a3412); box-shadow: inset 0 2px 12px rgba(0,0,0,.55), 0 0 0 5px #000; }
+.fx-pro.skin-F .vu-tick, .fx-pro.skin-F .vu-arc { stroke: #3a1205; }
+.fx-pro.skin-F .vu-num, .fx-pro.skin-F .vu-title { fill: #3a1205; }
+.fx-pro.skin-F .vu-tick.hot, .fx-pro.skin-F .vu-arc.hot { stroke: #fff; }
+.fx-pro.skin-F .vu-num.hot { fill: #fff; }
+.fx-pro.skin-F .vu-hand { stroke: #1a0a04; }
+.fx-pro.skin-F .viz-box, .fx-pro.skin-F .viz-grid { stroke: rgba(58,18,5,.35); }
+.fx-pro.skin-F .viz-line { stroke: #3a1205; }
+.fx-pro.skin-F .viz-txt { fill: rgba(58,18,5,.7); }
+.fx-pro.skin-F .fx-meter b { background: linear-gradient(0deg, #F97316 0%, #F472B6 100%); background-size: 100% 90px; background-position: bottom; }
+/* Bus : planche « capuchons violets » validée le 21/10 — plaque grise brossée à gauche (boutons crantés sur 2 colonnes + IN),
+   écran bleu nuit à droite (0 à gauche → 20 à droite, aiguille entière), vumètre de sortie dessous ; DA Pulse */
+.fx-in-row { display: none !important; }
+.fx-panel.fx-pro.skin-U { width: 540px; }
+.fx-pro.skin-U .fx-face { display: grid; grid-template-columns: 236px 1fr; grid-template-rows: auto 1fr; grid-template-areas: "knobs viz" "knobs meter";
+    gap: 10px 16px; padding: 16px 16px 14px; background: linear-gradient(180deg, #2a2a2e, #1c1c20); }
+.fx-pro.skin-U .fx-main { display: contents; }
+.fx-pro.skin-U .fx-viz { grid-area: viz; padding: 0; }
+.fx-pro.skin-U .fx-knobs { grid-area: knobs; grid-template-columns: 1fr 1fr; gap: 0 2px; padding: 8px 4px 6px; border-radius: 4px;
+    background: repeating-linear-gradient(90deg, #5d5f66 0 1px, #595b62 1px 3px), linear-gradient(#64666d, #4e5057); background-blend-mode: overlay;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.18), inset 0 -1px 0 rgba(0,0,0,.5), 0 0 0 1px #111, 0 6px 14px rgba(0,0,0,.5); }
+.fx-pro.skin-U .fx-meter { grid-area: meter; justify-self: center; align-self: start; height: 120px; }
+.fx-pro.skin-U .fx-meter i { min-height: 100px; background: #0c0c0f; }
+.fx-pro.skin-U .fx-row.fx-wide { grid-column: span 2; padding: 2px 4px 8px; }
+.fx-pro.skin-U .fx-row[data-key="mode"] { order: 0; }
+.fx-pro.skin-U .fx-row[data-key="threshold"] { order: 1; }
+.fx-pro.skin-U .fx-row[data-key="makeup"] { order: 2; }
+.fx-pro.skin-U .fx-row[data-key="attack"] { order: 3; }
+.fx-pro.skin-U .fx-row[data-key="release"] { order: 4; }
+.fx-pro.skin-U .fx-row[data-key="ratio"] { order: 5; }
+.fx-pro.skin-U .fx-in-row { order: 6; display: flex !important; align-items: center; justify-content: center; padding-top: 14px; }
+.fx-pro.skin-U .fx-row[data-key="knee"] { order: 7; }
+.fx-pro.skin-U .fx-row[data-key="mix"] { order: 8; }
+.fx-pro.skin-U.simple .fx-in-row { order: 4; }
+.fx-in { width: 40px; height: 40px; border-radius: 4px; border: none; font-size: 11px; font-weight: 800; cursor: pointer; color: #6b6e76;
+    background: linear-gradient(#4a4b52, #34353b); box-shadow: inset 0 1px 1px rgba(255,255,255,.15), 0 0 0 3px #3a3a40; }
+.fx-in.on { color: #3a1a00; background: radial-gradient(#ffd9a8, #f59e42 70%, #b45309); box-shadow: 0 0 14px rgba(245,158,66,.75), inset 0 1px 2px rgba(255,255,255,.6), 0 0 0 3px #3a3a40; }
+.fx-pro.skin-U .fx-row .fx-label { color: #f0f0f3; text-shadow: 0 1px 0 rgba(0,0,0,.4); }
+.fx-pro.skin-U .fx-val { color: #fff; }
+.fx-pro.skin-U .fx-knob .kn-tick, .fx-pro.skin-U .fx-knob .kn-tick.major { stroke: #f0f0f3; }
+.fx-pro.skin-U .fx-knob .kn-num { fill: #f0f0f3; font-size: 8px; }
+.fx-pro.skin-U .fx-knob .kn-dot { fill: #f0f0f3; }
+.fx-pro.skin-U .fx-knob .kn-hand { stroke: #fff; stroke-width: 2.6; }
+.fx-pro.skin-U .fx-knob .kn-val { opacity: 0; }
+.fx-pro.skin-U .viz-svg { background: radial-gradient(ellipse at 50% 120%, #3b5bd6 0%, #1b2a6b 45%, #0b1236 100%); box-shadow: inset 0 2px 14px rgba(0,0,0,.7), 0 0 0 5px #0c0c0f, 0 0 0 6px #3a3a40; }
+.fx-pro.skin-U .vu-tick, .fx-pro.skin-U .vu-arc, .fx-pro.skin-U .vu-arc.hot, .fx-pro.skin-U .vu-tick.hot { stroke: #e5e7eb; }
+.fx-pro.skin-U .vu-arc { opacity: 0; }
+.fx-pro.skin-U .vu-num, .fx-pro.skin-U .vu-num.hot, .fx-pro.skin-U .vu-title { fill: #e5e7eb; }
+.fx-pro.skin-U .vu-hand { stroke: #f8fafc; stroke-width: 2.2; }
+.fx-pro.skin-U .vu-pivot { display: none; }
+.fx-pro.skin-U .fx-row[data-key="mode"] .fx-label { display: none; }
+.fx-pro.skin-U .fx-row[data-key="mode"] { justify-content: center; }
+.fx-pro.skin-U .viz-glass { display: none; }
+.fx-pro.skin-U .viz-box, .fx-pro.skin-U .viz-grid { stroke: rgba(229,231,235,.25); }
+.fx-pro.skin-U .viz-line { stroke: #c4a3ff; }
+.fx-pro.skin-U .viz-txt { fill: rgba(229,231,235,.6); }
+.fx-pro.skin-U .viz-note { color: #c9c9d1; }
+.fx-pro.skin-U .viz-note b { color: #fff; }
+.fx-pro.skin-U .fx-meter span { color: #9ca3af; }
+.fx-pro.skin-U .fx-meter b { background: linear-gradient(0deg, #22D3EE 0%, #A855F7 100%); background-size: 100% 100px; background-position: bottom; }
+.fx-pro.skin-U .fx-seg.fx-choice { background: rgba(0,0,0,.35); border-color: rgba(0,0,0,.4); }
+.fx-pro.skin-U .fx-seg.fx-choice button { color: #e4e4ea; padding: 3px 7px; }
+.fx-pro.skin-U .fx-seg.fx-choice button.on { background: #7C3AED; }
+
+.fx-seg button:disabled { opacity: .35; cursor: not-allowed; }
+
+/* Menu « + Effet » en deux colonnes (variante B) — DA Pulse, sans pastilles de couleur */
+.track-ctx-menu.fx-add-menu { display: flex; padding: 0; min-width: 0; overflow: hidden !important; max-height: min(78vh, 560px) !important; }
+.fx-add-menu .fam-left { width: 180px; padding: 6px; border-right: 1px solid var(--border); overflow-y: auto; }
+.fx-add-menu .fam-right { width: 250px; padding: 6px; overflow-y: auto; }
+.fam-search { width: 100%; box-sizing: border-box; margin: 0 0 4px; padding: 6px 9px; border-radius: 6px; background: var(--bg-0); border: 1px solid var(--border); color: var(--text-1); font: inherit; font-size: 12px; outline: none; }
+.fam-search:focus { border-color: var(--violet-2); }
+.fx-add-menu .ctx-item.fam-cat.on { background: var(--violet-1); color: #fff; }
+.fx-add-menu .fam-fx { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 6px 10px; }
+.fx-add-menu .fam-nm { font-size: 12.5px; color: var(--text-1); display: flex; gap: 6px; align-items: baseline; }
+.fx-add-menu .fam-ds { font-size: 10.5px; color: var(--text-3); line-height: 1.3; white-space: normal; }
+.fx-add-menu .fam-fx:hover { background: var(--violet-1); }
+.fx-add-menu .fam-fx:hover .fam-ds { color: #ede4ff; }
+.fam-tag { font-style: normal; font-size: 9.5px; color: var(--violet-3, #C084FC); }
+.fam-empty { font-size: 11px; color: var(--text-3); padding: 8px 10px; }
+.fx-add-menu .ctx-sep { height: 1px; background: var(--border); margin: 4px 6px; }
+.fx-add-menu .fam-cat { display: flex; align-items: center; gap: 8px; }
+.fam-dot { width: 7px; height: 7px; border-radius: 50%; background: #5B21B6; box-shadow: 0 0 0 1px rgba(168,85,247,.35); flex-shrink: 0; }
+.fx-add-menu .fam-cat.on .fam-dot { background: #fff; box-shadow: none; }
+
+/* Pistes : léger dégradé de leur couleur, plus ou moins marqué selon le type (instru < piste < bus) */
+.track-item { --grad: 14%; background: linear-gradient(90deg, color-mix(in srgb, var(--track-color, var(--violet-1)) var(--grad), var(--bg-2)) 0%, var(--bg-2) 75%); }
+.track-item.is-instru { --grad: 8%; }
+.group-header { background: linear-gradient(90deg, color-mix(in srgb, var(--group-color) 30%, var(--bg-2)) 0%, color-mix(in srgb, var(--group-color) 9%, var(--bg-2)) 80%); }
