@@ -272,6 +272,13 @@ window.PulseAudio = (function() {
             constructor(o) {
                 super();
                 const p = (o && o.processorOptions) || {};
+                this.red = 0; this.report = !!p.report; this.cnt = 0;
+                this.env2 = 0; this.slow = 0; this.dc = [0, 0];
+                this.setup(p);
+                // Réglages envoyés en direct pendant la lecture (sans reconstruire le son)
+                this.port.onmessage = (e) => { if (e.data && e.data.set) this.setup(e.data.set); };
+            }
+            setup(p) {
                 this.thr = p.threshold ?? -22;
                 this.slopeC = 1 - 1 / Math.max(1, p.ratio ?? 3);
                 this.knee = p.knee ?? 10;
@@ -280,8 +287,6 @@ window.PulseAudio = (function() {
                 this.makeup = Math.pow(10, (p.makeup ?? (-this.thr * this.slopeC * 0.35)) / 20);
                 // Mélange (compression parallèle) : 100 % = tout le signal compressé, 0 % = signal d'origine
                 this.mix = Math.max(0, Math.min(1, (p.mix ?? 100) / 100));
-                this.red = 0; // réduction en cours (dB, >= 0)
-                this.report = !!p.report; this.cnt = 0; // aiguille du panneau : la vraie réduction, envoyée régulièrement
                 // Caractère : 0 Propre (numérique, sans couleur), 1 Opto (lent, doux, chaleur de lampe),
                 // 2 FET (très rapide, harmoniques impaires qui montent avec la compression), 3 Bus (VCA de console, colle le mix)
                 this.mode = Math.round(p.mode ?? 0);
@@ -290,7 +295,6 @@ window.PulseAudio = (function() {
                 this.slowC = 1 - Math.exp(-1 / (1.0 * sampleRate));       // Opto : la cellule « se charge » en 1 s
                 this.relSlow = 1 - Math.exp(-1 / (Math.max(0.005, (p.release ?? 50) / 1000) * 4 * sampleRate));
                 this.dcC = 1 - Math.exp(-1 / (0.05 * sampleRate));
-                this.env2 = 0; this.slow = 0; this.dc = [0, 0];
                 // Bus, relâchement Auto : 0,1 s sur les pointes, jusqu'à 1,2 s quand la compression dure
                 this.autoRel = this.mode === 3 && !!p.autoRel;
                 if (this.autoRel) { this.rel = 1 - Math.exp(-1 / (0.1 * sampleRate)); this.relSlow = 1 - Math.exp(-1 / (1.2 * sampleRate)); }
@@ -616,6 +620,12 @@ window.PulseAudio = (function() {
     // Spectre d'une piste en lecture (null à l'arrêt ou si la piste ne joue pas)
     // Réduction réelle du compresseur (dB) par piste ('t' + numéro) ou groupe ('b' + id), mise à jour pendant la lecture
     const compGR = new Map();
+    const compLive = new Map();   // grKey -> compresseur en cours de lecture (réglages en direct)
+    function updateComp(key, cp) {
+        const n = compLive.get(key); if (!n || !cp) return false;
+        const r = { threshold: cp.threshold, ratio: cp.ratio, attack: cp.attack, release: cp.release, knee: cp.knee, makeup: cp.makeup, mix: cp.mix, mode: cp.mode, autoRel: cp.autoRel };
+        try { n.port.postMessage({ set: r }); return true; } catch (e) { return false; }
+    }
     function getCompReduction(key) { return compGR.has(key) ? compGR.get(key) : null; }
     function getBusSpectrum(busId) { return liveBusSpec.get(busId) || null; }
     function getTrackSpectrum(trackIdx) { const n = liveNodes.get(trackIdx); return n && n.spec ? n.spec : null; }
@@ -1610,7 +1620,7 @@ window.PulseAudio = (function() {
                         numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max',
                         processorOptions: { threshold: cp.threshold, ratio: cp.ratio, attack: cp.attack, release: cp.release, knee: cp.knee, makeup: cp.makeup, mix: cp.mix, mode: cp.mode, autoRel: cp.autoRel, report: live }
                     });
-                    if (live) node.port.onmessage = (e) => compGR.set(params.grKey, e.data);
+                    if (live) { node.port.onmessage = (e) => compGR.set(params.grKey, e.data); compLive.set(params.grKey, node); }
                     connect(node);
                 } else {
                     const comp = actx.createDynamicsCompressor();
@@ -2002,7 +2012,7 @@ window.PulseAudio = (function() {
         startRecording, stopRecording,
         registerBuffer, hasBuffer, getBuffer, getBufferDuration, clearBuffers, computePeaks,
         play, stopAll, getPlaybackPosition, setNativeBackend, isNative, setBeatsPerBar,
-        updateTrackVolume, updateTrackPan, refreshAudibility, clearLiveNodes,
+        updateTrackVolume, updateTrackPan, updateComp, refreshAudibility, clearLiveNodes,
         getTrackAnalyser, getTrackMeters, trackChannelCount, getMasterAnalyser, getTrackSpectrum, getBusSpectrum, getCompReduction, setMasterVolume,
         setMetronome, setMetronomeBpm, setCountIn, isCountInEnabled,
         startMetronome, stopMetronome, playCountIn, stopCountIn, isCountingIn,

@@ -3287,3 +3287,20 @@ body.fx-drag-on, body.fx-drag-on * { cursor: grabbing !important; user-select: n
 .tp-val { font-size: 12px; color: #fff; }
 .tp-k em { font-style: normal; font-size: 9.5px; color: #7f709c; line-height: 1.3; margin-top: 1px; }
 .tune-pro .tune-scale { padding: 0 12px; }
+
+/* === Tranche de gauche façon Logic : sections en liste du haut vers le bas, fader tout en bas qui prend la place restante === */
+.inspector .insp-strip { align-items: stretch; }
+.inspector .strip-sends { display: flex !important; flex-direction: column; gap: 3px; padding: 6px 0 2px; }
+.inspector .strip-sends .strip-sends-title { text-align: left; padding: 0 2px; }
+.send-bar-row { position: relative; flex-direction: row !important; align-items: center; justify-content: space-between; gap: 4px !important; height: 22px; padding: 0 7px; border-radius: 5px; background: rgba(255, 255, 255, .06); overflow: hidden; cursor: ew-resize; font-size: 10px; color: var(--text-2, rgba(255, 255, 255, .7)); text-align: left; }
+.send-bar-row::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: var(--lvl, 0%); background: linear-gradient(90deg, color-mix(in srgb, var(--violet-1) 55%, transparent), color-mix(in srgb, var(--violet-2) 80%, transparent)); transition: width .06s linear; }
+.send-bar-row > * { position: relative; }
+.send-bar-row .sb-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: none; font-size: 10px; }
+.send-bar-row .sb-val { font-style: normal; font-size: 9.5px; opacity: 0; }
+.send-bar-row.on { color: #fff; }
+.send-bar-row.on .sb-val, .send-bar-row:hover .sb-val, .send-bar-row.turning .sb-val { opacity: .95; }
+.send-bar-row:hover { background: rgba(255, 255, 255, .1); }
+.insp-add-send { width: 100%; height: 20px; font-size: 10px; border-radius: 5px; background: transparent; color: var(--text-3, rgba(255, 255, 255, .5)); border: 1px dashed rgba(255, 255, 255, .16); cursor: pointer; }
+.insp-add-send:hover { color: #fff; border-color: var(--violet-2, #A855F7); }
+.inspector .strip-fader-wrap { flex: 1 1 auto; min-height: 120px; margin-top: auto; }
+.inspector .strip .fader, .inspector .insp-fader { flex: 1 1 0; height: auto; min-height: 100px; }

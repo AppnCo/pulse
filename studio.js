@@ -1742,13 +1742,14 @@ function inspectorStrip(kind, x, idx) {
             </div>`).join('') : (kind === 'track' && showTuneSlot(x) ? '' : '<div class="insp-empty">Aucun</div>')}
             ${x.premaster || x.locked ? '' : '<button class="insp-add-fx" data-tooltip="Ajouter un effet sur ' + (kind === 'bus' ? 'ce groupe' : 'cette piste') + '">+ Effet</button>'}
         </div>`}
-        ${sends.length ? `<div class="strip-sends">
+        ${(kind === 'track' || (kind === 'bus' && !x.premaster && !x.locked)) ? `<div class="strip-sends">
             <div class="strip-sends-title">Envois</div>
             ${sends.map(sd => `
-            <label class="strip-send-row ${(x.sends || {})[sd.id] > 0 ? 'on' : ''}" data-send="${esc(sd.id)}">
-                ${sendKnobHtml((x.sends || {})[sd.id] || 0)}<span>${esc(sd.name)}</span>
+            <label class="strip-send-row send-bar-row ${(x.sends || {})[sd.id] > 0 ? 'on' : ''}" data-send="${esc(sd.id)}" style="--lvl:${(x.sends || {})[sd.id] || 0}%" data-tooltip="Glisser à droite pour envoyer plus · double-clic = 0 · Maj = réglage fin">
+                <span class="sb-name">${esc(sd.name)}</span><em class="sb-val">${Math.round((x.sends || {})[sd.id] || 0)}</em>
                 <input type="range" class="insp-send" min="0" max="100" data-default="0" value="${(x.sends || {})[sd.id] || 0}" hidden>
             </label>`).join('')}
+            <button class="insp-add-send" data-tooltip="Ajouter un envoi (reverb ou écho commun) : il s'ajoute en bas de la liste">+ Envoi</button>
         </div>` : ''}
         ${(kind === 'track' || (kind === 'bus' && !x.premaster && !x.locked)) ? `<label class="insp-pan"><span>G</span><input type="range" class="insp-pan-input" min="-100" max="100" step="1" data-default="0" value="${x.pan || 0}" data-tooltip="Gauche / droite (⌘ + clic = centre, double-clic = écrire la valeur)"><span>D</span></label>` : ''}
         <div class="strip-fader-wrap">
@@ -1903,6 +1904,18 @@ function renderInspector() {
         const outBtn = strip.querySelector('.insp-output');
         if (outBtn && x) outBtn.addEventListener('click', (e) => { e.stopPropagation(); openOutputMenu(outBtn, kind, x, idx); });
         // Ajouter un effet (EQ, compresseur, reverb) : même chose sur une piste et sur un groupe
+        const addSendBtn = strip.querySelector('.insp-add-send');
+        if (addSendBtn) addSendBtn.addEventListener('click', (e) => {
+            e.stopPropagation(); closeAllMenus();
+            const r = addSendBtn.getBoundingClientRect();
+            const menu = document.createElement('div');
+            menu.className = 'track-ctx-menu';
+            menu.style.cssText = `position:fixed;left:${Math.min(r.left, window.innerWidth - 190)}px;top:${Math.max(8, Math.min(r.bottom + 2, window.innerHeight - 90))}px;z-index:300;`;
+            menu.innerHTML = '<div class="ctx-item" data-type="reverb">Ajouter une reverb commune</div><div class="ctx-item" data-type="delay">Ajouter un écho commun</div>';
+            menu.querySelectorAll('.ctx-item').forEach(it => it.addEventListener('mousedown', (ev) => { ev.stopPropagation(); closeAllMenus(); addSend(it.dataset.type); }));
+            document.body.appendChild(menu);
+            setTimeout(() => document.addEventListener('mousedown', closeAllMenus, { once: true }), 10);
+        });
         const addFx = strip.querySelector('.insp-add-fx');
         if (addFx && x) addFx.addEventListener('click', (e) => { e.stopPropagation(); openAddEffectMenu(addFx, kind === 'track' ? idx : x, x); });
     });
@@ -2323,8 +2336,23 @@ function sendKnobHtml(v) { return `<span class="send-knob" data-tooltip="Glisser
         };
         document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
     }, true);
+    // Envois de la tranche de gauche : barre horizontale façon Logic (glisser à droite = envoyer plus)
+    document.addEventListener('mousedown', (e) => {
+        const row = e.target.closest && e.target.closest('.send-bar-row'); if (!row || e.button !== 0) return;
+        const inp = row.querySelector('input[type="range"]'); if (!inp) return;
+        e.preventDefault(); e.stopPropagation();
+        const x0 = e.clientX, v0 = parseFloat(inp.value) || 0, w = Math.max(40, row.getBoundingClientRect().width);
+        row.classList.add('turning');
+        const move = (ev) => {
+            const nv = Math.round(Math.max(0, Math.min(100, v0 + (ev.clientX - x0) / w * 100 * (ev.shiftKey ? 0.15 : 1))));
+            if (nv === Math.round(parseFloat(inp.value))) return;
+            inp.value = nv; inp.dispatchEvent(new Event('input', { bubbles: true }));
+        };
+        const up = () => { row.classList.remove('turning'); document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); inp.dispatchEvent(new Event('change', { bubbles: true })); };
+        document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+    }, true);
     document.addEventListener('dblclick', (e) => {
-        const k = e.target.closest && e.target.closest('.send-knob'); if (!k) return;
+        const k = e.target.closest && (e.target.closest('.send-knob') || e.target.closest('.send-bar-row')); if (!k) return;
         const inp = k.closest('.strip-send-row').querySelector('input[type="range"]'); if (!inp) return;
         inp.value = 0; inp.dispatchEvent(new Event('input', { bubbles: true })); inp.dispatchEvent(new Event('change', { bubbles: true }));
     }, true);
@@ -2332,6 +2360,11 @@ function sendKnobHtml(v) { return `<span class="send-knob" data-tooltip="Glisser
     document.addEventListener('input', (e) => {
         const inp = e.target; if (!inp.closest) return;
         const row = inp.closest('.strip-send-row'); if (!row) return;
+        if (row.classList.contains('send-bar-row')) {
+            const v = parseFloat(inp.value) || 0;
+            row.style.setProperty('--lvl', v + '%'); const sv = row.querySelector('.sb-val'); if (sv) sv.textContent = Math.round(v);
+            row.classList.toggle('on', v > 0); return;
+        }
         const k = row.querySelector('.send-knob'); if (!k) return;
         const v = parseFloat(inp.value) || 0;
         k.innerHTML = sendKnobSvg(v) + `<em>${Math.round(v)}</em>`;
@@ -2446,7 +2479,7 @@ function addSend(type) {
         ? { id: 'send_' + Date.now().toString(36), name: 'Écho', type: 'delay', beats: 0.5, feedback: 35, volume: 100 }
         : { id: 'send_' + Date.now().toString(36), name: 'Reverb', type: 'reverb', size: 2, pre: 0, volume: 100 };
     sends.push(sd);
-    renderMixer(); bindMixerEvents(); saveProject();
+    renderMixer(); bindMixerEvents(); renderInspector(); saveProject();
     flash(`Envoi « ${sd.name} » ajouté — monte son curseur sur une piste pour l'entendre`);
     const el = document.querySelector(`.strip-return[data-send="${sd.id}"] .return-edit`);
     if (el) openSendPanel(sd.id, el);
@@ -4787,54 +4820,78 @@ function scaleLabel(tonic, minor) {
 // Les 7 notes d'une gamme majeure ou mineure
 const scaleMask = (tonic, minor) => PulseTune.toMask(minor ? (tonic + 3) % 12 : tonic);
 
+// Reconnaît la gamme formée par les notes choisies au clavier (majeur / mineur, ou la plus proche)
+function detectScale(mask) {
+    const on = mask.map((v, i) => v ? i : -1).filter(i => i >= 0);
+    if (on.length < 5) return 'Choisis au moins 5 notes pour trouver la gamme';
+    if (on.length === 12) return '';
+    const exact = [], close = [];
+    for (let m = 0; m < 2; m++) for (let t = 0; t < 12; t++) {
+        const sm = scaleMask(t, !!m), out = on.filter(i => !sm[i]).length, miss = sm.filter((v, i) => v && !mask[i]).length;
+        if (out === 0 && miss === 0) exact.push(scaleLabel(t, !!m));
+        else if (out === 0 && miss === 1 && on.length >= 6) close.push(scaleLabel(t, !!m));
+        else if (out === 1 && miss === 0 && on.length >= 7) close.push(scaleLabel(t, !!m));
+    }
+    if (exact.length) return 'Gamme : ' + exact.join('  =  ');
+    if (close.length) return 'Presque : ' + close[0] + ' (1 note de différence)';
+    return 'Pas une gamme majeure ou mineure';
+}
 // Petite note de piano, pour comparer à l'oreille avec la prod
-// Touche tenue (clavier de l'Auto-Tune) : la note sonne tant qu'on reste appuyé, comme sur un piano, puis s'éteint au relâchement
-function holdKeyNote(pc) {
+// Son de piano maison : harmoniques qui s'éteignent chacune à leur rythme (les aigus plus vite), deux cordes très légèrement
+// désaccordées, petit coup de marteau, timbre qui s'adoucit. La note meurt toute seule ; le relâchement = l'étouffoir.
+let _pianoNoise = null;
+function pianoVoice(pc, oct = 0) {
     const ctx = PulseAudio.getContext();
-    if (!ctx) return () => {};
-    const t = ctx.currentTime, g = ctx.createGain();
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.22, t + 0.008);
-    g.gain.setTargetAtTime(0.05, t + 0.05, 2.5);   // décroît doucement, comme une corde de piano
-    g.connect(ctx.destination);
-    const oscs = [1, 2].map((h, i) => {
-        const o = ctx.createOscillator();
-        o.type = 'triangle';
-        o.frequency.value = 261.63 * Math.pow(2, pc / 12) * h;
-        const og = ctx.createGain(); og.gain.value = i ? 0.3 : 1;
-        o.connect(og); og.connect(g);
-        o.start(t);
-        return o;
+    if (!ctx) return null;
+    const t = ctx.currentTime, f0 = 261.63 * Math.pow(2, pc / 12 + oct);
+    const env = ctx.createGain(); env.gain.setValueAtTime(0.0001, t); env.gain.linearRampToValueAtTime(1, t + 0.004);
+    env.gain.setTargetAtTime(0.0001, t + 0.004, 2.2 / (1 + Math.max(0, Math.log2(f0 / 261.63)) * 0.35));
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 0.3;
+    lp.frequency.setValueAtTime(Math.min(10000, f0 * 16), t);
+    lp.frequency.exponentialRampToValueAtTime(Math.max(1200, f0 * 3), t + 1.4);
+    const out = ctx.createGain(); out.gain.value = 0.2;
+    env.connect(lp); lp.connect(out); out.connect(ctx.destination);
+    const oscs = [];
+    const AMP = [1, 0.62, 0.42, 0.3, 0.2, 0.13, 0.09, 0.06];
+    AMP.forEach((a, i) => {
+        const n = i + 1, f = f0 * n * Math.sqrt(1 + 0.0004 * n * n);
+        if (f > 12000) return;
+        const pg = ctx.createGain(); pg.gain.setValueAtTime(a / 1.6, t);
+        pg.gain.setTargetAtTime(0.0001, t + 0.004, 2.4 / Math.pow(n, 0.7));
+        pg.connect(env);
+        [-1.3, 1.3].forEach(c => {
+            const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = f; o.detune.value = c;
+            o.connect(pg); o.start(t); o.stop(t + 9); oscs.push(o);
+        });
     });
+    // Coup de marteau
+    if (!_pianoNoise || _pianoNoise.ctx !== ctx) {
+        const buf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.04), ctx.sampleRate), d = buf.getChannelData(0);
+        for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 3);
+        _pianoNoise = { ctx, buf };
+    }
+    const ns = ctx.createBufferSource(); ns.buffer = _pianoNoise.buf;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = Math.min(6000, f0 * 5); bp.Q.value = 0.8;
+    const ng = ctx.createGain(); ng.gain.value = 0.5;
+    ns.connect(bp); bp.connect(ng); ng.connect(out); ns.start(t);
     let done = false;
-    const release = () => {
+    return () => {   // étouffoir
         if (done) return; done = true;
         const r = ctx.currentTime;
-        g.gain.cancelScheduledValues(r);
-        g.gain.setValueAtTime(Math.max(0.0001, g.gain.value), r);
-        g.gain.exponentialRampToValueAtTime(0.0001, r + 0.25);
-        oscs.forEach(o => o.stop(r + 0.3));
+        env.gain.cancelScheduledValues(r);
+        env.gain.setValueAtTime(Math.max(0.0001, env.gain.value), r);
+        env.gain.exponentialRampToValueAtTime(0.0001, r + 0.22);
+        oscs.forEach(o => { try { o.stop(r + 0.26); } catch {} });
     };
-    setTimeout(release, 12000);   // sécurité : jamais une note coincée
-    return release;
 }
-function playKeyNote(pc) {
-    const ctx = PulseAudio.getContext();
-    if (!ctx) return;
-    const t = ctx.currentTime, g = ctx.createGain();
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.22, t + 0.008);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.9);
-    g.connect(ctx.destination);
-    [1, 2].forEach((h, i) => {
-        const o = ctx.createOscillator();
-        o.type = 'triangle';
-        o.frequency.value = 261.63 * Math.pow(2, pc / 12) * h;
-        const og = ctx.createGain(); og.gain.value = i ? 0.3 : 1;
-        o.connect(og); og.connect(g);
-        o.start(t); o.stop(t + 1);
-    });
+// Touche tenue : la note sonne et s'éteint seule comme sur un piano ; le relâchement l'étouffe
+function holdKeyNote(pc, oct = 0) {
+    const rel = pianoVoice(pc, oct);
+    if (!rel) return () => {};
+    const safety = setTimeout(rel, 12000);   // sécurité : jamais une note coincée
+    return () => { clearTimeout(safety); rel(); };
 }
+function playKeyNote(pc) { pianoVoice(pc); }
 
 function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false) {
     closeTransientPanels();
@@ -4900,7 +4957,7 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false) {
                 ${WHITE.map(pc => `<button class="tune-key-btn white" data-pc="${pc}"><em>${PulseTune.NOTE_NAMES[pc]}</em></button>`).join('')}
                 ${BLACK.map(pc => `<button class="tune-key-btn black" data-pc="${pc}" style="left: calc(${blackLeft[pc]} * 100% / 7)"></button>`).join('')}
             </div>
-            <div class="tune-hint">Clic : jouer · <kbd>⌘</kbd> + clic : retirer / remettre la note — elle compte à toutes les octaves</div>
+            <div class="tune-hint">Joue au clavier de l'ordi (<kbd>A</kbd> <kbd>W</kbd> <kbd>S</kbd> <kbd>E</kbd> <kbd>D</kbd> <kbd>F</kbd> <kbd>T</kbd> <kbd>G</kbd> <kbd>Y</kbd> <kbd>H</kbd> <kbd>U</kbd> <kbd>J</kbd>, <kbd>Z</kbd> / <kbd>X</kbd> = octave) ou à la souris · <kbd>⌘</kbd> + clic : retirer / remettre la note, pour toutes les octaves</div>
         </div>
         <div class="fx-panel-footer tb-foot">
             ${trackMode ? '<label class="tune-all" data-tooltip="Copie ce réglage sur toutes les pistes qui ont PulseTune allumé"><input type="checkbox" class="tune-all-box"> Même réglage partout</label>' : '<span></span>'}
@@ -4918,7 +4975,7 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false) {
             k.classList.toggle('tonic', +k.dataset.pc === tonic && !!(mask && mask[tonic]) && !chroma());
         });
         const named = source === 'instru' || source === 'gamme';
-        status.textContent = !mask ? 'Gamme devinée sur ta voix' : source === 'instru' ? `Lue sur l'instru : ${scaleLabel(tonic, minor)}` : source === 'gamme' || chroma() ? '' : 'Notes choisies à la main';
+        status.textContent = !mask ? 'Gamme devinée sur ta voix' : source === 'instru' ? `Lue sur l'instru : ${scaleLabel(tonic, minor)}` : source === 'gamme' || chroma() ? '' : detectScale(mask);
         panel.querySelector('.tune-tonic').value = String(tonic);
         panel.querySelector('.tune-scale').classList.toggle('is-manual', !!mask && !named);
         panel.querySelectorAll('.tune-mode button').forEach(b => b.classList.toggle('on', b.dataset.chroma ? chroma() : !chroma() && (b.dataset.minor === '1') === minor));
@@ -5065,6 +5122,35 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false) {
             document.addEventListener('mouseup', up); k.addEventListener('mouseleave', up);
         });
     });
+    // Clavier d'ordinateur = clavier de piano (comme dans le piano roll), tant que PulseTune est ouvert
+    {
+        const KM = { a: 0, w: 1, s: 2, e: 3, d: 4, f: 5, t: 6, g: 7, y: 8, h: 9, u: 10, j: 11, k: 12, o: 13, l: 14 };
+        const phys = (e) => (e.code && /^Key[A-Z]$/.test(e.code)) ? e.code.slice(3).toLowerCase() : String(e.key || '').toLowerCase();
+        const held = new Map(); let oct = 0;
+        const lamp = (n, on) => { const b = panel.querySelector(`.tune-key-btn[data-pc="${n % 12}"]`); if (b) b.classList.toggle('pressed', on); };
+        const stopAll = () => { held.forEach((h, k) => { h.rel(); lamp(h.n, false); }); held.clear(); };
+        const cleanup = () => { stopAll(); document.removeEventListener('keydown', onDown, true); document.removeEventListener('keyup', onUp, true); };
+        const onDown = (e) => {
+            if (!panel.isConnected) { cleanup(); return; }
+            if (e.metaKey || e.ctrlKey || e.altKey) return;
+            if (e.target && e.target.closest && e.target.closest('input, textarea, select, [contenteditable]')) return;
+            const k = phys(e);
+            if (k === 'z' || k === 'x') { e.preventDefault(); e.stopImmediatePropagation(); if (!e.repeat) oct = Math.max(-2, Math.min(2, oct + (k === 'x' ? 1 : -1))); return; }
+            const n = KM[k]; if (n === undefined) return;
+            e.preventDefault(); e.stopImmediatePropagation();
+            if (e.repeat || held.has(k)) return;
+            held.set(k, { n, rel: holdKeyNote(n % 12, oct + Math.floor(n / 12)) });
+            lamp(n, true);
+        };
+        const onUp = (e) => {
+            if (!panel.isConnected) { cleanup(); return; }
+            const k = phys(e), h = held.get(k); if (!h) return;
+            e.preventDefault(); e.stopImmediatePropagation();
+            h.rel(); lamp(h.n, false); held.delete(k);
+        };
+        document.addEventListener('keydown', onDown, true); document.addEventListener('keyup', onUp, true);
+        window.addEventListener('blur', stopAll);
+    }
     panel.querySelectorAll('[data-q]').forEach(b => {
         b.addEventListener('mousedown', (e) => e.preventDefault());
         b.addEventListener('click', () => {
@@ -6947,6 +7033,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
     const applySkin = () => {
         const sk = skinOf(); if (sk === skinNow) return;
         skinNow = sk;
+        const keepRect = panel.style.left ? panel.getBoundingClientRect() : null;
         // Façade Bus : chaque réglage cranté se pose sur le cran le plus proche (le son suit ce qu'on voit)
         if (sk === 'U') {
             let moved = false;
@@ -6956,12 +7043,22 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
         ['P', 'O', 'F', 'U'].forEach(x => panel.classList.toggle('skin-' + x, x === sk));
         const face = panel.querySelector('.fx-face'), old = face.querySelector('.fx-wear');
         if (old) old.remove();
-        if (panel.style.left) place(panel.getBoundingClientRect().left);   // la façade Bus est plus large : on recale la fenêtre
         if (sk !== 'P') face.insertAdjacentHTML('afterbegin', fxWearSvg(sk, FX_SKIN_SEED[sk], face.offsetWidth || 340, face.offsetHeight || 340));   // à la taille réelle : vis bien rondes
+        if (keepRect) {   // la façade Bus est plus large : on recale la fenêtre, mais elle reste exactement où elle était si elle tient à l'écran
+            place(keepRect.left);
+            const z = parseFloat(panel.style.zoom) || 1;
+            if (keepRect.left + panel.offsetWidth * z <= window.innerWidth - 8 && keepRect.top + panel.offsetHeight * z <= window.innerHeight - 8) plugSetPos(panel, keepRect.left, keepRect.top);
+        }
         if (viz) drawViz();
     };
     const refreshAll = () => { applySkin(); defs.forEach(d => refreshCell(d.key)); if (viz && !analog) drawViz(); };
-    const commit = () => { refreshPlaybackSoon(); saveProject(); };
+    const commit = () => {
+        // Compresseur en lecture : réglage envoyé en direct (pas de coupure) ; sinon on reconstruit comme avant
+        const live = fxName === 'comp' && state.playing && PulseAudio.updateComp
+            && PulseAudio.updateComp(typeof trackIdx === 'number' ? 't' + trackIdx : 'b' + t.id, t.effectParams.comp);
+        if (!live) refreshPlaybackSoon();
+        saveProject();
+    };
     const valOf2 = (d) => { const v = (t.effectParams[fxName] || {})[d.key]; return v !== undefined ? v : d.def; };
     panel.querySelectorAll('.fx-slider').forEach(sl => {
         sl.addEventListener('change', () => { sl._undone = false; });
