@@ -38,6 +38,7 @@ window.PulseAudio = (function() {
 
     // Lecture
     let activeSources = [];
+    let activeGraph = [];   // tous les noeuds de la lecture en cours, débranchés à l'arrêt
     let playbackStartCtxTime = 0;
     let playbackStartProjectTime = 0;
     let isPlaying = false;
@@ -626,7 +627,9 @@ window.PulseAudio = (function() {
         const r = { threshold: cp.threshold, ratio: cp.ratio, attack: cp.attack, release: cp.release, knee: cp.knee, makeup: cp.makeup, mix: cp.mix, mode: cp.mode, autoRel: cp.autoRel };
         try { n.port.postMessage({ set: r }); return true; } catch (e) { return false; }
     }
-    function getCompReduction(key) { return compGR.has(key) ? compGR.get(key) : null; }
+    const compGRts = new Map();
+    // La valeur de l'aiguille vient du compresseur en cours de lecture ; si plus rien n'arrive (arrêt, graphe reconstruit), elle est périmée
+    function getCompReduction(key) { return compGR.has(key) && performance.now() - (compGRts.get(key) || 0) < 250 ? compGR.get(key) : null; }
     function getBusSpectrum(busId) { return liveBusSpec.get(busId) || null; }
     function getTrackSpectrum(trackIdx) { const n = liveNodes.get(trackIdx); return n && n.spec ? n.spec : null; }
 
@@ -1105,6 +1108,14 @@ window.PulseAudio = (function() {
                     sg.gain.value = level / 100;
                     tail.connect(sg); sg.connect(sendIn);
                 }
+                for (const [busId, level] of Object.entries(bus.busSends || {})) {
+                    if (!(level > 0) || busId === id) continue;
+                    const tgt = getBus(busId);
+                    if (!tgt || tgt === dest || tgt === out) continue;
+                    const sg = actx.createGain();
+                    sg.gain.value = level / 100;
+                    tail.connect(sg); sg.connect(tgt);
+                }
             }
             if (live) {
                 liveBusNodes.set(id, g);
@@ -1206,6 +1217,15 @@ window.PulseAudio = (function() {
                 const sg = actx.createGain();
                 sg.gain.value = level / 100;
                 panNode.connect(sg); sg.connect(send);
+            }
+            // Envois vers un groupe (façon Aux de Logic) : le son part en plus vers l'entrée de ce groupe
+            for (const [busId, level] of Object.entries(track.busSends || {})) {
+                if (!(level > 0)) continue;
+                const tgt = getBus(busId);
+                if (!tgt || tgt === dest || tgt === trackDest) continue;
+                const sg = actx.createGain();
+                sg.gain.value = level / 100;
+                panNode.connect(sg); sg.connect(tgt);
             }
 
             (track.clips || []).forEach(clip => {
@@ -1329,9 +1349,17 @@ window.PulseAudio = (function() {
 
         playbackStartCtxTime = ctx.currentTime + 0.05; // petit lookahead
         playbackStartProjectTime = fromTime;
-        activeSources = buildGraph(ctx, project, masterGain, {
-            fromTime, t0: playbackStartCtxTime, live: true
-        });
+        // On note chaque noeud créé pour pouvoir TOUT débrancher à l'arrêt (sinon les anciens effets et analyseurs
+        // continuent de tourner dans le vide : à chaque ajout de plugin le son devenait plus lent et craquait)
+        const made = new Set(), protoConnect = AudioNode.prototype.connect;
+        AudioNode.prototype.connect = function (...a) { made.add(this); return protoConnect.apply(this, a); };
+        try {
+            activeSources = buildGraph(ctx, project, masterGain, {
+                fromTime, t0: playbackStartCtxTime, live: true
+            });
+        } finally { AudioNode.prototype.connect = protoConnect; }
+        made.delete(masterGain);
+        activeGraph = [...made];
         isPlaying = true;
         // Capture lancée juste avant la lecture : on la cale sur CE départ (et on n'y touche plus ensuite)
         if ((recNode || recorder) && !recAlign) recAlign = { c: playbackStartCtxTime, p: playbackStartProjectTime };
@@ -1343,6 +1371,8 @@ window.PulseAudio = (function() {
             try { s.stop(); } catch {}
         });
         activeSources = [];
+        activeGraph.forEach(n => { try { n.disconnect(); } catch {} });
+        activeGraph = [];
         isPlaying = false;
     }
 
@@ -1620,7 +1650,11 @@ window.PulseAudio = (function() {
                         numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max',
                         processorOptions: { threshold: cp.threshold, ratio: cp.ratio, attack: cp.attack, release: cp.release, knee: cp.knee, makeup: cp.makeup, mix: cp.mix, mode: cp.mode, autoRel: cp.autoRel, report: live }
                     });
-                    if (live) { node.port.onmessage = (e) => compGR.set(params.grKey, e.data); compLive.set(params.grKey, node); }
+                    if (live) {
+                        const old = compLive.get(params.grKey); if (old && old !== node) old.port.onmessage = null;   // l'ancien compresseur ne parle plus (sinon l'aiguille saute entre deux)
+                        node.port.onmessage = (e) => { compGR.set(params.grKey, e.data); compGRts.set(params.grKey, performance.now()); };
+                        compLive.set(params.grKey, node);
+                    }
                     connect(node);
                 } else {
                     const comp = actx.createDynamicsCompressor();

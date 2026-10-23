@@ -169,9 +169,9 @@ const TEMPLATES = [
         // Disposition B (validée le 22/10) : l'essentiel visible, le reste n'apparaît qu'à l'usage
         tracks: [
             { name: 'Prod',          type: 'audio', preset: 'instru', output: 'mixbus1',  color: '#C084FC' },
-            { name: 'REC',           type: 'audio', isCapture: true, armed: true, output: 'vocal1', color: '#A855F7', tuneSlot: true },
-            { name: 'Back Auto-Tune', type: 'audio', output: 'back',     color: '#D8B4FE', tuneSlot: true },
-            { name: 'Amb Auto-Tune',  type: 'audio', output: 'ambiance', color: '#F0ABFC', tuneSlot: true }
+            { name: 'REC',           type: 'audio', isCapture: true, armed: true, output: 'vocal1', color: '#A855F7' },
+            { name: 'Back Auto-Tune', type: 'audio', output: 'back',     color: '#D8B4FE' },
+            { name: 'Amb Auto-Tune',  type: 'audio', output: 'ambiance', color: '#F0ABFC' }
         ],
         buses: [
             { id: 'vocal1',   name: 'Vocal 1',   isGroup: true, spots: true, output: 'allvocal', color: '#A855F7', sound: { preset: 'lead', tone: 0, hold: 35, drive: 10, space: 0, deess: 30 },

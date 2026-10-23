@@ -23,7 +23,8 @@ const TYPE_COLORS = { audio: '#A855F7', keys: '#22D3EE', drums: '#F59E0B', inst:
 
 // Piste d'instru : modèle (preset), ancien type « instru » ou piste créée par le menu + (« inst »)
 // Auto-Tune affiché sur une piste de voix seulement s'il a été ajouté (ou fourni par le modèle) : un projet vide n'en a pas
-function showTuneSlot(t) { return isVoiceTrack(t) && !!(t.tuneSlot || t.autotune); }
+// PulseTune est un effet comme les autres : sur n'importe quelle piste (voix, instrument…), seulement si on l'a ajouté
+function showTuneSlot(t) { return !!t && !t.premaster && !!(t.tuneSlot || t.autotune); }
 function isVoiceTrack(t) { return !!t && (t.type === 'audio' || !t.type) && !t.isCapture && !isInstruTrack(t); }
 function isInstruTrack(t) { return !!t && (t.preset === 'instru' || t.type === 'instru' || t.type === 'inst'); }
 
@@ -1732,24 +1733,33 @@ function inspectorStrip(kind, x, idx) {
         ${isMaster ? '<div class="insp-note">Tout le morceau sort ici</div>' : `<button class="strip-sound insp-sound" data-tooltip="${x.premaster ? 'Le réglage final de tout le morceau' : 'Choisir le son'}">${esc(soundLabel)} ▾</button>`}
         ${isMaster ? '' : `<div class="insp-fx">
             <div class="strip-sends-title">Effets</div>
+            <div class="insp-slots insp-fx-box" data-add="fx">
             ${kind === 'track' && showTuneSlot(x) ? `<div class="insp-fx-row insp-tune-row ${x.autotune && x.autotune.on ? 'on' : 'is-off'}" data-fx="tune" data-tooltip="${x.autotune && x.autotune.on ? 'Auto-Tune : clic pour régler' : 'Auto-Tune éteint : clic pour le régler et l\'allumer'}">
                 <span>PulseTune</span><i class="insp-del" data-tooltip="Retirer PulseTune (Auto-Tune) de cette piste">×</i>
             </div>` : ''}
-            ${chain.length ? chain.map((n, k) => `
+            ${chain.map((n, k) => `
             <div class="insp-fx-row ${x.premaster || n === 'limit' || n === 'master' ? '' : 'can-drag'}" data-fx="${n}" data-tooltip="Clic pour régler · clic maintenu et glisser pour changer l'ordre · clic droit pour copier ou supprimer">
                 <span>${FX_NAMES[n] || n}</span>
                 ${x.premaster || x.locked || n === 'limit' || n === 'master' ? '' : '<i class="insp-del" data-tooltip="Supprimer cet effet">×</i>'}
-            </div>`).join('') : (kind === 'track' && showTuneSlot(x) ? '' : '<div class="insp-empty">Aucun</div>')}
-            ${x.premaster || x.locked ? '' : '<button class="insp-add-fx" data-tooltip="Ajouter un effet sur ' + (kind === 'bus' ? 'ce groupe' : 'cette piste') + '">+ Effet</button>'}
+            </div>`).join('')}
+            ${x.premaster || x.locked ? '' : Array.from({ length: Math.max(4, 8 - chain.length - (kind === 'track' && showTuneSlot(x) ? 1 : 0)) }, (_, i) => `<div class="insp-slot-empty${i === 0 ? ' insp-add-fx' : ''}" data-tooltip="Emplacement libre : clique pour mettre un effet"></div>`).join('')}
+            </div>
         </div>`}
         ${(kind === 'track' || (kind === 'bus' && !x.premaster && !x.locked)) ? `<div class="strip-sends">
             <div class="strip-sends-title">Envois</div>
+            <div class="insp-slots insp-sends-box" data-add="send">
             ${sends.map(sd => `
-            <label class="strip-send-row send-bar-row ${(x.sends || {})[sd.id] > 0 ? 'on' : ''}" data-send="${esc(sd.id)}" style="--lvl:${(x.sends || {})[sd.id] || 0}%" data-tooltip="Glisser à droite pour envoyer plus · double-clic = 0 · Maj = réglage fin">
+            <label class="strip-send-row send-bar-row ${(x.sends || {})[sd.id] > 0 ? 'on' : ''}" data-send="${esc(sd.id)}" style="--lvl:${(x.sends || {})[sd.id] || 0}%" data-tooltip="Glisser pour envoyer plus · double-clic = écrire le chiffre · ⌘ + clic = remettre à 0 · Maj = réglage fin">
                 <span class="sb-name">${esc(sd.name)}</span><em class="sb-val">${Math.round((x.sends || {})[sd.id] || 0)}</em>
                 <input type="range" class="insp-send" min="0" max="100" data-default="0" value="${(x.sends || {})[sd.id] || 0}" hidden>
             </label>`).join('')}
-            <button class="insp-add-send" data-tooltip="Ajouter un envoi (reverb ou écho commun) : il s'ajoute en bas de la liste">+ Envoi</button>
+            ${Object.keys(x.busSends || {}).filter(id => busById(id)).map(id => `
+            <label class="strip-send-row send-bar-row on" data-bsend="${esc(id)}" style="--lvl:${x.busSends[id]}%" data-tooltip="Envoi vers le groupe « ${esc(busById(id).name)} » · glisser pour régler · double-clic = écrire le chiffre · ⌘ + clic = remettre à 0 · clic droit = retirer">
+                <span class="sb-name">→ ${esc(busById(id).name)}</span><em class="sb-val">${Math.round(x.busSends[id])}</em>
+                <input type="range" class="insp-send" min="0" max="100" data-default="0" value="${x.busSends[id]}" hidden>
+            </label>`).join('')}
+            ${Array.from({ length: Math.max(2, 4 - sends.length - Object.keys(x.busSends || {}).length) }, (_, i) => `<div class="insp-slot-empty${i === 0 ? ' insp-add-send' : ''}" data-tooltip="Emplacement libre : clique pour envoyer vers une reverb, un écho ou un groupe"></div>`).join('')}
+            </div>
         </div>` : ''}
         ${(kind === 'track' || (kind === 'bus' && !x.premaster && !x.locked)) ? `<label class="insp-pan"><span>G</span><input type="range" class="insp-pan-input" min="-100" max="100" step="1" data-default="0" value="${x.pan || 0}" data-tooltip="Gauche / droite (⌘ + clic = centre, double-clic = écrire la valeur)"><span>D</span></label>` : ''}
         <div class="strip-fader-wrap">
@@ -1865,7 +1875,8 @@ function renderInspector() {
         });
         bindFxDrag(strip, x);
         strip.querySelectorAll('.insp-send').forEach(sl => {
-            const id = sl.closest('.strip-send-row').dataset.send;
+            const srow = sl.closest('.strip-send-row');
+            const isBusSend = !!srow.dataset.bsend, id = srow.dataset.send || srow.dataset.bsend;
             let undoPushed = false;
             sl.addEventListener('input', () => {
                 if (!undoPushed) { pushUndo(); undoPushed = true; }
@@ -1873,15 +1884,21 @@ function renderInspector() {
                 // la piste, ou le groupe de cette tranche — et, si plusieurs pistes sont choisies, toutes les pistes choisies
                 const targets = kind === 'track' ? selectedTrackIdxs().map(i => state.project.tracks[i]).filter(Boolean) : [x || t];
                 targets.forEach(o => {
+                    if (isBusSend) { o.busSends = o.busSends || {}; o.busSends[id] = v; return; }
                     o.sends = o.sends || {};
                     if (v > 0) o.sends[id] = v; else delete o.sends[id];
                     const sends = projectSends(), key = id === sends.find(s => s.type === 'reverb')?.id ? 'space' : id === sends.find(s => s.type === 'delay')?.id ? 'echo' : null;
                     if (key && o.sound) o.sound[key] = v;
                 });
-                sl.closest('.strip-send-row').classList.toggle('on', v > 0);
+                srow.classList.toggle('on', v > 0 || isBusSend);
                 refreshPlaybackSoon();
             });
             sl.addEventListener('change', () => { undoPushed = false; saveProject(); if (state.mixerOpen) { renderMixer(); bindMixerEvents(); } });
+            if (isBusSend) srow.addEventListener('contextmenu', (e) => {
+                e.preventDefault(); e.stopPropagation();
+                pushUndo(); delete x.busSends[id]; saveProject(); refreshPlaybackSoon(); renderInspector();
+                flash('Envoi vers « ' + (busById(id) ? busById(id).name : 'groupe') + ' » retiré');
+            });
         });
         const pan = strip.querySelector('.insp-pan-input');
         if (pan) {
@@ -1903,22 +1920,56 @@ function renderInspector() {
         // Direction : où part le son de cette piste / de ce groupe
         const outBtn = strip.querySelector('.insp-output');
         if (outBtn && x) outBtn.addEventListener('click', (e) => { e.stopPropagation(); openOutputMenu(outBtn, kind, x, idx); });
-        // Ajouter un effet (EQ, compresseur, reverb) : même chose sur une piste et sur un groupe
-        const addSendBtn = strip.querySelector('.insp-add-send');
-        if (addSendBtn) addSendBtn.addEventListener('click', (e) => {
-            e.stopPropagation(); closeAllMenus();
-            const r = addSendBtn.getBoundingClientRect();
-            const menu = document.createElement('div');
-            menu.className = 'track-ctx-menu';
-            menu.style.cssText = `position:fixed;left:${Math.min(r.left, window.innerWidth - 190)}px;top:${Math.max(8, Math.min(r.bottom + 2, window.innerHeight - 90))}px;z-index:300;`;
-            menu.innerHTML = '<div class="ctx-item" data-type="reverb">Ajouter une reverb commune</div><div class="ctx-item" data-type="delay">Ajouter un écho commun</div>';
-            menu.querySelectorAll('.ctx-item').forEach(it => it.addEventListener('mousedown', (ev) => { ev.stopPropagation(); closeAllMenus(); addSend(it.dataset.type); }));
-            document.body.appendChild(menu);
-            setTimeout(() => document.addEventListener('mousedown', closeAllMenus, { once: true }), 10);
+        // Emplacements vides façon Logic : un clic dans le vide d'une liste ajoute un effet / un envoi
+        const fxBox = strip.querySelector('.insp-fx-box');
+        if (fxBox && x && !x.premaster && !x.locked) fxBox.addEventListener('click', (e) => {
+            if (e.target.closest('.insp-fx-row')) return;
+            e.stopPropagation(); openAddEffectMenu(e.target.closest('.insp-slot-empty') || fxBox, kind === 'track' ? idx : x, x);
         });
-        const addFx = strip.querySelector('.insp-add-fx');
-        if (addFx && x) addFx.addEventListener('click', (e) => { e.stopPropagation(); openAddEffectMenu(addFx, kind === 'track' ? idx : x, x); });
+        const sdBox = strip.querySelector('.insp-sends-box');
+        if (sdBox && x) sdBox.addEventListener('click', (e) => {
+            if (e.target.closest('.send-bar-row')) return;
+            e.stopPropagation(); openSendTargetMenu(e.target.closest('.insp-slot-empty') || sdBox, kind, x);
+        });
     });
+}
+
+// Où envoyer le son (comme Logic : n'importe quel groupe, ou une nouvelle reverb / un nouvel écho)
+function busFeeds(from, toId, depth = 0) {   // le groupe `from` finit-il par passer dans `toId` ? (évite les boucles)
+    if (!from || depth > 10) return false;
+    if (from.id === toId) return true;
+    if (from.output && from.output !== 'master') { const nx = busById(from.output); if (nx) return busFeeds(nx, toId, depth + 1); }
+    return false;
+}
+function openSendTargetMenu(anchor, kind, x) {
+    closeAllMenus();
+    const r = anchor.getBoundingClientRect();
+    const menu = document.createElement('div');
+    menu.className = 'track-ctx-menu';
+    menu.style.cssText = `position:fixed;left:${Math.max(8, Math.min(r.left, window.innerWidth - 230))}px;top:${Math.max(8, Math.min(r.bottom + 2, window.innerHeight - 320))}px;z-index:300;min-width:210px;max-height:60vh;overflow:auto`;
+    const items = [
+        { head: 'Nouveaux retours d\'effet' },
+        { label: 'Nouvelle reverb', run: () => addSend('reverb') },
+        { label: 'Nouvel écho', run: () => addSend('delay') },
+        { head: 'Vers un groupe' }
+    ];
+    const buses = (state.project.buses || []).filter(b => !b.premaster && b.id !== 'master' && !(kind === 'bus' && busFeeds(busById(b.id), x.id)) && !(x.busSends || {})[b.id]);
+    // un groupe où ce son passe déjà (sa sortie) n'a pas besoin d'envoi
+    buses.forEach(b => items.push({ label: b.name, run: () => {
+        pushUndo(); const set = kind === 'track' ? selectedTrackIdxs().map(i => state.project.tracks[i]).filter(Boolean) : [x];
+        (set.includes(x) ? set : [x]).forEach(o => { o.busSends = o.busSends || {}; o.busSends[b.id] = 50; });
+        saveProject(); refreshPlaybackSoon(); renderInspector();
+        flash(`Envoi vers « ${b.name} » ajouté à 50 : double-clic sur sa barre pour écrire le chiffre`);
+    } }));
+    if (!buses.length) items.push({ head: '(aucun autre groupe disponible)' });
+    items.forEach(it => {
+        const el = document.createElement('div');
+        if (it.head) { el.className = 'ctx-head'; el.textContent = it.head; }
+        else { el.className = 'ctx-item'; el.textContent = it.label; el.addEventListener('mousedown', (ev) => { ev.stopPropagation(); closeAllMenus(); it.run(); }); }
+        menu.appendChild(el);
+    });
+    document.body.appendChild(menu);
+    setTimeout(() => document.addEventListener('mousedown', closeAllMenus, { once: true }), 10);
 }
 
 // Copier / coller le réglage d'un effet d'une piste (ou d'un bus) à l'autre, comme dans Logic
@@ -2074,7 +2125,7 @@ function openAddEffectMenu(anchor, target, x) {
     let recent = [];
     try { recent = JSON.parse(localStorage.getItem('pulse_fx_recent') || '[]').filter(n => fxLabel[n]); } catch {}
     const cats = ADD_FX_CATEGORIES.map(([c, names]) => [c, names.filter(n => fxLabel[n])]);
-    const voice = isVoiceTrack(x);
+    const voice = state.project.tracks.includes(x);   // PulseTune : sur toute piste, pas sur un groupe
     if (voice) { const vh = cats.find(([c]) => c === 'Voix et hauteur'); if (vh) vh[1] = ['tune', ...vh[1]]; }   // Auto-Tune en tête : 1er maillon d'une voix
     const left = document.createElement('div'); left.className = 'fam-left';
     const right = document.createElement('div'); right.className = 'fam-right';
@@ -2340,7 +2391,9 @@ function sendKnobHtml(v) { return `<span class="send-knob" data-tooltip="Glisser
     document.addEventListener('mousedown', (e) => {
         const row = e.target.closest && e.target.closest('.send-bar-row'); if (!row || e.button !== 0) return;
         const inp = row.querySelector('input[type="range"]'); if (!inp) return;
+        if (e.target.closest && e.target.closest('.sb-edit')) return;
         e.preventDefault(); e.stopPropagation();
+        if (e.metaKey || e.ctrlKey) { inp.value = 0; inp.dispatchEvent(new Event('input', { bubbles: true })); inp.dispatchEvent(new Event('change', { bubbles: true })); return; }   // ⌘ + clic = à 0
         const x0 = e.clientX, v0 = parseFloat(inp.value) || 0, w = Math.max(40, row.getBoundingClientRect().width);
         row.classList.add('turning');
         const move = (ev) => {
@@ -2353,9 +2406,47 @@ function sendKnobHtml(v) { return `<span class="send-knob" data-tooltip="Glisser
     }, true);
     document.addEventListener('dblclick', (e) => {
         const k = e.target.closest && (e.target.closest('.send-knob') || e.target.closest('.send-bar-row')); if (!k) return;
-        const inp = k.closest('.strip-send-row').querySelector('input[type="range"]'); if (!inp) return;
-        inp.value = 0; inp.dispatchEvent(new Event('input', { bubbles: true })); inp.dispatchEvent(new Event('change', { bubbles: true }));
+        const row = k.closest('.strip-send-row'), inp = row.querySelector('input[type="range"]'); if (!inp) return;
+        e.preventDefault(); e.stopPropagation();
+        const val = row.querySelector('.sb-val');
+        if (!val) { inp.value = 0; inp.dispatchEvent(new Event('input', { bubbles: true })); inp.dispatchEvent(new Event('change', { bubbles: true })); return; }
+        // Façon Logic : le chiffre devient un champ où l'on tape la valeur exacte (0 à 100)
+        const ed = document.createElement('input');
+        ed.className = 'sb-edit'; ed.type = 'text'; ed.inputMode = 'numeric'; ed.value = Math.round(parseFloat(inp.value) || 0);
+        val.hidden = true; val.after(ed); ed.focus(); ed.select();
+        let done = false;
+        const finish = (ok) => {
+            if (done) return; done = true;
+            const n = parseFloat(String(ed.value).replace(',', '.'));
+            ed.remove(); val.hidden = false;
+            if (!ok || !isFinite(n)) return;
+            inp.value = Math.max(0, Math.min(100, Math.round(n)));
+            inp.dispatchEvent(new Event('input', { bubbles: true })); inp.dispatchEvent(new Event('change', { bubbles: true }));
+        };
+        ed.addEventListener('mousedown', (ev) => ev.stopPropagation());
+        ed.addEventListener('keydown', (ev) => { ev.stopPropagation(); if (ev.key === 'Enter') finish(true); else if (ev.key === 'Escape') finish(false); });
+        ed.addEventListener('blur', () => finish(true));
     }, true);
+    // Molette au survol (comme Logic) : envois, faders, gauche/droite se dosent en faisant défiler ; Maj = réglage fin
+    document.addEventListener('wheel', (e) => {
+        if (e.altKey || e.metaKey || e.ctrlKey || !e.target.closest) return;
+        const el = e.target.closest('.send-bar-row, .send-knob, .strip-send-row, input.fader, input.t-vol, input.insp-pan-input, .strip-pan input[type="range"]');
+        if (!el) return;
+        const inp = el.matches('input[type="range"]') ? el : el.querySelector('input[type="range"]');
+        if (!inp || inp.disabled) return;
+        e.preventDefault(); e.stopPropagation();
+        const min = parseFloat(inp.min), max = parseFloat(inp.max), span = max - min;
+        const step = (e.shiftKey ? 0.25 : 1) * span / 100 * Math.max(0.5, Math.min(4, Math.abs(e.deltaMode === 0 ? e.deltaY / 12 : e.deltaY * 3)));
+        inp._wacc = (inp._wacc || 0) + (e.deltaY < 0 ? step : -step);
+        const whole = el.matches('.strip-send-row, .send-bar-row, .send-knob') || inp.classList.contains('insp-pan-input');
+        const apply = whole ? Math.trunc(inp._wacc) : inp._wacc;
+        if (!apply) return;
+        inp._wacc -= apply;
+        const nv = Math.max(min, Math.min(max, parseFloat(inp.value) + apply));
+        if (nv === parseFloat(inp.value)) return;
+        inp.value = nv; inp.dispatchEvent(new Event('input', { bubbles: true }));
+        clearTimeout(inp._wt); inp._wt = setTimeout(() => inp.dispatchEvent(new Event('change', { bubbles: true })), 250);
+    }, { passive: false, capture: true });
     // Le bouton suit son curseur, quelle que soit la façon dont la valeur a changé
     document.addEventListener('input', (e) => {
         const inp = e.target; if (!inp.closest) return;
@@ -6820,7 +6911,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
         </div>
         <div class="fx-toolbar">
             ${hasAdv ? `<div class="fx-seg fx-mode"><button data-mode="simple" class="${advanced ? '' : 'on'}">Simple</button><button data-mode="adv" class="${advanced ? 'on' : ''}">Avancé</button></div>` : '<span></span>'}
-            ${fxName === 'comp' ? '<button class="fx-view" data-tooltip="Changer l\'affichage : courbe ou vumètre analogique">Analogique</button>' : ''}
+            ${fxName === 'comp' ? '<button class="fx-autogain" data-tooltip="Gain automatique : Pulse remonte le volume perdu par la compression. Éteint = tu règles « Rattrapage » toi-même">Auto gain</button><button class="fx-view" data-tooltip="Changer l\'affichage : courbe ou vumètre analogique">Analogique</button>' : ''}
             <div class="fx-seg fx-ab" data-tooltip="Deux réglages à comparer : passe de A à B pour écouter la différence"><button data-ab="A" class="on">A</button><button data-ab="B">B</button></div>
         </div>
         <div class="fx-presets-bar">
@@ -7051,7 +7142,18 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
         }
         if (viz) drawViz();
     };
-    const refreshAll = () => { applySkin(); defs.forEach(d => refreshCell(d.key)); if (viz && !analog) drawViz(); };
+    // Auto gain : allumé = le rattrapage suit le seuil et le ratio ; éteint = 0 dB (on le règle soi-même)
+    const agBtn = panel.querySelector('.fx-autogain');
+    const syncAutoGain = () => { if (agBtn) agBtn.classList.toggle('on', (t.effectParams[fxName] || {}).makeup === undefined); };
+    if (agBtn) agBtn.addEventListener('click', () => {
+        pushUndo();
+        t.effectParams[fxName] = t.effectParams[fxName] || {};
+        if (t.effectParams[fxName].makeup === undefined) t.effectParams[fxName].makeup = 0; else delete t.effectParams[fxName].makeup;
+        (t.proKeep = t.proKeep || {})[fxName] = true;
+        refreshCell('makeup'); syncAutoGain(); commit();
+        flash(t.effectParams[fxName].makeup === undefined ? 'Auto gain allumé : Pulse compense le volume' : 'Auto gain éteint : rattrapage à 0 dB, à régler toi-même');
+    });
+    const refreshAll = () => { applySkin(); defs.forEach(d => refreshCell(d.key)); syncAutoGain(); if (viz && !analog) drawViz(); };
     const commit = () => {
         // Compresseur en lecture : réglage envoyé en direct (pas de coupure) ; sinon on reconstruit comme avant
         const live = fxName === 'comp' && state.playing && PulseAudio.updateComp
@@ -7072,6 +7174,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
             if (key === 'mode') { applySkin(); defs.forEach(d => refreshCell(d.key)); }
             refreshCell(key);
             defs.forEach(d => { if (d.auto && d.key !== key) refreshCell(d.key); });   // le rattrapage auto suit le seuil et le ratio
+            syncAutoGain();
             commit();
         });
     });
@@ -7610,7 +7713,7 @@ function duplicateTrack(idx) {
         armed: false
     };
     // Copie profonde : régler la copie ne doit jamais toucher l'original
-    ['effectParams', 'sends', 'sound', 'automation', 'autotune'].forEach(k => {
+    ['effectParams', 'sends', 'busSends', 'sound', 'automation', 'autotune'].forEach(k => {
         if (src[k] && typeof src[k] === 'object') copy[k] = JSON.parse(JSON.stringify(src[k]));
     });
     if (src.effects) copy.effects = [...src.effects];

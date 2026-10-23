@@ -3304,3 +3304,32 @@ body.fx-drag-on, body.fx-drag-on * { cursor: grabbing !important; user-select: n
 .insp-add-send:hover { color: #fff; border-color: var(--violet-2, #A855F7); }
 .inspector .strip-fader-wrap { flex: 1 1 auto; min-height: 120px; margin-top: auto; }
 .inspector .strip .fader, .inspector .insp-fader { flex: 1 1 0; height: auto; min-height: 100px; }
+
+/* === Tranche de gauche façon Logic (23/10) : emplacements d'effets et d'envois en liste, fader de taille fixe ===
+   Les effets prennent la place libre ; les cases vides attendent un plugin ou un envoi */
+.inspector .insp-strip { gap: 6px; }
+.inspector .insp-fx { flex: 3 1 0; min-height: 96px; display: flex; flex-direction: column; }
+.inspector .strip-sends { flex: 2 1 0; min-height: 84px; display: flex !important; flex-direction: column; }
+.insp-slots {
+  flex: 1 1 0; min-height: 0; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 3px; padding: 3px; border-radius: 6px;
+  background: rgba(0, 0, 0, .22); box-shadow: inset 0 1px 3px rgba(0, 0, 0, .45); scrollbar-width: thin;
+}
+.insp-slots > * { flex: none; }
+.insp-fx-box { cursor: pointer; }
+.insp-slots .insp-fx-row, .insp-slots .send-bar-row, .insp-slot-empty { height: 22px; box-sizing: border-box; }
+.insp-slot-empty {
+  border-radius: 5px; border: 1px dashed rgba(255, 255, 255, .13); background: rgba(255, 255, 255, .025); cursor: pointer;
+  transition: border-color .12s, background .12s;
+}
+.insp-slot-empty:hover { border-color: var(--violet-2, #A855F7); background: rgba(168, 85, 247, .14); }
+.inspector .strip-fader-wrap { flex: none; height: 168px; min-height: 0; margin-top: 0; }
+.inspector .strip .fader, .inspector .insp-fader { flex: 1 1 0; height: auto; min-height: 90px; }
+.sb-edit {
+  width: 34px; height: 16px; padding: 0 3px; font-size: 10px; text-align: right; color: #fff; border-radius: 4px;
+  background: rgba(0, 0, 0, .55); border: 1px solid var(--violet-2, #A855F7); outline: none; position: relative;
+}
+.fx-autogain {
+  padding: 3px 10px; font-size: 11px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-3); color: var(--text-2); cursor: pointer; margin-right: 6px;
+}
+.fx-autogain.on { color: #fff; border-color: var(--violet-2); background: color-mix(in srgb, var(--violet-2) 45%, var(--bg-3)); }
+.fx-autogain:hover { border-color: var(--violet-2); }
