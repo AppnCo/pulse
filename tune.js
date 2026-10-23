@@ -10,7 +10,7 @@
     // Type de voix : où chercher la note (évite de confondre une voix grave avec son octave, etc.)
     const VOICE_RANGE = { high: [150, 1100], mid: [70, 800], low: [50, 450] };
     const MAJOR = [0, 2, 4, 5, 7, 9, 11];
-    const NOTE_NAMES = ['Do', 'Do#', 'Ré', 'Ré#', 'Mi', 'Fa', 'Fa#', 'Sol', 'Sol#', 'La', 'La#', 'Si'];
+    const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']   // notation anglaise, comme dans les plugins;
 
     const tick = () => new Promise(r => setTimeout(r, 0));
 

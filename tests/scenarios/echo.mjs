@@ -4,7 +4,7 @@ export default async ({ ev, nav, send, shot, sleep }) => {
   await send('Network.enable'); await send('Network.setCacheDisabled', { cacheDisabled: true });
   await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 860, deviceScaleFactor: 1, mobile: false });
   await nav('http://localhost:8765/index.html');
-  await ev(`localStorage.clear(); localStorage.setItem('pulse_onboarded_v1','1'); localStorage.setItem('pulse_tip_headphones','1'); localStorage.setItem('pulse_current_project', JSON.stringify({id:'ec1',name:'Echo',bpm:120,buses:[],tracks:[{name:'Voix',type:'audio',armed:true,color:'#A855F7'}]}))`);
+  await ev(`localStorage.clear(); localStorage.setItem('pulse_onboarded_v1','1'); localStorage.setItem('pulse_tip_headphones','1'); localStorage.setItem('pulse_current_project', JSON.stringify({sends:[{id:'revlong',name:'Rev Long',type:'reverb',size:3.2,pre:0,volume:100},{id:'del14',name:'Del 1/4',type:'delay',beats:1,feedback:35,volume:100}],id:'ec1',name:'Echo',bpm:120,buses:[],tracks:[{name:'Voix',type:'audio',armed:true,color:'#A855F7'}]}))`);
   await nav('http://localhost:8765/studio.html');
   const R = async (label, code) => console.log(label + ':', await ev(`(async()=>{${code}})()`));
   const tools = `const ctx=await PulseAudio.init(); const sr=48000; if(!PulseAudio.getBuffer('clap')){const b=ctx.createBuffer(1,sr,sr),d=b.getChannelData(0); for(let i=0;i<4800;i++)d[i]=0.5*Math.sin(2*Math.PI*440*i/sr); PulseAudio.registerBuffer('clap',b);}

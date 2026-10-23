@@ -1,5 +1,7 @@
 // Aides communes des scénarios QA (ne se lance pas seul)
 export async function boot({ ev, nav, send, sleep }, project = null, { mic = true, w = 1440, h = 860, ls = {} } = {}) {
+  // Les projets neufs n'ont plus de retours d'effet : les anciens scénarios gardent les deux retours d'avant (sauf si `sends` est donné)
+  if (project && project.sends === undefined) project = { ...project, sends: [{ id: 'revlong', name: 'Rev Long', type: 'reverb', size: 3.2, pre: 0, volume: 100 }, { id: 'del14', name: 'Del 1/4', type: 'delay', beats: 1, feedback: 35, volume: 100 }] };
   await send('Network.enable'); await send('Network.setCacheDisabled', { cacheDisabled: true });
   await send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: false });
   await nav('http://localhost:8765/index.html');
@@ -7,6 +9,7 @@ export async function boot({ ev, nav, send, sleep }, project = null, { mic = tru
     ${project ? `localStorage.setItem('pulse_current_project', ${JSON.stringify(JSON.stringify(project))});` : ''}
     ${Object.entries(ls).map(([k, v]) => `localStorage.setItem(${JSON.stringify(k)}, ${JSON.stringify(v)});`).join('')}`);
   await nav('http://localhost:8765/studio.html'); await sleep(900);
+  if (!project) await ev(`(()=>{ if (!projectSends().length) { state.project.sends = [{ id: 'revlong', name: 'Rev Long', type: 'reverb', size: 3.2, pre: 0, volume: 100 }, { id: 'del14', name: 'Del 1/4', type: 'delay', beats: 1, feedback: 35, volume: 100 }]; renderInspector(); } })()`);
   if (mic) await ev(`(async()=>{ const ctx=await PulseAudio.init(); const md=ctx.createMediaStreamDestination(); const o=ctx.createOscillator(); o.frequency.value=220; const g=ctx.createGain(); g.gain.value=0.2; o.connect(g); g.connect(md); o.start(); navigator.mediaDevices.getUserMedia=async()=>md.stream; navigator.permissions.query=async()=>({state:'granted'}); PulseAudio.setCountIn(false);
     window.__dl=[]; const oc=HTMLAnchorElement.prototype.click; HTMLAnchorElement.prototype.click=function(){ if(this.download){ window.__dl.push(this.download); return; } return oc.call(this); }; })()`);
 }

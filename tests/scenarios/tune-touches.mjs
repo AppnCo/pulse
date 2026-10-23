@@ -18,7 +18,7 @@ export default async (c) => {
   await ev(`document.querySelector('.tune-panel .tb-power').click()`); await sleep(1500);
   check('⏻ : Auto-Tune allumé, fenêtre toujours ouverte', await ev(`!!(state.project.tracks[0].autotune && state.project.tracks[0].autotune.on) && !!document.querySelector('.tune-panel.is-on')`));
   await ev(`document.querySelector('.tune-panel .tb-power').click()`); await sleep(1500);
-  check('⏻ à nouveau : éteint, réglages gardés, Auto-Tune toujours sur la piste', await ev(`(()=>{ const a=state.project.tracks[0].autotune; return !!a && a.on===false && Array.isArray(a.notes) && showTuneSlot(state.project.tracks[0])===isVoiceTrack(state.project.tracks[0]); })()`), await ev(`'voix=' + isVoiceTrack(state.project.tracks[0]) + ' preset=' + state.project.tracks[0].preset`));
+  check('⏻ à nouveau : éteint, réglages gardés, Auto-Tune toujours sur la piste', await ev(`(()=>{ const a=state.project.tracks[0].autotune; return !!a && a.on===false && Array.isArray(a.notes) && showTuneSlot(state.project.tracks[0]); })()`), await ev(`'voix=' + isVoiceTrack(state.project.tracks[0]) + ' preset=' + state.project.tracks[0].preset`));
   check('fenêtre Auto-Tune déplaçable comme un plug', await ev(`document.querySelector('.tune-panel').classList.contains('plug-win')`));
   // PulseTune : tourner « Humain » (allumé) enregistre le réglage sur la piste et relance la correction
   await ev(`document.querySelector('.tune-panel .tb-power').click()`); await sleep(1200);

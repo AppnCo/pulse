@@ -1040,6 +1040,18 @@ window.PulseAudio = (function() {
         return pts[pts.length - 1].v;
     }
 
+    // Automation d'un réglage quelconque : points { t, v } avec v entre 0 et 1 (position dans la plage du réglage)
+    function autoCurvePts(owner, pid) {
+        const pts = owner && owner.automation && owner.automation[pid] && owner.automation[pid].points;
+        return Array.isArray(pts) && pts.length ? pts.slice().sort((p, q) => p.t - q.t) : [];
+    }
+    function scheduleAuto(param, pts, toVal, fromTime, t0) {
+        if (!pts.length) return;
+        param.cancelScheduledValues(0);
+        param.setValueAtTime(toVal(volumeAt(pts, fromTime)), t0);
+        for (const p of pts) if (p.t > fromTime) param.linearRampToValueAtTime(toVal(p.v), t0 + (p.t - fromTime));
+    }
+
     function clipEndSec(clip) {
         const natural = clip.start + clip.duration;
         return (clip.loopEnd && clip.loopEnd > natural) ? clip.loopEnd : natural;
@@ -1091,8 +1103,9 @@ window.PulseAudio = (function() {
                 tail = autoGain;
             }
             // Gauche / droite du groupe (comme une piste)
-            if (bus.pan) {
+            if (bus.pan || autoCurvePts(bus, 'pan').length) {
                 const pn = actx.createStereoPanner();
+                scheduleAuto(pn.pan, autoCurvePts(bus, 'pan'), n => -1 + 2 * n, fromTime, t0);
                 pn.pan.value = Math.max(-1, Math.min(1, bus.pan / 100));
                 tail.connect(pn);
                 tail = pn;
@@ -1100,12 +1113,14 @@ window.PulseAudio = (function() {
             tail.connect(out);
             // Envois du groupe (reverb, écho…) : pris après son volume et son pan, comme sur une piste
             if (onlyTrack === null) {
-                for (const [sendId, level] of Object.entries(bus.sends || {})) {
-                    if (!(level > 0)) continue;
+                for (const sendId of new Set([...Object.keys(bus.sends || {}), ...Object.keys(bus.automation || {}).filter(k => k.startsWith('send:')).map(k => k.slice(5))])) {
+                    const level = (bus.sends || {})[sendId] || 0, ap = autoCurvePts(bus, 'send:' + sendId);
+                    if (!(level > 0) && !ap.length) continue;
                     const sendIn = getSend(sendId);
                     if (!sendIn) continue;
                     const sg = actx.createGain();
                     sg.gain.value = level / 100;
+                    scheduleAuto(sg.gain, ap, n => n, fromTime, t0);
                     tail.connect(sg); sg.connect(sendIn);
                 }
                 for (const [busId, level] of Object.entries(bus.busSends || {})) {
@@ -1173,6 +1188,7 @@ window.PulseAudio = (function() {
 
             const panNode = actx.createStereoPanner();
             panNode.pan.value = Math.max(-1, Math.min(1, (track.pan || 0) / 100));
+            scheduleAuto(panNode.pan, autoCurvePts(track, 'pan'), n => -1 + 2 * n, fromTime, t0);
             let preMeter = trackGain;   // point de mesure du niveau : après le fader, avant le pan (comme un canal de console)
             // Courbe de volume (automation) : 0 = silence … 1 = niveau du fader
             const pts = volumePoints(track);
@@ -1210,21 +1226,26 @@ window.PulseAudio = (function() {
                 panNode.connect(trackDest);
             }
 
-            for (const [sendId, level] of Object.entries(track.sends || {})) {
-                if (!(level > 0)) continue;
+            const sendIds = new Set([...Object.keys(track.sends || {}), ...Object.keys(track.automation || {}).filter(k => k.startsWith('send:')).map(k => k.slice(5))]);
+            for (const sendId of sendIds) {
+                const level = (track.sends || {})[sendId] || 0, ap = autoCurvePts(track, 'send:' + sendId);
+                if (!(level > 0) && !ap.length) continue;
                 const send = getSend(sendId);
                 if (!send) continue;
                 const sg = actx.createGain();
                 sg.gain.value = level / 100;
+                scheduleAuto(sg.gain, ap, n => n, fromTime, t0);
                 panNode.connect(sg); sg.connect(send);
             }
             // Envois vers un groupe (façon Aux de Logic) : le son part en plus vers l'entrée de ce groupe
-            for (const [busId, level] of Object.entries(track.busSends || {})) {
-                if (!(level > 0)) continue;
+            for (const busId of new Set([...Object.keys(track.busSends || {}), ...Object.keys(track.automation || {}).filter(k => k.startsWith('busSend:')).map(k => k.slice(8))])) {
+                const level = (track.busSends || {})[busId] || 0, ap = autoCurvePts(track, 'busSend:' + busId);
+                if (!(level > 0) && !ap.length) continue;
                 const tgt = getBus(busId);
                 if (!tgt || tgt === dest || tgt === trackDest) continue;
                 const sg = actx.createGain();
                 sg.gain.value = level / 100;
+                scheduleAuto(sg.gain, ap, n => n, fromTime, t0);
                 panNode.connect(sg); sg.connect(tgt);
             }
 

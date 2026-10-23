@@ -331,7 +331,11 @@ function createProjectFromTemplate(id) {
         templateId: tpl.id,
         tracks: tpl.tracks.map(t => ({ ...t, clips: [] })),
         buses: (tpl.buses || []).map(b => ({ ...b, ...(b.sends ? { sends: { ...b.sends } } : {}) })),
-        ...(tpl.sends ? { sends: tpl.sends.map(sd => ({ ...sd })) } : {}),
+        // Les modèles gardent leurs retours d'avant (Rev Long, Del 1/4) ; seul un projet vraiment vierge n'en a aucun
+        sends: tpl.sends ? tpl.sends.map(sd => ({ ...sd })) : [
+            { id: 'revlong', name: 'Rev Long', type: 'reverb', size: 3.2, pre: 0, volume: 100 },
+            { id: 'del14', name: 'Del 1/4', type: 'delay', beats: 1, feedback: 35, volume: 100 }
+        ],
         bpm: tpl.bpm || 120,
         createdAt: Date.now(),
         lastOpen: Date.now()

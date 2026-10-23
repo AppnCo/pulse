@@ -5,45 +5,92 @@ A step drum machine and a keyboard bass. To lay a foundation without playing.
 A+
 All Vocal
 Ambiance
-Auto-Tune
+Aucun effet ne correspond. Essaie « écho », « reverb », « compresseur »…
+Auto-Tune : corrige la justesse de la voix
 A−
 Back
 Back ▾
+Bitcrusher
+Chercher un effet…
+Chorus
 Convertir en MP3
 Convertir en WAV
-Del 1/4
+De-esser
+Distorsion
+Doubleur de voix
 E / Z
+Emplacement libre : clique pour envoyer vers une reverb, un écho ou un groupe
+Emplacement libre : clique pour mettre un effet
+Filtre
+Flanger
+Gate
+Hauteur des pistes : sur la liste de gauche, celle qu'on survole (les pistes choisies si elles sont plusieurs) · sur la timeline, toutes les pistes · ⌘ + molette = zoom, le curseur au milieu de l'écran
 IV
+Largeur stéréo
+Le circuit du studio : tu enregistres sur REC, ta voix passe dans Vocal 1 puis All Vocal, et tout finit dans les Mix Bus. Back et Ambiance ont leur Auto-Tune. Les effets ponctuels (Del, Pitch, Phone) se créent quand tu en as besoin, avec le bouton ✦ de Vocal 1.
 Mix Bus 1
 Mon morceau
+Mouvement
 New project
+Phaser
 Piano 1 — 2.00s @ 0:00.000
 Pick up where you left off
+PulseTune
 Rap Studio
 Recent projects
-Rev Long
+Reverb
+Réglage : charge un réglage prêt à l'emploi (comme « Réglage » dans Logic)
+Réglage de la piste : charge un réglage prêt à l'emploi (comme « Réglage » dans Logic)
+Réglage du groupe : charge un réglage prêt à l'emploi
+Réglage ▾
+Saturation
 Simple Beat
 Simple setup: 1 vocal + 1 instrumental. Perfect for a quick first track.
+Slapback
 Start from scratch
+Studio
 The base model: your beat on top, one track to record, then your vocals sorted by group (lead, backs, ambience). Add or remove whatever you want.
 The simple studio.
 Tracks
+Trémolo
+Utilitaire
+Utilitaires
 Vocal + Beat
 Vocal 1
+Voix et hauteur
+Zoomer / dézoomer : le curseur (de base si tu as cliqué) se met au milieu de l'écran
+adoucit les « s » qui sifflent
+ajoute de l'espace, une pièce
+balayage doux et rond
+balayage métallique qui tourne
+chaleur et grain, comme une bande ou une lampe
+corrige les graves, médiums et aigus
+coupe le bruit entre les phrases
+coupe les graves ou les aigus
 dB
+donne l'impression de deux prises
 https://youtube.com/watch?v=…
 ii
 iii
+le volume pulse en rythme
 ms
 ou garder le fichier :
+resserre l'écart entre les passages forts et faibles
+répétitions calées sur le tempo (1/8, 1/4…)
+son lo-fi, numérique abîmé
 vi
 vii°
+volume, phase, passage en mono
+Écho et espace
+Égaliseur et filtre
 ×2
+écho court, très utilisé en rap
+élargit ou resserre l'image stéréo
+épaissit le son en le dédoublant légèrement
 ÷2
 → All Vocal
 → Ambiance
 → Back
-→ MASTER
 → Master
 → Master ▾
 → Mix Bus 1

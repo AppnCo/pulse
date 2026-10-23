@@ -4,7 +4,7 @@ export default async ({ ev, nav, send, shot, sleep }) => {
   await send('Network.enable'); await send('Network.setCacheDisabled', { cacheDisabled: true });
   await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 860, deviceScaleFactor: 1, mobile: false });
   await nav('http://localhost:8765/index.html');
-  await ev(`localStorage.clear(); localStorage.setItem('pulse_onboarded_v1','1'); localStorage.setItem('pulse_tip_headphones','1'); localStorage.setItem('pulse_current_project', JSON.stringify({id:'en1',name:'Envois',bpm:120,buses:[],tracks:[{name:'Voix',type:'audio',armed:true,color:'#A855F7'},{name:'Back',type:'audio',color:'#C084FC'}]}))`);
+  await ev(`localStorage.clear(); localStorage.setItem('pulse_onboarded_v1','1'); localStorage.setItem('pulse_tip_headphones','1'); localStorage.setItem('pulse_current_project', JSON.stringify({sends:[{id:'revlong',name:'Rev Long',type:'reverb',size:3.2,pre:0,volume:100},{id:'del14',name:'Del 1/4',type:'delay',beats:1,feedback:35,volume:100}],id:'en1',name:'Envois',bpm:120,buses:[],tracks:[{name:'Voix',type:'audio',armed:true,color:'#A855F7'},{name:'Back',type:'audio',color:'#C084FC'}]}))`);
   await nav('http://localhost:8765/studio.html');
   const R = async (label, code) => console.log(label + ':', await ev(`(async()=>{${code}})()`));
   await ev(`toggleMixer()`); await sleep(500);

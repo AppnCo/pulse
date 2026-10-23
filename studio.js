@@ -1725,12 +1725,12 @@ function inspectorStrip(kind, x, idx) {
     const vol = isMaster ? Math.round(PulseAudio.getMasterVolume ? PulseAudio.getMasterVolume() : 80) : (x.volume ?? 100);
     const chain = isMaster ? [] : chainOf(x);
     const sends = (kind === 'track' || (kind === 'bus' && !x.premaster && !x.locked)) ? projectSends() : [];
-    const soundLabel = isMaster ? '' : x.premaster ? 'Finition' : (x.sound && presetsFor(x)[x.sound.preset] ? presetsFor(x)[x.sound.preset].label : 'Son');
+    const soundLabel = isMaster ? '' : x.premaster ? 'Finition' : (x.sound && presetsFor(x)[x.sound.preset] ? presetsFor(x)[x.sound.preset].label : 'Réglage');
     return `
     <div class="strip insp-strip" data-kind="${kind}" data-id="${isMaster ? 'master' : kind === 'track' ? idx : esc(x.id)}" style="--track-color: ${color}">
         <div class="strip-name">${esc(name)}</div>
         ${kind === 'track' && !x.isCapture ? monoButtonHtml(x) : ''}
-        ${isMaster ? '<div class="insp-note">Tout le morceau sort ici</div>' : `<button class="strip-sound insp-sound" data-tooltip="${x.premaster ? 'Le réglage final de tout le morceau' : 'Choisir le son'}">${esc(soundLabel)} ▾</button>`}
+        ${isMaster ? '<div class="insp-note">Tout le morceau sort ici</div>' : `<button class="strip-sound insp-sound" data-tooltip="${x.premaster ? 'Le réglage final de tout le morceau' : 'Réglage : charge un réglage prêt à l\'emploi (comme « Réglage » dans Logic)'}">${esc(soundLabel)} ▾</button>`}
         ${isMaster ? '' : `<div class="insp-fx">
             <div class="strip-sends-title">Effets</div>
             <div class="insp-slots insp-fx-box" data-add="fx">
@@ -2105,6 +2105,7 @@ const FX_WORDS = { pitch: 'pitch shift hauteur transpose alterboy grave aigu', c
     sat: 'saturation distortion saturator drive', crush: 'bitcrusher lofi', delay: 'delay echo', reverb: 'reverb reverberation', slapback: 'slap delay echo',
     chorus: 'modulation', flanger: 'modulation', phaser: 'modulation', tremolo: 'modulation', doubler: 'doubler double', width: 'stereo imager', util: 'utility gain mono phase', tune: 'autotune pitch justesse' };
 const FX_START = {
+    eq: { bands: [] },   // un EQ neuf s'ouvre sans aucun point : on les pose soi-même
     crush: { bits: 8, down: 4, mix: 100 }, util: { gain: 0, invert: 0, mono: 0 }, width: { width: 100 },
     tremolo: { rate: 5, depth: 50 }, phaser: { rate: 0.4, depth: 70, feedback: 40, mix: 50 }, flanger: { rate: 0.25, depth: 2, feedback: 50, mix: 50 },
     chorus: { rate: 0.8, depth: 5, mix: 50 }, doubler: { width: 50, mix: 50 }, slapback: { time: 110, feedback: 12, mix: 25 },
@@ -2150,7 +2151,7 @@ function openAddEffectMenu(anchor, target, x) {
         if (!x.effects.includes(n)) {
             pushUndo(); x.effects.push(n);
             // l'effet démarre avec les valeurs affichées dans son panneau (sinon le curseur dit une chose et le son en fait une autre)
-            if (FX_START[n]) { x.effectParams = x.effectParams || {}; if (!x.effectParams[n]) x.effectParams[n] = { ...FX_START[n] }; }
+            if (FX_START[n]) { x.effectParams = x.effectParams || {}; if (!x.effectParams[n]) x.effectParams[n] = JSON.parse(JSON.stringify(FX_START[n])); }
             saveProject(); refreshPlaybackSoon();
         }
         renderInspector();
@@ -2462,10 +2463,8 @@ function sendKnobHtml(v) { return `<span class="send-knob" data-tooltip="Glisser
         row.classList.toggle('on', v > 0);
     }, true);
 })();
-const DEFAULT_SENDS = () => [
-    { id: 'revlong', name: 'Rev Long', type: 'reverb', size: 3.2, pre: 0, volume: 100 },
-    { id: 'del14', name: 'Del 1/4', type: 'delay', beats: 1, feedback: 35, volume: 100 }
-];
+// Un projet neuf n'a aucun retour d'effet : on les crée soi-même (+ dans la zone Envois)
+const DEFAULT_SENDS = () => [];
 function projectSends() {
     if (!Array.isArray(state.project.sends)) state.project.sends = DEFAULT_SENDS();
     return state.project.sends;
@@ -2482,7 +2481,7 @@ function renderMixer() {
         return `
         <div class="strip ${t.isCapture?'strip-capture':''} ${isPendDel(t) ? 'pend-del' : ''}" style="--track-color: ${t.color}" data-kind="track" data-i="${i}">
             <div class="strip-name">${esc(t.name)}</div>
-            <button class="strip-sound" data-tooltip="Choisir le son de la piste">${t.sound && SOUND_PRESETS[t.sound.preset] ? esc(SOUND_PRESETS[t.sound.preset].label) : 'Son'} ▾</button>
+            <button class="strip-sound" data-tooltip="Réglage de la piste : charge un réglage prêt à l'emploi (comme « Réglage » dans Logic)">${t.sound && SOUND_PRESETS[t.sound.preset] ? esc(SOUND_PRESETS[t.sound.preset].label) : 'Réglage'} ▾</button>
             <div class="strip-fx">
                 <div class="strip-fx-slot ${(t.effects||[]).includes('eq') ? 'active' : ''}" data-fx="eq">EQ</div>
                 <div class="strip-fx-slot ${(t.effects||[]).includes('comp') ? 'active' : ''}" data-fx="comp">Comp</div>
@@ -2520,7 +2519,7 @@ function renderMixer() {
                 ${b.premaster || b.locked ? `<div class="strip-fx">
                     ${b.premaster ? `<button class="return-edit master-edit" data-bus="${esc(b.id)}" data-tooltip="Le réglage final de tout le morceau">Finition ▾</button>` : `<div class="strip-fx-slot active" data-fx="preset">${esc(({ 'bus-allvocal': 'Toutes les voix', 'bus-safety': 'Sécurité', 'bus-mix1': 'Finition' })[b.preset] || 'Groupe')}</div>`}
                 </div>` : `
-                <button class="strip-sound" data-tooltip="Choisir le son du groupe">${b.sound && presetsFor(b)[b.sound.preset] ? esc(presetsFor(b)[b.sound.preset].label) : 'Son'} ▾</button>
+                <button class="strip-sound" data-tooltip="Réglage du groupe : charge un réglage prêt à l'emploi">${b.sound && presetsFor(b)[b.sound.preset] ? esc(presetsFor(b)[b.sound.preset].label) : 'Réglage'} ▾</button>
                 <div class="strip-fx">
                     <div class="strip-fx-slot ${(b.effects||[]).includes('eq') ? 'active' : ''}" data-fx="eq">EQ</div>
                     <div class="strip-fx-slot ${(b.effects||[]).includes('comp') ? 'active' : ''}" data-fx="comp">Comp</div>
@@ -4852,8 +4851,8 @@ function toggleAutomationMode() {
     state.automationMode = !state.automationMode;
     document.body.classList.toggle('automation-mode', state.automationMode);
     flash(state.automationMode
-        ? '🎚 Courbes de volume — clique sur une piste pour poser un point, glisse-le, double-clic pour l\'enlever (A pour quitter)'
-        : 'Courbes de volume masquées');
+        ? '🎚 Automation — touche un réglage (fader, pan, envoi, plugin) : sa courbe s\'affiche sur la piste. Clique pour poser un point, double-clic pour l\'enlever (A pour quitter)'
+        : 'Automation masquée');
     renderTimelineTracks();
 }
 
@@ -4903,10 +4902,9 @@ async function detectProjectKey(exceptTrackIdx) {
     return state.project.key;
 }
 
-// « La mineur (Am) » : nom français + lettre, comme sur les autres Auto-Tune
-const NOTE_LETTERS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+// « A mineur (Am) » : notes en lettres (notation anglaise), comme sur les autres Auto-Tune
 function scaleLabel(tonic, minor) {
-    return `${PulseTune.NOTE_NAMES[tonic]} ${minor ? 'mineur' : 'majeur'} (${NOTE_LETTERS[tonic]}${minor ? 'm' : ''})`;
+    return `${PulseTune.NOTE_NAMES[tonic]} ${minor ? 'mineur' : 'majeur'} (${PulseTune.NOTE_NAMES[tonic]}${minor ? 'm' : ''})`;
 }
 // Les 7 notes d'une gamme majeure ou mineure
 const scaleMask = (tonic, minor) => PulseTune.toMask(minor ? (tonic + 3) % 12 : tonic);
@@ -6260,6 +6258,8 @@ function openEqPanel(trackIdx, anchorEl) {
     closeTransientPanels();
     // trackIdx : numéro de piste, ou directement un groupe
     const t = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;
+    // EQ pas encore utilisé sur cette piste : il s'ouvre vide (aucun point), pas avec les 4 réglages de l'ancienne chaîne
+    if (t && !(t.effects || []).includes('eq') && !(t.effectParams && t.effectParams.eq)) { t.effectParams = t.effectParams || {}; t.effectParams.eq = { bands: [] }; }
     if (!t) return;
     const already = findPlugWin(t, 'eq');
     if (already) { plugFront(already); return; }
@@ -6775,6 +6775,107 @@ function makePlugWindow(panel, t, fxName, trackIdx) {
     }, 500);
 }
 
+// Réglages de chaque effet (partagés : fenêtres de plugin et menu d'automation)
+const FX_PANEL_DEFS = {
+    eq: [
+        { key: 'hpf',      label: 'Passe-Haut',  unit: 'Hz', min: 20,  max: 500, def: 80,  step: 1 },
+        { key: 'midGain',  label: 'Médiums',      unit: 'dB', min: -12, max: 12,  def: -2,  step: 0.5 },
+        { key: 'presence', label: 'Présence 4k',  unit: 'dB', min: -12, max: 12,  def: 2,   step: 0.5 },
+        { key: 'air',      label: 'Air 10k',      unit: 'dB', min: -8,  max: 8,   def: 1,   step: 0.5 }
+    ],
+    comp: [
+        { key: 'mode', label: 'Caractère', unit: '', min: 0, max: 3, def: 0, step: 1, choices: [0, 1, 2, 3], choiceLabels: ['Propre', 'Opto', 'FET', 'Bus'],
+          tip: 'Propre : sans couleur · Opto : lent et doux, chaleur de lampe (voix) · FET : très rapide, ça claque (rap, batterie) · Bus : colle le mix' },
+        { key: 'threshold', label: 'Seuil',    unit: ' dB', min: -40, max: 0,  def: -22, step: 1 },
+        { key: 'ratio',     label: 'Ratio',     unit: ':1', min: 1,   max: 20, def: 3,   step: 0.5, busSteps: [1.5, 2, 4, 10, 20] },
+        { key: 'mix',       label: 'Mélange',   unit: '%',  min: 0,   max: 100, def: 100, step: 1 },
+        { key: 'attack',    label: 'Attaque',   unit: ' ms', min: 0.1, max: 100, def: 10, step: 0.1, adv: true, log: true, busSteps: [0.1, 0.3, 1, 3, 10, 30] },
+        { key: 'release',   label: 'Relâchement', unit: ' ms', min: 10,  max: 1200, def: 50, step: 5, adv: true, log: true, busSteps: [100, 300, 600, 1200, 'auto'] },
+        { key: 'knee',      label: 'Genou',     unit: ' dB', min: 0,   max: 24, def: 10,  step: 1, adv: true,
+          tip: 'Douceur de l\'entrée en compression : 0 = net, 24 = très progressif' },
+        // Rattrapage : sans réglage, Pulse remonte le volume tout seul (« Auto »), comme avant
+        { key: 'makeup',    label: 'Rattrapage', unit: ' dB', min: -12, max: 24, def: 0, step: 0.5, adv: true,
+          auto: (p) => Math.round(-p.threshold * (1 - 1 / Math.max(1, p.ratio)) * 0.35 * 2) / 2,
+          tip: 'Volume rendu après compression. Alt-clic : revenir en automatique' }
+    ],
+    reverb: [
+        { key: 'wet',   label: 'Quantité',    unit: '%',  min: 0,   max: 100, def: 18, step: 1 },
+        { key: 'size',  label: 'Taille',     unit: 's',  min: 0.3, max: 5,   def: 1.8, step: 0.1 },
+        { key: 'decay', label: 'Déclin',     unit: '',   min: 0.5, max: 5,   def: 2.5, step: 0.1 }
+    ],
+    crush: [
+        { key: 'bits', label: 'Finesse du son', unit: ' bits', min: 4, max: 16, def: 8, step: 1 },
+        { key: 'down', label: 'Son haché',      unit: '',      min: 1, max: 32, def: 4, step: 1 },
+        { key: 'mix',  label: 'Mélange',        unit: '%',     min: 0, max: 100, def: 100, step: 1 }
+    ],
+    util: [
+        { key: 'gain',   label: 'Volume',           unit: ' dB', min: -24, max: 24, def: 0, step: 0.5 },
+        { key: 'invert', label: 'Inverser la phase', unit: '',   min: 0,   max: 1,  def: 0, step: 1, toggle: true },
+        { key: 'mono',   label: 'Passer en mono',    unit: '',   min: 0,   max: 1,  def: 0, step: 1, toggle: true }
+    ],
+    width: [
+        { key: 'width', label: 'Largeur', unit: '%', min: 0, max: 200, def: 100, step: 1 }
+    ],
+    tremolo: [
+        { key: 'rate',  label: 'Vitesse',  unit: ' Hz', min: 0.5, max: 15,  def: 5,  step: 0.5 },
+        { key: 'depth', label: 'Intensité', unit: '%',   min: 0,   max: 100, def: 50, step: 1 }
+    ],
+    phaser: [
+        { key: 'rate',     label: 'Vitesse',     unit: ' Hz', min: 0.05, max: 3,   def: 0.4, step: 0.05 },
+        { key: 'depth',    label: 'Étendue',     unit: '%',   min: 0,    max: 100, def: 70,  step: 1 },
+        { key: 'feedback', label: 'Résonance',   unit: '%',   min: 0,    max: 90,  def: 40,  step: 1 },
+        { key: 'mix',      label: 'Mélange',     unit: '%',   min: 0,    max: 100, def: 50,  step: 1 }
+    ],
+    flanger: [
+        { key: 'rate',     label: 'Vitesse',     unit: ' Hz', min: 0.05, max: 2,   def: 0.25, step: 0.05 },
+        { key: 'depth',    label: 'Profondeur',  unit: ' ms', min: 0.5,  max: 5,   def: 2,    step: 0.5 },
+        { key: 'feedback', label: 'Résonance',   unit: '%',   min: 0,    max: 90,  def: 50,   step: 1 },
+        { key: 'mix',      label: 'Mélange',     unit: '%',   min: 0,    max: 100, def: 50,   step: 1 }
+    ],
+    chorus: [
+        { key: 'rate',  label: 'Vitesse',    unit: ' Hz', min: 0.1, max: 3,   def: 0.8, step: 0.1 },
+        { key: 'depth', label: 'Profondeur', unit: ' ms', min: 1,   max: 10,  def: 5,   step: 0.5 },
+        { key: 'mix',   label: 'Mélange',    unit: '%',   min: 0,   max: 100, def: 50,  step: 1 }
+    ],
+    doubler: [
+        { key: 'width', label: 'Épaisseur', unit: '%', min: 0, max: 100, def: 50, step: 1 },
+        { key: 'mix',   label: 'Mélange',   unit: '%', min: 0, max: 100, def: 50, step: 1 }
+    ],
+    slapback: [
+        { key: 'time',     label: 'Retard',      unit: ' ms', min: 30, max: 300, def: 110, step: 5 },
+        { key: 'feedback', label: 'Répétitions', unit: '%',   min: 0,  max: 50,  def: 12,  step: 1 },
+        { key: 'mix',      label: 'Mélange',     unit: '%',   min: 0,  max: 100, def: 25,  step: 1 }
+    ],
+    gate: [
+        { key: 'threshold', label: 'Seuil (en dessous = coupé)', unit: ' dB', min: -70, max: -20, def: -45, step: 1 },
+        { key: 'release',   label: 'Retour du son',             unit: ' ms', min: 20,  max: 500, def: 150, step: 5 },
+        { key: 'reduction', label: 'Coupure',                   unit: ' dB', min: 6,   max: 80,  def: 40,  step: 1 }
+    ],
+    filter: [
+        { key: 'hpf',   label: 'Coupe-bas (graves)',  unit: ' Hz', min: 20,  max: 1000,  def: 80,    step: 5, log: true },
+        { key: 'lpf',   label: 'Coupe-haut (aigus)',  unit: ' Hz', min: 1000, max: 20000, def: 20000, step: 100, log: true },
+        { key: 'slope', label: 'Pente',                unit: ' dB', min: 12,  max: 24,    def: 12,    step: 12, choices: [12, 24] }
+    ],
+    sat: [
+        { key: 'drive', label: 'Chaleur', unit: '%', min: 0, max: 100, def: 25, step: 1 }
+    ],
+    deess: [
+        { key: 'amount', label: 'Force',      unit: '%',  min: 0,    max: 100,  def: 40,   step: 1 },
+        { key: 'freq',   label: 'Fréquence', unit: ' Hz', min: 3000, max: 9000, def: 5500, step: 100 }
+    ],
+    pitch: [
+        { key: 'semi', label: 'Hauteur', unit: ' dt', min: -12, max: 12, def: 0, step: 1, tip: 'En demi-tons : -12 = une octave plus grave, +12 = une octave plus aiguë' },
+        { key: 'mix',  label: 'Mélange', unit: '%',   min: 0,   max: 100, def: 100, step: 1, tip: '100 % = seulement la voix transposée' }
+    ],
+    delay: [
+        { key: 'beats',    label: 'Retour', unit: '',  min: 0.125, max: 2,  def: 0.5, step: 0.125, fmt: beatsLabel },
+        { key: 'feedback', label: 'Répétitions',    unit: '%', min: 0,     max: 85, def: 35,  step: 1 },
+        { key: 'wet',      label: 'Quantité',       unit: '%', min: 0,     max: 100, def: 25, step: 1 },
+        { key: 'dry',      label: 'Voix d\'origine', unit: '%', min: 0,     max: 100, def: 100, step: 1, adv: true, tip: '0 % = seulement l\'écho (piste d\'effet ponctuel)' },
+        { key: 'pp',       label: 'Ping-pong',      unit: '',  min: 0,     max: 1,   def: 0,  step: 1, toggle: true, tip: 'Les répétitions rebondissent de gauche à droite' }
+    ]
+};
+
 function openEffectPanel(trackIdx, fxName, anchorEl) {
     if (fxName === 'eq') return openEqPanel(trackIdx, anchorEl);
     closeTransientPanels();
@@ -6786,105 +6887,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
     if (already) { plugFront(already); return; }
     t.effectParams = t.effectParams || {};
 
-    const DEFS = {
-        eq: [
-            { key: 'hpf',      label: 'Passe-Haut',  unit: 'Hz', min: 20,  max: 500, def: 80,  step: 1 },
-            { key: 'midGain',  label: 'Médiums',      unit: 'dB', min: -12, max: 12,  def: -2,  step: 0.5 },
-            { key: 'presence', label: 'Présence 4k',  unit: 'dB', min: -12, max: 12,  def: 2,   step: 0.5 },
-            { key: 'air',      label: 'Air 10k',      unit: 'dB', min: -8,  max: 8,   def: 1,   step: 0.5 }
-        ],
-        comp: [
-            { key: 'mode', label: 'Caractère', unit: '', min: 0, max: 3, def: 0, step: 1, choices: [0, 1, 2, 3], choiceLabels: ['Propre', 'Opto', 'FET', 'Bus'],
-              tip: 'Propre : sans couleur · Opto : lent et doux, chaleur de lampe (voix) · FET : très rapide, ça claque (rap, batterie) · Bus : colle le mix' },
-            { key: 'threshold', label: 'Seuil',    unit: ' dB', min: -40, max: 0,  def: -22, step: 1 },
-            { key: 'ratio',     label: 'Ratio',     unit: ':1', min: 1,   max: 20, def: 3,   step: 0.5, busSteps: [1.5, 2, 4, 10, 20] },
-            { key: 'mix',       label: 'Mélange',   unit: '%',  min: 0,   max: 100, def: 100, step: 1 },
-            { key: 'attack',    label: 'Attaque',   unit: ' ms', min: 0.1, max: 100, def: 10, step: 0.1, adv: true, log: true, busSteps: [0.1, 0.3, 1, 3, 10, 30] },
-            { key: 'release',   label: 'Relâchement', unit: ' ms', min: 10,  max: 1200, def: 50, step: 5, adv: true, log: true, busSteps: [100, 300, 600, 1200, 'auto'] },
-            { key: 'knee',      label: 'Genou',     unit: ' dB', min: 0,   max: 24, def: 10,  step: 1, adv: true,
-              tip: 'Douceur de l\'entrée en compression : 0 = net, 24 = très progressif' },
-            // Rattrapage : sans réglage, Pulse remonte le volume tout seul (« Auto »), comme avant
-            { key: 'makeup',    label: 'Rattrapage', unit: ' dB', min: -12, max: 24, def: 0, step: 0.5, adv: true,
-              auto: (p) => Math.round(-p.threshold * (1 - 1 / Math.max(1, p.ratio)) * 0.35 * 2) / 2,
-              tip: 'Volume rendu après compression. Alt-clic : revenir en automatique' }
-        ],
-        reverb: [
-            { key: 'wet',   label: 'Quantité',    unit: '%',  min: 0,   max: 100, def: 18, step: 1 },
-            { key: 'size',  label: 'Taille',     unit: 's',  min: 0.3, max: 5,   def: 1.8, step: 0.1 },
-            { key: 'decay', label: 'Déclin',     unit: '',   min: 0.5, max: 5,   def: 2.5, step: 0.1 }
-        ],
-        crush: [
-            { key: 'bits', label: 'Finesse du son', unit: ' bits', min: 4, max: 16, def: 8, step: 1 },
-            { key: 'down', label: 'Son haché',      unit: '',      min: 1, max: 32, def: 4, step: 1 },
-            { key: 'mix',  label: 'Mélange',        unit: '%',     min: 0, max: 100, def: 100, step: 1 }
-        ],
-        util: [
-            { key: 'gain',   label: 'Volume',           unit: ' dB', min: -24, max: 24, def: 0, step: 0.5 },
-            { key: 'invert', label: 'Inverser la phase', unit: '',   min: 0,   max: 1,  def: 0, step: 1, toggle: true },
-            { key: 'mono',   label: 'Passer en mono',    unit: '',   min: 0,   max: 1,  def: 0, step: 1, toggle: true }
-        ],
-        width: [
-            { key: 'width', label: 'Largeur', unit: '%', min: 0, max: 200, def: 100, step: 1 }
-        ],
-        tremolo: [
-            { key: 'rate',  label: 'Vitesse',  unit: ' Hz', min: 0.5, max: 15,  def: 5,  step: 0.5 },
-            { key: 'depth', label: 'Intensité', unit: '%',   min: 0,   max: 100, def: 50, step: 1 }
-        ],
-        phaser: [
-            { key: 'rate',     label: 'Vitesse',     unit: ' Hz', min: 0.05, max: 3,   def: 0.4, step: 0.05 },
-            { key: 'depth',    label: 'Étendue',     unit: '%',   min: 0,    max: 100, def: 70,  step: 1 },
-            { key: 'feedback', label: 'Résonance',   unit: '%',   min: 0,    max: 90,  def: 40,  step: 1 },
-            { key: 'mix',      label: 'Mélange',     unit: '%',   min: 0,    max: 100, def: 50,  step: 1 }
-        ],
-        flanger: [
-            { key: 'rate',     label: 'Vitesse',     unit: ' Hz', min: 0.05, max: 2,   def: 0.25, step: 0.05 },
-            { key: 'depth',    label: 'Profondeur',  unit: ' ms', min: 0.5,  max: 5,   def: 2,    step: 0.5 },
-            { key: 'feedback', label: 'Résonance',   unit: '%',   min: 0,    max: 90,  def: 50,   step: 1 },
-            { key: 'mix',      label: 'Mélange',     unit: '%',   min: 0,    max: 100, def: 50,   step: 1 }
-        ],
-        chorus: [
-            { key: 'rate',  label: 'Vitesse',    unit: ' Hz', min: 0.1, max: 3,   def: 0.8, step: 0.1 },
-            { key: 'depth', label: 'Profondeur', unit: ' ms', min: 1,   max: 10,  def: 5,   step: 0.5 },
-            { key: 'mix',   label: 'Mélange',    unit: '%',   min: 0,   max: 100, def: 50,  step: 1 }
-        ],
-        doubler: [
-            { key: 'width', label: 'Épaisseur', unit: '%', min: 0, max: 100, def: 50, step: 1 },
-            { key: 'mix',   label: 'Mélange',   unit: '%', min: 0, max: 100, def: 50, step: 1 }
-        ],
-        slapback: [
-            { key: 'time',     label: 'Retard',      unit: ' ms', min: 30, max: 300, def: 110, step: 5 },
-            { key: 'feedback', label: 'Répétitions', unit: '%',   min: 0,  max: 50,  def: 12,  step: 1 },
-            { key: 'mix',      label: 'Mélange',     unit: '%',   min: 0,  max: 100, def: 25,  step: 1 }
-        ],
-        gate: [
-            { key: 'threshold', label: 'Seuil (en dessous = coupé)', unit: ' dB', min: -70, max: -20, def: -45, step: 1 },
-            { key: 'release',   label: 'Retour du son',             unit: ' ms', min: 20,  max: 500, def: 150, step: 5 },
-            { key: 'reduction', label: 'Coupure',                   unit: ' dB', min: 6,   max: 80,  def: 40,  step: 1 }
-        ],
-        filter: [
-            { key: 'hpf',   label: 'Coupe-bas (graves)',  unit: ' Hz', min: 20,  max: 1000,  def: 80,    step: 5, log: true },
-            { key: 'lpf',   label: 'Coupe-haut (aigus)',  unit: ' Hz', min: 1000, max: 20000, def: 20000, step: 100, log: true },
-            { key: 'slope', label: 'Pente',                unit: ' dB', min: 12,  max: 24,    def: 12,    step: 12, choices: [12, 24] }
-        ],
-        sat: [
-            { key: 'drive', label: 'Chaleur', unit: '%', min: 0, max: 100, def: 25, step: 1 }
-        ],
-        deess: [
-            { key: 'amount', label: 'Force',      unit: '%',  min: 0,    max: 100,  def: 40,   step: 1 },
-            { key: 'freq',   label: 'Fréquence', unit: ' Hz', min: 3000, max: 9000, def: 5500, step: 100 }
-        ],
-        pitch: [
-            { key: 'semi', label: 'Hauteur', unit: ' dt', min: -12, max: 12, def: 0, step: 1, tip: 'En demi-tons : -12 = une octave plus grave, +12 = une octave plus aiguë' },
-            { key: 'mix',  label: 'Mélange', unit: '%',   min: 0,   max: 100, def: 100, step: 1, tip: '100 % = seulement la voix transposée' }
-        ],
-        delay: [
-            { key: 'beats',    label: 'Retour', unit: '',  min: 0.125, max: 2,  def: 0.5, step: 0.125, fmt: beatsLabel },
-            { key: 'feedback', label: 'Répétitions',    unit: '%', min: 0,     max: 85, def: 35,  step: 1 },
-            { key: 'wet',      label: 'Quantité',       unit: '%', min: 0,     max: 100, def: 25, step: 1 },
-            { key: 'dry',      label: 'Voix d\'origine', unit: '%', min: 0,     max: 100, def: 100, step: 1, adv: true, tip: '0 % = seulement l\'écho (piste d\'effet ponctuel)' },
-            { key: 'pp',       label: 'Ping-pong',      unit: '',  min: 0,     max: 1,   def: 0,  step: 1, toggle: true, tip: 'Les répétitions rebondissent de gauche à droite' }
-        ]
-    };
+    const DEFS = FX_PANEL_DEFS;
     const defs = DEFS[fxName];
     if (!defs) return;
     const params = t.effectParams[fxName] || {};
@@ -7311,39 +7314,137 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
     // Plus de fermeture au clic ailleurs : la fenêtre reste ouverte comme dans Logic (fermeture : ×)
 }
 
-// Seul le volume s'automatise pour l'instant (les effets viendront avec le moteur natif)
-function openAutomationFor(trackIdx, param) {
-    flash('Pour l\'instant c\'est le volume qui se dessine : clique directement sur la piste dans la timeline');
-}
+function openAutomationFor() { flash('En mode A, touche un réglage (fader, envoi, plugin…) : sa courbe s\'affiche sur la piste'); }
 
-// === Courbe de volume d'une piste (automation) ===
-// points = [{ t (secondes), v (0 = silence … 1 = niveau du fader) }]
+// === Automation façon Logic ===
+// owner.automation[paramId] = { points: [{ t (secondes), v (0..1, position dans la plage du réglage) }] }
+// paramId : 'volume' (v = fraction du niveau du fader), 'pan', 'send:<id>', 'busSend:<id>', 'fx:<effet>:<réglage>'
+// owner.autoParam = le réglage dont la courbe est affichée sur la piste (Volume par défaut)
 const VOL_PAD = 7;
-function volPoints(t) {
-    t.automation = t.automation || {};
-    t.automation.volume = t.automation.volume || { points: [] };
-    return t.automation.volume.points;
+function autoOwnerKey(o) { const i = state.project.tracks.indexOf(o); return i >= 0 ? 't' + i : 'b' + o.id; }
+function autoOwnerFromKey(k) { return k[0] === 't' ? state.project.tracks[+k.slice(1)] : busById(k.slice(1)); }
+function fxNumericDefs(name) { return (FX_PANEL_DEFS[name] || []).filter(d => !d.choices && !d.toggle && d.min !== undefined); }
+function autoInfo(o, pid) {
+    if (pid === 'volume') return { label: 'Volume', cur: () => 1, norm: v => v, denorm: v => v, fmt: v => Math.round(v * 100) + ' %' };
+    const lin = (label, min, max, cur, fmt) => ({ label, cur, norm: v => Math.max(0, Math.min(1, (v - min) / (max - min))), denorm: n => min + n * (max - min), fmt });
+    if (pid === 'pan') return lin('Gauche / droite', -100, 100, () => o.pan || 0, v => panLabel(Math.round(v)));
+    const [kind, a, b] = pid.split(':');
+    if (kind === 'send') { const sd = projectSends().find(x => x.id === a); return sd ? lin('Envoi · ' + sd.name, 0, 100, () => (o.sends || {})[a] || 0, v => Math.round(v)) : null; }
+    if (kind === 'busSend') { const bs = busById(a); return bs ? lin('Envoi → ' + bs.name, 0, 100, () => (o.busSends || {})[a] || 0, v => Math.round(v)) : null; }
+    if (kind === 'fx') {
+        const d = fxNumericDefs(a).find(x => x.key === b); if (!d) return null;
+        const cur = () => { const v = (o.effectParams || {})[a] ? o.effectParams[a][b] : undefined; return v !== undefined ? v : d.def; };
+        const label = (FX_NAMES[a] || a) + ' · ' + d.label;
+        if (d.log && d.min > 0) return { label, cur, norm: v => Math.max(0, Math.min(1, Math.log(Math.max(v, d.min) / d.min) / Math.log(d.max / d.min))), denorm: n => d.min * Math.pow(d.max / d.min, n), fmt: v => Math.round(v * 10) / 10 + (d.unit || '') };
+        return { ...lin(label, d.min, d.max, cur, v => Math.round(v * 10) / 10 + (d.unit || '')) };
+    }
+    return null;
 }
+function autoPts(o, pid, create = true) {
+    if (!o.automation || !o.automation[pid]) { if (!create) return []; o.automation = o.automation || {}; o.automation[pid] = { points: [] }; }
+    return o.automation[pid].points;
+}
+function volPoints(t) { return autoPts(t, 'volume'); }
+function autoCurrent(o) { const pid = o.autoParam || 'volume'; const info = autoInfo(o, pid); if (info) return { pid, info }; o.autoParam = 'volume'; return { pid: 'volume', info: autoInfo(o, 'volume') }; }
+function autoStatic(o, pid, info) { return info.norm(info.cur()); }
 // Hauteur de la ligne qui porte la courbe : une piste ou un groupe
 function ownerH(o) { return (state.project.buses || []).includes(o) ? (o.height || 36) : trackH(o); }
 function volY(v, h = state.trackHeight) { return VOL_PAD + (1 - v) * (h - 2 * VOL_PAD); }
 function volFromY(y, h = state.trackHeight) { return Math.max(0, Math.min(1, 1 - (y - VOL_PAD) / (h - 2 * VOL_PAD))); }
 function volCurveInner(t, widthPx) {
     const H = ownerH(t);
-    const pts = ((t.automation && t.automation.volume && t.automation.volume.points) || []).slice().sort((a, b) => a.t - b.t);
-    const first = pts.length ? pts[0].v : 1, last = pts.length ? pts[pts.length - 1].v : 1;
+    const { pid, info } = autoCurrent(t);
+    const pts = autoPts(t, pid, false).slice().sort((a, b) => a.t - b.t);
+    const flat = autoStatic(t, pid, info);
+    const first = pts.length ? pts[0].v : flat, last = pts.length ? pts[pts.length - 1].v : flat;
     const line = [`0,${volY(first, H)}`, ...pts.map(p => `${(p.t * state.pxPerSecond).toFixed(1)},${volY(p.v, H).toFixed(1)}`), `${widthPx},${volY(last, H)}`].join(' ');
     return `<polygon class="vol-fill" points="0,${H} ${line} ${widthPx},${H}"/>
-        <polyline class="vol-line" points="${line}"/>
-        ${pts.map(p => `<circle class="vol-pt" cx="${(p.t * state.pxPerSecond).toFixed(1)}" cy="${volY(p.v, H).toFixed(1)}" r="5" data-t="${p.t}"><title>${Math.round(p.v * 100)} %</title></circle>`).join('')}`;
+        <polyline class="vol-line ${pts.length ? '' : 'is-flat'}" points="${line}"/>
+        ${pts.map(p => `<circle class="vol-pt" cx="${(p.t * state.pxPerSecond).toFixed(1)}" cy="${volY(p.v, H).toFixed(1)}" r="5" data-t="${p.t}"><title>${esc(info.label)} : ${esc(String(info.fmt(info.denorm(p.v))))}</title></circle>`).join('')}`;
+}
+// Pastille « réglage affiché » (menu : tout ce qui peut s'automatiser), collée à gauche de la zone visible
+function autoChip(o) {
+    const { pid, info } = autoCurrent(o);
+    return `<button class="auto-chip" data-owner="${esc(autoOwnerKey(o))}" data-tooltip="Réglage dessiné sur cette piste : clique pour en choisir un autre. En touchant un réglage (fader, envoi, plugin) en mode A, sa courbe s'affiche ici toute seule">${esc(info.label)}${autoPts(o, pid, false).length ? ' ●' : ''} ▾</button>`;
 }
 function renderVolumeCurve(t, i, widthPx) {
-    return `<svg class="vol-curve" data-i="${i}" width="${widthPx}" height="${trackH(t)}">${volCurveInner(t, widthPx)}</svg>`;
+    return `<svg class="vol-curve" data-i="${i}" width="${widthPx}" height="${trackH(t)}">${volCurveInner(t, widthPx)}</svg>${autoChip(t)}`;
 }
 function renderBusCurve(bus, widthPx) {
-    return `<svg class="vol-curve" data-bus="${esc(bus.id)}" width="${widthPx}" height="${ownerH(bus)}">${volCurveInner(bus, widthPx)}</svg>`;
+    return `<svg class="vol-curve" data-bus="${esc(bus.id)}" width="${widthPx}" height="${ownerH(bus)}">${volCurveInner(bus, widthPx)}</svg>${autoChip(bus)}`;
 }
+// Liste de ce qui s'automatise sur une piste ou un groupe
+function autoParamGroups(o) {
+    const groups = [['Réglages de base', ['volume', 'pan']]];
+    if (!o.premaster && !o.locked) {
+        const sd = projectSends().map(x => 'send:' + x.id).concat(Object.keys(o.busSends || {}).filter(id => busById(id)).map(id => 'busSend:' + id));
+        if (sd.length) groups.push(['Envois', sd]);
+        (o.effects || []).filter(n => n !== 'eq' && n !== 'limit' && n !== 'master').forEach(n => {
+            const ids = fxNumericDefs(n).map(d => `fx:${n}:${d.key}`);
+            if (ids.length) groups.push([FX_NAMES[n] || n, ids]);
+        });
+    }
+    return groups;
+}
+function openAutoParamMenu(anchor, o) {
+    closeAllMenus();
+    const r = anchor.getBoundingClientRect();
+    const menu = document.createElement('div');
+    menu.className = 'track-ctx-menu';
+    menu.style.cssText = `position:fixed;left:${Math.max(8, Math.min(r.left, window.innerWidth - 250))}px;top:${Math.max(8, Math.min(r.bottom + 2, window.innerHeight - 380))}px;z-index:300;min-width:230px;max-height:70vh;overflow:auto`;
+    const cur = autoCurrent(o).pid;
+    autoParamGroups(o).forEach(([title, ids]) => {
+        const h = document.createElement('div'); h.className = 'ctx-head'; h.textContent = title; menu.appendChild(h);
+        ids.forEach(pid => {
+            const info = autoInfo(o, pid); if (!info) return;
+            const it = document.createElement('div'); it.className = 'ctx-item';
+            const has = autoPts(o, pid, false).length > 0;
+            it.textContent = (pid === cur ? '✓ ' : '   ') + info.label.replace(/^.*? · /, '') + (has ? '  ●' : '');
+            it.addEventListener('mousedown', (ev) => { ev.stopPropagation(); closeAllMenus(); o.autoParam = pid; saveProject(); renderTimelineTracks(); });
+            menu.appendChild(it);
+        });
+    });
+    document.body.appendChild(menu);
+    setTimeout(() => document.addEventListener('mousedown', closeAllMenus, { once: true }), 10);
+}
+// Autosélection (comme Logic) : en mode A, toucher un réglage affiche sa courbe sur la piste
+let _autoRaf = 0;
+function autoSelectParam(o, pid) {
+    if (!state.automationMode || !o || !autoInfo(o, pid) || (o.autoParam || 'volume') === pid) return;
+    o.autoParam = pid; saveProject();
+    cancelAnimationFrame(_autoRaf); _autoRaf = requestAnimationFrame(() => renderTimelineTracks());
+}
+function autoTargetOf(el) {
+    const fxp = el.closest('.fx-panel.plug-win');
+    if (fxp) { const c = el.closest('.fx-slider, .fx-knob, .fx-val'); return c && c.dataset.key && fxp._plugT ? { o: fxp._plugT, pid: `fx:${fxp.dataset.fx}:${c.dataset.key}` } : null; }
+    let o = null;
+    const strip = el.closest('.insp-strip, .strip[data-kind]');
+    if (strip) {
+        const insp = strip.classList.contains('insp-strip');
+        if (strip.dataset.kind === 'track') o = state.project.tracks[insp ? state.selectedTrack : +strip.dataset.i];
+        else if (strip.dataset.kind === 'bus') o = insp ? busById(strip.dataset.id) : (state.project.buses || [])[+strip.dataset.i];
+        if (!o) return null;
+        const row = el.closest('.send-bar-row, .strip-send-row');
+        if (row) return row.dataset.send ? { o, pid: 'send:' + row.dataset.send } : row.dataset.bsend ? { o, pid: 'busSend:' + row.dataset.bsend } : null;
+        if (el.closest('.insp-pan, .strip-pan')) return { o, pid: 'pan' };
+        if (el.closest('.fader, .strip-fader-wrap')) return { o, pid: 'volume' };
+        return null;
+    }
+    const tv = el.closest('.t-vol, .t-knob');
+    if (tv) { o = state.project.tracks[+tv.dataset.i]; return o ? { o, pid: tv.classList.contains('t-knob') ? 'pan' : 'volume' } : null; }
+    return null;
+}
+['mousedown', 'wheel'].forEach(ev => document.addEventListener(ev, (e) => {
+    if (!state.automationMode || !e.target.closest) return;
+    const tg = autoTargetOf(e.target);
+    if (tg) autoSelectParam(tg.o, tg.pid);
+}, { capture: true, passive: true }));
 function bindVolumeCurves() {
+    document.querySelectorAll('.auto-chip').forEach(chip => {
+        const o = autoOwnerFromKey(chip.dataset.owner); if (!o) return;
+        chip.addEventListener('mousedown', (e) => { e.stopPropagation(); });
+        chip.addEventListener('click', (e) => { e.stopPropagation(); openAutoParamMenu(chip, o); });
+    });
     document.querySelectorAll('.vol-curve').forEach(svg => {
         const track = svg.dataset.bus
             ? (state.project.buses || []).find(b => b.id === svg.dataset.bus)
@@ -7351,12 +7452,14 @@ function bindVolumeCurves() {
         if (!track) return;
         const width = parseFloat(svg.getAttribute('width'));
         const redraw = () => { svg.innerHTML = volCurveInner(track, width); };
+        const curPts = () => autoPts(track, autoCurrent(track).pid);
+        const round = (v) => autoCurrent(track).pid === 'volume' ? Math.round(v * 100) / 100 : Math.round(v * 1000) / 1000;
         svg.addEventListener('dblclick', (e) => {
             e.stopPropagation();
             // Le point le plus proche du clic (le dessin est refait entre les deux clics, on ne peut pas se fier à la cible)
             const rect = svg.getBoundingClientRect();
             const x = e.clientX - rect.left, y = e.clientY - rect.top;
-            const pts = volPoints(track);
+            const pts = curPts();
             let k = -1, best = 12;
             pts.forEach((p, n) => { const d = Math.hypot(p.t * state.pxPerSecond - x, volY(p.v, ownerH(track)) - y); if (d < best) { best = d; k = n; } });
             if (k < 0) return;
@@ -7369,7 +7472,8 @@ function bindVolumeCurves() {
             e.stopPropagation(); e.preventDefault();
             const rect = svg.getBoundingClientRect();
             const pos = (ev) => ({ t: Math.max(0, (ev.clientX - rect.left) / state.pxPerSecond), v: volFromY(ev.clientY - rect.top, ownerH(track)) });
-            const pts = volPoints(track);
+            const cur = autoCurrent(track);
+            const pts = curPts();
             // Point existant sous la souris ? (recherche par distance, plus fiable que la cible du clic)
             let pt = null, best = 9;
             const mx = e.clientX - rect.left, my = e.clientY - rect.top;
@@ -7379,9 +7483,9 @@ function bindVolumeCurves() {
             if (!pt) {
                 pushUndo();
                 const at = pos(e);
-                // Premier point posé : on ancre aussi le niveau normal au tout début, sinon toute la piste baisserait
-                if (!pts.length && at.t > 0.05) pts.push({ t: 0, v: 1 });
-                pt = { t: at.t, v: Math.round(at.v * 100) / 100 };
+                // Premier point posé : on ancre aussi la valeur actuelle au tout début, sinon toute la piste changerait
+                if (!pts.length && at.t > 0.05) pts.push({ t: 0, v: autoStatic(track, cur.pid, cur.info) });
+                pt = { t: at.t, v: round(at.v) };
                 pts.push(pt);
                 changed = true;
                 redraw();
@@ -7389,7 +7493,7 @@ function bindVolumeCurves() {
             const onMove = (ev) => {
                 if (!changed) { pushUndo(); changed = true; }
                 const at = pos(ev);
-                pt.t = at.t; pt.v = Math.round(at.v * 100) / 100;
+                pt.t = at.t; pt.v = round(at.v);
                 redraw();
             };
             const onUp = () => {
@@ -11166,6 +11270,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const tracksPanel = document.querySelector('.tracks-panel');
     const timeline    = document.querySelector('.timeline');
     timeline.addEventListener('scroll', refreshFineWaves, { passive: true });
+    timeline.addEventListener('scroll', () => timeline.style.setProperty('--tl-sl', timeline.scrollLeft + 'px'), { passive: true });   // la pastille d'automation reste visible à gauche
     // Le dernier défilement imposé à l'autre côté est ignoré quand il revient (sinon les deux se renvoient la balle)
     let _echoTL = null, _echoTP = null;
     tracksPanel.addEventListener('scroll', () => {

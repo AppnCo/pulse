@@ -3333,3 +3333,11 @@ body.fx-drag-on, body.fx-drag-on * { cursor: grabbing !important; user-select: n
 }
 .fx-autogain.on { color: #fff; border-color: var(--violet-2); background: color-mix(in srgb, var(--violet-2) 45%, var(--bg-3)); }
 .fx-autogain:hover { border-color: var(--violet-2); }
+
+/* === Automation : pastille du réglage dessiné === */
+.auto-chip {
+  position: absolute; top: 3px; left: calc(var(--tl-sl, 0px) + 8px); z-index: 9; height: 17px; padding: 0 8px; font-size: 10px; line-height: 15px;
+  border-radius: 9px; border: 1px solid rgba(251, 191, 36, .55); background: rgba(26, 18, 6, .88); color: #FBBF24; cursor: pointer; white-space: nowrap;
+}
+.auto-chip:hover { background: rgba(251, 191, 36, .22); color: #fff; }
+.vol-line.is-flat { stroke-dasharray: 5 4; opacity: .7; }

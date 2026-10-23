@@ -76,7 +76,7 @@ function prod(chords, secPer = 2) {
 const maskStr = (m) => m.map((v, i) => v ? T.NOTE_NAMES[i] : '').filter(Boolean).join(' ');
 // La mineur : Am F C G
 let k = await T.detectKeyFromMusic(prod([{ notes: [57, 60, 64], bass: 33 }, { notes: [53, 57, 60], bass: 29 }, { notes: [48, 52, 55], bass: 36 }, { notes: [55, 59, 62], bass: 31 }]), sr);
-ok('gamme instru (La mineur)', maskStr(k.notes) === 'Do Ré Mi Fa Sol La Si', `${T.scaleName(k.tonic, k.minor)} — notes ${maskStr(k.notes)} — confiance ${k.confidence.toFixed(2)}`);
+ok('gamme instru (La mineur)', maskStr(k.notes) === 'C D E F G A B', `${T.scaleName(k.tonic, k.minor)} — notes ${maskStr(k.notes)} — confiance ${k.confidence.toFixed(2)}`);
 // Fa# mineur façon trap : F#m D E F#m
 k = await T.detectKeyFromMusic(prod([{ notes: [54, 57, 61], bass: 30 }, { notes: [50, 54, 57], bass: 26 }, { notes: [52, 56, 59], bass: 28 }, { notes: [54, 57, 61], bass: 30 }]), sr);
 ok('gamme instru (Fa# mineur)', k.tonic === 6 && k.minor, `${T.scaleName(k.tonic, k.minor)} — notes ${maskStr(k.notes)} — confiance ${k.confidence.toFixed(2)}`);
