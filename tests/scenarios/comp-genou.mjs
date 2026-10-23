@@ -46,10 +46,10 @@ export default async ({ ev, nav, send, sleep }) => {
   await R('saisie valeur', `const p=document.querySelector('.fx-panel'); p.querySelector('.fx-val[data-key=attack]').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));
     const inp=p.querySelector('.fx-val-edit'); inp.value='25'; inp.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));
     return 'attaque='+state.project.tracks[0].effectParams.comp.attack`);
-  await R('filtre et utilitaire', `openEffectPanel(0,'filter',document.body); let p=document.querySelector('.fx-panel'); const f=p.querySelector('.fx-val[data-key=lpf]').textContent+' / pente: '+[...p.querySelectorAll('.fx-choice button')].map(b=>b.textContent+(b.classList.contains('on')?'*':'')).join(',');
-    openEffectPanel(0,'util',document.body); p=document.querySelector('.fx-panel'); p.querySelector('.fx-toggle[data-key=mono]').click();
-    openEffectPanel(0,'delay',document.body); const d=document.querySelector('.fx-panel .fx-val[data-key=beats]').textContent;
-    return f+' | mono='+state.project.tracks[0].effectParams.util.mono+' | écho='+d`);
+  await R('filtre et utilitaire', `openEffectPanel(0,'filter',document.body); let p=document.querySelector('.fx-panel'); const f=(p.querySelector('.fx-val[data-key=lpf]')||{textContent:'(réglage avancé caché)'}).textContent+' / pente: '+[...p.querySelectorAll('.fx-choice button')].map(b=>b.textContent+(b.classList.contains('on')?'*':'')).join(',');
+    openEffectPanel(0,'util',document.body); p=document.querySelector('.fx-panel'); p.querySelector('.fx-toggle[data-key=mono]')?.click();
+    openEffectPanel(0,'delay',document.body); const d=document.querySelector('.fx-panel .fx-val[data-key=beats]')?.textContent;
+    return f+' | mono='+(state.project.tracks[0].effectParams.util||{}).mono+' | écho='+d`);
   await R('aiguille = vraie réduction', `const ctx=await PulseAudio.init(); const sr=ctx.sampleRate; const b=ctx.createBuffer(1,sr*4,sr),d=b.getChannelData(0); for(let i=0;i<d.length;i++)d[i]=0.5*Math.sin(2*Math.PI*300*i/sr); PulseAudio.registerBuffer('cgl',b);
     const t=state.project.tracks[0]; t.clips=[{id:'cgl',start:0,duration:4}]; t.effects=['comp']; t.effectParams={comp:{threshold:-20,ratio:4,attack:10,release:50,knee:0,makeup:0}};
     await togglePlay(); await new Promise(r=>setTimeout(r,1200)); const gr=PulseAudio.getCompReduction('t0'); await togglePlay();

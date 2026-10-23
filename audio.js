@@ -49,6 +49,27 @@ window.PulseAudio = (function() {
     // De-esser : on isole les aigus ; quand ils dominent la voix (un « S », un « CH »), on les baisse eux seuls.
     // Le seuil est relatif (aigus / voix entière) : ça marche pareil qu'on ait enregistré fort ou pas.
     const FX_WORKLET = `
+        // Automation d'un réglage d'effet : la courbe arrive dans les options ({ réglage: [{ t, v }] }, valeurs déjà converties)
+        // et l'effet la suit lui-même à chaque bloc de 128 échantillons, en lecture comme à l'export
+        function pulseAutoAt(pts, t) {
+            if (t <= pts[0].t) return pts[0].v;
+            for (let i = 1; i < pts.length; i++) if (t <= pts[i].t) { const a = pts[i - 1], b = pts[i]; return b.t === a.t ? b.v : a.v + (b.v - a.v) * (t - a.t) / (b.t - a.t); }
+            return pts[pts.length - 1].v;
+        }
+        function pulseAuto(Cls, apply) {
+            return class extends Cls {
+                constructor(o) {
+                    super(o);
+                    const p = (o && o.processorOptions) || {};
+                    this._ap = p; this._au = p.auto && Object.keys(p.auto).length ? p.auto : null;
+                    this._at0 = p.autoT0 || 0; this._af = p.autoFrom || 0;
+                }
+                process(i, o) {
+                    if (this._au) { const t = currentTime - this._at0 + this._af, v = {}; for (const k in this._au) v[k] = pulseAutoAt(this._au[k], t); apply(this, v); }
+                    return super.process(i, o);
+                }
+            };
+        }
         class PulseDeesser extends AudioWorkletProcessor {
             constructor(o) {
                 super();
@@ -277,7 +298,7 @@ window.PulseAudio = (function() {
                 this.env2 = 0; this.slow = 0; this.dc = [0, 0];
                 this.setup(p);
                 // Réglages envoyés en direct pendant la lecture (sans reconstruire le son)
-                this.port.onmessage = (e) => { if (e.data && e.data.set) this.setup(e.data.set); };
+                this.port.onmessage = (e) => { if (e.data && e.data.set) { if (this._ap) this._ap = { ...this._ap, ...e.data.set }; this.setup(this._ap ? { ...this._ap } : e.data.set); } };
             }
             setup(p) {
                 this.thr = p.threshold ?? -22;
@@ -333,7 +354,7 @@ window.PulseAudio = (function() {
                 return true;
             }
         }
-        registerProcessor('pulse-comp', PulseComp);
+        registerProcessor('pulse-comp', pulseAuto(PulseComp, (s, v) => s.setup({ ...s._ap, ...v })));
 
         // Reverb : 8 échos très courts en parallèle + 4 diffuseurs en série (schéma « Freeverb »).
         // Aucun hasard dedans : le même réglage donne exactement le même son partout (navigateur, export, moteur natif).
@@ -390,7 +411,7 @@ window.PulseAudio = (function() {
                 return true;
             }
         }
-        registerProcessor('pulse-reverb', PulseReverb);
+        registerProcessor('pulse-reverb', pulseAuto(PulseReverb, (s, v) => { if (v.wet !== undefined) s.wet = Math.max(0, Math.min(1, v.wet)); }));
 
         // Pitch −/+ : deux têtes de lecture glissent dans une mémoire de 50 ms, en fondu croisé (sin²)
         // Même calcul que engine/src/fx.rs (Pitch::tick)
@@ -518,7 +539,7 @@ window.PulseAudio = (function() {
                 return true;
             }
         }
-        registerProcessor('pulse-delay', PulseDelay);
+        registerProcessor('pulse-delay', pulseAuto(PulseDelay, (s, v) => { if (v.feedback !== undefined) s.fb = Math.max(0, Math.min(0.9, v.feedback)); if (v.wet !== undefined) s.wet = Math.max(0, Math.min(1, v.wet)); if (v.dry !== undefined) s.dry = v.dry; }));
 
         // Largeur stéréo : on écarte ou on resserre ce qui diffère entre la gauche et la droite. 1 = inchangé.
         class PulseWidth extends AudioWorkletProcessor {
@@ -1040,11 +1061,16 @@ window.PulseAudio = (function() {
         return pts[pts.length - 1].v;
     }
 
+    // Plages des réglages d'effet automatisables ({ 'fx:comp:threshold': { min, max, log } }), données par l'interface
+    let autoRanges = {};
+    function setAutoRanges(m) { autoRanges = m || {}; }
+    function autoReal(pid, v) { const r = autoRanges[pid]; if (!r) return null; return r.log && r.min > 0 ? r.min * Math.pow(r.max / r.min, v) : r.min + v * (r.max - r.min); }
     // Automation d'un réglage quelconque : points { t, v } avec v entre 0 et 1 (position dans la plage du réglage)
     function autoCurvePts(owner, pid) {
         const pts = owner && owner.automation && owner.automation[pid] && owner.automation[pid].points;
         return Array.isArray(pts) && pts.length ? pts.slice().sort((p, q) => p.t - q.t) : [];
     }
+    function pulseAutoAtMain(pts, t) { return volumeAt(pts, t); }
     function scheduleAuto(param, pts, toVal, fromTime, t0) {
         if (!pts.length) return;
         param.cancelScheduledValues(0);
@@ -1084,7 +1110,7 @@ window.PulseAudio = (function() {
             const bus = (project.buses || []).find(b => b.id === id);
             if (!bus) return dest;
             // Effets communs du groupe (ex. une seule reverb pour toutes les voix) → volume du groupe → sortie
-            const fx = createEffectsChain(actx, bus.effects || [], { ...(bus.effectParams || {}), order: bus.fxOrder, grKey: 'b' + id }, project.bpm, project.ceilingDb ?? ceilingDb);
+            const fx = createEffectsChain(actx, bus.effects || [], { ...(bus.effectParams || {}), order: bus.fxOrder, grKey: 'b' + id, auto: bus.automation, autoAt: { t0, from: fromTime } }, project.bpm, project.ceilingDb ?? ceilingDb);
             const g = actx.createGain();
             g.gain.value = bus.muted ? 0 : (bus.volume ?? 100) / 100;
             fx.output.connect(g);
@@ -1175,7 +1201,7 @@ window.PulseAudio = (function() {
             const trackGain = actx.createGain();
             trackGain.gain.value = audible ? vol : 0;
 
-            const fx = createEffectsChain(actx, track.effects || [], { ...(track.effectParams || {}), order: track.fxOrder, grKey: 't' + trackIdx }, project.bpm);
+            const fx = createEffectsChain(actx, track.effects || [], { ...(track.effectParams || {}), order: track.fxOrder, grKey: 't' + trackIdx, auto: track.automation, autoAt: { t0, from: fromTime } }, project.bpm);
             fx.output.connect(trackGain);
             // Piste forcée en mono (bouton Mono / Stéréo) : les deux côtés se mélangent avant les effets
             let fxIn = fx.input;
@@ -1523,6 +1549,18 @@ window.PulseAudio = (function() {
         const input = actx.createGain();
         let prev = input;
         const connect = (n) => { prev.connect(n); prev = n; };
+        // Courbes d'automation des réglages, converties dans l'unité de l'effet
+        const autoAt = params.autoAt || { t0: 0, from: 0 };
+        const curveOf = (fx, key, conv = (x) => x) => {
+            const pid = `fx:${fx}:${key}`, pts = autoCurvePts({ automation: params.auto }, pid);
+            if (!pts.length || !autoRanges[pid]) return null;
+            return pts.map(p => ({ t: p.t, v: conv(autoReal(pid, p.v)) }));
+        };
+        const autoOpts = (fx, map) => {
+            const auto = {};
+            for (const [key, conv] of Object.entries(map)) { const c = curveOf(fx, key, conv || undefined); if (c) auto[key] = c; }
+            return Object.keys(auto).length ? { auto, autoT0: autoAt.t0, autoFrom: autoAt.from } : {};
+        };
 
         // Chaque effet est un bloc ; on les branche dans l'ordre demandé (ordre habituel si rien n'est précisé)
         const B = {};
@@ -1537,7 +1575,11 @@ window.PulseAudio = (function() {
             const qs = p.slope === 24 ? [0.5412, 1.3066] : [Math.SQRT1_2];
             const add = (type, freq) => qs.forEach((q) => {
                 const f = actx.createBiquadFilter(); f.type = type; f.frequency.value = freq; f.Q.value = qdb(q); connect(f);
+                const c = curveOf('filter', type === 'highpass' ? 'hpf' : 'lpf');
+                if (c) { f.frequency.setValueAtTime(pulseAutoAtMain(c, autoAt.from), autoAt.t0); c.forEach(p => { if (p.t > autoAt.from) f.frequency.linearRampToValueAtTime(p.v, autoAt.t0 + (p.t - autoAt.from)); }); }
             });
+            if (curveOf('filter', 'hpf') && hpf <= 20) add('highpass', 20);
+            if (curveOf('filter', 'lpf') && lpf >= 20000) add('lowpass', 20000);
             if (hpf > 20) add('highpass', Math.min(hpf, 20000));
             if (lpf < 20000) add('lowpass', Math.max(lpf, 20));
         };
@@ -1669,7 +1711,8 @@ window.PulseAudio = (function() {
                     const live = !!params.grKey && !(typeof OfflineAudioContext !== 'undefined' && actx instanceof OfflineAudioContext);
                     const node = new AudioWorkletNode(actx, 'pulse-comp', {
                         numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max',
-                        processorOptions: { threshold: cp.threshold, ratio: cp.ratio, attack: cp.attack, release: cp.release, knee: cp.knee, makeup: cp.makeup, mix: cp.mix, mode: cp.mode, autoRel: cp.autoRel, report: live }
+                        processorOptions: { threshold: cp.threshold, ratio: cp.ratio, attack: cp.attack, release: cp.release, knee: cp.knee, makeup: cp.makeup, mix: cp.mix, mode: cp.mode, autoRel: cp.autoRel, report: live,
+                            ...autoOpts('comp', { threshold: null, ratio: null, attack: null, release: null, knee: null, makeup: null, mix: null }) }
                     });
                     if (live) {
                         const old = compLive.get(params.grKey); if (old && old !== node) old.port.onmessage = null;   // l'ancien compresseur ne parle plus (sinon l'aiguille saute entre deux)
@@ -1730,7 +1773,8 @@ window.PulseAudio = (function() {
                 connect(new AudioWorkletNode(actx, 'pulse-delay', {
                     numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max',
                     ...(dp.pp ? { outputChannelCount: [2] } : {}),
-                    processorOptions: { time: delaySeconds(dp, bpm), feedback: (dp.feedback ?? 35) / 100, wet: (dp.wet ?? 25) / 100, dry: (dp.dry ?? 100) / 100, pp: !!dp.pp }
+                    processorOptions: { time: delaySeconds(dp, bpm), feedback: (dp.feedback ?? 35) / 100, wet: (dp.wet ?? 25) / 100, dry: (dp.dry ?? 100) / 100, pp: !!dp.pp,
+                        ...autoOpts('delay', { feedback: (x) => x / 100, wet: (x) => x / 100, dry: (x) => x / 100 }) }
                 }));
             }
         };
@@ -1741,7 +1785,7 @@ window.PulseAudio = (function() {
                 const rp = params.reverb || {};
                 connect(new AudioWorkletNode(actx, 'pulse-reverb', {
                     numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCountMode: 'max',
-                    processorOptions: { wet: rp.wet !== undefined ? rp.wet / 100 : 0.18, size: rp.size, decay: rp.decay }
+                    processorOptions: { wet: rp.wet !== undefined ? rp.wet / 100 : 0.18, size: rp.size, decay: rp.decay, ...autoOpts('reverb', { wet: (x) => x / 100 }) }
                 }));
             } else if (enabled.includes('reverb')) {
                 const rp = params.reverb || {};
@@ -2067,7 +2111,7 @@ window.PulseAudio = (function() {
         startRecording, stopRecording,
         registerBuffer, hasBuffer, getBuffer, getBufferDuration, clearBuffers, computePeaks,
         play, stopAll, getPlaybackPosition, setNativeBackend, isNative, setBeatsPerBar,
-        updateTrackVolume, updateTrackPan, updateComp, refreshAudibility, clearLiveNodes,
+        updateTrackVolume, updateTrackPan, updateComp, setAutoRanges, refreshAudibility, clearLiveNodes,
         getTrackAnalyser, getTrackMeters, trackChannelCount, getMasterAnalyser, getTrackSpectrum, getBusSpectrum, getCompReduction, setMasterVolume,
         setMetronome, setMetronomeBpm, setCountIn, isCountInEnabled,
         startMetronome, stopMetronome, playCountIn, stopCountIn, isCountingIn,

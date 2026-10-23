@@ -55,6 +55,8 @@ pub struct Track {
     pub fx_order: Vec<String>,
     /// Dose envoyée dans chaque envoi (identifiant → 0-100), prise après le volume et le pan
     pub sends: std::collections::HashMap<String, f64>,
+    /// Envois vers un groupe (identifiant du groupe → 0-100), comme un Aux de Logic
+    pub bus_sends: std::collections::HashMap<String, f64>,
     pub clips: Vec<Clip>,
     /// Effets actifs : "eq", "sat", "deess", "comp", "reverb"
     pub effects: Vec<String>,
@@ -257,6 +259,22 @@ pub struct SatParams {
 #[serde(default)]
 pub struct Automation {
     pub volume: Option<Curve>,
+    /// Les autres réglages : « pan », « send:<id> », « busSend:<id> », « fx:<effet>:<réglage> » (valeurs entre 0 et 1)
+    #[serde(flatten)]
+    pub other: std::collections::HashMap<String, Curve>,
+}
+
+impl Automation {
+    /// La courbe d'un réglage, points rangés dans l'ordre ; None si elle est vide
+    pub fn curve(&self, key: &str) -> Option<Curve> {
+        let c = if key == "volume" { self.volume.as_ref() } else { self.other.get(key) }?;
+        if c.points.is_empty() {
+            return None;
+        }
+        let mut c = c.clone();
+        c.points.sort_by(|a, b| a.t.total_cmp(&b.t));
+        Some(c)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -329,6 +347,8 @@ pub struct Bus {
     pub pan: Option<f64>,
     /// Envois du groupe (reverb, écho…) : dose 0–100 par envoi, prise après son volume et son pan
     pub sends: std::collections::HashMap<String, f64>,
+    /// Envois vers un autre groupe (identifiant → 0-100)
+    pub bus_sends: std::collections::HashMap<String, f64>,
 }
 
 impl Bus {
@@ -336,8 +356,10 @@ impl Bus {
     pub fn is_stage(&self) -> bool {
         !self.effects.is_empty()
             || self.automation.volume.as_ref().is_some_and(|c| !c.points.is_empty())
+            || self.automation.other.values().any(|c| !c.points.is_empty())
             || self.pan.is_some_and(|p| p != 0.0)
             || self.sends.values().any(|l| *l > 0.0)
+            || self.bus_sends.values().any(|l| *l > 0.0)
     }
 }
 

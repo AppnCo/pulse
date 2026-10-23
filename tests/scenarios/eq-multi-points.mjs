@@ -5,6 +5,8 @@ export default async ({ ev, nav, send, sleep, shot }) => {
   await ev(`localStorage.clear(); localStorage.setItem('pulse_onboarded_v1','1'); localStorage.setItem('pulse_tip_headphones','1')`);
   await nav('http://localhost:8765/studio.html'); await sleep(800);
   const R = async (label, code) => console.log(label + ':', await ev(`(async()=>{${code}})()`));
+  // Un EQ neuf s'ouvre vide : ce scénario part des 4 points de l'ancien réglage de départ
+  await ev(`(()=>{ const t=state.project.tracks[0]; t.effects=[...new Set([...(t.effects||[]),'eq'])]; t.effectParams=t.effectParams||{}; t.effectParams.eq={bands:[{type:'hpf',freq:80,gain:0,q:1.0839},{type:'bell',freq:300,gain:-2,q:1},{type:'bell',freq:4000,gain:2,q:0.7},{type:'highshelf',freq:10000,gain:1,q:0.7}]}; })()`);
   await ev(`openEqPanel(0, document.body)`); await sleep(300);
   const bandsStr = `JSON.stringify(eqBandsOf(state.project.tracks[0].effectParams.eq||{}).map(b=>[b.type,Math.round(b.freq),(b.gain||0)]))`;
   await R('points au départ', `return ${bandsStr}`);

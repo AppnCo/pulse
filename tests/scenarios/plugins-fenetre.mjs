@@ -7,6 +7,8 @@ export default async ({ ev, nav, send, sleep, shot }) => {
   const R = async (label, code) => console.log(label + ':', await ev(`(async()=>{${code}})()`));
   const M = (type, x, y) => send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1 });
   await ev(`document.getElementById('btnMixer').click()`); await sleep(400);
+  // Un EQ neuf s'ouvre vide : ce scénario part des 4 points de l'ancien réglage de départ
+  await ev(`(()=>{ const t=state.project.tracks[0]; t.effects=[...new Set([...(t.effects||[]),'eq'])]; t.effectParams=t.effectParams||{}; t.effectParams.eq={bands:[{type:'hpf',freq:80,gain:0,q:1.0839},{type:'bell',freq:300,gain:-2,q:1},{type:'bell',freq:4000,gain:2,q:0.7},{type:'highshelf',freq:10000,gain:1,q:0.7}]}; })()`);
   await ev(`openEqPanel(0, document.querySelector('.strip-fx-slot,.strip button')||document.body)`); await sleep(500);
   await R('EQ : largeur de départ', `const p=document.querySelector('.eq-panel'); return p.offsetWidth+' px ; dessin '+document.querySelector('.eq-svg').clientWidth+' px'`);
   const g = JSON.parse(await ev(`JSON.stringify((()=>{const r=document.querySelector('.eq-panel .fx-grip').getBoundingClientRect(); return {x:r.left+r.width/2,y:r.top+r.height/2}})())`));

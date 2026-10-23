@@ -7323,7 +7323,12 @@ function openAutomationFor() { flash('En mode A, touche un réglage (fader, envo
 const VOL_PAD = 7;
 function autoOwnerKey(o) { const i = state.project.tracks.indexOf(o); return i >= 0 ? 't' + i : 'b' + o.id; }
 function autoOwnerFromKey(k) { return k[0] === 't' ? state.project.tracks[+k.slice(1)] : busById(k.slice(1)); }
-function fxNumericDefs(name) { return (FX_PANEL_DEFS[name] || []).filter(d => !d.choices && !d.toggle && d.min !== undefined); }
+// Réglages d'effet que le moteur sait suivre pendant la lecture (les autres viendront effet par effet)
+const AUTO_FX = { comp: ['threshold', 'ratio', 'mix', 'attack', 'release', 'knee', 'makeup'], delay: ['wet', 'feedback', 'dry'], reverb: ['wet'], filter: ['hpf', 'lpf'] };
+function fxNumericDefs(name) { return (FX_PANEL_DEFS[name] || []).filter(d => !d.choices && !d.toggle && d.min !== undefined && (AUTO_FX[name] || []).includes(d.key)); }
+// Le moteur audio reçoit les plages de ces réglages (les courbes sont rangées entre 0 et 1)
+if (window.PulseAudio && PulseAudio.setAutoRanges) PulseAudio.setAutoRanges(Object.fromEntries(Object.entries(AUTO_FX).flatMap(([fx, keys]) =>
+    keys.map(k => (FX_PANEL_DEFS[fx] || []).find(d => d.key === k)).filter(Boolean).map(d => [`fx:${fx}:${d.key}`, { min: d.min, max: d.max, log: !!(d.log && d.min > 0) }]))));
 function autoInfo(o, pid) {
     if (pid === 'volume') return { label: 'Volume', cur: () => 1, norm: v => v, denorm: v => v, fmt: v => Math.round(v * 100) + ' %' };
     const lin = (label, min, max, cur, fmt) => ({ label, cur, norm: v => Math.max(0, Math.min(1, (v - min) / (max - min))), denorm: n => min + n * (max - min), fmt });
@@ -7365,7 +7370,7 @@ function volCurveInner(t, widthPx) {
 // Pastille « réglage affiché » (menu : tout ce qui peut s'automatiser), collée à gauche de la zone visible
 function autoChip(o) {
     const { pid, info } = autoCurrent(o);
-    return `<button class="auto-chip" data-owner="${esc(autoOwnerKey(o))}" data-tooltip="Réglage dessiné sur cette piste : clique pour en choisir un autre. En touchant un réglage (fader, envoi, plugin) en mode A, sa courbe s'affiche ici toute seule">${esc(info.label)}${autoPts(o, pid, false).length ? ' ●' : ''} ▾</button>`;
+    return `<button class="auto-chip" data-owner="${esc(autoOwnerKey(o))}" data-mode="${autoModeOf(o)}" data-tooltip="Réglage dessiné sur cette piste et mode d'écriture : clique pour changer. En touchant un réglage (fader, envoi, plugin) en mode A, sa courbe s'affiche ici toute seule ; pendant la lecture, ton geste s'écrit (Touch)"><b>${esc((AUTO_MODES.find(m => m[0] === autoModeOf(o)) || AUTO_MODES[1])[1])}</b> ${esc(info.label)}${autoPts(o, pid, false).length ? ' ●' : ''} ▾</button>`;
 }
 function renderVolumeCurve(t, i, widthPx) {
     return `<svg class="vol-curve" data-i="${i}" width="${widthPx}" height="${trackH(t)}">${volCurveInner(t, widthPx)}</svg>${autoChip(t)}`;
@@ -7393,6 +7398,13 @@ function openAutoParamMenu(anchor, o) {
     menu.className = 'track-ctx-menu';
     menu.style.cssText = `position:fixed;left:${Math.max(8, Math.min(r.left, window.innerWidth - 250))}px;top:${Math.max(8, Math.min(r.bottom + 2, window.innerHeight - 380))}px;z-index:300;min-width:230px;max-height:70vh;overflow:auto`;
     const cur = autoCurrent(o).pid;
+    const mh = document.createElement('div'); mh.className = 'ctx-head'; mh.textContent = 'Mode d\'écriture'; menu.appendChild(mh);
+    AUTO_MODES.forEach(([m, name, tip]) => {
+        const it = document.createElement('div'); it.className = 'ctx-item';
+        it.textContent = (autoModeOf(o) === m ? '✓ ' : '   ') + name + ' — ' + tip;
+        it.addEventListener('mousedown', (ev) => { ev.stopPropagation(); closeAllMenus(); if (m === 'touch') delete o.autoMode; else o.autoMode = m; saveProject(); renderTimelineTracks(); flash(`Mode ${name} : ${tip}`); });
+        menu.appendChild(it);
+    });
     autoParamGroups(o).forEach(([title, ids]) => {
         const h = document.createElement('div'); h.className = 'ctx-head'; h.textContent = title; menu.appendChild(h);
         ids.forEach(pid => {
@@ -7437,8 +7449,142 @@ function autoTargetOf(el) {
 ['mousedown', 'wheel'].forEach(ev => document.addEventListener(ev, (e) => {
     if (!state.automationMode || !e.target.closest) return;
     const tg = autoTargetOf(e.target);
-    if (tg) autoSelectParam(tg.o, tg.pid);
+    if (!tg) return;
+    const info = autoInfo(tg.o, tg.pid), k = autoOwnerKey(tg.o) + '|' + tg.pid;
+    if (info && !_autoW.has(k)) _autoPre.set(k, { norm: info.norm(info.cur()), vol: tg.o.volume ?? 100 });
+    autoSelectParam(tg.o, tg.pid);
 }, { capture: true, passive: true }));
+// === Écriture d'automation pendant la lecture (modes de Logic) ===
+// Read : la courbe est lue, on n'écrit rien · Touch (défaut) : on écrit tant qu'on tient le réglage, au relâchement on retrouve la courbe
+// Latch : on continue d'écrire la dernière valeur jusqu'à l'arrêt · Write : comme Latch, et la courbe est effacée depuis le départ de la lecture
+const AUTO_MODES = [['read', 'Read', 'lit la courbe sans la changer'], ['touch', 'Touch', 'écrit tant que tu tiens le réglage, puis revient à la courbe'], ['latch', 'Latch', 'écrit jusqu\'à l\'arrêt de la lecture'], ['write', 'Write', 'réécrit tout depuis le départ de la lecture']];
+function autoModeOf(o) { return o.autoMode || 'touch'; }
+const _autoW = new Map();
+const _autoPre = new Map();   // valeur de chaque réglage au moment où on le touche   // réglage en cours d'écriture → { o, pid, snap, start, lastT, lastV, base, held }
+let _autoPlayFrom = 0, _autoTick = 0, _autoDrawRaf = 0;
+function curveAt(pts, t, dflt) {
+    if (!pts.length) return dflt;
+    if (t <= pts[0].t) return pts[0].v;
+    for (let i = 1; i < pts.length; i++) if (t <= pts[i].t) { const a = pts[i - 1], b = pts[i]; return b.t === a.t ? b.v : a.v + (b.v - a.v) * (t - a.t) / (b.t - a.t); }
+    return pts[pts.length - 1].v;
+}
+function autoRedrawSoon() { cancelAnimationFrame(_autoDrawRaf); _autoDrawRaf = requestAnimationFrame(() => { if (state.automationMode) renderTimelineTracks(); }); }
+// Ajoute la valeur v à l'instant t en effaçant ce qui était écrit depuis le dernier point
+function autoPutPoint(w, t, v) {
+    const pts = autoPts(w.o, w.pid);
+    const from = w.lastT ?? w.start, tr = Math.round(t * 1000) / 1000;
+    for (let i = pts.length - 1; i >= 0; i--) if (pts[i].t > from + 1e-6 && pts[i].t <= tr) pts.splice(i, 1);
+    pts.push({ t: tr, v: Math.round(v * 1000) / 1000 });
+    pts.sort((a, b) => a.t - b.t);
+    w.lastT = tr; w.lastV = v;
+}
+function autoWriteSample(o, pid) {
+    if (!state.automationMode || !state.playing || state.recording || !o) return;
+    const mode = autoModeOf(o); if (mode === 'read') return;
+    const info = autoInfo(o, pid); if (!info) return;
+    const now = PulseAudio.getPlaybackPosition();
+    const k = autoOwnerKey(o) + '|' + pid;
+    let w = _autoW.get(k);
+    if (!w) {
+        pushUndo();
+        const pts = autoPts(o, pid);
+        const snap = pts.slice().sort((a, b) => a.t - b.t);
+        const pre = _autoPre.get(k);   // la valeur d'AVANT le geste (le réglage a déjà bougé quand on arrive ici)
+        const flat = pre ? pre.norm : autoStatic(o, pid, info);
+        w = { o, pid, snap, flat, start: mode === 'write' ? _autoPlayFrom : now, base: pid === 'volume' ? (pre ? pre.vol : (o.volume ?? 100)) : null, held: true };
+        _autoW.set(k, w);
+        // Point de départ : la valeur que la courbe avait juste avant (rien ne change avant ce moment)
+        const t0 = Math.max(0, w.start - 0.01);
+        const a = { t: Math.round(t0 * 1000) / 1000, v: curveAt(snap, t0, flat) };
+        if (mode === 'write') { for (let i = pts.length - 1; i >= 0; i--) if (pts[i].t >= t0 && pts[i].t <= now) pts.splice(i, 1); }
+        pts.push(a); pts.sort((x, y) => x.t - y.t);
+        o.autoParam = pid;
+        if (!_autoTick) _autoTick = setInterval(autoLatchTick, 60);
+    }
+    w.held = true;
+    const v = pid === 'volume' ? Math.max(0, Math.min(1, (o.volume ?? 100) / Math.max(1, w.base))) : info.norm(info.cur());
+    if (w.lastT !== undefined && now - w.lastT < 0.04 && Math.abs(v - w.lastV) < 0.002) return;
+    autoPutPoint(w, now, v);
+    autoRedrawSoon();
+}
+// Latch / Write : la dernière valeur continue de s'écrire même sans toucher
+function autoLatchTick() {
+    if (!state.playing || !_autoW.size) { clearInterval(_autoTick); _autoTick = 0; return; }
+    const now = PulseAudio.getPlaybackPosition();
+    _autoW.forEach(w => { if (!w.held && autoModeOf(w.o) !== 'touch' && now - (w.lastT ?? 0) > 0.05) autoPutPoint(w, now, w.lastV); });
+}
+// Relâchement : Touch rend la main à la courbe d'avant (et le fader revient à sa place)
+function autoRelease() {
+    if (!_autoW.size) return;
+    const now = state.playing ? PulseAudio.getPlaybackPosition() : null;
+    let done = false;
+    _autoW.forEach((w, k) => {
+        w.held = false;
+        if (autoModeOf(w.o) !== 'touch') return;
+        if (now !== null) { const t = now + 0.03; autoPutPoint(w, t, curveAt(w.snap, t, w.flat)); }
+        autoEndWriter(w); _autoW.delete(k); done = true;
+    });
+    if (done) { saveProject(); autoRedrawSoon(); }
+}
+function autoEndWriter(w) {
+    if (w.pid === 'volume' && w.base !== null) {   // le volume écrit est dans la courbe : le fader reprend son niveau de départ
+        w.o.volume = w.base;
+        const ti = state.project.tracks.indexOf(w.o);
+        if (ti >= 0) { PulseAudio.updateTrackVolume(ti, w.base); syncInspectorVolume(ti); }
+        else if (PulseAudio.updateBusVolume) PulseAudio.updateBusVolume(w.o.id, w.o.muted ? 0 : w.base);
+    }
+}
+// Arrêt de la lecture : Latch / Write posent la dernière valeur à l'endroit de l'arrêt
+function autoStopAll(pos) {
+    if (!_autoW.size) return;
+    _autoW.forEach(w => { if (pos !== null && w.lastV !== undefined) autoPutPoint(w, pos, w.lastV); autoEndWriter(w); });
+    _autoW.clear(); clearInterval(_autoTick); _autoTick = 0;
+    saveProject(); setTimeout(() => { if (state.automationMode) renderTimelineTracks(); }, 0);
+}
+document.addEventListener('input', (e) => {
+    if (!state.automationMode || !state.playing || !e.target.closest) return;
+    const tg = autoTargetOf(e.target);
+    if (tg) autoWriteSample(tg.o, tg.pid);
+});
+document.addEventListener('mouseup', () => autoRelease(), true);
+let _autoWheelT = 0;
+document.addEventListener('wheel', () => { if (_autoW.size) { clearTimeout(_autoWheelT); _autoWheelT = setTimeout(autoRelease, 350); } }, true);
+if (window.PulseAudio && !PulseAudio._autoWrapped) {
+    const _play = PulseAudio.play, _stop = PulseAudio.stopAll;
+    PulseAudio.play = function (project, from) { if (!_autoW.size) _autoPlayFrom = from || 0; return _play.apply(this, arguments); };
+    PulseAudio.stopAll = function () { let pos = null; try { pos = PulseAudio.getPlaybackPosition(); } catch {} autoStopAll(pos); return _stop.apply(this, arguments); };
+    PulseAudio._autoWrapped = true;
+}
+
+// Comme Logic : pendant la lecture, le fader, le gauche/droite et les envois de la tranche suivent leur courbe (affichage seulement)
+function autoFollowTick() {
+    if (!state.playing) return;
+    const now = PulseAudio.getPlaybackPosition();
+    document.querySelectorAll('#inspector .insp-strip[data-kind="track"], #inspector .insp-strip[data-kind="bus"]').forEach(strip => {
+        const o = strip.dataset.kind === 'track' ? state.project.tracks[state.selectedTrack] : busById(strip.dataset.id);
+        if (!o || !o.automation) return;
+        const key = autoOwnerKey(o) + '|';
+        const val = (pid) => { if (_autoW.has(key + pid)) return null; const pts = autoPts(o, pid, false); return pts.length ? curveAt(pts.slice().sort((a, b) => a.t - b.t), now, 0) : null; };
+        const vv = val('volume');
+        const f = strip.querySelector('.insp-fader');
+        if (vv !== null && f && document.activeElement !== f) {
+            const vol = (o.volume ?? 100) * vv;
+            f.value = volToPos(vol);
+            const d = strip.querySelector('.strip-db'); if (d) d.textContent = `${volumeToDb(vol)} dB`;
+        }
+        const pv = val('pan'), pan = strip.querySelector('.insp-pan-input');
+        if (pv !== null && pan && document.activeElement !== pan) pan.value = Math.round(-100 + 200 * pv);
+        strip.querySelectorAll('.send-bar-row').forEach(row => {
+            const sv = val(row.dataset.send ? 'send:' + row.dataset.send : 'busSend:' + row.dataset.bsend);
+            if (sv === null || row.classList.contains('turning')) return;
+            const lv = Math.round(sv * 100);
+            row.style.setProperty('--lvl', lv + '%'); const e = row.querySelector('.sb-val'); if (e) e.textContent = lv;
+            row.classList.toggle('on', lv > 0);
+        });
+    });
+}
+setInterval(autoFollowTick, 50);
+
 function bindVolumeCurves() {
     document.querySelectorAll('.auto-chip').forEach(chip => {
         const o = autoOwnerFromKey(chip.dataset.owner); if (!o) return;
@@ -11297,6 +11443,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 });
 
+// Rechargement inattendu (fenêtre de l'appli relancée par le système, souvent faute de mémoire) : on le repère et on le dit,
+// pour comprendre le « flash blanc » (journal : localStorage pulse_reload_log)
+(() => {
+    try {
+        const alive = localStorage.getItem('pulse_alive'), clean = localStorage.getItem('pulse_clean_exit');
+        if (alive && !clean) {
+            const log = JSON.parse(localStorage.getItem('pulse_reload_log') || '[]');
+            log.push({ at: new Date().toISOString(), alive: +alive });
+            localStorage.setItem('pulse_reload_log', JSON.stringify(log.slice(-20)));
+            setTimeout(() => flash('Pulse vient d\'être relancé par le système (ton projet est gardé). Si tu as vu un flash blanc, c\'était ça : dis-le à Claude.'), 1500);
+        }
+        localStorage.removeItem('pulse_clean_exit');
+        localStorage.setItem('pulse_alive', String(Date.now()));
+        window.addEventListener('pagehide', () => { try { localStorage.setItem('pulse_clean_exit', '1'); } catch {} });
+    } catch {}
+})();
 function flash(msg) {
     let el = document.getElementById('flash');
     if (!el) {

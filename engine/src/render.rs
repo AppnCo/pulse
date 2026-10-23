@@ -1,6 +1,6 @@
 //! Mixage hors-ligne : mêmes règles que `buildGraph()` du prototype web.
 //! (EQ, saturation, de-esser, compresseur, reverb et courbe de volume portés ; effets de groupe et limiteur : pas encore.)
-use crate::model::{Clip, Project};
+use crate::model::{Clip, Curve, Project};
 use std::collections::HashMap;
 use std::f64::consts::FRAC_PI_2;
 
@@ -89,6 +89,32 @@ fn clip_level(clip: &Clip, x: f64, xin: f64, xout: f64) -> f64 {
 }
 
 /// Rend le projet en stéréo. Retourne (gauche, droite).
+/// Envois vers un groupe (Aux) : (dose fixe, courbe éventuelle, gain jusqu'à la destination, groupe à effets de destination)
+fn aux_sends(project: &Project, sends: &HashMap<String, f64>, auto: &crate::model::Automation, own_out: Option<&str>, master_volume: f64) -> Vec<(f32, Option<Curve>, f32, Option<usize>)> {
+    let mut ids: Vec<String> = sends.keys().cloned().collect();
+    for k in auto.other.keys() {
+        if let Some(id) = k.strip_prefix("busSend:") {
+            if !ids.iter().any(|x| x == id) {
+                ids.push(id.to_owned());
+            }
+        }
+    }
+    ids.sort();
+    ids.into_iter()
+        .filter(|id| Some(id.as_str()) != own_out && project.buses.iter().any(|b| &b.id == id))
+        .filter_map(|id| {
+            let lvl = sends.get(&id).copied().unwrap_or(0.0);
+            let c = auto.curve(&format!("busSend:{id}"));
+            if lvl <= 0.0 && c.is_none() {
+                return None;
+            }
+            let (g, dest) = project.route(Some(&id));
+            let g = g * if dest.is_some() { 1.0 } else { master_volume };
+            Some(((lvl / 100.0) as f32, c, g as f32, dest))
+        })
+        .collect()
+}
+
 pub fn render(project: &Project, media: &Media, opts: &RenderOptions) -> (Vec<f32>, Vec<f32>) {
     let sr = opts.sample_rate as f64;
     let (from, to) = opts.range.unwrap_or((0.0, project.end()));
@@ -125,11 +151,17 @@ pub fn render(project: &Project, media: &Media, opts: &RenderOptions) -> (Vec<f3
         let vol = track.volume.unwrap_or(100.0) / 100.0;
         let route_gain = (bus * master) as f32; // de la sortie de la piste jusqu'à sa destination
         // Envois de cette piste : (indice de l'envoi, dose)
-        let track_sends: Vec<(usize, f32)> = project.sends.iter().enumerate()
+        // (indice de l'envoi, dose, courbe d'automation éventuelle : elle remplace la dose, comme dans le navigateur)
+        let track_sends: Vec<(usize, f32, Option<Curve>)> = project.sends.iter().enumerate()
             .filter(|(_, sd)| !sd.muted)
-            .filter_map(|(i, sd)| track.sends.get(&sd.id).filter(|l| **l > 0.0).map(|l| (i, (*l / 100.0) as f32)))
+            .filter_map(|(i, sd)| {
+                let lvl = track.sends.get(&sd.id).copied().unwrap_or(0.0);
+                let c = track.automation.curve(&format!("send:{}", sd.id));
+                (lvl > 0.0 || c.is_some()).then(|| (i, (lvl / 100.0) as f32, c))
+            })
             .collect();
-        if vol == 0.0 || (route_gain == 0.0 && track_sends.is_empty()) {
+        let track_aux = if stem { Vec::new() } else { aux_sends(project, &track.bus_sends, &track.automation, track.output.as_deref(), opts.master_volume) };
+        if vol == 0.0 || (route_gain == 0.0 && track_sends.is_empty() && track_aux.is_empty()) {
             continue;
         }
 
@@ -187,12 +219,11 @@ pub fn render(project: &Project, media: &Media, opts: &RenderOptions) -> (Vec<f3
         }
 
         // 3. Volume (fader, groupes, master, courbe) puis pan, et somme dans le mix
-        let curve = track.automation.volume.as_ref().filter(|c| !c.points.is_empty()).map(|c| {
-            let mut c = c.clone();
-            c.points.sort_by(|a, b| a.t.total_cmp(&b.t));
-            c
-        });
-        let pan = (track.pan.unwrap_or(0.0) / 100.0).clamp(-1.0, 1.0);
+        let curve = track.automation.curve("volume");
+        let pan_curve = track.automation.curve("pan");
+        let pan0 = (track.pan.unwrap_or(0.0) / 100.0).clamp(-1.0, 1.0);
+        let mut aux_buf: Vec<(Vec<f32>, Vec<f32>)> = track_aux.iter().map(|_| (vec![0.0f32; frames], vec![0.0f32; frames])).collect();
+        {
         let (left, right) = match dest {
             Some(i) => {
                 let b = bus_in[i].get_or_insert_with(|| (vec![0.0f32; frames], vec![0.0f32; frames]));
@@ -201,7 +232,9 @@ pub fn render(project: &Project, media: &Media, opts: &RenderOptions) -> (Vec<f3
             None => (&mut left, &mut right),
         };
         for n in 0..frames {
-            let auto = curve.as_ref().map_or(1.0, |c| c.at(from + n as f64 / sr));
+            let t = from + n as f64 / sr;
+            let auto = curve.as_ref().map_or(1.0, |c| c.at(t));
+            let pan = pan_curve.as_ref().map_or(pan0, |c| (-1.0 + 2.0 * c.at(t)).clamp(-1.0, 1.0));
             let g = (vol * auto) as f32;
             let l_in = tl[n] * g;
             let (l, r) = if stereo {
@@ -221,11 +254,26 @@ pub fn render(project: &Project, media: &Media, opts: &RenderOptions) -> (Vec<f3
             };
             left[n] += l * route_gain;
             right[n] += r * route_gain;
-            for (i, level) in &track_sends {
+            for (i, level, c) in &track_sends {
+                let level = c.as_ref().map_or(*level, |c| c.at(t) as f32);
                 let b = send_in[*i].get_or_insert_with(|| (vec![0.0f32; frames], vec![0.0f32; frames]));
                 b.0[n] += l * level;
                 b.1[n] += r * level;
             }
+            for (k, (level, c, _, _)) in track_aux.iter().enumerate() {
+                let level = c.as_ref().map_or(*level, |c| c.at(t) as f32);
+                aux_buf[k].0[n] += l * level;
+                aux_buf[k].1[n] += r * level;
+            }
+        }
+        }
+        // Envois vers un groupe : vers son entrée (groupe à effets) ou directement vers le master
+        for ((_, _, g, d), (al, ar)) in track_aux.iter().zip(aux_buf) {
+            let (dl, dr) = match d {
+                Some(i) => { let b = bus_in[*i].get_or_insert_with(|| (vec![0.0f32; frames], vec![0.0f32; frames])); (&mut b.0, &mut b.1) }
+                None => (&mut left, &mut right),
+            };
+            for n in 0..frames { dl[n] += al[n] * g; dr[n] += ar[n] * g; }
         }
     }
 
@@ -257,39 +305,61 @@ pub fn render(project: &Project, media: &Media, opts: &RenderOptions) -> (Vec<f3
             }
             _ => (&mut left, &mut right),
         };
-        let curve = bus.automation.volume.as_ref().filter(|c| !c.points.is_empty()).map(|c| {
-            let mut c = c.clone();
-            c.points.sort_by(|a, b| a.t.total_cmp(&b.t));
-            c
-        });
+        let curve = bus.automation.curve("volume");
+        let pan_curve = bus.automation.curve("pan");
         // Gauche / droite du groupe : même loi que le StereoPanner pour une entrée stéréo
-        let pan = (bus.pan.unwrap_or(0.0) / 100.0).clamp(-1.0, 1.0);
-        let (pl_l, pl_r, pr_l, pr_r) = if pan <= 0.0 {
+        let pan0 = (bus.pan.unwrap_or(0.0) / 100.0).clamp(-1.0, 1.0);
+        let pan_law = |pan: f64| if pan <= 0.0 {
             let a = ((pan + 1.0) * FRAC_PI_2) as f32;
             (1.0f32, a.cos(), 0.0f32, a.sin())   // l' = l + r·cos ; r' = r·sin
         } else {
             let a = (pan * FRAC_PI_2) as f32;
             (a.cos(), 0.0f32, a.sin(), 1.0f32)   // l' = l·cos ; r' = r + l·sin
         };
-        let bus_sends: Vec<(usize, f32)> = project.sends.iter().enumerate()
+        let law0 = pan_law(pan0);
+        // Envois de ce groupe vers un autre groupe (posés après le traitement ; un groupe déjà traité ne les reçoit plus)
+        let bus_aux = aux_sends(project, &bus.bus_sends, &bus.automation, bus.output.as_deref(), opts.master_volume);
+        let mut aux_buf: Vec<(Vec<f32>, Vec<f32>)> = bus_aux.iter().map(|_| (vec![0.0f32; frames], vec![0.0f32; frames])).collect();
+        let bus_sends: Vec<(usize, f32, Option<Curve>)> = project.sends.iter().enumerate()
             .filter(|(_, sd)| !sd.muted)
-            .filter_map(|(k, sd)| bus.sends.get(&sd.id).filter(|l| **l > 0.0).map(|l| (k, (*l / 100.0) as f32)))
+            .filter_map(|(k, sd)| {
+                let lvl = bus.sends.get(&sd.id).copied().unwrap_or(0.0);
+                let c = bus.automation.curve(&format!("send:{}", sd.id));
+                (lvl > 0.0 || c.is_some()).then(|| (k, (lvl / 100.0) as f32, c))
+            })
             .collect();
         for n in 0..frames {
-            let auto = curve.as_ref().map_or(1.0, |c| c.at(from + n as f64 / sr)) as f32;
+            let t = from + n as f64 / sr;
+            let auto = curve.as_ref().map_or(1.0, |c| c.at(t)) as f32;
+            let pan = pan_curve.as_ref().map_or(pan0, |c| (-1.0 + 2.0 * c.at(t)).clamp(-1.0, 1.0));
+            let (pl_l, pl_r, pr_l, pr_r) = if pan_curve.is_some() { pan_law(pan) } else { law0 };
             let own_g = (own as f32) * auto;      // volume du groupe (sans la route vers le master)
             let (xl, xr) = (bl[n] * own_g, br[n] * own_g);
             let (l, r) = if pan <= 0.0 { (xl * pl_l + xr * pl_r, xr * pr_r) } else { (xl * pl_l, xr * pr_r + xl * pr_l) };
             let route = (up * if dest.is_some() { 1.0 } else { opts.master_volume }) as f32;
             dl[n] += l * route;
             dr[n] += r * route;
-            for (k, level) in &bus_sends {
+            for (k, level, c) in &bus_sends {
+                let level = c.as_ref().map_or(*level, |c| c.at(t) as f32);
                 let b = send_in[*k].get_or_insert_with(|| (vec![0.0f32; frames], vec![0.0f32; frames]));
                 b.0[n] += l * level;
                 b.1[n] += r * level;
             }
+            for (k, (level, c, _, _)) in bus_aux.iter().enumerate() {
+                let level = c.as_ref().map_or(*level, |c| c.at(t) as f32);
+                aux_buf[k].0[n] += l * level;
+                aux_buf[k].1[n] += r * level;
+            }
         }
         let _ = g;
+        for ((_, _, g, d), (al, ar)) in bus_aux.iter().zip(aux_buf) {
+            let (dl, dr) = match d {
+                Some(j) if *j != i => { let b = bus_in[*j].get_or_insert_with(|| (vec![0.0f32; frames], vec![0.0f32; frames])); (&mut b.0, &mut b.1) }
+                Some(_) => continue,
+                None => (&mut left, &mut right),
+            };
+            for n in 0..frames { dl[n] += al[n] * g; dr[n] += ar[n] * g; }
+        }
     }
     // 5. Retours des envois, directement dans le master
     let master = if opts.only_track.is_some() { 1.0 } else { opts.master_volume } as f32;

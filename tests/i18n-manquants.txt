@@ -16,6 +16,7 @@ Chorus
 Convertir en MP3
 Convertir en WAV
 De-esser
+Del 1/4
 Distorsion
 Doubleur de voix
 E / Z
@@ -24,6 +25,8 @@ Emplacement libre : clique pour mettre un effet
 Filtre
 Flanger
 Gate
+Glisser pour envoyer plus · double-clic = écrire le chiffre · ⌘ + clic = remettre à 0 · Maj = réglage fin
+Glisser vers le haut ou le bas · double-clic = 0
 Hauteur des pistes : sur la liste de gauche, celle qu'on survole (les pistes choisies si elles sont plusieurs) · sur la timeline, toutes les pistes · ⌘ + molette = zoom, le curseur au milieu de l'écran
 IV
 Largeur stéréo
@@ -38,6 +41,7 @@ Pick up where you left off
 PulseTune
 Rap Studio
 Recent projects
+Rev Long
 Reverb
 Réglage : charge un réglage prêt à l'emploi (comme « Réglage » dans Logic)
 Réglage de la piste : charge un réglage prêt à l'emploi (comme « Réglage » dans Logic)
@@ -91,6 +95,7 @@ volume, phase, passage en mono
 → All Vocal
 → Ambiance
 → Back
+→ MASTER
 → Master
 → Master ▾
 → Mix Bus 1

@@ -17,7 +17,7 @@ export default async (c) => {
   await ev(`document.querySelector('#inspector .insp-strip:first-child .insp-pan-input').dispatchEvent(new MouseEvent('mousedown',{bubbles:true}))`); await sleep(300);
   check('toucher le pan affiche sa courbe', await ev(`state.project.tracks[0].autoParam`) === 'pan' && /Gauche/.test(await ev(`document.querySelector('.timeline-track .auto-chip')?.textContent||''`)));
   // poser un point sur la courbe
-  const r = await ev(`(()=>{const b=document.querySelector('.timeline-track .vol-curve').getBoundingClientRect(); return {x:b.left+120,y:b.top+10};})()`);
+  const r = await ev(`(()=>{const b=document.querySelector('.timeline-track .vol-curve').getBoundingClientRect(); return {x:b.left+320,y:b.top+10};})()`);
   await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: r.x, y: r.y, button: 'left', clickCount: 1 });
   await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: r.x, y: r.y, button: 'left', clickCount: 1 });
   await sleep(200);

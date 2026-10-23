@@ -507,6 +507,49 @@ mod tests {
     }
 
     #[test]
+    fn courbe_de_pan_sur_une_piste() {
+        // Pan automatisé : tout à gauche au début, tout à droite à la fin (même calcul que le StereoPanner)
+        let json = r#"{"volume":100,"clips":[{"id":"a","start":0,"duration":8,"offset":0}],
+                       "automation":{"pan":{"points":[{"t":0,"v":0},{"t":2,"v":0},{"t":6,"v":1}]}}}"#;
+        let t: Track = serde_json::from_str(json).unwrap();
+        let p = Project { tracks: vec![t], ..Default::default() };
+        let (l, r) = render(&p, &ramp_media(), &opts());
+        let i = |s: f64| (s * SR as f64).round() as usize;
+        assert!(l[i(1.0)].abs() > 0.01 && r[i(1.0)].abs() < 1e-4, "début à gauche : {} / {}", l[i(1.0)], r[i(1.0)]);
+        assert!(r[i(7.0)].abs() > 0.01 && l[i(7.0)].abs() < 1e-4, "fin à droite : {} / {}", l[i(7.0)], r[i(7.0)]);
+    }
+
+    #[test]
+    fn courbe_d_envoi_remplace_la_dose() {
+        // L'envoi suit sa courbe (0 au début, plein à la fin) même si la dose fixe est à 0
+        let mk = |auto: &str| -> Project {
+            let t: Track = serde_json::from_str(&format!(r#"{{"volume":100,"clips":[{{"id":"a","start":0,"duration":8,"offset":0}}],"automation":{{{auto}}}}}"#)).unwrap();
+            let sd: crate::model::Send = serde_json::from_str(r#"{"id":"rv","name":"Rev","type":"reverb","size":2,"volume":100}"#).unwrap();
+            Project { tracks: vec![t], sends: vec![sd], ..Default::default() }
+        };
+        let sans = render(&mk(""), &ramp_media(), &opts()).0;
+        let avec = render(&mk(r#""send:rv":{"points":[{"t":0,"v":0},{"t":3,"v":0},{"t":4,"v":1}]}"#), &ramp_media(), &opts()).0;
+        let i = |s: f64| (s * SR as f64).round() as usize;
+        assert!((avec[i(2.0)] - sans[i(2.0)]).abs() < 1e-6, "avant la courbe : pas d'envoi");
+        let diff: f32 = (i(5.0)..i(6.0)).map(|n| (avec[n] - sans[n]).abs()).sum();
+        assert!(diff > 1.0, "après la courbe : la reverb s'entend ({diff})");
+    }
+
+    #[test]
+    fn envoi_vers_un_groupe() {
+        // Aux : la piste sort au master ET envoie 50 % vers un groupe à 50 % → 1 + 0,25 du signal
+        let mut p = project(vec![clip(0.0, 4.0, 5.0)]);
+        let base = at(&p, &opts(), 1.0);
+        let b: Bus = serde_json::from_str(r#"{"id":"g","volume":50,"output":"master"}"#).unwrap();
+        p.buses = vec![b];
+        p.tracks[0].bus_sends.insert("g".into(), 50.0);
+        close(at(&p, &opts(), 1.0), base * 1.25);
+        // Courbe d'envoi : 0 au début, la dose fixe ne compte plus
+        p.tracks[0].automation = serde_json::from_str(r#"{"busSend:g":{"points":[{"t":0,"v":0}]}}"#).unwrap();
+        close(at(&p, &opts(), 1.0), base);
+    }
+
+    #[test]
     fn fader_au_dessus_de_zero_db() {
         let mut p = project(vec![clip(0.0, 2.0, 5.0)]);
         p.tracks[0].volume = Some(100.0);
