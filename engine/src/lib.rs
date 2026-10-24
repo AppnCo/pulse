@@ -166,6 +166,36 @@ mod tests {
         near(rms(&l, 1.5, 2.5), 0.005723);
     }
 
+    /// Multibande à bandes libres : mêmes chiffres que tests/scenarios/mband-parite.mjs (Chrome).
+    #[test]
+    fn multibande_comme_le_navigateur() {
+        let sr = SR as usize;
+        let mut media = Media::new();
+        let v: Vec<f32> = (0..sr).map(|i| { let t = i as f64 / SR as f64; (0.4 * (2.0 * std::f64::consts::PI * 100.0 * t).sin()
+            + if t > 0.5 && t < 0.8 { 0.2 * (2.0 * std::f64::consts::PI * 3000.0 * t).sin() } else { 0.0 }) as f32 }).collect();
+        media.insert("mb".into(), Source { channels: vec![v], sample_rate: SR });
+        let rms = |x: &[f32], a: f64, z: f64| {
+            let (a, z) = ((a * SR as f64).round() as usize, (z * SR as f64).round() as usize);
+            (x[a..z].iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / (z - a) as f64).sqrt()
+        };
+        let run = |mp: &str| {
+            let json = format!(r#"{{"tracks":[{{"volume":100,"clips":[{{"id":"mb","start":0,"duration":1}}],"effects":["mband"],"effectParams":{{"mband":{mp}}}}}]}}"#);
+            let p: Project = serde_json::from_str(&json).unwrap();
+            render(&p, &media, &RenderOptions { only_track: Some(0), ..opts() }).0
+        };
+        let near = |v: f64, want: f64| assert!((v - want).abs() < want * 0.01 + 2e-5, "{v} au lieu de {want}");
+        let l = run(r#"{"bands":[{"lo":60,"hi":200,"thr":0,"range":-8}]}"#);
+        near(rms(&l, 0.2, 0.45), 0.199987); near(rms(&l, 0.55, 0.78), 0.223593);
+        let b1 = r#"{"lo":60,"hi":200,"thr":-20,"range":-8,"att":5,"rel":80}"#;
+        let b2 = r#"{"lo":2000,"hi":5000,"thr":-30,"range":6,"out":-2}"#;
+        let l = run(&format!(r#"{{"bands":[{b1},{b2}]}}"#));
+        near(rms(&l, 0.2, 0.45), 0.121393); near(rms(&l, 0.55, 0.78), 0.187453);
+        let l = run(&format!(r#"{{"bands":[{b1},{{"lo":2000,"hi":5000,"thr":-30,"range":6,"out":-2,"solo":true}}]}}"#));
+        assert!(rms(&l, 0.2, 0.45) < 1e-4, "solo : rien hors de la bande"); near(rms(&l, 0.55, 0.78), 0.118899);
+        let l = run(&format!(r#"{{"bands":[{{"lo":60,"hi":200,"thr":-20,"range":-8,"att":5,"rel":80,"mute":true}},{b2}]}}"#));
+        near(rms(&l, 0.2, 0.45), 0.06976); near(rms(&l, 0.55, 0.78), 0.158958);
+    }
+
     /// Nouveau De-esser (seuil, plage, zone) : mêmes chiffres que tests/scenarios/deess-parite.mjs (Chrome).
     #[test]
     fn deesser_v2_comme_le_navigateur() {

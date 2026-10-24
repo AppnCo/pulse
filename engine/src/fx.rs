@@ -92,6 +92,54 @@ impl Biquad {
     }
 }
 
+/// Multibande à bandes libres : même calcul que le worklet `pulse-mband` de audio.js.
+struct MbBand { ks: [Vec<Biquad>; 2], env: f64, att: f64, rel: f64, thr: f64, range: f64, out: f64, solo: bool, mute: bool }
+pub struct MultiBand { bands: Vec<MbBand>, any_solo: bool }
+impl MultiBand {
+    pub fn new(p: &crate::model::MbandParams, sr: f64) -> Option<Self> {
+        let biq = |hp: bool, f: f64| {
+            let w = 2.0 * PI * f / sr;
+            let (c, al) = (w.cos(), w.sin() / (2.0 * std::f64::consts::FRAC_1_SQRT_2));
+            if hp { Biquad::new((1.0 + c) / 2.0, -(1.0 + c), (1.0 + c) / 2.0, 1.0 + al, -2.0 * c, 1.0 - al) }
+            else { Biquad::new((1.0 - c) / 2.0, 1.0 - c, (1.0 - c) / 2.0, 1.0 + al, -2.0 * c, 1.0 - al) }
+        };
+        let co = |ms: f64| 1.0 - (-1.0 / (ms.max(0.05) / 1000.0 * sr)).exp();
+        let bands: Vec<MbBand> = p.bands.iter().filter(|b| b.on != Some(false)).take(6).map(|b| {
+            let lo = b.lo.unwrap_or(20.0).clamp(20.0, 20000.0);
+            let hi = b.hi.unwrap_or(20000.0).min(20000.0).min(sr * 0.45).max(lo * 1.05);
+            let mut ks = Vec::new();
+            if lo > 20.5 { ks.push(biq(true, lo)); ks.push(biq(true, lo)); }
+            if hi < 19999.0 { ks.push(biq(false, hi)); ks.push(biq(false, hi)); }
+            MbBand { ks: [ks.clone(), ks], env: 0.0, att: co(b.att.unwrap_or(10.0)), rel: co(b.rel.unwrap_or(120.0)), thr: b.thr.unwrap_or(-30.0),
+                range: b.range.unwrap_or(-6.0).clamp(-24.0, 24.0), out: b.out.unwrap_or(0.0).clamp(-24.0, 24.0), solo: b.solo.unwrap_or(false), mute: b.mute.unwrap_or(false) }
+        }).collect();
+        if bands.is_empty() { return None; }
+        let any_solo = bands.iter().any(|b| b.solo);
+        Some(Self { bands, any_solo })
+    }
+    fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
+        let (x0, x1) = (x[0], if nc > 1 { x[1] } else { 0.0 });
+        let (mut y0, mut y1) = if self.any_solo { (0.0, 0.0) } else { (x0, x1) };
+        for b in &mut self.bands {
+            let mut v = [0.0f64; 2];
+            let mut pk = 0.0f64;
+            for ch in 0..nc {
+                let mut s = if ch == 0 { x0 } else { x1 };
+                for f in &mut b.ks[ch] { s = f.tick(s); }
+                v[ch] = s; pk = pk.max(s.abs());
+            }
+            b.env += (pk - b.env) * if pk > b.env { b.att } else { b.rel };
+            let over = 20.0 * b.env.max(1e-9).log10() - b.thr;
+            let gd = b.range * (over / 12.0).clamp(0.0, 1.0);
+            let gl = if b.mute { 0.0 } else { 10f64.powf((gd + b.out) / 20.0) };
+            if self.any_solo { if b.solo { y0 += v[0] * gl; y1 += v[1] * gl; } }
+            else { y0 += v[0] * (gl - 1.0); y1 += v[1] * (gl - 1.0); }
+        }
+        x[0] = y0;
+        if nc > 1 { x[1] = y1; }
+    }
+}
+
 /// Nouveau De-esser : même calcul que le worklet `pulse-deesser2` de audio.js.
 pub struct DeesserV2 {
     hp: [Biquad; 2],
@@ -953,6 +1001,7 @@ pub struct Chain {
     modfx: Vec<(Stage, ModFx)>,
     deess: Option<Deesser>,
     deess2: Option<DeesserV2>,
+    mband: Option<MultiBand>,
     comp: Option<Compressor>,
     master: Option<Master>,
     limit: Option<Limiter>,
@@ -1232,6 +1281,7 @@ impl Chain {
         let sat = Saturator::new(drive);
         let de = effect_params.deess.clone().unwrap_or_default();
         let deess2 = (has("deess") && de.thr.is_some()).then(|| DeesserV2::new(&de, sr));
+        let mband = if has("mband") { effect_params.mband.as_ref().and_then(|m| MultiBand::new(m, sr)) } else { None };
         let deess = (has("deess") && de.thr.is_none() && de.amount > 0.0).then(|| Deesser::new(de.amount, de.freq.unwrap_or(5500.0), sr));
         let gate = has("gate").then(|| Gate::new(&effect_params.gate.clone().unwrap_or_default(), sr));
         let crush = has("crush").then(|| Crush::new(&effect_params.crush.clone().unwrap_or_default()));
@@ -1261,7 +1311,7 @@ impl Chain {
         let pitch = (has("pitch") && effect_params.pitch.as_ref().and_then(|p| p.semi).unwrap_or(0.0) != 0.0)
             .then(|| Pitch::new(&effect_params.pitch.clone().unwrap_or_default(), sr));
         let comp_p = effect_params.comp.clone().unwrap_or_default();
-        Self { cut, filters, dyn_eq, sat, gate, crush, util, width, modfx, deess, deess2, comp, master, limit, delay, reverb, pitch, order: Stage::DEFAULT.to_vec(),
+        Self { cut, filters, dyn_eq, sat, gate, crush, util, width, modfx, deess, deess2, mband, comp, master, limit, delay, reverb, pitch, order: Stage::DEFAULT.to_vec(),
             auto: Vec::new(), auto_from: 0.0, sr, comp_p, eq_bands, cut_kinds, names: effects.to_vec(), deess_freq: de.freq.unwrap_or(5500.0) }
     }
     /// Branche les courbes d'automation des réglages d'effet (`from` = instant du premier échantillon traité)
@@ -1353,7 +1403,7 @@ impl Chain {
         self
     }
     pub fn is_empty(&self) -> bool {
-        self.cut.is_empty() && self.filters.is_empty() && self.dyn_eq.is_empty() && self.sat.is_none() && self.gate.is_none() && self.crush.is_none() && self.util.is_none() && self.width.is_none() && self.modfx.is_empty() && self.deess.is_none() && self.deess2.is_none() && self.comp.is_none() && self.master.is_none() && self.limit.is_none() && self.delay.is_none() && self.reverb.is_none() && self.pitch.is_none()
+        self.cut.is_empty() && self.filters.is_empty() && self.dyn_eq.is_empty() && self.sat.is_none() && self.gate.is_none() && self.crush.is_none() && self.util.is_none() && self.width.is_none() && self.modfx.is_empty() && self.deess.is_none() && self.deess2.is_none() && self.mband.is_none() && self.comp.is_none() && self.master.is_none() && self.limit.is_none() && self.delay.is_none() && self.reverb.is_none() && self.pitch.is_none()
     }
     /// Une piste avec reverb sort toujours en stéréo, même si ses sons sont mono.
     pub fn makes_stereo(&self) -> bool {
@@ -1428,6 +1478,11 @@ impl Chain {
                             d.tick(&mut x, nc);
                         }
                     }
+                    Stage::Mband => {
+                        if let Some(m) = &mut self.mband {
+                            m.tick(&mut x, nc);
+                        }
+                    }
                     Stage::Comp => {
                         if let Some(c) = &mut self.comp {
                             c.tick(&mut x, nc);
@@ -1484,6 +1539,7 @@ enum Stage {
     Crush,
     Deess,
     Comp,
+    Mband,
     Util,
     Width,
     Tremolo,
@@ -1500,7 +1556,7 @@ enum Stage {
 }
 
 impl Stage {
-    const DEFAULT: [Stage; 20] = [Stage::Pitch, Stage::Filter, Stage::Gate, Stage::Eq, Stage::Sat, Stage::Crush, Stage::Deess, Stage::Comp, Stage::Util, Stage::Width, Stage::Tremolo, Stage::Phaser, Stage::Flanger, Stage::Chorus, Stage::Doubler, Stage::Slapback, Stage::Master, Stage::Limit, Stage::Delay, Stage::Reverb];
+    const DEFAULT: [Stage; 21] = [Stage::Pitch, Stage::Filter, Stage::Gate, Stage::Eq, Stage::Sat, Stage::Crush, Stage::Deess, Stage::Comp, Stage::Mband, Stage::Util, Stage::Width, Stage::Tremolo, Stage::Phaser, Stage::Flanger, Stage::Chorus, Stage::Doubler, Stage::Slapback, Stage::Master, Stage::Limit, Stage::Delay, Stage::Reverb];
     fn parse(name: &str) -> Option<Stage> {
         Some(match name {
             "filter" => Stage::Filter,
@@ -1518,6 +1574,7 @@ impl Stage {
             "sat" => Stage::Sat,
             "deess" => Stage::Deess,
             "comp" => Stage::Comp,
+            "mband" => Stage::Mband,
             "master" => Stage::Master,
             "limit" => Stage::Limit,
             "delay" => Stage::Delay,

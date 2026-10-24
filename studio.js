@@ -1668,8 +1668,8 @@ function migrateProject() {
 
 // === Tranche à gauche (inspecteur) : la piste sélectionnée et, à sa droite, là où elle sort ===
 // Évite d'ouvrir le mixer pour voir les effets d'une piste ou régler son volume.
-const FX_NAMES = { pitch: 'Pitch', crush: 'Bitcrusher', util: 'Utilitaire', width: 'Largeur', tremolo: 'Trémolo', phaser: 'Phaser', flanger: 'Flanger', chorus: 'Chorus', doubler: 'Doubleur', slapback: 'Slapback', filter: 'Filtre', gate: 'Gate', eq: 'EQ', sat: 'Saturation', deess: 'De-esser', comp: 'Compresseur', master: 'Finition', limit: 'Limiteur', delay: 'Écho', reverb: 'Reverb' };
-const FX_ORDER = ['pitch', 'filter', 'gate', 'eq', 'sat', 'crush', 'deess', 'comp', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'reverb'];
+const FX_NAMES = { mband: 'Multibande', pitch: 'Pitch', crush: 'Bitcrusher', util: 'Utilitaire', width: 'Largeur', tremolo: 'Trémolo', phaser: 'Phaser', flanger: 'Flanger', chorus: 'Chorus', doubler: 'Doubleur', slapback: 'Slapback', filter: 'Filtre', gate: 'Gate', eq: 'EQ', sat: 'Saturation', deess: 'De-esser', comp: 'Compresseur', master: 'Finition', limit: 'Limiteur', delay: 'Écho', reverb: 'Reverb' };
+const FX_ORDER = ['pitch', 'filter', 'gate', 'eq', 'sat', 'crush', 'deess', 'comp', 'mband', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'reverb'];
 function inspectorOpen() { try { return localStorage.getItem('pulse_inspector') !== '0'; } catch { return true; } }
 function setInspectorOpen(open) {
     try { localStorage.setItem('pulse_inspector', open ? '1' : '0'); } catch {}
@@ -2203,10 +2203,10 @@ function openOutputMenu(anchor, kind, x, idx) {
 // Effets qu'on peut poser sur une piste ou un bus (chacun a son panneau)
 const ADD_FX_CHOICES = [['crush', 'Bitcrusher (son lo-fi)'], ['util', 'Utilitaire (gain, mono, phase)'], ['width', 'Largeur stéréo'],
     ['tremolo', 'Trémolo (volume qui pulse)'], ['phaser', 'Phaser'], ['flanger', 'Flanger'], ['chorus', 'Chorus'],
-    ['doubler', 'Doubleur de voix'], ['slapback', 'Slapback (écho court)'], ['gate', 'Gate (coupe le bruit entre les phrases)'], ['filter', 'Filtre (coupe-bas / coupe-haut)'], ['eq', 'EQ'], ['comp', 'Compresseur'], ['deess', 'De-esser'], ['sat', 'Saturation'], ['delay', 'Écho'], ['reverb', 'Reverb']];
+    ['doubler', 'Doubleur de voix'], ['slapback', 'Slapback (écho court)'], ['gate', 'Gate (coupe le bruit entre les phrases)'], ['filter', 'Filtre (coupe-bas / coupe-haut)'], ['eq', 'EQ'], ['comp', 'Compresseur'], ['mband', 'Multibande'], ['deess', 'De-esser'], ['sat', 'Saturation'], ['delay', 'Écho'], ['reverb', 'Reverb']];
 // Rangés par catégorie comme dans Logic (voir PLUGINS-CATALOGUE.md) : un nouvel effet = une ligne dans sa catégorie
 const ADD_FX_CATEGORIES = [
-    ['Dynamique', ['comp', 'deess', 'gate']],
+    ['Dynamique', ['comp', 'mband', 'deess', 'gate']],
     ['Égaliseur et filtre', ['eq', 'filter']],
     ['Distorsion', ['sat', 'crush']],
     ['Mouvement', ['chorus', 'flanger', 'phaser', 'tremolo']],
@@ -2216,12 +2216,12 @@ const ADD_FX_CATEGORIES = [
     ['Utilitaires', ['util']]
 ];
 // Une phrase par effet dans le menu « + Effet », et les mots qu'on tape pour le trouver
-const FX_DESC = { pitch: 'monte ou descend la voix (demi-tons), pour un effet sur un passage', comp: 'resserre l\'écart entre les passages forts et faibles', deess: 'adoucit les « s » qui sifflent', eq: 'corrige les graves, médiums et aigus',
+const FX_DESC = { mband: 'travaille seulement une zone du son (graves, boue, sifflantes…), quand elle déborde', pitch: 'monte ou descend la voix (demi-tons), pour un effet sur un passage', comp: 'resserre l\'écart entre les passages forts et faibles', deess: 'adoucit les « s » qui sifflent', eq: 'corrige les graves, médiums et aigus',
     sat: 'chaleur et grain, comme une bande ou une lampe', delay: 'répétitions calées sur le tempo (1/8, 1/4…)', reverb: 'ajoute de l\'espace, une pièce',
     width: 'élargit ou resserre l\'image stéréo', chorus: 'épaissit le son en le dédoublant légèrement', flanger: 'balayage métallique qui tourne',
     phaser: 'balayage doux et rond', tremolo: 'le volume pulse en rythme', doubler: 'donne l\'impression de deux prises', slapback: 'écho court, très utilisé en rap',
     crush: 'son lo-fi, numérique abîmé', util: 'volume, phase, passage en mono', filter: 'coupe les graves ou les aigus' };
-const FX_WORDS = { pitch: 'pitch shift hauteur transpose alterboy grave aigu', comp: 'compressor compression dynamique', deess: 'deesser sibilance', gate: 'noise gate bruit', eq: 'equalizer egaliseur', filter: 'hpf lpf high pass low pass coupe-bas coupe-haut',
+const FX_WORDS = { mband: 'multiband multibande compressor dynamic dynamique', pitch: 'pitch shift hauteur transpose alterboy grave aigu', comp: 'compressor compression dynamique', deess: 'deesser sibilance', gate: 'noise gate bruit', eq: 'equalizer egaliseur', filter: 'hpf lpf high pass low pass coupe-bas coupe-haut',
     sat: 'saturation distortion saturator drive', crush: 'bitcrusher lofi', delay: 'delay echo', reverb: 'reverb reverberation', slapback: 'slap delay echo',
     chorus: 'modulation', flanger: 'modulation', phaser: 'modulation', tremolo: 'modulation', doubler: 'doubler double', width: 'stereo imager', util: 'utility gain mono phase', tune: 'autotune pitch justesse' };
 const FX_START = {
@@ -2230,7 +2230,7 @@ const FX_START = {
     crush: { bits: 8, down: 4, mix: 100 }, util: { gain: 0, invert: 0, mono: 0 }, width: { width: 100 },
     tremolo: { rate: 5, depth: 50 }, phaser: { rate: 0.4, depth: 70, feedback: 40, mix: 50 }, flanger: { rate: 0.25, depth: 2, feedback: 50, mix: 50 },
     chorus: { rate: 0.8, depth: 5, mix: 50 }, doubler: { width: 50, mix: 50 }, slapback: { time: 110, feedback: 12, mix: 25 },
-    gate: { threshold: -45, release: 150, reduction: 40 }, filter: { hpf: 80, lpf: 20000, slope: 12 }, sat: { drive: 25 }, deess: { thr: -26, range: 10, lo: 5000, hi: 11000 }, delay: { beats: 0.5, feedback: 35, wet: 25 } };
+    gate: { threshold: -45, release: 150, reduction: 40 }, filter: { hpf: 80, lpf: 20000, slope: 12 }, sat: { drive: 25 }, mband: { bands: [] }, deess: { thr: -26, range: 10, lo: 5000, hi: 11000 }, delay: { beats: 0.5, feedback: 35, wet: 25 } };
 function openAddEffectMenu(anchor, target, x) {
     closeAllMenus();
     const r = anchor.getBoundingClientRect();
@@ -7791,6 +7791,179 @@ function openDeessPanel(trackIdx, anchorEl) {
     makePlugWindow(panel, t, 'deess', trackIdx);
 }
 
+// === Multibande à bandes libres (planche validée) : une bande seulement là où il y a un souci, jusqu'à 6 ===
+// Double-clic dans le vide = nouvelle bande · le rond : gauche / droite = déplacer la bande, haut / bas = son seuil ·
+// les deux poignées = ses limites · ✕ = la retirer. Plage négative = compresser, positive = remonter.
+const MB_COLORS = ['#A855F7', '#22D3EE', '#F472B6', '#FBBF24', '#34D399', '#60A5FA'];
+const mbName = (b) => { const f = Math.sqrt(b.lo * b.hi); return f < 120 ? 'Grave' : f < 500 ? 'Boue' : f < 2000 ? 'Médium' : f < 5000 ? 'Présence' : f < 10000 ? 'Sifflantes' : 'Air'; };
+function openMbandPanel(trackIdx, anchorEl) {
+    closeTransientPanels();
+    const t = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;
+    if (!t) return;
+    const already = findPlugWin(t, 'mband');
+    if (already) { plugFront(already); return; }
+    t.effectParams = t.effectParams || {};
+    if (!t.effectParams.mband) t.effectParams.mband = { bands: [] };
+    const P = () => t.effectParams.mband, BS = () => (P().bands = P().bands || []);
+    const key = typeof trackIdx === 'number' ? 't' + trackIdx : 'b' + t.id;
+    const W = 900, H = 520, T = 30, B = H - 130, PL = 850, Y0 = 190, DBK = 7, MAXB = 6, F0 = 20, F1 = 20000;
+    const X = (f) => Math.log(f / F0) / Math.log(F1 / F0) * PL, F = (x) => F0 * Math.pow(F1 / F0, Math.max(0, Math.min(PL, x)) / PL);
+    const lr = (f, fc, hp) => { const r = Math.pow(f / fc, 4); return hp ? r / (1 + r) : 1 / (1 + r); };
+    const resp = (b, f) => (b.lo > F0 * 1.05 ? lr(f, b.lo, true) : 1) * (b.hi < F1 * 0.95 ? lr(f, b.hi, false) : 1);
+    const fmtF = (f) => f >= 1000 ? (f / 1000).toFixed(f >= 10000 ? 1 : 2).replace(/\.?0+$/, '').replace('.', ',') + ' kHz' : Math.round(f) + ' Hz';
+    const db1 = (v) => (v > 0 ? '+' : '') + v.toFixed(1).replace('.', ',') + ' dB';
+    const YS = (d) => B - ((Math.max(-96, Math.min(-12, d)) + 96) / 84) * (B - Y0 - 10);
+    let sel = BS().length ? 0 : -1, undoArmed = false;
+    // L'étape d'annulation est prise AVANT le changement : au premier mouvement d'un geste (bouton, glisser),
+    // ou tout de suite pour un clic (mode, solo, ✕, nouvelle bande) — chaque clic est sa propre étape
+    const arm = () => { if (!undoArmed) { pushUndo(); undoArmed = true; } };
+    const finish = () => {
+        t.effects = t.effects || []; if (!t.effects.includes('mband')) t.effects.push('mband');
+        refreshPlaybackSoon(); saveProject(); undoArmed = false;
+    };
+    const commit = finish;
+    const step = (fn) => { pushUndo(); fn(); finish(); };
+    const panel = document.createElement('div');
+    panel.className = 'fx-panel lim-panel mb-panel';
+    panel.innerHTML = `
+        <div class="fx-panel-header">
+            <label class="fx-bypass-label fx-power" data-tooltip="Allumer ou éteindre l'effet"><input type="checkbox" class="fx-bypass" ${t.effects?.includes('mband') ? 'checked' : ''}><span class="fx-power-btn">⏻</span></label>
+            <span class="fx-title lim-title">Multibande <i>— ${esc(t.name || '')}</i></span>
+            <button class="fx-panel-close">×</button>
+        </div>
+        <div class="lim-face"><svg class="lim-svg mb-svg" viewBox="0 0 ${W} ${H}"></svg><div class="lim-fp mb-fp"></div></div>
+        <div class="lim-sb"><span>Bandes <b class="mb-n"></b></span><span class="lim-spacer"></span><span class="mb-hint">Double-clic dans le vide = nouvelle bande · le rond : gauche / droite = déplacer, haut / bas = seuil</span></div>`;
+    document.body.appendChild(panel);
+    const svg = panel.querySelector('.mb-svg'), fp = panel.querySelector('.mb-fp');
+    const gd = [0, 0, 0, 0, 0, 0];      // gain dynamique affiché, par bande (suivi pendant la lecture)
+    let bins = null;
+    const draw = () => {
+        const bands = BS();
+        let g = '<defs>' + bands.map((b, i) => `<linearGradient id="mbc${i}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${MB_COLORS[i]}" stop-opacity=".14"/><stop offset="1" stop-color="${MB_COLORS[i]}" stop-opacity=".02"/></linearGradient>`).join('') + '</defs>';
+        bands.forEach((b, i) => { const x0 = X(b.lo), x1 = X(b.hi); g += `<rect class="mb-col" data-i="${i}" x="${x0.toFixed(1)}" y="${T - 4}" width="${(x1 - x0).toFixed(1)}" height="${B - T + 4}" fill="url(#mbc${i})" opacity="${i === sel ? 1 : 0.45}"/><line x1="${x0}" x2="${x0}" y1="${T}" y2="${B}" stroke="${MB_COLORS[i]}" stroke-opacity=".35" stroke-dasharray="3 5"/><line x1="${x1}" x2="${x1}" y1="${T}" y2="${B}" stroke="${MB_COLORS[i]}" stroke-opacity=".35" stroke-dasharray="3 5"/>`; });
+        for (const f of [50, 100, 200, 500, 1000, 2000, 5000, 10000]) g += `<line x1="${X(f).toFixed(1)}" x2="${X(f).toFixed(1)}" y1="${T}" y2="${B}" class="lim-grid"/><text x="${(X(f) + 3).toFixed(1)}" y="${B - 4}" class="lim-txt">${f >= 1000 ? f / 1000 + 'k' : f}</text>`;
+        for (const d of [12, 6, 0, -6, -12, -18]) { const y = Y0 - d * DBK; g += `<line x1="0" x2="${PL}" y1="${y}" y2="${y}" class="lim-grid ${d === 0 ? 'z' : ''}"/><text x="${PL - 4}" y="${y - 3}" class="lim-txt" text-anchor="end">${d > 0 ? '+' : ''}${d}</text>`; }
+        // le son de la piste derrière (pendant la lecture)
+        const an = (state.playing || state.recording) ? (typeof trackIdx === 'number' ? PulseAudio.getTrackSpectrum(trackIdx) : (t.id && PulseAudio.getBusSpectrum ? PulseAudio.getBusSpectrum(t.id) : null)) : null;
+        if (an) {
+            if (!bins || bins.length !== an.frequencyBinCount) bins = new Float32Array(an.frequencyBinCount);
+            an.getFloatFrequencyData(bins);
+            const nyq = (PulseAudio.getContext() ? PulseAudio.getContext().sampleRate : 48000) / 2;
+            let d = `M0 ${B}`;
+            for (let x = 0; x <= PL; x += 4) { const k = Math.min(bins.length - 1, Math.max(0, Math.round(F(x) / nyq * (bins.length - 1)))); const v = Number.isFinite(bins[k]) ? bins[k] : -120; d += ` L${x} ${YS(v).toFixed(1)}`; }
+            g += `<path d="${d} L${PL} ${B} Z" class="mb-spec"/>`;
+        }
+        // ce que fait chaque bande : forme arrondie autour du 0 dB (et sa limite, la plage)
+        bands.forEach((b, i) => {
+            const c = MB_COLORS[i], on = i === sel; let a = '', lim = '';
+            for (let x = 0; x <= PL; x += 5) { const r = resp(b, F(x)); a += `${x ? 'L' : 'M'}${x} ${(Y0 - ((b.mute ? -24 : gd[i]) + (b.out || 0)) * r * DBK).toFixed(1)}`; lim += `${x ? 'L' : 'M'}${x} ${(Y0 - ((b.range ?? -6) + (b.out || 0)) * r * DBK).toFixed(1)}`; }
+            g += `<path d="${lim}" fill="none" stroke="${c}" stroke-opacity="${on ? 0.55 : 0.25}" stroke-width="1.2" stroke-dasharray="4 4"/>`;
+            g += `<path d="${a} L${PL} ${Y0} L0 ${Y0} Z" fill="${c}" fill-opacity="${on ? 0.4 : 0.2}" stroke="${c}" stroke-width="${on ? 2 : 1.2}" ${on ? `style="filter:drop-shadow(0 0 6px ${c})"` : ''}/>`;
+        });
+        // courbe totale (0 dB partout où il n'y a pas de bande)
+        let tot = '';
+        for (let x = 0; x <= PL; x += 5) { const f = F(x); let sm = 1; bands.forEach((b, i) => { sm += resp(b, f) * (Math.pow(10, ((b.mute ? -60 : gd[i]) + (b.out || 0)) / 20) - 1); }); tot += `${x ? 'L' : 'M'}${x} ${(Y0 - 20 * Math.log10(Math.max(sm, 1e-3)) * DBK).toFixed(1)}`; }
+        g += `<path d="${tot}" class="mb-total"/>`;
+        // les ronds (déplacer / seuil) et les poignées de la bande choisie
+        bands.forEach((b, i) => {
+            const x = X(Math.sqrt(b.lo * b.hi)), on = i === sel, c = MB_COLORS[i], y = Y0 - ((b.thr ?? -30) + 30) * 2.2;
+            g += `<g class="mb-dot" data-i="${i}"><circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="18" fill="transparent"/>${on ? `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="13" fill="none" stroke="#fff" stroke-width="2"/>` : ''}<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${on ? 9 : 7}" fill="${c}" stroke="#0b0712" stroke-width="2"/></g>`;
+            if (on) { const lab = `${mbName(b)} · ${fmtF(b.lo)} – ${fmtF(b.hi)} · seuil ${Math.round(b.thr ?? -30)} dB`, w = lab.length * 6.1 + 20, lx = Math.max(4, Math.min(PL - w - 4, x - w / 2)); g += `<rect x="${lx.toFixed(1)}" y="${(y - 44).toFixed(1)}" width="${w.toFixed(1)}" height="22" rx="11" fill="#0b0712dd" stroke="${c}" stroke-opacity=".6"/><text x="${(lx + w / 2).toFixed(1)}" y="${(y - 29).toFixed(1)}" class="mb-lab" text-anchor="middle">${esc(lab)}</text>`; }
+        });
+        const b = bands[sel];
+        if (b) { const bx0 = X(b.lo), bx1 = X(b.hi), by = B - 26, c = MB_COLORS[sel];
+            g += `<line x1="${bx0}" x2="${bx1}" y1="${by}" y2="${by}" stroke="${c}" stroke-width="4" stroke-linecap="round" style="filter:drop-shadow(0 0 5px ${c})"/>
+                <g class="mb-tri" data-k="lo"><rect x="${bx0 - 14}" y="${by - 18}" width="28" height="32" fill="transparent"/><path d="M${bx0 - 11} ${by + 8} L${bx0 + 3} ${by - 12} L${bx0 + 3} ${by + 8} Z" fill="#e9e2f5"/></g>
+                <g class="mb-tri" data-k="hi"><rect x="${bx1 - 14}" y="${by - 18}" width="28" height="32" fill="transparent"/><path d="M${bx1 + 11} ${by + 8} L${bx1 - 3} ${by - 12} L${bx1 - 3} ${by + 8} Z" fill="#e9e2f5"/></g>`; }
+        if (!bands.length) g += `<text x="${PL / 2}" y="${Y0 - 20}" class="lim-txt big" text-anchor="middle">Double-clic là où tu veux travailler pour créer une bande (le reste du son n'est pas touché)</text>`;
+        svg.innerHTML = g;
+        panel.querySelector('.mb-n').textContent = bands.length + ' / ' + MAXB;
+    };
+    let knobs = {};
+    const buildFp = () => {
+        const b = BS()[sel]; fp.innerHTML = ''; fp.style.display = b ? '' : 'none'; knobs = {}; if (!b) return;
+        const c = MB_COLORS[sel]; fp.style.borderColor = c + '77';
+        const c0 = document.createElement('div'); c0.className = 'lim-col mb-c0';
+        c0.innerHTML = `<span class="lim-t" style="color:${c}">● ${mbName(b)}</span>
+            <span class="lim-seg mb-md"><span data-v="c" class="${(b.range ?? -6) <= 0 ? 'on' : ''}" data-tooltip="Baisser la zone quand elle déborde (au-dessus du seuil)">Compresser</span><span data-v="e" class="${(b.range ?? -6) > 0 ? 'on' : ''}" data-tooltip="Remonter la zone quand elle passe le seuil">Remonter</span></span>
+            <span class="mb-sm"><span class="mb-pill mb-so ${b.solo ? 'on' : ''}" data-tooltip="Écouter seulement cette bande">S</span><span class="mb-pill mb-mu ${b.mute ? 'on' : ''}" data-tooltip="Couper cette zone du son">M</span><span class="mb-pill mb-del" data-tooltip="Retirer cette bande">✕</span></span>`;
+        fp.appendChild(c0);
+        c0.querySelectorAll('.mb-md span').forEach(x => x.addEventListener('click', () => { step(() => { const r = Math.abs(b.range ?? 6) || 6; b.range = x.dataset.v === 'c' ? -r : r; }); buildFp(); draw(); }));
+        c0.querySelector('.mb-so').addEventListener('click', () => { step(() => { b.solo = !b.solo; if (b.solo) delete b.mute; if (!b.solo) delete b.solo; }); buildFp(); draw(); });
+        c0.querySelector('.mb-mu').addEventListener('click', () => { step(() => { b.mute = !b.mute; if (b.mute) delete b.solo; if (!b.mute) delete b.mute; }); buildFp(); draw(); });
+        c0.querySelector('.mb-del').addEventListener('click', () => { step(() => { BS().splice(sel, 1); sel = Math.min(sel, BS().length - 1); }); buildFp(); draw(); });
+        const sp = document.createElement('div'); sp.className = 'lim-sep'; fp.appendChild(sp);
+        const k = (key, o) => { knobs[key] = proKnob(fp, { color: c, onEnd: commit, ...o, onChange: (v) => { arm(); b[key] = o.round(v); draw(); } }); };
+        k('thr', { label: 'Seuil', min: -60, max: 0, val: b.thr ?? -30, big: true, fmt: (v) => Math.round(v) + ' dB', round: (v) => Math.round(v) });
+        k('range', { label: 'Plage', min: -24, max: 24, val: b.range ?? -6, fmt: db1, round: (v) => Math.round(v * 2) / 2 });
+        k('att', { label: 'Attaque', min: 0.5, max: 200, val: b.att ?? 10, log: true, fmt: (v) => v.toFixed(1).replace('.', ',') + ' ms', round: (v) => Math.round(v * 10) / 10 });
+        k('rel', { label: 'Relâchement', min: 20, max: 1000, val: b.rel ?? 120, log: true, fmt: (v) => Math.round(v) + ' ms', round: (v) => Math.round(v) });
+        k('out', { label: 'Sortie', min: -12, max: 12, val: b.out || 0, fmt: db1, round: (v) => Math.round(v * 2) / 2 });
+    };
+    const at = (e) => { const r = svg.getBoundingClientRect(); return [(e.clientX - r.left) * W / r.width, (e.clientY - r.top) * H / r.height]; };
+    svg.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        const tri = e.target.closest('.mb-tri'), dot = e.target.closest('.mb-dot'), col = e.target.closest('.mb-col');
+        if (!tri && !dot) { if (col && +col.dataset.i !== sel) { sel = +col.dataset.i; buildFp(); draw(); } return; }
+        e.preventDefault();
+        if (dot && +dot.dataset.i !== sel) { sel = +dot.dataset.i; buildFp(); }
+        const b = BS()[sel]; if (!b) return;
+        const [x0, y0] = at(e), lo0 = b.lo, hi0 = b.hi, th0 = b.thr ?? -30;
+        undoArmed = false;
+        let moved = false;
+        const mv = (ev) => {
+            const [x, y] = at(ev); if (!moved && Math.hypot(x - x0, y - y0) < 2) return; if (!moved) arm(); moved = true;
+            if (tri && tri.dataset.k === 'lo') b.lo = Math.round(Math.max(F0, Math.min(b.hi / 1.25, F(x))));
+            else if (tri) b.hi = Math.round(Math.min(F1, Math.max(b.lo * 1.25, F(x))));
+            else {
+                const k = F(X(Math.sqrt(lo0 * hi0)) + (x - x0)) / Math.sqrt(lo0 * hi0); let lo = lo0 * k, hi = hi0 * k;
+                if (lo < F0) { hi *= F0 / lo; lo = F0; } if (hi > F1) { lo *= F1 / hi; hi = F1; }
+                b.lo = Math.round(lo); b.hi = Math.round(hi);
+                b.thr = Math.round(Math.max(-60, Math.min(0, th0 + (y0 - y) / 2.2)));
+                if (knobs.thr) knobs.thr.set(b.thr);
+            }
+            draw();
+        };
+        const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); if (moved) commit(); buildFp(); draw(); };
+        document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
+    });
+    svg.addEventListener('dblclick', (e) => {
+        if (e.target.closest('.mb-dot, .mb-tri')) return;
+        const [x] = at(e); if (x > PL) return;
+        if (BS().length >= MAXB) { flash(`${MAXB} bandes au plus`); return; }
+        const f = F(x);
+        step(() => { BS().push({ lo: Math.round(Math.max(F0, f / Math.SQRT2)), hi: Math.round(Math.min(F1, f * Math.SQRT2)), thr: -30, range: -6, att: 10, rel: 120, out: 0 }); sel = BS().length - 1; });
+        buildFp(); draw();
+    });
+    let last = 0;
+    const loop = (ts) => {
+        if (!panel.isConnected) return;
+        if (ts - last > 33) {
+            last = ts;
+            const m = (state.playing || state.recording) && t.effects && t.effects.includes('mband') && PulseAudio.getMbandMeter ? PulseAudio.getMbandMeter(key) : null;
+            // les bandes allumées dans le moteur sont celles qui ne sont pas éteintes, dans l'ordre
+            const live = BS().map((b, i) => i).filter(i => BS()[i].on !== false);
+            BS().forEach((b, i) => { const j = live.indexOf(i), tg = m && j >= 0 && m.g ? (m.g[j] || 0) : 0; gd[i] += (tg - gd[i]) * 0.3; });
+            if (m || (state.playing || state.recording) || gd.some(v => Math.abs(v) > 0.05)) draw();
+        }
+        requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+    panel.querySelector('.fx-panel-close').addEventListener('click', () => panel.remove());
+    panel.querySelector('.fx-bypass').addEventListener('change', (e) => {
+        pushUndo(); t.effects = t.effects || [];
+        if (e.target.checked) { if (!t.effects.includes('mband')) t.effects.push('mband'); } else { const i = t.effects.indexOf('mband'); if (i >= 0) t.effects.splice(i, 1); }
+        refreshPlaybackSoon(); saveProject(); refreshStrips();
+    });
+    buildFp(); draw();
+    const rect = (anchorEl && anchorEl.getBoundingClientRect) ? anchorEl.getBoundingClientRect() : { left: 80, right: 80, top: 80 };
+    const pw = Math.min(900, window.innerWidth - 16);
+    let left = rect.right + 8; if (left + pw > window.innerWidth) left = Math.max(8, rect.left - pw - 8);
+    panel.style.left = Math.max(8, Math.min(left, window.innerWidth - pw - 8)) + 'px';
+    panel.style.top = Math.max(8, Math.min(rect.top - 20, window.innerHeight - panel.offsetHeight - 8)) + 'px';
+    makePlugWindow(panel, t, 'mband', trackIdx);
+}
+
 // Réglages de chaque effet (partagés : fenêtres de plugin et menu d'automation)
 const FX_PANEL_DEFS = {
     eq: [
@@ -7907,6 +8080,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
     if (fxName === 'limit') return openLimiterPanel(trackIdx, anchorEl);
     if (fxName === 'gate') return openGatePanel(trackIdx, anchorEl);
     if (fxName === 'deess') return openDeessPanel(trackIdx, anchorEl);
+    if (fxName === 'mband') return openMbandPanel(trackIdx, anchorEl);
     closeTransientPanels();
     // trackIdx : numéro de piste, ou directement un groupe
     const t = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;

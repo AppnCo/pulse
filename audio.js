@@ -183,6 +183,59 @@ window.PulseAudio = (function() {
             }
         }
         registerProcessor('pulse-deesser2', PulseDeesser2);
+        // Multibande à bandes libres : même calcul que MultiBand dans engine/src/fx.rs.
+        // Chaque bande isole sa zone (Linkwitz-Riley 24 dB/oct : deux filtres 2e ordre de chaque côté) et la monte ou la baisse
+        // selon son niveau : gain = plage × (dépassement du seuil / 12 dB, entre 0 et 1), plus sa sortie. Sortie = son + Σ bande × (gain − 1) :
+        // une bande qui ne travaille pas laisse le son intact.
+        class PulseMband extends AudioWorkletProcessor {
+            constructor(o) {
+                super();
+                const p = (o && o.processorOptions) || {};
+                const biq = (hp, f) => { const w = 2 * Math.PI * f / sampleRate, c = Math.cos(w), al = Math.sin(w) / (2 * Math.SQRT1_2), a0 = 1 + al;
+                    return hp ? [(1 + c) / 2 / a0, -(1 + c) / a0, (1 + c) / 2 / a0, -2 * c / a0, (1 - al) / a0] : [(1 - c) / 2 / a0, (1 - c) / a0, (1 - c) / 2 / a0, -2 * c / a0, (1 - al) / a0]; };
+                const co = (ms) => 1 - Math.exp(-1 / (Math.max(0.05, ms) / 1000 * sampleRate));
+                this.bands = (Array.isArray(p.bands) ? p.bands : []).filter(b => b && b.on !== false).slice(0, 6).map(b => {
+                    const lo = Math.max(20, Math.min(20000, b.lo || 20)), hi = Math.max(lo * 1.05, Math.min(20000, sampleRate * 0.45, b.hi || 20000));
+                    const ks = []; if (lo > 20.5) ks.push(biq(true, lo), biq(true, lo)); if (hi < 19999) ks.push(biq(false, hi), biq(false, hi));
+                    return { ks, st: [ks.map(() => [0, 0, 0, 0]), ks.map(() => [0, 0, 0, 0])], env: 0, att: co(b.att ?? 10), rel: co(b.rel ?? 120),
+                        thr: b.thr ?? -30, range: Math.max(-24, Math.min(24, b.range ?? -6)), out: Math.max(-24, Math.min(24, b.out || 0)), solo: !!b.solo, mute: !!b.mute, mg: 0 };
+                });
+                this.anySolo = this.bands.some(b => b.solo);
+                this.live = !!p.live; this.cnt = 0;
+            }
+            process(inputs, outputs) {
+                const inp = inputs[0], out = outputs[0];
+                if (!inp || !inp.length) return true;
+                const n = inp[0].length, nc = Math.min(inp.length, out.length), bs = this.bands, nb = bs.length;
+                const bp = this._bp || (this._bp = [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0]]);
+                for (let i = 0; i < n; i++) {
+                    let y0 = nc > 0 ? inp[0][i] : 0, y1 = nc > 1 ? inp[1][i] : 0;
+                    const x0 = y0, x1 = y1;
+                    if (this.anySolo) { y0 = 0; y1 = 0; }
+                    for (let k = 0; k < nb; k++) {
+                        const b = bs[k], v = bp[k];
+                        let pk = 0;
+                        for (let ch = 0; ch < nc; ch++) {
+                            let s = ch ? x1 : x0;
+                            const st = b.st[ch];
+                            for (let j = 0; j < b.ks.length; j++) s = biqRun(b.ks[j], st[j], s);
+                            v[ch] = s; const a = s < 0 ? -s : s; if (a > pk) pk = a;
+                        }
+                        b.env += (pk - b.env) * (pk > b.env ? b.att : b.rel);
+                        const over = 20 * Math.log10(Math.max(b.env, 1e-9)) - b.thr;
+                        const gd = b.range * Math.max(0, Math.min(1, over / 12));
+                        const gl = b.mute ? 0 : Math.pow(10, (gd + b.out) / 20);
+                        if (this.anySolo) { if (b.solo) { y0 += v[0] * gl; y1 += v[1] * gl; } }
+                        else { y0 += v[0] * (gl - 1); y1 += v[1] * (gl - 1); }
+                        if (this.live && Math.abs(gd) > Math.abs(b.mg)) b.mg = gd;
+                    }
+                    out[0][i] = y0; if (nc > 1) out[1][i] = y1;
+                }
+                if (this.live && (this.cnt += n) >= 1200) { this.cnt = 0; this.port.postMessage({ g: bs.map(b => b.mg), e: bs.map(b => 20 * Math.log10(Math.max(b.env, 1e-9))) }); bs.forEach(b => b.mg = 0); }
+                return true;
+            }
+        }
+        registerProcessor('pulse-mband', PulseMband);
         // Saturation suréchantillonnée ×4 : même calcul que Saturator dans engine/src/fx.rs
         // (filtre de 64 coefficients, Blackman, coupure 0,1125 de la cadence ×4 ; parasites −22 dB → −99 dB)
         const satFir = (() => {
@@ -855,7 +908,7 @@ window.PulseAudio = (function() {
         }
         registerProcessor('pulse-width', PulseWidth);`;
 
-    const FX_CHAIN = ['pitch', 'filter', 'gate', 'eq', 'sat', 'crush', 'deess', 'comp', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'reverb']; // ordre habituel des effets
+    const FX_CHAIN = ['pitch', 'filter', 'gate', 'eq', 'sat', 'crush', 'deess', 'comp', 'mband', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'reverb']; // ordre habituel des effets
     const SEND_REVERB_TRIM = 1 / 3; // la reverb seule sort 3 fois trop fort par rapport au son direct : on la ramène à niveau
 
     // Temps de l'écho en secondes : calé sur le rythme (beats = nombre de temps) ou donné en millisecondes
@@ -950,7 +1003,8 @@ window.PulseAudio = (function() {
     // La valeur de l'aiguille vient du compresseur en cours de lecture ; si plus rien n'arrive (arrêt, graphe reconstruit), elle est périmée
     // Gate en lecture : { e: niveau vu par le gate, g: gain appliqué } pour son écran
     const gateLive = new Map();
-    const deessLive = new Map();
+    const deessLive = new Map(), mbandLive = new Map();
+    function getMbandMeter(key) { const v = mbandLive.get(key); return v && performance.now() - v.ts < 250 ? v : null; }
     function getDeessMeter(key) { const v = deessLive.get(key); return v && performance.now() - v.ts < 250 ? v : null; }
     function getGateMeter(key) { const v = gateLive.get(key); return v && performance.now() - v.ts < 250 ? v : null; }
     // Limiteur en lecture : { i: crête d'entrée, o: crête de sortie, gr: gain le plus bas } pour son écran
@@ -2139,6 +2193,16 @@ window.PulseAudio = (function() {
             }
         };
 
+        // Multibande (bandes libres)
+        B.mband = () => {
+            const mp = params.mband || {}, bands = (mp.bands || []).filter(b => b && b.on !== false);
+            if (!enabled.includes('mband') || !bands.length || !fxReady.has(actx)) return;
+            const live = !!params.grKey && !(typeof OfflineAudioContext !== 'undefined' && actx instanceof OfflineAudioContext);
+            const node = new AudioWorkletNode(actx, 'pulse-mband', { numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max', processorOptions: { bands, live } });
+            if (live) { const key = params.grKey; node.port.onmessage = (e) => mbandLive.set(key, { ...e.data, ts: performance.now() }); }
+            connect(node);
+        };
+
         // Compresseur (maison si possible ; sinon celui du navigateur, plus fort en sortie)
         B.comp = () => {
             if (enabled.includes('comp')) {
@@ -2552,7 +2616,7 @@ window.PulseAudio = (function() {
         startRecording, stopRecording,
         registerBuffer, hasBuffer, getBuffer, getBufferDuration, clearBuffers, computePeaks,
         play, stopAll, getPlaybackPosition, setNativeBackend, isNative, setBeatsPerBar,
-        updateTrackVolume, updateTrackPan, updateComp, setAutoRanges, eqSections, eqIsDynamic, getEqDyn, eqBandCoefs, getLimiterMeter, getGateMeter, getDeessMeter, refreshAudibility, clearLiveNodes,
+        updateTrackVolume, updateTrackPan, updateComp, setAutoRanges, eqSections, eqIsDynamic, getEqDyn, eqBandCoefs, getLimiterMeter, getGateMeter, getDeessMeter, getMbandMeter, refreshAudibility, clearLiveNodes,
         getTrackAnalyser, getTrackMeters, trackChannelCount, getMasterAnalyser, getTrackSpectrum, getBusSpectrum, getCompReduction, setMasterVolume,
         setMetronome, setMetronomeBpm, setCountIn, isCountInEnabled,
         startMetronome, stopMetronome, playCountIn, stopCountIn, isCountingIn,

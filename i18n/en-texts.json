@@ -1130,7 +1130,24 @@
   "🎧 tu entends seulement les « s » détectés": "🎧 you only hear the detected \"s\"",
   "gris = la voix · orange = chaque « s » détecté, et ce qu'il en reste": "grey = the voice · orange = each detected \"s\", and what is left of it",
   "Lance la lecture : la voix défile ici, et chaque « s » baissé s'allume en orange": "Start playback: the voice scrolls here, and each lowered \"s\" lights up orange",
-  "Réduction": "Reduction"
+  "Réduction": "Reduction",
+  "Multibande": "Multiband",
+  "travaille seulement une zone du son (graves, boue, sifflantes…), quand elle déborde": "works only on one area of the sound (lows, mud, sibilance…), when it gets too loud",
+  "Compresser": "Compress",
+  "Remonter": "Expand",
+  "Baisser la zone quand elle déborde (au-dessus du seuil)": "Lower the area when it gets too loud (above the threshold)",
+  "Remonter la zone quand elle passe le seuil": "Raise the area when it goes above the threshold",
+  "Écouter seulement cette bande": "Listen to this band only",
+  "Couper cette zone du son": "Mute this area of the sound",
+  "Retirer cette bande": "Remove this band",
+  "Bandes": "Bands",
+  "Double-clic dans le vide = nouvelle bande · le rond : gauche / droite = déplacer, haut / bas = seuil": "Double-click an empty spot = new band · the dot: left / right = move, up / down = threshold",
+  "Double-clic là où tu veux travailler pour créer une bande (le reste du son n'est pas touché)": "Double-click where you want to work to create a band (the rest of the sound is untouched)",
+  "Boue": "Mud",
+  "Médium": "Mid",
+  "Présence": "Presence",
+  "Sifflantes": "Sibilance",
+  "Air": "Air"
  },
  "patterns": [
   [
@@ -1888,6 +1905,14 @@
   [
    "seuil (.+?) dB",
    "threshold $1 dB"
+  ],
+  [
+   "(.+?) bandes au plus",
+   "$1 bands at most"
+  ],
+  [
+   "● (.+?)",
+   "● $1"
   ]
  ]
 }

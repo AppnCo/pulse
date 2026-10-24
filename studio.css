@@ -3560,3 +3560,17 @@ body.automation-mode .track-item .t-auto .auto-chip { max-width: 150px; height: 
 .pk:not(.big) .ds-lvl { width: 52px; height: 52px; }
 .ds-panel .lim-seg { margin-left: 8px; flex: none; }
 .ds-panel .ds-md { margin-left: auto; }
+
+/* Multibande à bandes libres */
+.mb-panel { width: 900px; }
+.mb-spec { fill: #ffffff0d; stroke: #ffffff38; stroke-width: 1; }
+.mb-total { fill: none; stroke: #fff; stroke-width: 2.6; filter: drop-shadow(0 0 6px #A855F7); }
+.mb-dot { cursor: move; } .mb-tri { cursor: ew-resize; } .mb-col { cursor: pointer; }
+.mb-lab { fill: #fff; font-size: 11px; }
+.mb-fp { left: 50%; transform: translateX(-50%); }
+.mb-c0 { gap: 6px; align-items: flex-start; }
+.mb-sm { display: flex; gap: 6px; }
+.mb-pill { min-width: 24px; height: 22px; padding: 0 6px; display: inline-flex; align-items: center; justify-content: center; border-radius: 11px; background: #1a1228; border: 1px solid #3a2c50; color: #cbbfe3; font-size: 11px; font-weight: 700; cursor: pointer; }
+.mb-pill.on.mb-so { background: #FBBF24; color: #2a1a05; border-color: #FBBF24; }
+.mb-pill.on.mb-mu { background: #F87171; color: #2a0505; border-color: #F87171; }
+.mb-pill.mb-del:hover { border-color: #F87171; color: #fff; }

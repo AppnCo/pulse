@@ -84,11 +84,35 @@ pub struct EffectParams {
     pub sat: Option<SatParams>,
     pub deess: Option<DeessParams>,
     pub comp: Option<CompParams>,
+    pub mband: Option<MbandParams>,
     pub reverb: Option<ReverbParams>,
     pub delay: Option<DelayParams>,
     pub master: Option<MasterParams>,
     pub limit: Option<LimitParams>,
     pub pitch: Option<PitchParams>,
+}
+
+/// Multibande à bandes libres (jusqu'à 6)
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct MbandParams {
+    pub bands: Vec<MbandBand>,
+}
+/// Une bande : limites (Hz ; 20 / 20000 = pas de limite), seuil (dB), plage (dB : négatif = compresser, positif = remonter),
+/// attaque / relâchement (ms), sortie (dB), solo, muet
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct MbandBand {
+    pub lo: Option<f64>,
+    pub hi: Option<f64>,
+    pub thr: Option<f64>,
+    pub range: Option<f64>,
+    pub att: Option<f64>,
+    pub rel: Option<f64>,
+    pub out: Option<f64>,
+    pub solo: Option<bool>,
+    pub mute: Option<bool>,
+    pub on: Option<bool>,
 }
 
 /// Pitch : `semi` en demi-tons (-12 à +12), `mix` en pourcentage (100 = seulement la voix transposée).

@@ -382,3 +382,13 @@ Object.assign(exact, {
   'Lance la lecture : la voix défile ici, et chaque « s » baissé s\'allume en orange': 'Start playback: the voice scrolls here, and each lowered "s" lights up orange', 'Réduction': 'Reduction' });
 patterns.push(P('Ancien réglage (force § %) : touche un bouton pour passer au nouveau de-esser', 'Old setting (strength $1 %): touch any control to switch to the new de-esser'),
   P('seuil § dB (relatif)', 'threshold $1 dB (relative)'), P('seuil § dB', 'threshold $1 dB'));
+// 25/10 (fin) : Multibande à bandes libres
+Object.assign(exact, {
+  'Multibande': 'Multiband', 'travaille seulement une zone du son (graves, boue, sifflantes…), quand elle déborde': 'works only on one area of the sound (lows, mud, sibilance…), when it gets too loud',
+  'Compresser': 'Compress', 'Remonter': 'Expand', 'Baisser la zone quand elle déborde (au-dessus du seuil)': 'Lower the area when it gets too loud (above the threshold)',
+  'Remonter la zone quand elle passe le seuil': 'Raise the area when it goes above the threshold', 'Écouter seulement cette bande': 'Listen to this band only',
+  'Couper cette zone du son': 'Mute this area of the sound', 'Retirer cette bande': 'Remove this band', 'Bandes': 'Bands', 'Sortie': 'Output',
+  'Double-clic dans le vide = nouvelle bande · le rond : gauche / droite = déplacer, haut / bas = seuil': 'Double-click an empty spot = new band · the dot: left / right = move, up / down = threshold',
+  'Double-clic là où tu veux travailler pour créer une bande (le reste du son n\'est pas touché)': 'Double-click where you want to work to create a band (the rest of the sound is untouched)',
+  'Grave': 'Low', 'Boue': 'Mud', 'Médium': 'Mid', 'Présence': 'Presence', 'Sifflantes': 'Sibilance', 'Air': 'Air' });
+patterns.push(P('§ bandes au plus', '$1 bands at most'), P('● §', '● $1'));
