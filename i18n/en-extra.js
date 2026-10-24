@@ -310,6 +310,11 @@ Object.assign(exact, { 'Courbe': 'Curve', 'Copier la courbe affichée': 'Copy th
   'Solo : n\'écouter que la zone de ce point': 'Solo: listen only to this point\'s range',
   'Point dynamique : arrive bientôt': 'Dynamic point: coming soon', 'Retirer ce point': 'Remove this point',
   'Double-clic sur la courbe pour poser un point': 'Double-click the curve to add a point',
+  'Limiteur': 'Limiter', 'Plafond': 'Ceiling', 'Anticipation': 'Lookahead', 'Relâchement': 'Release', 'Style': 'Style', 'Transparent': 'Transparent', 'Doux': 'Soft', 'Franc': 'Hard',
+  'Pic réel': 'True peak', 'Réduction max': 'Max reduction', 'Sortie': 'Output', 'ENTRÉE': 'INPUT',
+  'Bientôt : plusieurs façons de réagir aux gros pics': 'Coming soon: several ways to react to big peaks',
+  'Pic réel : les crêtes entre les échantillons comptent aussi (calcul ×4). Ce que demandent Spotify et YouTube': 'True peak: peaks between samples count too (4× calculation). What Spotify and YouTube require',
+  'Lance la lecture : le son défile ici, et tu vois chaque pic que le limiteur retire': 'Press play: the sound scrolls here and you see every peak the limiter removes',
   'Ducking': 'Ducking', 'Pré-délai': 'Pre-delay', 'Grave': 'Low', 'Aigu': 'High', 'Temps': 'Time', 'Coupe-haut': 'High cut', 'Coupe-bas': 'Low cut',
   'Le temps avant que la reverb démarre : la voix reste devant': 'The time before the reverb starts: the voice stays in front',
   'La reverb se pousse pendant que la voix chante et ressort dans les trous': 'The reverb steps back while the voice sings and comes back in the gaps',
@@ -320,7 +325,7 @@ Object.assign(exact, { 'Courbe': 'Curve', 'Copier la courbe affichée': 'Copy th
   '⚡ Dynamique · plage': '⚡ Dynamic · range', 'seuil': 'threshold',
   'Double-clic pour poser un point (tout à gauche = coupe-bas, tout à droite = coupe-haut) · tire pour régler · molette = largeur (Q) · double-clic sur un point = le retirer · ⇧ + glisser = choisir plusieurs points': 'Double-click to add a point (far left = low cut, far right = high cut) · drag to adjust · wheel = width (Q) · double-click a point = remove it · ⇧ + drag = select several points',
   'L\'automation suit maintenant les régions que tu déplaces': 'Automation now follows the regions you move', 'L\'automation reste en place quand tu déplaces une région': 'Automation stays in place when you move a region' });
-patterns.push(P('ducking § % : l\'écho se pousse pendant la voix', 'ducking $1 %: the echo steps back during the voice'), P('ducking § % : la reverb se pousse pendant la voix', 'ducking $1 %: the reverb steps back during the voice'),
+patterns.push(P('plafond § dB', 'ceiling $1 dB'), P('ducking § % : l\'écho se pousse pendant la voix', 'ducking $1 %: the echo steps back during the voice'), P('ducking § % : la reverb se pousse pendant la voix', 'ducking $1 %: the reverb steps back during the voice'),
   P('§ = § ms · § % de répétitions', '$1 = $2 ms · $3 % repeats'), P('🎧 Solo du point § : tu n\'entends que sa zone', '🎧 Point $1 solo: you only hear its range'), P('Coller la courbe (§)', 'Paste the curve ($1)'),
   P('Courbe copiée (§) : choisis un autre réglage ou une autre piste, puis « Coller la courbe »', 'Curve copied ($1): pick another control or another track, then "Paste the curve"'),
   P('Courbe collée sur « § » (⌘Z pour annuler)', 'Curve pasted on "$1" (⌘Z to undo)'));

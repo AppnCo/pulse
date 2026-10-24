@@ -153,6 +153,13 @@ pub struct GateParams {
     pub threshold: Option<f64>,
     pub release: Option<f64>,
     pub reduction: Option<f64>,
+    /// Ratio (absent = gate franc), genou (dB), attaque et maintien (ms), filtre du déclencheur (Hz)
+    pub ratio: Option<f64>,
+    pub knee: Option<f64>,
+    pub attack: Option<f64>,
+    pub hold: Option<f64>,
+    pub hp: Option<f64>,
+    pub lp: Option<f64>,
 }
 
 /// Finition (premaster) : graves et clarté en dB, colle et chaleur de 0 à 100, largeur (1 = inchangé), volume en dB.
@@ -171,6 +178,11 @@ pub struct MasterParams {
 #[serde(default)]
 pub struct LimitParams {
     pub ceiling: Option<f64>,
+    /// Gain d'entrée (dB), relâchement (ms, 120 par défaut), anticipation (ms, 1,5 par défaut), pic réel (1 = oui)
+    pub gain: Option<f64>,
+    pub release: Option<f64>,
+    pub lookahead: Option<f64>,
+    pub tp: Option<f64>,
 }
 
 /// Écho. `wet` et `feedback` en pourcentage ; le temps est soit `ms`, soit `beats` (nombre de temps, suit le tempo).

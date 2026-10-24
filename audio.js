@@ -272,34 +272,61 @@ window.PulseAudio = (function() {
         // Gate : coupe le bruit entre deux phrases. Mêmes calculs que Gate dans engine/src/fx.rs.
         // Écoute le plus fort des canaux (pistes liées) ; ouvert = gain 1, fermé = baisse de « reduction » dB, 50 ms de maintien.
         class PulseGate extends AudioWorkletProcessor {
+            // Même calcul que Gate dans engine/src/fx.rs. Sans ratio : gate franc (son d'avant). Avec ratio : expandeur
+            // (sous le seuil, chaque dB en moins en enlève « ratio − 1 » de plus, au plus « Coupure »), genou doux.
+            // Déclencheur filtré (coupe-bas / coupe-haut 12 dB/oct) ; « écouter » = on entend ce que le gate voit (lecture seulement)
             constructor(options) {
                 super();
                 const p = (options && options.processorOptions) || {};
                 const coef = (sec) => 1 - Math.exp(-1 / (sec * sampleRate));
-                this.thr = Math.pow(10, (p.threshold ?? -45) / 20);
-                this.floor = Math.pow(10, -(p.reduction ?? 40) / 20);
-                this.hold = Math.round(0.05 * sampleRate);
+                this.thr = Math.pow(10, (p.threshold ?? -45) / 20); this.thrDb = p.threshold ?? -45;
+                this.range = p.reduction ?? 40; this.floor = Math.pow(10, -this.range / 20);
+                this.ratio = p.ratio > 0 ? Math.max(1, p.ratio) : 0; this.knee = Math.max(0, p.knee || 0);
+                this.hold = Math.round(Math.max(0, p.hold ?? 50) / 1000 * sampleRate);
                 this.att = coef(0.0005); this.envRel = coef(0.02);
-                this.gAtt = coef(0.002); this.gRel = coef(Math.max(0.005, (p.release ?? 150) / 1000));
+                this.gAtt = coef(Math.max(0.0001, (p.attack ?? 2) / 1000)); this.gRel = coef(Math.max(0.005, (p.release ?? 150) / 1000));
                 this.env = 0; this.left = 0; this.gain = 1;
+                const bq = (type, f) => { const w = 2 * Math.PI * f / sampleRate, c = Math.cos(w), al = Math.sin(w) / Math.SQRT2, a0 = 1 + al;
+                    return type === 'hp' ? [(1 + c) / 2 / a0, -(1 + c) / a0, (1 + c) / 2 / a0, -2 * c / a0, (1 - al) / a0] : [(1 - c) / 2 / a0, (1 - c) / a0, (1 - c) / 2 / a0, -2 * c / a0, (1 - al) / a0]; };
+                this.hp = p.hp > 20 ? bq('hp', Math.min(p.hp, sampleRate * 0.45)) : null;
+                this.lp = p.lp > 0 && p.lp < 20000 ? bq('lp', Math.min(p.lp, sampleRate * 0.45)) : null;
+                this.zh = [[0, 0, 0, 0], [0, 0, 0, 0]]; this.zl = [[0, 0, 0, 0], [0, 0, 0, 0]];
+                this.listen = !!p.listen; this.live = !!p.live; this.cnt = 0; this.mEnv = 0; this.mGain = 1;
+            }
+            target() {
+                if (this.left > 0) return 1;
+                if (!this.ratio) return this.floor;
+                const u = this.thrDb - 20 * Math.log10(Math.max(this.env, 1e-6)), k = this.knee / 2;
+                const r = u <= -k ? 0 : u < k ? (u + k) * (u + k) / (4 * Math.max(this.knee, 1e-3)) * (this.ratio - 1) : u * (this.ratio - 1);
+                return Math.pow(10, -Math.min(this.range, Math.max(0, r)) / 20);
             }
             process(inputs, outputs) {
                 const inp = inputs[0], out = outputs[0];
                 if (!inp || !inp.length) return true;
                 const n = inp[0].length, nc = Math.min(inp.length, out.length);
+                const run = (k, z, x) => { const y = k[0] * x + k[1] * z[0] + k[2] * z[1] - k[3] * z[2] - k[4] * z[3]; z[1] = z[0]; z[0] = x; z[3] = z[2]; z[2] = y; return y; };
                 for (let i = 0; i < n; i++) {
                     let pk = 0;
-                    for (let ch = 0; ch < nc; ch++) { const a = inp[ch][i] < 0 ? -inp[ch][i] : inp[ch][i]; if (a > pk) pk = a; }
+                    for (let ch = 0; ch < nc; ch++) {
+                        let d = inp[ch][i];
+                        if (this.hp) d = run(this.hp, this.zh[ch], d);
+                        if (this.lp) d = run(this.lp, this.zl[ch], d);
+                        if (this.listen) out[ch][i] = d;
+                        const a = d < 0 ? -d : d; if (a > pk) pk = a;
+                    }
                     this.env += (pk - this.env) * (pk > this.env ? this.att : this.envRel);
                     if (this.env > this.thr) this.left = this.hold; else if (this.left > 0) this.left--;
-                    const target = this.left > 0 ? 1 : this.floor;
+                    const target = this.target();
                     this.gain += (target - this.gain) * (target > this.gain ? this.gAtt : this.gRel);
-                    for (let ch = 0; ch < nc; ch++) out[ch][i] = inp[ch][i] * this.gain;
+                    if (!this.listen) for (let ch = 0; ch < nc; ch++) out[ch][i] = inp[ch][i] * this.gain;
+                    if (this.env > this.mEnv) this.mEnv = this.env; if (this.gain < this.mGain) this.mGain = this.gain;
                 }
+                // à l'écran : niveau vu par le gate et gain appliqué, ~40 fois par seconde
+                if (this.live && (this.cnt += n) >= 1200) { this.cnt = 0; this.port.postMessage({ e: this.mEnv, g: this.mGain }); this.mEnv = 0; this.mGain = 1; }
                 return true;
             }
         }
-        registerProcessor('pulse-gate', pulseAuto(PulseGate, (s, v) => { if (v.threshold !== undefined) s.thr = Math.pow(10, v.threshold / 20); if (v.reduction !== undefined) s.floor = Math.pow(10, -v.reduction / 20); if (v.release !== undefined) s.gRel = 1 - Math.exp(-1 / (Math.max(0.005, v.release / 1000) * sampleRate)); }));
+        registerProcessor('pulse-gate', pulseAuto(PulseGate, (s, v) => { if (v.threshold !== undefined) { s.thr = Math.pow(10, v.threshold / 20); s.thrDb = v.threshold; } if (v.reduction !== undefined) { s.floor = Math.pow(10, -v.reduction / 20); s.range = v.reduction; } if (v.release !== undefined) s.gRel = 1 - Math.exp(-1 / (Math.max(0.005, v.release / 1000) * sampleRate)); }));
 
         // Effets de mouvement : chorus, flanger, phaser, trémolo, doubleur de voix, slapback.
         // Mêmes calculs que ModFx dans engine/src/fx.rs (une ligne à retard par canal, un LFO commun décalé d'un canal à l'autre).
@@ -438,6 +465,7 @@ window.PulseAudio = (function() {
                 const p = (o && o.processorOptions) || {};
                 this.red = 0; this.report = !!p.report; this.cnt = 0;
                 this.env2 = 0; this.slow = 0; this.dc = [0, 0];
+                this.penv = 0; this.hcnt = 0;
                 this.setup(p);
                 // Réglages envoyés en direct pendant la lecture (sans reconstruire le son)
                 this.port.onmessage = (e) => { if (e.data && e.data.set) { if (this._ap) this._ap = { ...this._ap, ...e.data.set }; this.setup(this._ap ? { ...this._ap } : e.data.set); } };
@@ -459,6 +487,10 @@ window.PulseAudio = (function() {
                 this.slowC = 1 - Math.exp(-1 / (1.0 * sampleRate));       // Opto : la cellule « se charge » en 1 s
                 this.relSlow = 1 - Math.exp(-1 / (Math.max(0.005, (p.release ?? 50) / 1000) * 4 * sampleRate));
                 this.dcC = 1 - Math.exp(-1 / (0.05 * sampleRate));
+                // Propre : maintien des crêtes du détecteur (12 ms) — le gain ne suit plus chaque arche d'une basse
+                // (3e harmonique à 60 Hz : −18 / −36 dB → sous −97 dB). Même calcul que Compressor dans engine/src/fx.rs
+                this.holdN = this.mode === 0 ? Math.round(0.012 * sampleRate) : 0;
+                this.holdDec = Math.exp(-1 / (0.002 * sampleRate));
                 // Bus, relâchement Auto : 0,1 s sur les pointes, jusqu'à 1,2 s quand la compression dure
                 this.autoRel = this.mode === 3 && !!p.autoRel;
                 if (this.autoRel) { this.rel = 1 - Math.exp(-1 / (0.1 * sampleRate)); this.relSlow = 1 - Math.exp(-1 / (1.2 * sampleRate)); }
@@ -473,6 +505,12 @@ window.PulseAudio = (function() {
                     let pk = 0, sq = 0;
                     for (let ch = 0; ch < nc; ch++) { const a = inp[ch][i] < 0 ? -inp[ch][i] : inp[ch][i]; if (a > pk) pk = a; if (a * a > sq) sq = a * a; }
                     let lvl = pk;
+                    if (this.holdN > 0) {
+                        if (pk >= this.penv) { this.penv = pk; this.hcnt = this.holdN; }
+                        else if (this.hcnt > 0) this.hcnt--;
+                        else this.penv *= this.holdDec;
+                        lvl = this.penv;
+                    }
                     if (m === 1 || m === 3) { this.env2 += (sq - this.env2) * this.rmsC; lvl = Math.sqrt(this.env2) * Math.SQRT2; }
                     let want = 0;
                     if (lvl > 1e-5) {
@@ -617,38 +655,55 @@ window.PulseAudio = (function() {
         // Il « voit venir » la crête 1,5 ms à l'avance, donc il baisse en douceur au lieu d'écraser.
         // (Celui du navigateur mettait 0,1 s à s'ouvrir : le premier temps de chaque morceau sortait deux fois moins fort.)
         class PulseLimiter extends AudioWorkletProcessor {
+            // Même calcul que Limiter dans engine/src/fx.rs. Réglages : gain d'entrée (dB), plafond, relâchement (ms),
+            // anticipation (ms), pic réel (les crêtes entre les échantillons comptent aussi, détection ×4)
             constructor(o) {
                 super();
                 const p = (o && o.processorOptions) || {};
                 this.thr = p.ceiling > 0 ? Math.min(1, p.ceiling) : 0.966; // plafond : -0,3 dB par défaut
                 this.port.onmessage = (e) => { if (e.data && e.data.ceiling > 0) this.thr = Math.min(1, e.data.ceiling); };
-                this.L = Math.max(1, Math.round(0.0015 * sampleRate));
+                this.g = Math.pow(10, (p.gain || 0) / 20);
+                this.tp = !!p.tp;
+                const look = Math.max(0.1, Math.min(10, p.lookahead ?? 1.5)) / 1000;
+                this.L = Math.max(1, Math.round(look * sampleRate)) + (this.tp ? 8 : 0);   // le pic réel arrive ~8 échantillons plus tard
                 this.buf = [new Float32Array(this.L), new Float32Array(this.L)];
                 this.i = 0; this.env = 0; this.gain = 1;
-                this.att = 1 - Math.exp(-4 / this.L);
-                this.rel = 1 - Math.exp(-1 / (0.12 * sampleRate));
+                this.att = 1 - Math.exp(-4 / Math.max(1, this.L - (this.tp ? 8 : 0)));
+                this.rel = 1 - Math.exp(-1 / (Math.max(1, Math.min(2000, p.release ?? 120)) / 1000 * sampleRate));
+                this.hist = [new Float64Array(16), new Float64Array(16)];
+                this.live = !!p.live; this.cnt = 0; this.mIn = 0; this.mOut = 0; this.mGr = 1;
             }
             process(inputs, outputs) {
                 const inp = inputs[0], out = outputs[0];
-                const n = out[0].length, nc = out.length, ni = inp ? inp.length : 0;
+                const n = out[0].length, nc = out.length, ni = inp ? inp.length : 0, h = satFir;
                 for (let i = 0; i < n; i++) {
                     let pk = 0;
                     for (let ch = 0; ch < nc; ch++) {
-                        const x = ni ? inp[ch < ni ? ch : 0][i] : 0, a = x < 0 ? -x : x;
+                        const x = (ni ? inp[ch < ni ? ch : 0][i] : 0) * this.g, a = x < 0 ? -x : x;
                         if (a > pk) pk = a;
+                        if (this.tp) {
+                            // crêtes entre les échantillons : on recalcule 3 points intermédiaires (même filtre que la saturation)
+                            const hs = this.hist[ch]; hs.copyWithin(1, 0, 15); hs[0] = x;
+                            for (let ph = 1; ph < 4; ph++) { let u = 0; for (let j = 0; j < 16; j++) u += h[ph + 4 * j] * hs[j]; u = u < 0 ? -4 * u : 4 * u; if (u > pk) pk = u; }
+                        }
                         const d = this.buf[ch][this.i];
                         this.buf[ch][this.i] = x;
                         out[ch][i] = d;
                     }
+                    if (pk > this.mIn) this.mIn = pk;
                     this.env = pk > this.env ? pk : this.env + (pk - this.env) * this.rel;
                     const target = this.env > this.thr ? this.thr / this.env : 1;
                     this.gain += (target - this.gain) * (target < this.gain ? this.att : this.rel);
+                    if (this.gain < this.mGr) this.mGr = this.gain;
                     for (let ch = 0; ch < nc; ch++) {
-                        const y = out[ch][i] * this.gain;
-                        out[ch][i] = y > this.thr ? this.thr : y < -this.thr ? -this.thr : y; // rien ne dépasse le plafond
+                        let y = out[ch][i] * this.gain;
+                        y = y > this.thr ? this.thr : y < -this.thr ? -this.thr : y; // rien ne dépasse le plafond
+                        out[ch][i] = y; const a = y < 0 ? -y : y; if (a > this.mOut) this.mOut = a;
                     }
                     if (++this.i >= this.L) this.i = 0;
                 }
+                // à l'écran : crête d'entrée, de sortie et réduction, ~40 fois par seconde
+                if (this.live && (this.cnt += n) >= 1200) { this.cnt = 0; this.port.postMessage({ i: this.mIn, o: this.mOut, gr: this.mGr }); this.mIn = 0; this.mOut = 0; this.mGr = 1; }
                 return true;
             }
         }
@@ -818,6 +873,12 @@ window.PulseAudio = (function() {
     }
     const compGRts = new Map();
     // La valeur de l'aiguille vient du compresseur en cours de lecture ; si plus rien n'arrive (arrêt, graphe reconstruit), elle est périmée
+    // Gate en lecture : { e: niveau vu par le gate, g: gain appliqué } pour son écran
+    const gateLive = new Map();
+    function getGateMeter(key) { const v = gateLive.get(key); return v && performance.now() - v.ts < 250 ? v : null; }
+    // Limiteur en lecture : { i: crête d'entrée, o: crête de sortie, gr: gain le plus bas } pour son écran
+    const limLive = new Map();
+    function getLimiterMeter(key) { const v = limLive.get(key); return v && performance.now() - v.ts < 250 ? v : null; }
     function getCompReduction(key) { return compGR.has(key) && performance.now() - (compGRts.get(key) || 0) < 250 ? compGR.get(key) : null; }
     function getBusSpectrum(busId) { return liveBusSpec.get(busId) || null; }
     function getTrackSpectrum(trackIdx) { const n = liveNodes.get(trackIdx); return n && n.spec ? n.spec : null; }
@@ -1886,12 +1947,15 @@ window.PulseAudio = (function() {
         // Gate : coupe le bruit entre deux phrases (voir le worklet pulse-gate)
         B.gate = () => {
             if (!enabled.includes('gate') || !fxReady.has(actx)) return;
-            const p = params.gate || {};
-            connect(new AudioWorkletNode(actx, 'pulse-gate', {
+            const p = params.gate || {}, live = !!params.grKey && !(typeof OfflineAudioContext !== 'undefined' && actx instanceof OfflineAudioContext);
+            const node = new AudioWorkletNode(actx, 'pulse-gate', {
                 numberOfInputs: 1, numberOfOutputs: 1,
                 channelCountMode: 'max', // une voix mono reste mono
-                processorOptions: { threshold: p.threshold ?? -45, release: p.release ?? 150, reduction: p.reduction ?? 40, ...autoAll('gate') }
-            }));
+                processorOptions: { threshold: p.threshold ?? -45, release: p.release ?? 150, reduction: p.reduction ?? 40,
+                    ratio: p.ratio, knee: p.knee, attack: p.attack, hold: p.hold, hp: p.hp, lp: p.lp, listen: live && !!p.listen, live, ...autoAll('gate') }
+            });
+            if (live) { const key = params.grKey; node.port.onmessage = (e) => gateLive.set(key, { ...e.data, ts: performance.now() }); }
+            connect(node);
         };
 
         // EQ 4-bandes
@@ -2041,10 +2105,13 @@ window.PulseAudio = (function() {
         // Limiteur de sécurité posé sur un bus (le dernier avant la sortie) : rien ne dépasse le plafond du projet
         B.limit = () => {
             if (enabled.includes('limit') && fxReady.has(actx)) {
-                connect(new AudioWorkletNode(actx, 'pulse-limiter', {
+                const lp = params.limit || {}, live = !!params.grKey && !(typeof OfflineAudioContext !== 'undefined' && actx instanceof OfflineAudioContext);
+                const node = new AudioWorkletNode(actx, 'pulse-limiter', {
                     numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCount: 2, channelCountMode: 'explicit',
-                    processorOptions: { ceiling: dbToLin((params.limit || {}).ceiling ?? ceiling) }
-                }));
+                    processorOptions: { ceiling: dbToLin(lp.ceiling ?? ceiling), gain: lp.gain || 0, release: lp.release, lookahead: lp.lookahead, tp: !!lp.tp, live }
+                });
+                if (live) { const key = params.grKey; node.port.onmessage = (e) => limLive.set(key, { ...e.data, ts: performance.now() }); }
+                connect(node);
             }
         };
 
@@ -2395,7 +2462,7 @@ window.PulseAudio = (function() {
         startRecording, stopRecording,
         registerBuffer, hasBuffer, getBuffer, getBufferDuration, clearBuffers, computePeaks,
         play, stopAll, getPlaybackPosition, setNativeBackend, isNative, setBeatsPerBar,
-        updateTrackVolume, updateTrackPan, updateComp, setAutoRanges, eqSections, eqIsDynamic, getEqDyn, eqBandCoefs, refreshAudibility, clearLiveNodes,
+        updateTrackVolume, updateTrackPan, updateComp, setAutoRanges, eqSections, eqIsDynamic, getEqDyn, eqBandCoefs, getLimiterMeter, getGateMeter, refreshAudibility, clearLiveNodes,
         getTrackAnalyser, getTrackMeters, trackChannelCount, getMasterAnalyser, getTrackSpectrum, getBusSpectrum, getCompReduction, setMasterVolume,
         setMetronome, setMetronomeBpm, setCountIn, isCountInEnabled,
         startMetronome, stopMetronome, playCountIn, stopCountIn, isCountingIn,

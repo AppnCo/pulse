@@ -189,10 +189,10 @@ mod tests {
         };
         let near = |v: f64, want: f64| assert!((v - want).abs() < want * 0.015, "{v} au lieu de {want}");
         assert_eq!(l.len(), (3.5 * SR as f64) as usize);
-        near(rms(&l, 0.06, 0.1), 0.100054);
-        near(rms(&r, 0.06, 0.1), 0.060533);
-        near(rms(&l, 0.3, 0.9), 0.002814);
-        near(rms(&r, 0.3, 0.9), 0.007228);
+        near(rms(&l, 0.06, 0.1), 0.085491);
+        near(rms(&r, 0.06, 0.1), 0.051931);
+        near(rms(&l, 0.3, 0.9), 0.002423);
+        near(rms(&r, 0.3, 0.9), 0.006155);
     }
 
     /// Écho calé sur le rythme : à 120 BPM, ½ temps = 0,25 s. Valeurs mesurées dans Chrome.
@@ -287,7 +287,7 @@ mod tests {
         let a = SR as usize / 2;
         let rms = (l[a..a + SR as usize].iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / SR as f64).sqrt();
         let pk = l.iter().chain(r.iter()).fold(0.0f32, |m, v| m.max(v.abs()));
-        assert!((rms - 0.384).abs() < 0.384 * 0.02, "niveau {rms} au lieu de 0,384");
+        assert!((rms - 0.32635).abs() < 0.32635 * 0.02, "niveau {rms} au lieu de 0,32635");
         assert!((pk as f64 - 0.713).abs() < 0.713 * 0.03, "crête {pk} au lieu de 0,713");
     }
 
@@ -302,9 +302,9 @@ mod tests {
             0.6 / 2f64.sqrt() * 10f64.powf(db / 20.0) * FRAC_1_SQRT_2
         };
         let near = |v: f64, want: f64| assert!((v - want).abs() < want * 0.02, "{v} au lieu de {want}");
-        near(run("[]"), 0.05921);
-        near(run(r#"["eq","comp"]"#), 0.05921);
-        near(run(r#"["comp","eq"]"#), 0.01186);
+        near(run("[]"), 0.052015);
+        near(run(r#"["eq","comp"]"#), 0.052015);
+        near(run(r#"["comp","eq"]"#), 0.009986);
     }
 
     /// Trois pistes trop fortes : sans limiteur la crête serait à 1,61 ; le navigateur sort 0,966 (plafond à -0,3 dB).
@@ -325,8 +325,8 @@ mod tests {
     fn compresseur_comme_le_navigateur() {
         let t: Track = serde_json::from_str(r#"{"effects":["comp"],"effectParams":{"comp":{"ratio":3.08,"threshold":-20,"attack":10,"release":50}}}"#).unwrap();
         assert!((gain_db(&t, 300.0, 0.03) - 4.7).abs() < 0.2, "voix faible : {}", gain_db(&t, 300.0, 0.03));
-        assert!((gain_db(&t, 300.0, 0.3) + 0.4).abs() < 0.3, "voix normale : {}", gain_db(&t, 300.0, 0.3));
-        assert!((gain_db(&t, 300.0, 0.7) + 5.1).abs() < 0.3, "voix forte : {}", gain_db(&t, 300.0, 0.7));
+        assert!((gain_db(&t, 300.0, 0.3) + 1.72).abs() < 0.1, "voix normale : {}", gain_db(&t, 300.0, 0.3));
+        assert!((gain_db(&t, 300.0, 0.7) + 6.69).abs() < 0.1, "voix forte : {}", gain_db(&t, 300.0, 0.7));
     }
 
     /// Mêmes chiffres que tests/scenarios/comp-genou.mjs (mesurés dans Chrome).
@@ -337,9 +337,9 @@ mod tests {
         };
         let g = |t: &Track, amp: f64| gain_db(t, 300.0, amp);
         assert!(g(&mk(0.0, 0.0), 0.1).abs() < 0.05, "au seuil, genou net : {}", g(&mk(0.0, 0.0), 0.1));
-        assert!((g(&mk(24.0, 0.0), 0.1) + 1.70).abs() < 0.05, "au seuil, genou doux : {}", g(&mk(24.0, 0.0), 0.1));
-        assert!((g(&mk(0.0, 0.0), 0.5) + 8.80).abs() < 0.05, "voix forte : {}", g(&mk(0.0, 0.0), 0.5));
-        assert!((g(&mk(0.0, 6.0), 0.5) + 2.80).abs() < 0.05, "rattrapage +6 dB : {}", g(&mk(0.0, 6.0), 0.5));
+        assert!((g(&mk(24.0, 0.0), 0.1) + 2.25).abs() < 0.05, "au seuil, genou doux : {}", g(&mk(24.0, 0.0), 0.1));
+        assert!((g(&mk(0.0, 0.0), 0.5) + 10.48).abs() < 0.05, "voix forte : {}", g(&mk(0.0, 0.0), 0.5));
+        assert!((g(&mk(0.0, 6.0), 0.5) + 4.48).abs() < 0.05, "rattrapage +6 dB : {}", g(&mk(0.0, 6.0), 0.5));
     }
 
     /// Caractères du compresseur (Propre, Opto, FET, Bus) : compression et harmoniques ajoutées,
@@ -373,7 +373,7 @@ mod tests {
             assert!((g + 10.63).abs() < 0.05, "bus, relâchement auto : {g}");
         }
         // (mode, compression dB, harmonique 2 dB, harmonique 3 dB) ; les harmoniques sous -70 dB ne sont pas comparées (bruit du WAV 16 bits de l'export)
-        for (m, g, h2, h3) in [(0u8, -8.80, -120.0, -52.2), (1, -10.59, -41.2, -78.7), (2, -9.79, -103.9, -47.5), (3, -10.57, -102.0, -89.4)] {
+        for (m, g, h2, h3) in [(0u8, -10.48, -120.0, -120.0), (1, -10.59, -41.2, -78.7), (2, -9.79, -103.9, -47.5), (3, -10.57, -102.0, -89.4)] {
             let x = run(Some(m));
             let f = amp(&x, 300.0);
             let db = |v: f64| 20.0 * v.log10();
@@ -391,8 +391,8 @@ mod tests {
             serde_json::from_str(&format!(r#"{{"effects":["comp"],"effectParams":{{"comp":{{"ratio":3.08,"threshold":-20,"attack":10,"release":50,"mix":{mix}}}}}}}"#)).unwrap()
         };
         assert!(gain_db(&mk(0.0), 300.0, 0.7).abs() < 0.2, "mélange 0 % = son d'origine : {}", gain_db(&mk(0.0), 300.0, 0.7));
-        assert!((gain_db(&mk(50.0), 300.0, 0.7) + 2.2).abs() < 0.4, "mélange 50 % : {}", gain_db(&mk(50.0), 300.0, 0.7));
-        assert!((gain_db(&mk(100.0), 300.0, 0.7) + 5.1).abs() < 0.3, "mélange 100 % : {}", gain_db(&mk(100.0), 300.0, 0.7));
+        assert!((gain_db(&mk(50.0), 300.0, 0.7) + 2.72).abs() < 0.1, "mélange 50 % : {}", gain_db(&mk(50.0), 300.0, 0.7));
+        assert!((gain_db(&mk(100.0), 300.0, 0.7) + 6.69).abs() < 0.1, "mélange 100 % : {}", gain_db(&mk(100.0), 300.0, 0.7));
     }
 
     #[test]
@@ -524,6 +524,77 @@ mod tests {
         assert!(p13 < -90.0 && p1 < -90.0, "parasites : {p13} / {p1}");
         assert!((h3 + 17.3).abs() < 0.3, "3e harmonique comme le navigateur (−17,3) : {h3}");
         assert!((gain - 4.02).abs() < 0.05, "gain comme le navigateur (4,02) : {gain}");
+    }
+
+    /// Compresseur Propre : maintien des crêtes du détecteur — une basse rapide ne se déforme plus.
+    /// Avant : 3e harmonique à 60 Hz = −18 / −25 / −36 dB (attaque / relâchement 0,1/5, 1/20, 10/50 ms) ; même mesure que tests/scenarios/comp-parite.mjs.
+    #[test]
+    fn comp_basses_sans_distorsion() {
+        let n = 2 * SR as usize;
+        for (att, rel) in [(0.1, 5.0), (1.0, 20.0), (10.0, 50.0)] {
+            let t: Track = serde_json::from_str(&format!(r#"{{"effects":["comp"],"effectParams":{{"comp":{{"threshold":-30,"ratio":8,"attack":{att},"release":{rel},"makeup":0,"mode":0}}}}}}"#)).unwrap();
+            let mut l: Vec<f32> = (0..n).map(|i| (0.7 * (2.0 * std::f64::consts::PI * 60.0 * i as f64 / SR as f64).sin()) as f32).collect();
+            let mut r = l.clone();
+            crate::fx::Chain::for_track(&t, SR as f64, 120.0).process(&mut l, &mut r, false);
+            let goertzel = |fr: f64| {
+                let (mut re, mut im) = (0.0, 0.0);
+                for i in SR as usize / 2..n {
+                    let w = 0.5 - 0.5 * (2.0 * std::f64::consts::PI * (i - SR as usize / 2) as f64 / (n - SR as usize / 2) as f64).cos();
+                    let ph = 2.0 * std::f64::consts::PI * fr * i as f64 / SR as f64;
+                    re += l[i] as f64 * w * ph.cos(); im += l[i] as f64 * w * ph.sin();
+                }
+                (re * re + im * im).sqrt()
+            };
+            let h3 = 20.0 * (goertzel(180.0) / goertzel(60.0) + 1e-12).log10();
+            assert!(h3 < -90.0, "3e harmonique à 60 Hz, attaque {att} / relâchement {rel} : {h3} dB");
+        }
+    }
+
+    /// Limiteur : gain d'entrée, relâchement, pic réel — mêmes chiffres que tests/scenarios/limiteur-reglages.mjs.
+    /// 12 kHz décalé d'un huitième : les échantillons tombent 3 dB sous les vraies crêtes, seul le pic réel les voit.
+    #[test]
+    fn limiteur_reglages() {
+        let sr = SR as usize;
+        let run = |json: &str| {
+            let t: Track = serde_json::from_str(&format!(r#"{{"effects":["limit"],"effectParams":{{"limit":{json}}}}}"#)).unwrap();
+            let mut l: Vec<f32> = (0..sr).map(|i| (0.3 * (2.0 * std::f64::consts::PI * 12000.0 * i as f64 / SR as f64 + std::f64::consts::FRAC_PI_4).sin()) as f32).collect();
+            let mut r = l.clone();
+            crate::fx::Chain::for_track(&t, SR as f64, 120.0).process(&mut l, &mut r, false);
+            let rms = (l[sr / 2..].iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / (sr / 2) as f64).sqrt();
+            (20.0 * rms.log10(), l[sr / 2..].iter().fold(0.0f32, |m, v| m.max(v.abs())))
+        };
+        let (a, pa) = run(r#"{"gain":12,"ceiling":-1,"release":50}"#);
+        let (b, pb) = run(r#"{"gain":12,"ceiling":-1,"release":50,"tp":1}"#);
+        let (c, _) = run(r#"{"ceiling":-1}"#);
+        println!("limiteur : sans pic réel {a:.2} ({pa:.3}) / avec {b:.2} ({pb:.3}) / gain 0 {c:.2}");
+        assert!((a + 1.47).abs() < 0.05 && (pa - 0.845).abs() < 0.005, "sans pic réel (navigateur −1,47 dB, crête 0,845) : {a} / {pa}");
+        assert!((b + 3.84).abs() < 0.05 && (pb - 0.643).abs() < 0.005, "pic réel (navigateur −3,84 dB, crête 0,643) : {b} / {pb}");
+        assert!((c + 13.47).abs() < 0.05, "gain 0 : rien ne bouge (−13,47) : {c}");
+    }
+
+    /// Gate : ratio (expandeur), genou, attaque, maintien, filtre du déclencheur — mêmes chiffres que tests/scenarios/gate-reglages.mjs.
+    #[test]
+    fn gate_reglages() {
+        let sr = SR as usize;
+        let lvl = |sig: &dyn Fn(usize) -> f64, gate: &str, a: f64, z: f64| {
+            let t: Track = serde_json::from_str(&format!(r#"{{"effects":["gate"],"effectParams":{{"gate":{gate}}}}}"#)).unwrap();
+            let mut l: Vec<f32> = (0..sr).map(|i| sig(i) as f32).collect();
+            let mut r = l.clone();
+            crate::fx::Chain::for_track(&t, SR as f64, 120.0).process(&mut l, &mut r, false);
+            let (i0, i1) = ((a * SR as f64) as usize, (z * SR as f64) as usize);
+            20.0 * ((l[i0..i1].iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / (i1 - i0) as f64).sqrt() + 1e-12).log10()
+        };
+        let tau = 2.0 * std::f64::consts::PI;
+        let voix = |i: usize| (if i < sr / 2 { 0.5 } else { 0.01 }) * (tau * 300.0 * i as f64 / SR as f64).sin();
+        let grave = |i: usize| 0.1 * (tau * 50.0 * i as f64 / SR as f64).sin();
+        let exp = r#"{"threshold":-30,"reduction":30,"ratio":4,"knee":6,"attack":2,"hold":20,"release":80}"#;
+        let v = [lvl(&voix, r#"{"threshold":-30}"#, 0.7, 0.95), lvl(&voix, exp, 0.7, 0.95), lvl(&voix, exp, 0.1, 0.45),
+                 lvl(&grave, r#"{"threshold":-30}"#, 0.5, 0.95), lvl(&grave, r#"{"threshold":-30,"hp":200}"#, 0.5, 0.95)];
+        println!("gate : {v:.2?}");
+        for (got, want) in v.iter().zip([-53.58, -62.22, -9.03, -23.01, -55.83]) {
+            // sous −50 dB, l'export WAV 16 bits du navigateur arrondit un peu : 0,2 dB de marge
+            assert!((got - want).abs() < if want < -50.0 { 0.2 } else { 0.1 }, "gate : {got} (navigateur {want})");
+        }
     }
 
     /// Filtre : coupe-bas / coupe-haut Butterworth. -3 dB à la coupure, 12 puis 24 dB par octave ; éteint = transparent.

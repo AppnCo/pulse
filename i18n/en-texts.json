@@ -1029,6 +1029,17 @@
   "Point dynamique : arrive bientôt": "Dynamic point: coming soon",
   "Retirer ce point": "Remove this point",
   "Double-clic sur la courbe pour poser un point": "Double-click the curve to add a point",
+  "Plafond": "Ceiling",
+  "Anticipation": "Lookahead",
+  "Style": "Style",
+  "Transparent": "Transparent",
+  "Franc": "Hard",
+  "Pic réel": "True peak",
+  "Réduction max": "Max reduction",
+  "ENTRÉE": "INPUT",
+  "Bientôt : plusieurs façons de réagir aux gros pics": "Coming soon: several ways to react to big peaks",
+  "Pic réel : les crêtes entre les échantillons comptent aussi (calcul ×4). Ce que demandent Spotify et YouTube": "True peak: peaks between samples count too (4× calculation). What Spotify and YouTube require",
+  "Lance la lecture : le son défile ici, et tu vois chaque pic que le limiteur retire": "Press play: the sound scrolls here and you see every peak the limiter removes",
   "Ducking": "Ducking",
   "Pré-délai": "Pre-delay",
   "Grave": "Low",
@@ -1725,6 +1736,10 @@
   [
    "→ (.+?)",
    "→ $1"
+  ],
+  [
+   "plafond (.+?) dB",
+   "ceiling $1 dB"
   ],
   [
    "ducking (.+?) % : l'écho se pousse pendant la voix",

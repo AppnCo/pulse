@@ -2124,6 +2124,7 @@ const FX_WORDS = { pitch: 'pitch shift hauteur transpose alterboy grave aigu', c
     sat: 'saturation distortion saturator drive', crush: 'bitcrusher lofi', delay: 'delay echo', reverb: 'reverb reverberation', slapback: 'slap delay echo',
     chorus: 'modulation', flanger: 'modulation', phaser: 'modulation', tremolo: 'modulation', doubler: 'doubler double', width: 'stereo imager', util: 'utility gain mono phase', tune: 'autotune pitch justesse' };
 const FX_START = {
+    limit: { tp: 1 },    // pic réel allumé sur un limiteur neuf (les anciens projets gardent leur son)
     eq: { bands: [] },   // un EQ neuf s'ouvre sans aucun point : on les pose soi-même
     crush: { bits: 8, down: 4, mix: 100 }, util: { gain: 0, invert: 0, mono: 0 }, width: { width: 100 },
     tremolo: { rate: 5, depth: 50 }, phaser: { rate: 0.4, depth: 70, feedback: 40, mix: 50 }, flanger: { rate: 0.25, depth: 2, feedback: 50, mix: 50 },
@@ -7031,6 +7032,167 @@ function makePlugWindow(panel, t, fxName, trackIdx) {
     }, 500);
 }
 
+// === Limiteur (style « écran plein + panneau flottant », planche docs-planche-limiteur-gate-deesser-multibande.html) ===
+// Petit bouton rotatif plat à bague lumineuse, partagé par les nouvelles façades
+function proKnob(host, { label, min, max, val, fmt, onChange, onEnd, log, color = '#A855F7', big }) {
+    const el = document.createElement('div'); el.className = 'pk' + (big ? ' big' : ''); host.appendChild(el);
+    const fr = () => log ? Math.log(val / min) / Math.log(max / min) : (val - min) / (max - min);
+    const draw = () => {
+        const p = Math.max(0, Math.min(1, fr())), a = -135 + p * 270, rad = (d) => (d - 90) * Math.PI / 180, P = (d, R) => [32 + R * Math.cos(rad(d)), 32 + R * Math.sin(rad(d))];
+        const [x1, y1] = P(-135, 27), [x2, y2] = P(a, 27), large = p * 270 > 180 ? 1 : 0, [ix, iy] = P(a, 17), [jx, jy] = P(a, 9);
+        el.innerHTML = `<svg viewBox="0 0 64 64"><path d="M${P(-135, 27).join(' ')} A27 27 0 1 1 ${P(135, 27).join(' ')}" fill="none" stroke="#ffffff12" stroke-width="4.5" stroke-linecap="round"/>
+            ${p > 0.003 ? `<path d="M${x1} ${y1} A27 27 0 ${large} 1 ${x2} ${y2}" fill="none" stroke="${color}" stroke-width="4.5" stroke-linecap="round" style="filter:drop-shadow(0 0 4px ${color}99)"/>` : ''}
+            <circle cx="32" cy="32" r="20" fill="#120c1b" stroke="#ffffff1a"/><line x1="${jx}" y1="${jy}" x2="${ix}" y2="${iy}" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/></svg>
+            <span class="pk-l">${label}</span><span class="pk-v">${fmt(val)}</span>`;
+    };
+    let y0 = null, f0 = 0;
+    el.addEventListener('mousedown', (e) => {
+        e.preventDefault(); e.stopPropagation(); y0 = e.clientY; f0 = fr();
+        const mv = (ev) => { const f = Math.max(0, Math.min(1, f0 + (y0 - ev.clientY) / (ev.shiftKey ? 600 : 150))); val = log ? min * Math.pow(max / min, f) : min + f * (max - min); draw(); onChange && onChange(val); };
+        const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); onEnd && onEnd(val); };
+        document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
+    });
+    // double-clic sur le chiffre : on tape la valeur
+    el.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        const v = el.querySelector('.pk-v'); if (!v) return;
+        const inp = document.createElement('input'); inp.className = 'pk-in'; inp.value = String(Math.round(val * 10) / 10).replace('.', ',');
+        v.replaceWith(inp); inp.focus(); inp.select();
+        const done = (ok) => { const n = parseFloat(inp.value.replace(',', '.')); if (ok && Number.isFinite(n)) { val = Math.max(min, Math.min(max, n)); onChange && onChange(val); onEnd && onEnd(val); } draw(); };
+        inp.addEventListener('keydown', (ev) => { ev.stopPropagation(); if (ev.key === 'Enter') done(true); if (ev.key === 'Escape') done(false); });
+        inp.addEventListener('blur', () => done(true));
+    });
+    draw();
+    return { set(v) { val = v; draw(); }, el };
+}
+
+function openLimiterPanel(trackIdx, anchorEl) {
+    closeTransientPanels();
+    const t = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;
+    if (!t) return;
+    const already = findPlugWin(t, 'limit');
+    if (already) { plugFront(already); return; }
+    t.effectParams = t.effectParams || {};
+    if (!t.effectParams.limit) t.effectParams.limit = { ...FX_START.limit };
+    const P = () => t.effectParams.limit;
+    const ceil0 = () => P().ceiling ?? (state.project.ceilingDb ?? -0.3);
+    const key = typeof trackIdx === 'number' ? 't' + trackIdx : 'b' + t.id;
+    const W = 900, H = 380, T = 14, B = H - 10, PL = 760, N = 240;
+    const Y = (d) => T + ((0 - Math.max(-36, Math.min(3, d))) / 36) * (B - T) * 0.92 + 18;
+    const db = (v) => 20 * Math.log10(Math.max(v, 1e-5));
+    const f1 = (v) => (v > 0 ? '+' : '') + v.toFixed(1).replace('.', ',');
+    let undoArmed = false;
+    const commit = (live) => {
+        if (!undoArmed) { pushUndo(); undoArmed = true; setTimeout(() => undoArmed = false, 800); }
+        t.effects = t.effects || []; if (!t.effects.includes('limit')) t.effects.push('limit');
+        if (!live) refreshPlaybackSoon();
+        saveProject();
+    };
+    const panel = document.createElement('div');
+    panel.className = 'fx-panel lim-panel';
+    panel.innerHTML = `
+        <div class="fx-panel-header">
+            <label class="fx-bypass-label fx-power" data-tooltip="Allumer ou éteindre l'effet"><input type="checkbox" class="fx-bypass" ${t.effects?.includes('limit') ? 'checked' : ''}><span class="fx-power-btn">⏻</span></label>
+            <span class="fx-title lim-title">Limiteur <i>— ${esc(t.name || '')}</i></span>
+            <button class="fx-panel-close">×</button>
+        </div>
+        <div class="lim-face">
+            <svg class="lim-svg" viewBox="0 0 ${W} ${H}"></svg>
+            <div class="lim-fp">
+                <div class="lim-col"><span class="lim-t">Style</span><span class="lim-seg" data-tooltip="Bientôt : plusieurs façons de réagir aux gros pics"><span class="on">Transparent</span><span class="off">Doux</span><span class="off">Franc</span></span></div>
+                <div class="lim-sep"></div>
+            </div>
+        </div>
+        <div class="lim-sb">
+            <button class="lim-tp" data-tooltip="Pic réel : les crêtes entre les échantillons comptent aussi (calcul ×4). Ce que demandent Spotify et YouTube">Pic réel</button>
+            <span>Plafond <b class="lim-c"></b></span><span class="lim-spacer"></span><span>Réduction max <b class="lim-g"></b></span><span>Sortie <b class="lim-o">—</b></span>
+        </div>`;
+    document.body.appendChild(panel);
+    const svg = panel.querySelector('.lim-svg'), fp = panel.querySelector('.lim-fp');
+    const kCeil = proKnob(fp, { label: 'Plafond', min: -12, max: 0, val: ceil0(), color: '#F87171', fmt: (v) => f1(v) + ' dB', onChange: (v) => { P().ceiling = Math.round(v * 10) / 10; drawStatic(); }, onEnd: () => commit() });
+    proKnob(fp, { label: 'Anticipation', min: 0.1, max: 10, val: P().lookahead ?? 1.5, log: true, fmt: (v) => v.toFixed(1).replace('.', ',') + ' ms', onChange: (v) => { P().lookahead = Math.round(v * 10) / 10; }, onEnd: () => commit() });
+    proKnob(fp, { label: 'Relâchement', min: 5, max: 2000, val: P().release ?? 120, log: true, fmt: (v) => Math.round(v) + ' ms', onChange: (v) => { P().release = Math.round(v); }, onEnd: () => commit() });
+    // historique (lecture en cours) : crête d'entrée, de sortie et réduction
+    const hin = [], hout = [], hgr = [];
+    let gainDrag = false;
+    const drawStatic = () => {
+        panel.querySelector('.lim-c').textContent = f1(ceil0()) + ' dB';
+        panel.querySelector('.lim-tp').classList.toggle('on', !!P().tp);
+        kCeil.set(ceil0());
+        draw();
+    };
+    const draw = () => {
+        const c = ceil0(), g = P().gain || 0, yc = Y(c);
+        let s = `<defs><linearGradient id="limg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#C4B5FD" stop-opacity=".75"/><stop offset="1" stop-color="#7C3AED" stop-opacity=".16"/></linearGradient></defs>`;
+        for (const d of [0, -5, -8, -11, -14, -17, -20, -23, -26, -29, -32]) { const y = Y(d); s += `<line x1="0" x2="${PL}" y1="${y}" y2="${y}" class="lim-grid ${d === 0 ? 'z' : ''}"/><text x="${PL - 6}" y="${y - 3}" class="lim-txt" text-anchor="end">${d} dB</text>`; }
+        const n = hout.length;
+        if (n > 1) {
+            const xs = (i) => ((i + N - n) / (N - 1) * PL).toFixed(1);
+            let a = `M${xs(0)} ${B}`, b = '';
+            for (let i = 0; i < n; i++) { a += ` L${xs(i)} ${Y(db(hout[i])).toFixed(1)}`; b += `${i ? 'L' : 'M'}${xs(i)} ${Y(db(hin[i])).toFixed(1)}`; }
+            s += `<path d="${a} L${xs(n - 1)} ${B} Z" fill="url(#limg)"/><path d="${b}" fill="none" class="lim-in"/>`;
+            let gl = '';
+            for (let i = 0; i < n; i++) gl += `${i ? 'L' : 'M'}${xs(i)} ${(yc + Math.min(-db(hgr[i]), 12) * 6).toFixed(1)}`;
+            s += `<path d="${gl}" fill="none" class="lim-grl"/>`;
+            let last = -99;
+            for (let i = 1; i < n - 1; i++) {
+                const r = -db(hgr[i]);
+                if (r > 0.4 && r >= -db(hgr[i - 1]) && r >= -db(hgr[i + 1]) && i - last > 26) { last = i; const x = +xs(i), y = yc + Math.min(r, 12) * 6; s += `<rect x="${x - 30}" y="${y + 8}" width="60" height="20" rx="10" class="lim-lab"/><text x="${x}" y="${y + 22}" class="lim-labt" text-anchor="middle">−${r.toFixed(1).replace('.', ',')} dB</text>`; }
+            }
+        } else s += `<text x="${PL / 2}" y="${(T + B) / 2}" class="lim-txt big" text-anchor="middle">Lance la lecture : le son défile ici, et tu vois chaque pic que le limiteur retire</text>`;
+        s += `<line x1="0" x2="${PL}" y1="${yc}" y2="${yc}" class="lim-ceil"/><text x="${PL - 80}" y="${yc - 5}" class="lim-ceilt" text-anchor="end">plafond ${f1(c)} dB</text>`;
+        // poignée d'entrée (gain) à gauche
+        const gy = Math.max(T + 30, Math.min(B - 120, B - 120 - g / 24 * (B - T - 170)));
+        s += `<g class="lim-gain"><rect x="16" y="${T + 20}" width="34" height="${B - T - 120}" rx="17" class="lim-gtrack"/><rect x="8" y="${gy - 13}" width="50" height="26" rx="13" class="lim-gpill"/><text x="33" y="${gy + 4}" class="lim-gtxt" text-anchor="middle">${f1(g)}</text><text x="33" y="${B - 86}" class="lim-txt" text-anchor="middle">ENTRÉE</text></g>`;
+        // vumètres
+        const li = hin.length ? hin[hin.length - 1] : 0, lo = hout.length ? hout[hout.length - 1] : 0, toF = (v) => Math.max(0, Math.min(1, (db(v) + 40) / 40));
+        [[PL + 24, li, 'IN'], [PL + 52, lo, 'OUT']].forEach(([x, v, nm]) => {
+            const yT = T + 20, yB = B - 6, yv = yB - toF(v) * (yB - yT);
+            s += `<rect x="${x}" y="${yT}" width="14" height="${yB - yT}" rx="3" class="lim-mbg"/><rect x="${x}" y="${yv}" width="14" height="${yB - yv}" rx="3" class="lim-m ${db(v) > c - 0.05 ? 'hot' : ''}"/><text x="${x + 7}" y="${T + 12}" class="lim-txt" text-anchor="middle">${nm}</text>`;
+        });
+        svg.innerHTML = s;
+    };
+    // boucle d'affichage : prend les mesures du limiteur pendant la lecture
+    let lastPush = 0, grMax = 1;
+    const loop = (ts) => {
+        if (!panel.isConnected) return;
+        const m = (state.playing || state.recording) && t.effects && t.effects.includes('limit') ? PulseAudio.getLimiterMeter(key) : null;
+        if (m && ts - lastPush > 33) {
+            lastPush = ts; hin.push(m.i); hout.push(m.o); hgr.push(m.gr); if (hin.length > N) { hin.shift(); hout.shift(); hgr.shift(); }
+            grMax = Math.min(grMax, m.gr);
+            panel.querySelector('.lim-g').textContent = '−' + (-db(grMax)).toFixed(1).replace('.', ',') + ' dB';
+            panel.querySelector('.lim-o').textContent = f1(db(m.o)) + ' dB';
+            draw();
+        }
+        requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+    // poignée d'entrée : tirer vers le haut pour pousser le volume dans le limiteur
+    svg.addEventListener('mousedown', (e) => {
+        if (!e.target.closest('.lim-gain')) return;
+        e.preventDefault(); gainDrag = true;
+        const r = svg.getBoundingClientRect(), k = W / r.width;
+        const mv = (ev) => { const y = (ev.clientY - r.top) * k; P().gain = Math.round(Math.max(0, Math.min(24, (B - 120 - y) / (B - T - 170) * 24)) * 10) / 10; draw(); };
+        const up = () => { gainDrag = false; document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); commit(); };
+        document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
+    });
+    svg.addEventListener('dblclick', (e) => { if (e.target.closest('.lim-gain')) { P().gain = 0; commit(); draw(); } });
+    panel.querySelector('.lim-tp').addEventListener('click', () => { P().tp = P().tp ? 0 : 1; commit(); drawStatic(); });
+    panel.querySelector('.fx-panel-close').addEventListener('click', () => panel.remove());
+    panel.querySelector('.fx-bypass').addEventListener('change', (e) => {
+        pushUndo(); t.effects = t.effects || [];
+        if (e.target.checked) { if (!t.effects.includes('limit')) t.effects.push('limit'); } else { const i = t.effects.indexOf('limit'); if (i >= 0) t.effects.splice(i, 1); }
+        anchorEl && anchorEl.classList && anchorEl.classList.toggle('active', !!e.target.checked);
+        refreshPlaybackSoon(); saveProject();
+    });
+    drawStatic();
+    const rect = anchorEl.getBoundingClientRect(), pw = Math.min(820, window.innerWidth - 16);
+    let left = rect.right + 8; if (left + pw > window.innerWidth) left = Math.max(8, rect.left - pw - 8);
+    panel.style.left = left + 'px';
+    panel.style.top = Math.max(8, Math.min(rect.top - 20, window.innerHeight - panel.offsetHeight - 8)) + 'px';
+    makePlugWindow(panel, t, 'limit', trackIdx);
+}
+
 // Réglages de chaque effet (partagés : fenêtres de plugin et menu d'automation)
 const FX_PANEL_DEFS = {
     eq: [
@@ -7142,6 +7304,7 @@ const FX_PANEL_DEFS = {
 
 function openEffectPanel(trackIdx, fxName, anchorEl) {
     if (fxName === 'eq') return openEqPanel(trackIdx, anchorEl);
+    if (fxName === 'limit') return openLimiterPanel(trackIdx, anchorEl);
     closeTransientPanels();
     // trackIdx : numéro de piste, ou directement un groupe
     const t = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;

@@ -9,6 +9,6 @@ export default async ({ ev, nav, send, sleep }) => {
     const rms=async(tr)=>{const p={buses:[],tracks:[{volume:100,clips:[{id:'cp',start:0,duration:2}],...tr}]}; const x=(await ctx.decodeAudioData(await (await PulseAudio.exportTrackWav(p,0)).arrayBuffer())).getChannelData(0); let s=0; for(let i=sr;i<sr*1.8;i++)s+=x[i]*x[i]; return Math.sqrt(s/(sr*0.8));};
     const ref=await rms({}); const o=[];
     for(const mix of [0,50,100]){ const v=await rms({effects:['comp'],effectParams:{comp:{threshold:-20,ratio:3.08,attack:10,release:50,mix}}}); o.push(mix+' % → '+(20*Math.log10(v/ref)).toFixed(1)+' dB'); }
-    return o.join(' | ')+' (attendu ≈ 0 | -2.2 | -5.1)'`);
+    return o.join(' | ')+' (attendu ≈ 0 | -2.7 | -6.7 : la courbe réglée, depuis le maintien des crêtes)'`);
   await R('curseur dans le panneau', `openEffectPanel(0,'comp',document.body); const r=[...document.querySelectorAll('.fx-panel .fx-row, .fx-panel label')].map(e=>e.textContent.trim().slice(0,20)).join(' / '); return /Mélange/.test(document.querySelector('.fx-panel').textContent)?'présent':'ABSENT : '+r`);
 };

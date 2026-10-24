@@ -311,10 +311,14 @@ impl Util {
     }
 }
 
-/// Gate : même calcul que le worklet `pulse-gate` de audio.js.
+/// Gate : même calcul que le worklet `pulse-gate` de audio.js. Sans ratio : gate franc ; avec ratio : expandeur à genou doux.
 struct Gate {
     thr: f64,
+    thr_db: f64,
+    range: f64,
     floor: f64,
+    ratio: f64,
+    knee: f64,
     hold: usize,
     att: f64,
     env_rel: f64,
@@ -323,33 +327,69 @@ struct Gate {
     env: f64,
     left: usize,
     gain: f64,
+    hp: Option<[f64; 5]>,
+    lp: Option<[f64; 5]>,
+    zh: [[f64; 4]; 2],
+    zl: [[f64; 4]; 2],
 }
 
 impl Gate {
     fn new(p: &GateParams, sr: f64) -> Self {
         let coef = |sec: f64| 1.0 - (-1.0 / (sec * sr)).exp();
+        let bq = |hp: bool, f: f64| {
+            let w = 2.0 * PI * f / sr;
+            let (c, al) = (w.cos(), w.sin() / std::f64::consts::SQRT_2);
+            let a0 = 1.0 + al;
+            if hp { [(1.0 + c) / 2.0 / a0, -(1.0 + c) / a0, (1.0 + c) / 2.0 / a0, -2.0 * c / a0, (1.0 - al) / a0] }
+            else { [(1.0 - c) / 2.0 / a0, (1.0 - c) / a0, (1.0 - c) / 2.0 / a0, -2.0 * c / a0, (1.0 - al) / a0] }
+        };
+        let thr_db = p.threshold.unwrap_or(-45.0);
+        let range = p.reduction.unwrap_or(40.0);
         Self {
-            thr: 10f64.powf(p.threshold.unwrap_or(-45.0) / 20.0),
-            floor: 10f64.powf(-p.reduction.unwrap_or(40.0) / 20.0),
-            hold: (0.05 * sr).round() as usize,
+            thr: 10f64.powf(thr_db / 20.0),
+            thr_db,
+            range,
+            floor: 10f64.powf(-range / 20.0),
+            ratio: p.ratio.filter(|r| *r > 0.0).map_or(0.0, |r| r.max(1.0)),
+            knee: p.knee.unwrap_or(0.0).max(0.0),
+            hold: (p.hold.unwrap_or(50.0).max(0.0) / 1000.0 * sr).round() as usize,
             att: coef(0.0005),
             env_rel: coef(0.02),
-            g_att: coef(0.002),
+            g_att: coef((p.attack.unwrap_or(2.0) / 1000.0).max(0.0001)),
             g_rel: coef((p.release.unwrap_or(150.0) / 1000.0).max(0.005)),
             env: 0.0,
             left: 0,
             gain: 1.0,
+            hp: p.hp.filter(|f| *f > 20.0).map(|f| bq(true, f.min(sr * 0.45))),
+            lp: p.lp.filter(|f| *f > 0.0 && *f < 20_000.0).map(|f| bq(false, f.min(sr * 0.45))),
+            zh: [[0.0; 4]; 2],
+            zl: [[0.0; 4]; 2],
         }
     }
+    fn target(&self) -> f64 {
+        if self.left > 0 { return 1.0; }
+        if self.ratio == 0.0 { return self.floor; }
+        let u = self.thr_db - 20.0 * self.env.max(1e-6).log10();
+        let k = self.knee / 2.0;
+        let r = if u <= -k { 0.0 } else if u < k { (u + k) * (u + k) / (4.0 * self.knee.max(1e-3)) * (self.ratio - 1.0) } else { u * (self.ratio - 1.0) };
+        10f64.powf(-r.max(0.0).min(self.range) / 20.0)
+    }
     fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
-        let pk = x[..nc].iter().fold(0.0f64, |m, v| m.max(v.abs()));
+        let run = |k: &[f64; 5], z: &mut [f64; 4], v: f64| { let y = k[0] * v + k[1] * z[0] + k[2] * z[1] - k[3] * z[2] - k[4] * z[3]; z[1] = z[0]; z[0] = v; z[3] = z[2]; z[2] = y; y };
+        let mut pk = 0.0f64;
+        for ch in 0..nc {
+            let mut d = x[ch];
+            if let Some(k) = &self.hp { d = run(k, &mut self.zh[ch], d); }
+            if let Some(k) = &self.lp { d = run(k, &mut self.zl[ch], d); }
+            pk = pk.max(d.abs());
+        }
         self.env += (pk - self.env) * if pk > self.env { self.att } else { self.env_rel };
         if self.env > self.thr {
             self.left = self.hold;
         } else if self.left > 0 {
             self.left -= 1;
         }
-        let target = if self.left > 0 { 1.0 } else { self.floor };
+        let target = self.target();
         self.gain += (target - self.gain) * if target > self.gain { self.g_att } else { self.g_rel };
         for v in &mut x[..nc] {
             *v *= self.gain;
@@ -377,6 +417,12 @@ pub struct Compressor {
     slow: f64,
     dc: [f64; 2],
     auto_rel: bool,
+    /// Propre : maintien des crêtes du détecteur (12 ms) — le gain ne suit plus chaque arche d'une basse
+    /// (3e harmonique à 60 Hz : −18 / −36 dB → sous −97 dB). Même calcul que le worklet `pulse-comp`.
+    hold_n: u32,
+    hold_dec: f64,
+    penv: f64,
+    hcnt: u32,
 }
 
 impl Compressor {
@@ -387,6 +433,8 @@ impl Compressor {
         n.env2 = self.env2;
         n.slow = self.slow;
         n.dc = self.dc;
+        n.penv = self.penv;
+        n.hcnt = self.hcnt;
         *self = n;
     }
     /// Réduction de gain en cours, en dB (pour l'aiguille)
@@ -420,12 +468,22 @@ impl Compressor {
             slow: 0.0,
             dc: [0.0; 2],
             auto_rel,
+            hold_n: if mode == 0 { (0.012 * sr).round() as u32 } else { 0 },
+            hold_dec: (-1.0 / (0.002 * sr)).exp(),
+            penv: 0.0,
+            hcnt: 0,
         }
     }
     pub fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
         let m = self.mode;
         let pk = x[..nc].iter().fold(0.0f64, |m, v| m.max(v.abs()));
         let mut lvl = pk;
+        if self.hold_n > 0 {
+            if pk >= self.penv { self.penv = pk; self.hcnt = self.hold_n; }
+            else if self.hcnt > 0 { self.hcnt -= 1; }
+            else { self.penv *= self.hold_dec; }
+            lvl = self.penv;
+        }
         if m == 1 || m == 3 {
             self.env2 += (pk * pk - self.env2) * self.rms_c;
             lvl = self.env2.sqrt() * std::f64::consts::SQRT_2;
@@ -1100,7 +1158,7 @@ impl Chain {
         let reverb = has("reverb").then(|| Reverb::new(&effect_params.reverb.clone().unwrap_or_default(), sr));
         let delay = has("delay").then(|| Delay::new(&effect_params.delay.clone().unwrap_or_default(), sr, bpm));
         let master = has("master").then(|| Master::new(&effect_params.master.clone().unwrap_or_default(), sr));
-        let limit = has("limit").then(|| Limiter::new(effect_params.limit.as_ref().and_then(|l| l.ceiling).unwrap_or(ceiling_db), sr));
+        let limit = has("limit").then(|| Limiter::with(&effect_params.limit.clone().unwrap_or_default(), ceiling_db, sr));
         let pitch = (has("pitch") && effect_params.pitch.as_ref().and_then(|p| p.semi).unwrap_or(0.0) != 0.0)
             .then(|| Pitch::new(&effect_params.pitch.clone().unwrap_or_default(), sr));
         let comp_p = effect_params.comp.clone().unwrap_or_default();
@@ -1148,7 +1206,7 @@ impl Chain {
                 ("deess", "amount") => if let Some(d) = &mut self.deess { let a = v.clamp(0.0, 100.0); d.max_red = a * 0.24; d.slope = a / 100.0 * 3.0; },
                 ("gate", k) => if let Some(g) = &mut self.gate {
                     let sr = self.sr;
-                    match k { "threshold" => g.thr = 10f64.powf(v / 20.0), "reduction" => g.floor = 10f64.powf(-v / 20.0),
+                    match k { "threshold" => { g.thr = 10f64.powf(v / 20.0); g.thr_db = v; } "reduction" => { g.floor = 10f64.powf(-v / 20.0); g.range = v; }
                         "release" => g.g_rel = 1.0 - (-1.0 / ((v / 1000.0).max(0.005) * sr)).exp(), _ => {} }
                 },
                 ("crush", k) => if let Some(c) = &mut self.crush {
@@ -1382,6 +1440,11 @@ impl Stage {
 /// Transparent sous le plafond ; retarde le son de 1,5 ms pour voir venir les crêtes ; rien ne dépasse le plafond.
 pub struct Limiter {
     thr: f64,
+    /// gain d'entrée (linéaire), pic réel, mémoire pour les points intermédiaires (×4)
+    g: f64,
+    tp: bool,
+    hist: [[f64; 16]; 2],
+    h: [f64; 64],
     buf: [Vec<f64>; 2],
     i: usize,
     env: f64,
@@ -1392,19 +1455,45 @@ pub struct Limiter {
 
 impl Limiter {
     pub fn new(ceiling_db: f64, sr: f64) -> Self {
-        let l = ((0.0015 * sr).round() as usize).max(1);
+        Self::with(&crate::model::LimitParams::default(), ceiling_db, sr)
+    }
+    /// Même calcul que le worklet `pulse-limiter` de audio.js
+    pub fn with(p: &crate::model::LimitParams, ceiling_db: f64, sr: f64) -> Self {
+        let tp = p.tp.unwrap_or(0.0) >= 0.5;
+        let look = (p.lookahead.unwrap_or(1.5).clamp(0.1, 10.0)) / 1000.0;
+        let base = ((look * sr).round() as usize).max(1);
+        let l = base + if tp { 8 } else { 0 };
         Self {
-            thr: 10f64.powf(ceiling_db / 20.0).min(1.0),
+            thr: 10f64.powf(p.ceiling.unwrap_or(ceiling_db) / 20.0).min(1.0),
+            g: 10f64.powf(p.gain.unwrap_or(0.0) / 20.0),
+            tp,
+            hist: [[0.0; 16]; 2],
+            h: sat_fir(),
             buf: [vec![0.0; l], vec![0.0; l]],
             i: 0,
             env: 0.0,
             gain: 1.0,
-            att: 1.0 - (-4.0 / l as f64).exp(),
-            rel: 1.0 - (-1.0 / (0.12 * sr)).exp(),
+            att: 1.0 - (-4.0 / base as f64).exp(),
+            rel: 1.0 - (-1.0 / (p.release.unwrap_or(120.0).clamp(1.0, 2000.0) / 1000.0 * sr)).exp(),
         }
     }
     pub fn tick(&mut self, x: &mut [f64; 2]) {
-        let pk = x[0].abs().max(x[1].abs());
+        x[0] *= self.g;
+        x[1] *= self.g;
+        let mut pk = x[0].abs().max(x[1].abs());
+        if self.tp {
+            // crêtes entre les échantillons : 3 points intermédiaires (même filtre que la saturation)
+            for ch in 0..2 {
+                let hs = &mut self.hist[ch];
+                hs.copy_within(0..15, 1);
+                hs[0] = x[ch];
+                for ph in 1..4 {
+                    let mut u = 0.0;
+                    for j in 0..16 { u += self.h[ph + 4 * j] * hs[j]; }
+                    pk = pk.max((4.0 * u).abs());
+                }
+            }
+        }
         let d = [self.buf[0][self.i], self.buf[1][self.i]];
         self.buf[0][self.i] = x[0];
         self.buf[1][self.i] = x[1];
