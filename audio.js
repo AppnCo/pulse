@@ -572,6 +572,7 @@ window.PulseAudio = (function() {
                 this.kl = p.low > 20 ? Math.exp(-2 * Math.PI * p.low / sampleRate) : 0; this.zl = 0;
                 this.kh = p.high > 0 && p.high < 20000 ? Math.exp(-2 * Math.PI * p.high / sampleRate) : 0; this.zh = 0;
                 this.duck = new Ducker(p.duck);
+                this.outG = Math.pow(10, (p.out || 0) / 20);   // sortie de l'effet (bus d'envoi : -9,5 dB)
             }
             process(inputs, outputs) {
                 const inp = inputs[0], out = outputs[0];
@@ -579,7 +580,7 @@ window.PulseAudio = (function() {
                 const n = out[0].length, mono = this.nc < 2;
                 const a = inp && inp[0], b = inp && inp[1];
                 // Une piste mono sort en stéréo : on la baisse de 3 dB pour qu'elle garde le volume qu'elle aurait sans reverb
-                const dry = (1 - this.wet) * (mono ? Math.SQRT1_2 : 1), wet = this.wet * 3 * (mono ? Math.SQRT1_2 : 1);
+                const dry = (1 - this.wet) * (mono ? Math.SQRT1_2 : 1), wet = this.wet * 3 * this.outG * (mono ? Math.SQRT1_2 : 1);
                 for (let i = 0; i < n; i++) {
                     const xl = a ? a[i] : 0, xr = mono ? xl : (b ? b[i] : 0);
                     let x = (xl + xr) * 0.015;
@@ -1431,6 +1432,9 @@ window.PulseAudio = (function() {
             if (!bus) return dest;
             // Effets communs du groupe (ex. une seule reverb pour toutes les voix) → volume du groupe → sortie
             const fx = createEffectsChain(actx, bus.effects || [], { ...(bus.effectParams || {}), order: bus.fxOrder, grKey: 'b' + id, auto: bus.automation, autoAt: { t0, from: fromTime } }, project.bpm, project.ceilingDb ?? ceilingDb);
+            // Un bus reçoit toujours du stéréo (après le gauche / droite des pistes) : sans ça, le navigateur peut le croire mono
+            // quand une piste n'a pas encore commencé, et la reverb du bus baisserait de 3 dB
+            fx.input.channelCount = 2; fx.input.channelCountMode = 'explicit'; fx.input.channelInterpretation = 'speakers';
             const g = actx.createGain();
             g.gain.value = bus.muted ? 0 : (bus.volume ?? 100) / 100;
             fx.output.connect(g);
@@ -2135,7 +2139,7 @@ window.PulseAudio = (function() {
                 const rp = params.reverb || {};
                 connect(new AudioWorkletNode(actx, 'pulse-reverb', {
                     numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCountMode: 'max',
-                    processorOptions: { wet: rp.wet !== undefined ? rp.wet / 100 : 0.18, size: rp.size, decay: rp.decay, pre: (rp.pre || 0) / 1000, low: rp.low || 0, high: rp.high || 0, duck: rp.duck || 0, ...autoOpts('reverb', { wet: (x) => x / 100 }) }
+                    processorOptions: { wet: rp.wet !== undefined ? rp.wet / 100 : 0.18, size: rp.size, decay: rp.decay, pre: (rp.pre || 0) / 1000, low: rp.low || 0, high: rp.high || 0, duck: rp.duck || 0, out: rp.out || 0, ...autoOpts('reverb', { wet: (x) => x / 100 }) }
                 }));
             } else if (enabled.includes('reverb')) {
                 const rp = params.reverb || {};

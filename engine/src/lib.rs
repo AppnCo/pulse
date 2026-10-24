@@ -742,6 +742,29 @@ mod tests {
     }
 
     #[test]
+    fn bus_d_envoi_comme_un_retour() {
+        // Un ancien retour Reverb (envoi fermé) et le bus d'envoi qui le remplace (reverb 100 %, sortie -9,54 dB) : même son.
+        // Deux pistes envoient dans le même bus, comme tests/scenarios/bus-envoi.mjs.
+        let tr = |sends: &str, start: f64| format!(r#"{{"volume":100,"output":"master","clips":[{{"id":"a","start":{start},"duration":0.5,"offset":4}}],{sends}}}"#);
+        let retour: Project = serde_json::from_str(&format!(r#"{{"bpm":120,"sends":[{{"id":"rv","name":"Rev","type":"reverb","size":3.2,"volume":100}}],
+            "tracks":[{},{}]}}"#, tr(r#""sends":{"rv":40}"#, 0.0), tr(r#""sends":{"rv":20}"#, 0.25))).unwrap();
+        let bus: Project = serde_json::from_str(&format!(r#"{{"bpm":120,"buses":[{{"id":"aux","isGroup":true,"output":"master","volume":100,"effects":["reverb"],
+            "effectParams":{{"reverb":{{"size":3.2,"pre":0,"wet":100,"out":-9.54}}}}}}],
+            "tracks":[{},{}]}}"#, tr(r#""busSends":{"aux":40}"#, 0.0), tr(r#""busSends":{"aux":20}"#, 0.25))).unwrap();
+        let rms = |p: &Project, a: f64, b: f64| {
+            let (l, r) = render(p, &ramp_media(), &opts());
+            let (i0, i1) = ((a * SR as f64) as usize, (b * SR as f64) as usize);
+            ((i0..i1).map(|n| (l[n] as f64).powi(2) + (r[n] as f64).powi(2)).sum::<f64>() / (2 * (i1 - i0)) as f64).sqrt()
+        };
+        for (a, b) in [(0.1, 0.5), (0.8, 1.6), (1.6, 3.0)] {
+            let (x, y) = (rms(&retour, a, b), rms(&bus, a, b));
+            let db = 20.0 * (y / x).log10();
+            println!("{a}-{b} s : retour {x:.5} / bus {y:.5} ({db:+.3} dB)");
+            assert!(db.abs() < 0.05, "le bus d'envoi sonne comme le retour ({a}-{b} s : {db:+.3} dB)");
+        }
+    }
+
+    #[test]
     fn envoi_avant_le_fader() {
         // Pre : fader à 0 → l'envoi vers le groupe passe quand même (Post : plus rien)
         let mut p = project(vec![clip(0.0, 4.0, 5.0)]);

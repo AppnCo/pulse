@@ -18,7 +18,7 @@ export default async (c) => {
   const st = () => ev(`JSON.stringify({auto:state.project.tracks[0].autotune&&state.project.tracks[0].autotune.on, tuned:state.project.tracks[0].clips.map(c=>!!c.tune), undo:_undoStack.length, tag:document.querySelectorAll('.clip-gain-tag').length})`);
   console.log('après activation', await st());
   await ev(`undoAction()`); await sleep(500);
-  console.log('après 1 ⌘Z', await st(), '| bouton Tune actif dans le mixeur :', await ev(`(toggleMixer(), document.querySelector('.strip[data-i="0"] .strip-fx-slot[data-fx="tune"]')?.classList.contains('active'))`));
+  console.log('après 1 ⌘Z', await st(), '| bouton Tune actif dans le mixeur :', await ev(`(toggleMixer(), document.querySelector('.strip[data-i="0"] .insp-fx-row[data-fx="tune"]')?.classList.contains('on'))`));
   await ev(`toggleMixer()`);
   await ev(`undoAction()`); await sleep(500);
   console.log('après 2 ⌘Z', await st());

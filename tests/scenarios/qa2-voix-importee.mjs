@@ -7,7 +7,7 @@ export default async (c) => {
   await instru(ev, 5, 2, 0); await sleep(500);    // « ma voix » posée sur Lead
   console.log('Lead :', await ev(`JSON.stringify({type:state.project.tracks[2].type, preset:state.project.tracks[2].preset, instru:isInstruTrack(state.project.tracks[2])})`));
   await ev(`toggleMixer()`); await sleep(300);
-  console.log('Tune dans le mixeur pour Lead :', await ev(`!!document.querySelector('.strip[data-kind="track"][data-i="2"] .strip-fx-slot[data-fx="tune"]')`), '| pour Back :', await ev(`!!document.querySelector('.strip[data-kind="track"][data-i="3"] .strip-fx-slot[data-fx="tune"]')`));
+  console.log('Tune dans le mixeur pour Lead :', await ev(`!!document.querySelector('.strip[data-kind="track"][data-i="2"] .insp-fx-row[data-fx="tune"]')`), '| pour Back :', await ev(`!!document.querySelector('.strip[data-kind="track"][data-i="3"] .insp-fx-row[data-fx="tune"]')`));
   await ev(`toggleMixer()`);
   await ev(`openTrackContextMenu(300,300,2,state.project.tracks[2])`);
   console.log('menu piste Lead :', await ev(`[...document.querySelectorAll('.track-ctx-menu .ctx-item')].map(e=>e.textContent.trim()).filter(t=>/Tune/i.test(t)).join('|')||'aucun Auto-Tune'`));

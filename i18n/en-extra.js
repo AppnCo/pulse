@@ -329,4 +329,23 @@ patterns.push(P('plafond § dB', 'ceiling $1 dB'), P('ducking § % : l\'écho se
   P('§ = § ms · § % de répétitions', '$1 = $2 ms · $3 % repeats'), P('🎧 Solo du point § : tu n\'entends que sa zone', '🎧 Point $1 solo: you only hear its range'), P('Coller la courbe (§)', 'Paste the curve ($1)'),
   P('Courbe copiée (§) : choisis un autre réglage ou une autre piste, puis « Coller la courbe »', 'Curve copied ($1): pick another control or another track, then "Paste the curve"'),
   P('Courbe collée sur « § » (⌘Z pour annuler)', 'Curve pasted on "$1" (⌘Z to undo)'));
+// 25/10 : bus d'envoi façon Logic, « + » des listes, façade du Gate
+Object.assign(exact, {
+  'Ajouter un effet (insert)': 'Add an effect (insert)', 'Ajouter un envoi : nouvelle reverb, nouvel écho ou vers un groupe': 'Add a send: new reverb, new echo or to a group',
+  'Nouveau bus d\'envoi': 'New send bus', 'Bus vide (je choisis les effets)': 'Empty bus (I pick the effects)', 'Bus Reverb': 'Reverb bus', 'Bus Écho': 'Echo bus',
+  'Vers un bus existant': 'To an existing bus', '+ Plugins': '+ Plugins',
+  'Transformer ce retour en bus d\'envoi : même son, et tu peux y mettre les plugins que tu veux (comme un bus aux dans Logic)': 'Turn this return into a send bus: same sound, and you can put any plugins on it (like an aux bus in Logic)',
+  'Classique': 'Classic', 'Propre': 'Clean', '🎧 Écouter': '🎧 Listen', 'Ratio': 'Ratio', 'Coupure': 'Range', 'Genou': 'Knee', 'Maintien': 'Hold', 'Retour': 'Release', 'Déclencheur': 'Sidechain',
+  'Gate franc : coupe net entre les phrases': 'Hard gate: cuts cleanly between phrases', 'Expandeur doux : baisse le bruit sans couper net': 'Soft expander: lowers the noise without hard cuts',
+  'Pour une voix : baisse les respirations, garde les fins de mots': 'For vocals: lowers the breaths, keeps the word endings',
+  'Écouter le déclencheur : tu entends ce que le gate « voit » (pendant la lecture). Se coupe à la fermeture': 'Listen to the sidechain: you hear what the gate "sees" (during playback). Turns off when closed',
+  'violet = ce qui passe · zone sombre = baissé': 'purple = what passes · dark area = lowered', '🎧 tu entends ce que le gate « voit »': '🎧 you hear what the gate "sees"',
+  'Ce que le gate écoute pour s\'ouvrir : tire une poignée, ou la zone entière': 'What the gate listens to before opening: drag a handle, or the whole range',
+  'Lance la lecture : la voix défile ici, la zone sombre montre ce que le gate baisse': 'Start playback: the voice scrolls here, the dark area shows what the gate lowers',
+  'entrée → sortie': 'input → output', 'Baisse max': 'Max reduction' });
+patterns.push(P('Ouvrir le bus « § » (ses effets)', 'Open the "$1" bus (its effects)'), P('Transformer « § » en bus (pour y mettre des plugins)', 'Turn "$1" into a bus (to put plugins on it)'),
+  P('Bus d\'envoi « § » créé : choisis ses effets', 'Send bus "$1" created: pick its effects'),
+  P('Bus d\'envoi « § » créé, envoi à 50 — clic droit sur l\'envoi pour ouvrir le bus et y ajouter d\'autres effets', 'Send bus "$1" created, send at 50 — right-click the send to open the bus and add more effects'),
+  P('« § » est maintenant un bus d\'envoi : ajoute-lui les effets que tu veux — ⌘Z pour annuler', '"$1" is now a send bus: add any effects you want — ⌘Z to undo'),
+  P('Gate : style §', 'Gate: $1 style'));
 module.exports = { exact, patterns };

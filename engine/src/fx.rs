@@ -709,6 +709,8 @@ pub struct Reverb {
     kh: f64,
     zh: f64,
     wet: f64,
+    /// Gain de sortie de l'effet (linéaire)
+    out: f64,
     fb: f64,
     damp: f64,
     comb: [Vec<Line>; 2],
@@ -723,6 +725,7 @@ impl Reverb {
     pub fn retune(&mut self, p: &ReverbParams, sr: f64) {
         let n = Self::new(p, sr);
         self.wet = n.wet;
+        self.out = n.out;
         self.fb = n.fb;
     }
     pub fn new(p: &ReverbParams, sr: f64) -> Self {
@@ -737,6 +740,7 @@ impl Reverb {
             kh: p.high.filter(|h| *h > 0.0 && *h < 20_000.0).map_or(0.0, |h| (-2.0 * PI * h / sr).exp()),
             zh: 0.0,
             wet: (p.wet.unwrap_or(18.0) / 100.0).clamp(0.0, 1.0),
+            out: 10f64.powf(p.out.unwrap_or(0.0) / 20.0),
             fb: (0.72 + 0.2 * ((p.size.unwrap_or(1.8) - 1.2) / 2.0).clamp(0.0, 1.0) + (p.decay.unwrap_or(2.5) - 2.5) * 0.025).clamp(0.5, 0.97),
             damp: 0.35,
             comb: [lines(&COMB, 0), lines(&COMB, 23)],
@@ -749,7 +753,7 @@ impl Reverb {
     pub fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
         let mono = nc < 2;
         let scale = if mono { std::f64::consts::FRAC_1_SQRT_2 } else { 1.0 };
-        let (dry, wet) = ((1.0 - self.wet) * scale, self.wet * 3.0 * scale);
+        let (dry, wet) = ((1.0 - self.wet) * scale, self.wet * 3.0 * self.out * scale);
         let (xl, xr) = (x[0], if mono { x[0] } else { x[1] });
         let mut input = (xl + xr) * 0.015;
         let dg = self.duck.gain((xl + xr) * 0.5);

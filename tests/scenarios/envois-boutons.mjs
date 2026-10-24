@@ -16,5 +16,5 @@ export default async (c) => {
   await ev(`undoAction()`); await sleep(200);
   check('⌘Z remet à zéro', await ev(`!Object.values(state.project.tracks[0].sends||{}).some(x=>x>0)`));
   await ev(`state.mixerOpen || toggleMixer && toggleMixer()`); await sleep(400);
-  check('table de mix : boutons ronds aussi', await ev(`document.querySelectorAll('.mixer-strips .send-knob').length`) >= 2);
+  check('table de mix : envois en liste aussi', await ev(`document.querySelectorAll('.mixer-strips .send-bar-row').length`) >= 2);
 };

@@ -13,8 +13,9 @@ export default async (c) => {
   await meas('base (100 Hz, groupe sans fx)');
   // 1. COMP sur le groupe via le vrai clic dans le mixeur
   await ev(`toggleMixer()`); await sleep(400);
-  const comp = await pos(ev, `.strip[data-kind="bus"] .strip-fx-slot[data-fx="comp"]`);
-  await Mo.click(comp.x, comp.y); await sleep(400);
+  const plus = await pos(ev, `.mixer-strips .strip[data-kind="bus"] .slot-plus[data-plus="fx"]`);
+  await Mo.click(plus.x, plus.y); await sleep(300);
+  await ev(`document.querySelector('.fx-add-menu .fam-fx[data-fx="comp"]').click()`); await sleep(400);
   console.log('panneau comp ouvert', await ev(`!!document.querySelector('.fx-panel')`), 'effets', await ev(`JSON.stringify(state.project.buses[0].effects)`));
   await meas('COMP groupe défauts');
   await ev(`state.project.buses[0].effectParams={comp:{threshold:-40,ratio:20,attack:1,release:50,mix:100}}`);

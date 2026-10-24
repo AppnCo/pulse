@@ -8,7 +8,7 @@ export default async ({ ev, nav, send, shot, sleep }) => {
   await nav('http://localhost:8765/studio.html');
   const R = async (label, code) => console.log(label + ':', await ev(`(async()=>{${code}})()`));
   await ev(`toggleMixer()`); await sleep(500);
-  await R('envois de base', `return projectSends().map(s=>s.name+'('+s.type+')').join(', ')+' | curseurs par piste='+document.querySelectorAll('.mixer-strips .strip[data-kind=track]')[0].querySelectorAll('.send-level').length+' | retours='+document.querySelectorAll('.strip-return').length+' | séparés des inserts='+!document.querySelector('.strip-fx .send-level')`);
+  await R('envois de base', `return projectSends().map(s=>s.name+'('+s.type+')').join(', ')+' | curseurs par piste='+document.querySelectorAll('.mixer-strips .strip[data-kind=track]')[0].querySelectorAll('.insp-send').length+' | retours='+document.querySelectorAll('.strip-return').length+' | séparés des inserts='+!document.querySelector('.mixer-strips .insp-fx .insp-send')`);
   const tools = `const ctx=await PulseAudio.init(); const sr=48000; if(!PulseAudio.getBuffer('clap')){const b=ctx.createBuffer(1,sr,sr),d=b.getChannelData(0); for(let i=0;i<4800;i++)d[i]=0.5*Math.sin(2*Math.PI*440*i/sr); PulseAudio.registerBuffer('clap',b);}
     const run=async(sends,extra={},defs)=>{const p={bpm:120,buses:[],sends:defs||projectSends(),tracks:[{volume:100,clips:[{id:'clap',start:0,duration:1}],sends,...extra}]};
       const o=await ctx.decodeAudioData(await (await PulseAudio.exportWav(p)).arrayBuffer()); const x=o.getChannelData(0);
@@ -21,7 +21,7 @@ export default async ({ ev, nav, send, shot, sleep }) => {
   await R('pré-délai 100 ms', `${tools} const defs=JSON.parse(JSON.stringify(projectSends())); const a=await run({revlong:100},{},defs); defs[0].pre=100; const b=await run({revlong:100},{},defs);
     const first=(r)=>{const x=r.o.getChannelData(0); const dry=r.o; return 0;}; return ok(b.rms(0.105,0.02)<a.rms(0.105,0.02)*0.5)+'juste après la note, sans pré-délai='+f(a.rms(0.105,0.02))+' avec='+f(b.rms(0.105,0.02))`);
   await R('piste coupée = plus d’envoi', `${tools} const r=await run({del14:50},{muted:true}); return ok(r.rms(0.5)<1e-5)+'à 0,5 s='+f(r.rms(0.5))`);
-  await R('curseur dans le mixer', `const sl=document.querySelectorAll('.mixer-strips .strip[data-kind=track]')[0].querySelector('[data-send=del14] .send-level'); sl.value=35; sl.dispatchEvent(new Event('input')); sl.dispatchEvent(new Event('change'));
+  await R('curseur dans le mixer', `const sl=document.querySelectorAll('.mixer-strips .strip[data-kind=track]')[0].querySelector('[data-send=del14] .insp-send'); sl.value=35; sl.dispatchEvent(new Event('input')); sl.dispatchEvent(new Event('change'));
     return JSON.stringify(state.project.tracks[0].sends)+' | autre piste='+JSON.stringify(state.project.tracks[1].sends||{})`);
   await ev(`document.querySelector('.strip-return[data-send=revlong] .return-edit').click()`); await sleep(300);
   if (SHOTS) await shot(SHOTS + '/shot-envois.jpg');

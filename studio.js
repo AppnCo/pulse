@@ -1725,16 +1725,28 @@ function inspectorStrip(kind, x, idx) {
     const name = isMaster ? 'Sortie stéréo' : x.name;
     const color = isMaster ? 'var(--violet-3)' : (x.color || 'var(--violet-2)');
     const vol = isMaster ? Math.round(PulseAudio.getMasterVolume ? PulseAudio.getMasterVolume() : 80) : (x.volume ?? 100);
-    const chain = isMaster ? [] : chainOf(x);
-    const sends = (kind === 'track' || (kind === 'bus' && !x.premaster && !x.locked)) ? projectSends() : [];
     const soundLabel = isMaster ? '' : x.premaster ? 'Finition' : (x.sound && presetsFor(x)[x.sound.preset] ? presetsFor(x)[x.sound.preset].label : 'Réglage');
     return `
     <div class="strip insp-strip" data-kind="${kind}" data-id="${isMaster ? 'master' : kind === 'track' ? idx : esc(x.id)}" style="--track-color: ${color}">
         <div class="strip-name">${esc(name)}</div>
         ${kind === 'track' && !x.isCapture ? monoButtonHtml(x) : ''}
         ${isMaster ? '<div class="insp-note">Tout le morceau sort ici</div>' : `<button class="strip-sound insp-sound" data-tooltip="${x.premaster ? 'Le réglage final de tout le morceau' : 'Réglage : charge un réglage prêt à l\'emploi (comme « Réglage » dans Logic)'}">${esc(soundLabel)} ▾</button>`}
-        ${isMaster ? '' : `<div class="insp-fx">
-            <div class="strip-sends-title">Effets</div>
+        ${isMaster ? '' : slotListsHtml(kind, x)}
+        ${(kind === 'track' || (kind === 'bus' && !x.premaster && !x.locked)) ? `<label class="insp-pan"><span>G</span><input type="range" class="insp-pan-input" min="-100" max="100" step="1" data-default="0" value="${x.pan || 0}" data-tooltip="Gauche / droite (⌘ + clic = centre, double-clic = écrire la valeur)"><span>D</span></label>` : ''}
+        <div class="strip-fader-wrap">
+            <input type="range" class="fader insp-fader" min="0" max="100" step="0.5" data-vmap="1" data-default="${volToPos(100)}" value="${volToPos(vol)}" ${x && x.locked && !showAll() ? 'disabled' : ''}>
+            <div class="strip-db">${volumeToDb(vol)} dB</div>
+        </div>
+        ${isMaster ? '<div class="strip-output"></div>' : (x.locked ? `<div class="strip-output">→ ${esc(busLabel(x.output))}</div>` : `<button class="strip-output insp-output" data-tooltip="Où va le son de ${kind === 'bus' ? 'ce groupe' : 'cette piste'} : clique pour changer la direction">→ ${esc(busLabel(x.output))} ▾</button>`)}
+    </div>`;
+}
+// Listes d'effets (inserts) et d'envois façon Logic, les mêmes dans la tranche de gauche et dans la table de mixage
+function slotListsHtml(kind, x) {
+    const chain = chainOf(x);
+    const sends = (kind === 'track' || (kind === 'bus' && !x.premaster && !x.locked)) ? projectSends() : [];
+    const canAdd = !x.premaster && !x.locked;
+    return `<div class="insp-fx">
+            <div class="strip-sends-title">Effets${canAdd ? '<button class="slot-plus" data-plus="fx" data-tooltip="Ajouter un effet (insert)">+</button>' : ''}</div>
             <div class="insp-slots insp-fx-box" data-add="fx">
             ${kind === 'track' && showTuneSlot(x) ? `<div class="insp-fx-row insp-tune-row ${x.autotune && x.autotune.on ? 'on' : 'is-off'}" data-fx="tune" data-tooltip="${x.autotune && x.autotune.on ? 'Auto-Tune : clic pour régler' : 'Auto-Tune éteint : clic pour le régler et l\'allumer'}">
                 <span>PulseTune</span><i class="insp-del" data-tooltip="Retirer PulseTune (Auto-Tune) de cette piste">×</i>
@@ -1746,9 +1758,9 @@ function inspectorStrip(kind, x, idx) {
             </div>`).join('')}
             ${x.premaster || x.locked ? '' : Array.from({ length: Math.max(4, 8 - chain.length - (kind === 'track' && showTuneSlot(x) ? 1 : 0)) }, (_, i) => `<div class="insp-slot-empty${i === 0 ? ' insp-add-fx' : ''}" data-tooltip="Emplacement libre : clique pour mettre un effet"></div>`).join('')}
             </div>
-        </div>`}
+        </div>
         ${(kind === 'track' || (kind === 'bus' && !x.premaster && !x.locked)) ? `<div class="strip-sends">
-            <div class="strip-sends-title">Envois</div>
+            <div class="strip-sends-title">Envois<button class="slot-plus" data-plus="send" data-tooltip="Ajouter un envoi : nouvelle reverb, nouvel écho ou vers un groupe">+</button></div>
             <div class="insp-slots insp-sends-box" data-add="send">
             ${sends.map(sd => `
             <label class="strip-send-row send-bar-row ${(x.sends || {})[sd.id] > 0 ? 'on' : ''}" data-send="${esc(sd.id)}" style="--lvl:${(x.sends || {})[sd.id] || 0}%" data-tooltip="Glisser pour envoyer plus · double-clic = écrire le chiffre · ⌘ + clic = remettre à 0 · Maj = réglage fin · clic droit = avant / après le fader">
@@ -1762,14 +1774,12 @@ function inspectorStrip(kind, x, idx) {
             </label>`).join('')}
             ${Array.from({ length: Math.max(2, 4 - sends.length - Object.keys(x.busSends || {}).length) }, (_, i) => `<div class="insp-slot-empty${i === 0 ? ' insp-add-send' : ''}" data-tooltip="Emplacement libre : clique pour envoyer vers une reverb, un écho ou un groupe"></div>`).join('')}
             </div>
-        </div>` : ''}
-        ${(kind === 'track' || (kind === 'bus' && !x.premaster && !x.locked)) ? `<label class="insp-pan"><span>G</span><input type="range" class="insp-pan-input" min="-100" max="100" step="1" data-default="0" value="${x.pan || 0}" data-tooltip="Gauche / droite (⌘ + clic = centre, double-clic = écrire la valeur)"><span>D</span></label>` : ''}
-        <div class="strip-fader-wrap">
-            <input type="range" class="fader insp-fader" min="0" max="100" step="0.5" data-vmap="1" data-default="${volToPos(100)}" value="${volToPos(vol)}" ${x && x.locked && !showAll() ? 'disabled' : ''}>
-            <div class="strip-db">${volumeToDb(vol)} dB</div>
-        </div>
-        ${isMaster ? '<div class="strip-output"></div>' : (x.locked ? `<div class="strip-output">→ ${esc(busLabel(x.output))}</div>` : `<button class="strip-output insp-output" data-tooltip="Où va le son de ${kind === 'bus' ? 'ce groupe' : 'cette piste'} : clique pour changer la direction">→ ${esc(busLabel(x.output))} ▾</button>`)}
-    </div>`;
+        </div>` : ''}`;
+}
+// Après un changement dans une liste : la tranche de gauche et la table de mixage se redessinent ensemble
+function refreshStrips() {
+    renderInspector();
+    if (state.mixerOpen) { renderMixer(); bindMixerEvents(); }
 }
 // Le volume ou le pan changé à un endroit (piste, fader de gauche, mixeur) se voit aussitôt partout
 // Plusieurs pistes choisies : quand on bouge le volume de l'une, les autres suivent en gardant leurs écarts
@@ -1860,65 +1870,7 @@ function renderInspector() {
         if (snd) snd.addEventListener('click', () => {
             if (kind === 'bus' && x.premaster) openMasterPanel(x, snd); else openSoundPanel(kind === 'track' ? idx : x, snd);
         });
-        strip.querySelectorAll('.insp-fx-row').forEach(row => {
-            row.addEventListener('click', (e) => {
-                if (row._dragged) { row._dragged = false; return; }   // c'était un glisser, pas un clic
-                const n = row.dataset.fx;
-                if (e.target.closest('.insp-del')) { e.stopPropagation(); removeFx(n, x); return; }
-                if (n === 'tune') { const r = row.getBoundingClientRect(); openTunePanel(idx, -1, r.left - 290, r.top - 20, true); return; }
-                if (kind === 'bus' && x.premaster) openMasterPanel(x, row);
-                else {
-                    // Chaque effet ouvre son plug ; le panneau « Son » seulement pour ce qui n'a pas de fenêtre
-                    openEffectPanel(kind === 'track' ? idx : x, n, row);
-                    if (!findPlugWin(x, n)) openSoundPanel(kind === 'track' ? idx : x, row);
-                }
-            });
-            row.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); openFxCopyMenu(e.clientX, e.clientY, row.dataset.fx, x); });
-        });
-        bindFxDrag(strip, x);
-        strip.querySelectorAll('.insp-send').forEach(sl => {
-            const srow = sl.closest('.strip-send-row');
-            const isBusSend = !!srow.dataset.bsend, id = srow.dataset.send || srow.dataset.bsend;
-            let undoPushed = false;
-            sl.addEventListener('input', () => {
-                if (!undoPushed) { pushUndo(); undoPushed = true; }
-                const v = parseInt(sl.value);
-                // la piste, ou le groupe de cette tranche — et, si plusieurs pistes sont choisies, toutes les pistes choisies
-                const targets = kind === 'track' ? selectedTrackIdxs().map(i => state.project.tracks[i]).filter(Boolean) : [x || t];
-                targets.forEach(o => {
-                    if (isBusSend) { o.busSends = o.busSends || {}; o.busSends[id] = v; return; }
-                    o.sends = o.sends || {};
-                    if (v > 0) o.sends[id] = v; else delete o.sends[id];
-                    const sends = projectSends(), key = id === sends.find(s => s.type === 'reverb')?.id ? 'space' : id === sends.find(s => s.type === 'delay')?.id ? 'echo' : null;
-                    if (key && o.sound) o.sound[key] = v;
-                });
-                srow.classList.toggle('on', v > 0 || isBusSend);
-                refreshPlaybackSoon();
-            });
-            sl.addEventListener('change', () => { undoPushed = false; saveProject(); if (state.mixerOpen) { renderMixer(); bindMixerEvents(); } });
-            // Clic droit : avant / après le fader (Pre / Post, comme Logic) ; un envoi vers un groupe se retire ici
-            srow.addEventListener('contextmenu', (e) => {
-                e.preventDefault(); e.stopPropagation(); closeAllMenus();
-                const key = (isBusSend ? 'busSend:' : 'send:') + id;
-                const targets = kind === 'track' ? selectedTrackIdxs().map(i => state.project.tracks[i]).filter(Boolean) : [x];
-                const set = targets.includes(x) ? targets : [x];
-                const isPre = !!(x.preSends || {})[key];
-                const menu = document.createElement('div');
-                menu.className = 'track-ctx-menu';
-                menu.style.cssText = `position:fixed;left:${Math.min(e.clientX, window.innerWidth - 240)}px;top:${Math.min(e.clientY, window.innerHeight - 140)}px;z-index:300;min-width:220px`;
-                const item = (label, run) => { const it = document.createElement('div'); it.className = 'ctx-item'; it.textContent = label; it.addEventListener('mousedown', (ev) => { ev.stopPropagation(); closeAllMenus(); run(); }); menu.appendChild(it); };
-                const setPre = (on) => { pushUndo(); set.forEach(o => { o.preSends = o.preSends || {}; if (on) o.preSends[key] = true; else delete o.preSends[key]; }); saveProject(); refreshPlaybackSoon(); renderInspector(); flash(on ? 'Envoi avant le fader (Pre) : il ne suit plus le fader ni le gauche/droite' : 'Envoi après le fader (Post) : il suit le fader'); };
-                item((isPre ? '   ' : '✓ ') + 'Après le fader (Post)', () => setPre(false));
-                item((isPre ? '✓ ' : '   ') + 'Avant le fader (Pre)', () => setPre(true));
-                if (isBusSend) item('Retirer cet envoi', () => {
-                    pushUndo(); set.forEach(o => { if (o.busSends) delete o.busSends[id]; if (o.preSends) delete o.preSends[key]; });
-                    saveProject(); refreshPlaybackSoon(); renderInspector();
-                    flash('Envoi vers « ' + (busById(id) ? busById(id).name : 'groupe') + ' » retiré');
-                });
-                document.body.appendChild(menu);
-                setTimeout(() => document.addEventListener('mousedown', closeAllMenus, { once: true }), 10);
-            });
-        });
+        bindSlotLists(strip, kind, x, idx);
         const pan = strip.querySelector('.insp-pan-input');
         if (pan) {
             let panUndo = false;
@@ -1939,18 +1891,94 @@ function renderInspector() {
         // Direction : où part le son de cette piste / de ce groupe
         const outBtn = strip.querySelector('.insp-output');
         if (outBtn && x) outBtn.addEventListener('click', (e) => { e.stopPropagation(); openOutputMenu(outBtn, kind, x, idx); });
-        // Emplacements vides façon Logic : un clic dans le vide d'une liste ajoute un effet / un envoi
-        const fxBox = strip.querySelector('.insp-fx-box');
-        if (fxBox && x && !x.premaster && !x.locked) fxBox.addEventListener('click', (e) => {
-            if (e.target.closest('.insp-fx-row')) return;
-            e.stopPropagation(); openAddEffectMenu(e.target.closest('.insp-slot-empty') || fxBox, kind === 'track' ? idx : x, x);
+    });
+}
+
+// Clic, glisser, croix, envois et « + » des listes d'une tranche (gauche ou table de mixage)
+function bindSlotLists(strip, kind, x, idx) {
+    if (!x) return;
+    // plusieurs pistes choisies : un envoi réglé sur l'une se règle sur toutes (si celle-ci en fait partie)
+    const group = () => {
+        if (kind !== 'track') return [x];
+        const s = selectedTrackIdxs().map(i => state.project.tracks[i]).filter(Boolean);
+        return s.includes(x) ? s : [x];
+    };
+    strip.querySelectorAll('.insp-fx-row').forEach(row => {
+        row.addEventListener('click', (e) => {
+            if (row._dragged) { row._dragged = false; return; }   // c'était un glisser, pas un clic
+            const n = row.dataset.fx;
+            if (e.target.closest('.insp-del')) { e.stopPropagation(); removeFx(n, x); return; }
+            if (n === 'tune') { const r = row.getBoundingClientRect(); openTunePanel(idx, -1, r.left - 290, r.top - 20, true); return; }
+            if (kind === 'bus' && x.premaster) openMasterPanel(x, row);
+            else {
+                // Chaque effet ouvre son plug ; le panneau « Son » seulement pour ce qui n'a pas de fenêtre
+                openEffectPanel(kind === 'track' ? idx : x, n, row);
+                if (!findPlugWin(x, n)) openSoundPanel(kind === 'track' ? idx : x, row);
+            }
         });
-        const sdBox = strip.querySelector('.insp-sends-box');
-        if (sdBox && x) sdBox.addEventListener('click', (e) => {
-            if (e.target.closest('.send-bar-row')) return;
-            e.stopPropagation(); openSendTargetMenu(e.target.closest('.insp-slot-empty') || sdBox, kind, x);
+        row.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); openFxCopyMenu(e.clientX, e.clientY, row.dataset.fx, x); });
+    });
+    bindFxDrag(strip, x);
+    strip.querySelectorAll('.insp-send').forEach(sl => {
+        const srow = sl.closest('.strip-send-row');
+        const isBusSend = !!srow.dataset.bsend, id = srow.dataset.send || srow.dataset.bsend;
+        let undoPushed = false;
+        sl.addEventListener('input', () => {
+            if (!undoPushed) { pushUndo(); undoPushed = true; }
+            const v = parseInt(sl.value);
+            // la piste, ou le groupe de cette tranche — et, si plusieurs pistes sont choisies, toutes les pistes choisies
+            const targets = group();
+            targets.forEach(o => {
+                if (isBusSend) { o.busSends = o.busSends || {}; o.busSends[id] = v; return; }
+                o.sends = o.sends || {};
+                if (v > 0) o.sends[id] = v; else delete o.sends[id];
+                const sends = projectSends(), key = id === sends.find(s => s.type === 'reverb')?.id ? 'space' : id === sends.find(s => s.type === 'delay')?.id ? 'echo' : null;
+                if (key && o.sound) o.sound[key] = v;
+            });
+            srow.classList.toggle('on', v > 0 || isBusSend);
+            refreshPlaybackSoon();
+        });
+        sl.addEventListener('change', () => { undoPushed = false; saveProject(); refreshStrips(); });
+        // Clic droit : avant / après le fader (Pre / Post, comme Logic) ; un envoi vers un groupe se retire ici
+        srow.addEventListener('contextmenu', (e) => {
+            e.preventDefault(); e.stopPropagation(); closeAllMenus();
+            const key = (isBusSend ? 'busSend:' : 'send:') + id;
+            const set = group();
+            const isPre = !!(x.preSends || {})[key];
+            const menu = document.createElement('div');
+            menu.className = 'track-ctx-menu';
+            menu.style.cssText = `position:fixed;left:${Math.min(e.clientX, window.innerWidth - 240)}px;top:${Math.min(e.clientY, window.innerHeight - 140)}px;z-index:300;min-width:220px`;
+            const item = (label, run) => { const it = document.createElement('div'); it.className = 'ctx-item'; it.textContent = label; it.addEventListener('mousedown', (ev) => { ev.stopPropagation(); closeAllMenus(); run(); }); menu.appendChild(it); };
+            const setPre = (on) => { pushUndo(); set.forEach(o => { o.preSends = o.preSends || {}; if (on) o.preSends[key] = true; else delete o.preSends[key]; }); saveProject(); refreshPlaybackSoon(); refreshStrips(); flash(on ? 'Envoi avant le fader (Pre) : il ne suit plus le fader ni le gauche/droite' : 'Envoi après le fader (Post) : il suit le fader'); };
+            item((isPre ? '   ' : '✓ ') + 'Après le fader (Post)', () => setPre(false));
+            item((isPre ? '✓ ' : '   ') + 'Avant le fader (Pre)', () => setPre(true));
+            if (isBusSend) item(`Ouvrir le bus « ${busById(id) ? busById(id).name : ''} » (ses effets)`, () => openSendBus(id, false));
+            else item(`Transformer « ${(projectSends().find(sd => sd.id === id) || {}).name || 'ce retour'} » en bus (pour y mettre des plugins)`, () => convertSendToBus(id));
+            if (isBusSend) item('Retirer cet envoi', () => {
+                pushUndo(); set.forEach(o => { if (o.busSends) delete o.busSends[id]; if (o.preSends) delete o.preSends[key]; });
+                saveProject(); refreshPlaybackSoon(); refreshStrips();
+                flash('Envoi vers « ' + (busById(id) ? busById(id).name : 'groupe') + ' » retiré');
+            });
+            document.body.appendChild(menu);
+            setTimeout(() => document.addEventListener('mousedown', closeAllMenus, { once: true }), 10);
         });
     });
+    // Emplacements vides façon Logic : un clic dans le vide d'une liste ajoute un effet / un envoi
+    const fxBox = strip.querySelector('.insp-fx-box');
+    if (fxBox && x && !x.premaster && !x.locked) fxBox.addEventListener('click', (e) => {
+        if (e.target.closest('.insp-fx-row')) return;
+        e.stopPropagation(); openAddEffectMenu(e.target.closest('.insp-slot-empty') || fxBox, kind === 'track' ? idx : x, x);
+    });
+    const sdBox = strip.querySelector('.insp-sends-box');
+    if (sdBox && x) sdBox.addEventListener('click', (e) => {
+        if (e.target.closest('.send-bar-row')) return;
+        e.stopPropagation(); openSendTargetMenu(e.target.closest('.insp-slot-empty') || sdBox, kind, x);
+    });
+    strip.querySelectorAll('.slot-plus').forEach(btn => btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (btn.dataset.plus === 'fx') openAddEffectMenu(btn, kind === 'track' ? idx : x, x);
+        else openSendTargetMenu(btn, kind, x);
+    }));
 }
 
 // Où envoyer le son (comme Logic : n'importe quel groupe, ou une nouvelle reverb / un nouvel écho)
@@ -1966,18 +1994,20 @@ function openSendTargetMenu(anchor, kind, x) {
     const menu = document.createElement('div');
     menu.className = 'track-ctx-menu';
     menu.style.cssText = `position:fixed;left:${Math.max(8, Math.min(r.left, window.innerWidth - 230))}px;top:${Math.max(8, Math.min(r.bottom + 2, window.innerHeight - 320))}px;z-index:300;min-width:210px;max-height:60vh;overflow:auto`;
+    // Comme Logic : un envoi part vers un bus, et ce bus a ses propres effets (on y met ce qu'on veut)
     const items = [
-        { head: 'Nouveaux retours d\'effet' },
-        { label: 'Nouvelle reverb', run: () => addSend('reverb') },
-        { label: 'Nouvel écho', run: () => addSend('delay') },
-        { head: 'Vers un groupe' }
+        { head: 'Nouveau bus d\'envoi' },
+        { label: 'Bus vide (je choisis les effets)', run: () => createSendBus(kind, x, 'empty') },
+        { label: 'Bus Reverb', run: () => createSendBus(kind, x, 'reverb') },
+        { label: 'Bus Écho', run: () => createSendBus(kind, x, 'delay') },
+        { head: 'Vers un bus existant' }
     ];
     const buses = (state.project.buses || []).filter(b => !b.premaster && b.id !== 'master' && !(kind === 'bus' && busFeeds(busById(b.id), x.id)) && !(x.busSends || {})[b.id]);
     // un groupe où ce son passe déjà (sa sortie) n'a pas besoin d'envoi
     buses.forEach(b => items.push({ label: b.name, run: () => {
         pushUndo(); const set = kind === 'track' ? selectedTrackIdxs().map(i => state.project.tracks[i]).filter(Boolean) : [x];
         (set.includes(x) ? set : [x]).forEach(o => { o.busSends = o.busSends || {}; o.busSends[b.id] = 50; });
-        saveProject(); refreshPlaybackSoon(); renderInspector();
+        saveProject(); refreshPlaybackSoon(); refreshStrips();
         flash(`Envoi vers « ${b.name} » ajouté à 50 : double-clic sur sa barre pour écrire le chiffre`);
     } }));
     if (!buses.length) items.push({ head: '(aucun autre groupe disponible)' });
@@ -1989,6 +2019,65 @@ function openSendTargetMenu(anchor, kind, x) {
     });
     document.body.appendChild(menu);
     setTimeout(() => document.addEventListener('mousedown', closeAllMenus, { once: true }), 10);
+}
+
+// Bus d'envoi (aux façon Logic) : un groupe qui ne reçoit que des envois, avec ses inserts à lui.
+// Reverb à 100 % d'effet et -9,5 dB en sortie : même niveau que les anciens retours.
+const SEND_BUS_OUT = -9.54;
+function sendBusName(base) {
+    const used = new Set((state.project.buses || []).map(b => b.name));
+    let n = 1; while (used.has(n === 1 ? base : `${base} ${n}`)) n++;
+    return n === 1 ? base : `${base} ${n}`;
+}
+function createSendBus(kind, x, type) {
+    pushUndo();
+    state.project.buses = state.project.buses || [];
+    const id = 'aux_' + Date.now().toString(36);
+    const b = { id, name: sendBusName(type === 'reverb' ? 'Reverb' : type === 'delay' ? 'Écho' : 'Bus'), isGroup: true, isAux: true, output: 'master', color: '#7C3AED', volume: 100, effects: [] };
+    if (type === 'reverb') { b.effects = ['reverb']; b.effectParams = { reverb: { size: 2, pre: 0, wet: 100, out: SEND_BUS_OUT } }; }
+    if (type === 'delay') { b.effects = ['delay']; b.effectParams = { delay: { beats: 0.5, feedback: 35, wet: 100, dry: 0 } }; }
+    state.project.buses.push(b);
+    const set = kind === 'track' ? selectedTrackIdxs().map(i => state.project.tracks[i]).filter(Boolean) : [x];
+    (set.includes(x) ? set : [x]).forEach(o => { o.busSends = o.busSends || {}; o.busSends[id] = 50; });
+    afterGroupChange(type === 'empty'
+        ? `Bus d'envoi « ${b.name} » créé : choisis ses effets`
+        : `Bus d'envoi « ${b.name} » créé, envoi à 50 — clic droit sur l'envoi pour ouvrir le bus et y ajouter d'autres effets`);
+    openSendBus(id, type === 'empty');
+    return b;
+}
+// Ouvre un bus d'envoi dans la tranche de gauche (comme sélectionner l'aux dans Logic) ; withMenu = menu d'ajout d'effet tout de suite
+function openSendBus(id, withMenu) {
+    const b = busById(id); if (!b) return;
+    state.selectedBus = id; state._selBusTrack = state.selectedTrack;
+    refreshStrips();
+    if (!withMenu) return;
+    const strip = document.querySelector(`#inspector .insp-strip[data-kind="bus"][data-id="${CSS.escape(id)}"]`) || document.querySelector(`.mixer-strips .strip[data-kind="bus"][data-i="${state.project.buses.indexOf(b)}"]`);
+    const plus = strip && strip.querySelector('.slot-plus[data-plus="fx"]');
+    if (plus) openAddEffectMenu(plus, b, b);
+}
+// Ancien retour (Reverb / Écho fermés) → vrai bus d'envoi avec le même effet, les mêmes doses et le même son
+function convertSendToBus(sid) {
+    const sd = projectSends().find(s => s.id === sid); if (!sd) return;
+    pushUndo();
+    state.project.buses = state.project.buses || [];
+    const id = 'aux_' + Date.now().toString(36);
+    const isDelay = sd.type === 'delay';
+    const b = { id, name: sendBusName(sd.name || (isDelay ? 'Écho' : 'Reverb')), isGroup: true, isAux: true, output: 'master', color: '#7C3AED', volume: sd.volume ?? 100, muted: !!sd.muted,
+        effects: [isDelay ? 'delay' : 'reverb'],
+        effectParams: isDelay
+            ? { delay: { ...(sd.ms ? { ms: sd.ms } : { beats: sd.beats ?? 0.5 }), feedback: sd.feedback ?? 35, pp: !!sd.pp, wet: 100, dry: 0 } }
+            : { reverb: { size: sd.size ?? 3.2, pre: sd.pre || 0, wet: 100, out: SEND_BUS_OUT } } };
+    if (!b.muted) delete b.muted;
+    state.project.buses.push(b);
+    [...state.project.tracks, ...state.project.buses].forEach(o => {
+        if (o.sends && o.sends[sid] !== undefined) { if (o.sends[sid] > 0) { o.busSends = o.busSends || {}; o.busSends[id] = o.sends[sid]; } delete o.sends[sid]; }
+        if (o.preSends && o.preSends['send:' + sid]) { o.preSends['busSend:' + id] = true; delete o.preSends['send:' + sid]; }
+        if (o.automation && o.automation['send:' + sid]) { o.automation['busSend:' + id] = o.automation['send:' + sid]; delete o.automation['send:' + sid]; }
+    });
+    state.project.sends = projectSends().filter(s => s.id !== sid);
+    document.querySelectorAll('.fx-panel').forEach(p => p.remove());
+    afterGroupChange(`« ${b.name} » est maintenant un bus d'envoi : ajoute-lui les effets que tu veux — ⌘Z pour annuler`);
+    openSendBus(id, false);
 }
 
 // Copier / coller le réglage d'un effet d'une piste (ou d'un bus) à l'autre, comme dans Logic
@@ -2167,9 +2256,8 @@ function openAddEffectMenu(anchor, target, x) {
             openTunePanel(ti, -1, rr.left - 290, rr.top - 20, true);
             return;
         }
-        x.effects = x.effects || [];
-        if (!x.effects.includes(n)) {
-            pushUndo(); x.effects.push(n);
+        if (!(x.effects || []).includes(n)) {
+            pushUndo(); x.effects = x.effects || []; x.effects.push(n);
             // l'effet démarre avec les valeurs affichées dans son panneau (sinon le curseur dit une chose et le son en fait une autre)
             if (FX_START[n]) { x.effectParams = x.effectParams || {}; if (!x.effectParams[n]) x.effectParams[n] = JSON.parse(JSON.stringify(FX_START[n])); }
             saveProject(); refreshPlaybackSoon();
@@ -2249,7 +2337,7 @@ function moveEffectTo(x, name, to) {
     pushUndo();
     chain.splice(i, 1); chain.splice(Math.max(0, Math.min(chain.length, to)), 0, name);
     x.fxOrder = [...chain, ...FX_ORDER.filter(n => !chain.includes(n))];
-    renderInspector(); refreshPlaybackSoon(); saveProject();
+    refreshStrips(); refreshPlaybackSoon(); saveProject();
     flash(`${FX_NAMES[name]} déplacé : le son passe maintenant par ${chain.map(n => FX_NAMES[n]).join(' → ')}`);
 }
 // Clic maintenu sur un effet puis glisser vers le haut ou le bas : la ligne suit la souris, un trait montre où elle va tomber
@@ -2292,7 +2380,7 @@ function moveEffect(x, name, dir) {
     [chain[i], chain[j]] = [chain[j], chain[i]];
     // On garde l'ordre complet : les effets éteints reprennent leur place habituelle autour
     x.fxOrder = [...chain, ...FX_ORDER.filter(n => !chain.includes(n))];
-    renderInspector(); refreshPlaybackSoon(); saveProject();
+    refreshStrips(); refreshPlaybackSoon(); saveProject();
     flash(`${FX_NAMES[name]} déplacé : le son passe maintenant par ${chain.map(n => FX_NAMES[n]).join(' → ')}`);
 }
 
@@ -2503,19 +2591,7 @@ function renderMixer() {
         <div class="strip ${t.isCapture?'strip-capture':''} ${isPendDel(t) ? 'pend-del' : ''}" style="--track-color: ${t.color}" data-kind="track" data-i="${i}">
             <div class="strip-name">${esc(t.name)}</div>
             <button class="strip-sound" data-tooltip="Réglage de la piste : charge un réglage prêt à l'emploi (comme « Réglage » dans Logic)">${t.sound && SOUND_PRESETS[t.sound.preset] ? esc(SOUND_PRESETS[t.sound.preset].label) : 'Réglage'} ▾</button>
-            <div class="strip-fx">
-                <div class="strip-fx-slot ${(t.effects||[]).includes('eq') ? 'active' : ''}" data-fx="eq">EQ</div>
-                <div class="strip-fx-slot ${(t.effects||[]).includes('comp') ? 'active' : ''}" data-fx="comp">Comp</div>
-                ${showTuneSlot(t) ? `<div class="strip-fx-slot ${t.autotune && t.autotune.on ? 'active' : ''}" data-fx="tune" data-tooltip="PulseTune (Auto-Tune) : corrige les notes de la voix de cette piste">PulseTune</div>` : ''}
-            </div>
-            <div class="strip-sends">
-                <div class="strip-sends-title">Envois</div>
-                ${sends.map(sd => `
-                <label class="strip-send-row" data-send="${esc(sd.id)}" data-tooltip="Dose de « ${esc(sd.name)} » sur cette piste">
-                    ${sendKnobHtml((t.sends || {})[sd.id] || 0)}<span>${esc(sd.name)}</span>
-                    <input type="range" class="send-level" min="0" max="100" data-default="0" value="${(t.sends || {})[sd.id] || 0}" hidden>
-                </label>`).join('')}
-            </div>
+            ${slotListsHtml('track', t)}
             <div class="strip-pan">
                 <div class="strip-pan-knob" style="transform: rotate(${panDeg}deg)" data-tooltip="Gauche / droite : glisse pour placer le son (${t.pan ? (t.pan > 0 ? 'à droite' : 'à gauche') : 'au centre'})"></div>
             </div>
@@ -2541,18 +2617,7 @@ function renderMixer() {
                     ${b.premaster ? `<button class="return-edit master-edit" data-bus="${esc(b.id)}" data-tooltip="Le réglage final de tout le morceau">Finition ▾</button>` : `<div class="strip-fx-slot active" data-fx="preset">${esc(({ 'bus-allvocal': 'Toutes les voix', 'bus-safety': 'Sécurité', 'bus-mix1': 'Finition' })[b.preset] || 'Groupe')}</div>`}
                 </div>` : `
                 <button class="strip-sound" data-tooltip="Réglage du groupe : charge un réglage prêt à l'emploi">${b.sound && presetsFor(b)[b.sound.preset] ? esc(presetsFor(b)[b.sound.preset].label) : 'Réglage'} ▾</button>
-                <div class="strip-fx">
-                    <div class="strip-fx-slot ${(b.effects||[]).includes('eq') ? 'active' : ''}" data-fx="eq">EQ</div>
-                    <div class="strip-fx-slot ${(b.effects||[]).includes('comp') ? 'active' : ''}" data-fx="comp">Comp</div>
-                </div>
-                <div class="strip-sends">
-                    <div class="strip-sends-title">Envois</div>
-                    ${sends.map(sd => `
-                    <label class="strip-send-row" data-send="${esc(sd.id)}" data-tooltip="Dose de « ${esc(sd.name)} » sur ce groupe">
-                        ${sendKnobHtml((b.sends || {})[sd.id] || 0)}<span>${esc(sd.name)}</span>
-                        <input type="range" class="send-level" min="0" max="100" data-default="0" value="${(b.sends || {})[sd.id] || 0}" hidden>
-                    </label>`).join('')}
-                </div>
+                ${slotListsHtml('bus', b)}
                 <label class="insp-pan strip-bus-pan"><span>G</span><input type="range" class="bus-pan" min="-100" max="100" step="1" data-default="0" value="${b.pan || 0}" data-tooltip="Gauche / droite du groupe (⌘ + clic = centre, double-clic = écrire la valeur)"><span>D</span></label>`}
                 <div class="strip-fader-wrap">
                     <input type="range" class="fader" min="0" max="100" step="0.5" data-vmap="1" data-default="${volToPos(100)}" value="${volToPos(b.volume ?? 100)}" ${b.locked?'disabled':''}>
@@ -2571,6 +2636,7 @@ function renderMixer() {
                 <div class="strip-name">${esc(sd.name)}</div>
                 <button class="return-edit" data-tooltip="Régler cet envoi">${sd.type === 'delay' ? 'Écho' : 'Reverb'} ▾</button>
                 <div class="return-note">100 % effet</div>
+                <button class="return-tobus" data-tooltip="Transformer ce retour en bus d'envoi : même son, et tu peux y mettre les plugins que tu veux (comme un bus aux dans Logic)">+ Plugins</button>
                 <div class="strip-fader-wrap">
                     <input type="range" class="fader return-fader" min="0" max="100" data-default="100" value="${sd.volume ?? 100}">
                     <div class="strip-db">${volumeToDb(sd.volume ?? 100)} dB</div>
@@ -7193,6 +7259,198 @@ function openLimiterPanel(trackIdx, anchorEl) {
     makePlugWindow(panel, t, 'limit', trackIdx);
 }
 
+// === Gate : la voix défile, la ligne du seuil se tire, la zone sombre = ce que le gate baisse ===
+// Ratio : 1 à 99 = expandeur (baisse un peu), ∞ = gate franc (ratio 0 dans le moteur, le son d'avant)
+const GATE_STYLES = {
+    classique: { label: 'Classique', tip: 'Gate franc : coupe net entre les phrases', p: { ratio: 0, knee: 0, attack: 2, hold: 50, release: 150 } },
+    propre:    { label: 'Propre',    tip: 'Expandeur doux : baisse le bruit sans couper net', p: { ratio: 4, knee: 6, attack: 1, hold: 30, release: 120 } },
+    voix:      { label: 'Voix',      tip: 'Pour une voix : baisse les respirations, garde les fins de mots', p: { ratio: 2, knee: 10, attack: 5, hold: 80, release: 220, hp: 100 } }
+};
+function openGatePanel(trackIdx, anchorEl) {
+    closeTransientPanels();
+    const t = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;
+    if (!t) return;
+    const already = findPlugWin(t, 'gate');
+    if (already) { plugFront(already); return; }
+    t.effectParams = t.effectParams || {};
+    if (!t.effectParams.gate) t.effectParams.gate = { ...FX_START.gate };
+    const P = () => t.effectParams.gate;
+    const key = typeof trackIdx === 'number' ? 't' + trackIdx : 'b' + t.id;
+    const W = 900, H = 400, T = 16, B = H - 128, mid = (T + B) / 2, PL = W - 70, N = 260;
+    const db = (v) => 20 * Math.log10(Math.max(v, 1e-6));
+    const amp = (d) => Math.max(0, (Math.max(-70, d) + 70) / 70) * (mid - T - 4);
+    const ratioOf = () => P().ratio > 0 ? P().ratio : 100;   // 100 à l'écran = ∞
+    const fmtF = (f) => f >= 1000 ? (f / 1000).toFixed(f >= 10000 ? 1 : 2).replace(/\.?0+$/, '').replace('.', ',') + ' kHz' : Math.round(f) + ' Hz';
+    // ce que le gate retire pour un niveau d'entrée (dB) : même formule que le moteur
+    const red = (d) => {
+        const r = P().ratio > 0 ? P().ratio : 0, range = P().reduction ?? 40, thr = P().threshold ?? -45;
+        if (!r) return d >= thr ? 0 : range;
+        const u = thr - d, k = (P().knee || 0) / 2;
+        const x = u <= -k ? 0 : u < k ? (u + k) * (u + k) / (4 * Math.max(P().knee || 0, 1e-3)) * (r - 1) : u * (r - 1);
+        return Math.min(range, Math.max(0, x));
+    };
+    let undoArmed = false;
+    const commit = () => {
+        if (!undoArmed) { pushUndo(); undoArmed = true; setTimeout(() => undoArmed = false, 800); }
+        t.effects = t.effects || []; if (!t.effects.includes('gate')) t.effects.push('gate');
+        refreshPlaybackSoon(); saveProject();
+    };
+    const panel = document.createElement('div');
+    panel.className = 'fx-panel lim-panel gate-panel';
+    panel.innerHTML = `
+        <div class="fx-panel-header">
+            <label class="fx-bypass-label fx-power" data-tooltip="Allumer ou éteindre l'effet"><input type="checkbox" class="fx-bypass" ${t.effects?.includes('gate') ? 'checked' : ''}><span class="fx-power-btn">⏻</span></label>
+            <span class="fx-title lim-title">Gate <i>— ${esc(t.name || '')}</i></span>
+            <span class="lim-seg gate-sty">${Object.entries(GATE_STYLES).map(([k, s]) => `<span data-sty="${k}" data-tooltip="${esc(s.tip)}">${s.label}</span>`).join('')}</span>
+            <button class="lim-tp gate-listen" data-tooltip="Écouter le déclencheur : tu entends ce que le gate « voit » (pendant la lecture). Se coupe à la fermeture">🎧 Écouter</button>
+            <button class="fx-panel-close">×</button>
+        </div>
+        <div class="lim-face">
+            <svg class="lim-svg gate-svg" viewBox="0 0 ${W} ${H}"></svg>
+            <div class="lim-fp gate-fp"></div>
+        </div>
+        <div class="lim-sb"><span class="gate-hint">violet = ce qui passe · zone sombre = baissé</span><span class="lim-spacer"></span><span>Baisse max <b class="gate-g">—</b></span></div>`;
+    document.body.appendChild(panel);
+    const svg = panel.querySelector('.gate-svg'), fp = panel.querySelector('.gate-fp');
+    const sep = () => { const d = document.createElement('div'); d.className = 'lim-sep'; fp.appendChild(d); };
+    const kThr = proKnob(fp, { label: 'Seuil', min: -70, max: -20, val: P().threshold ?? -45, color: '#FBBF24', fmt: (v) => Math.round(v) + ' dB', onChange: (v) => { P().threshold = Math.round(v); draw(); }, onEnd: commit });
+    const kRat = proKnob(fp, { label: 'Ratio', min: 1, max: 100, val: ratioOf(), log: true, fmt: (v) => v >= 99 ? '∞ : 1' : v.toFixed(1).replace('.', ',') + ' : 1', onChange: (v) => { P().ratio = v >= 99 ? 0 : Math.round(v * 10) / 10; draw(); }, onEnd: commit });
+    const kRng = proKnob(fp, { label: 'Coupure', min: 6, max: 80, val: P().reduction ?? 40, fmt: (v) => Math.round(v) + ' dB', onChange: (v) => { P().reduction = Math.round(v); draw(); }, onEnd: commit });
+    const kKnee = proKnob(fp, { label: 'Genou', min: 0, max: 24, val: P().knee || 0, fmt: (v) => Math.round(v) + ' dB', onChange: (v) => { P().knee = Math.round(v); draw(); }, onEnd: commit });
+    sep();
+    const kAtt = proKnob(fp, { label: 'Attaque', min: 0.1, max: 50, val: P().attack ?? 2, log: true, fmt: (v) => v.toFixed(1).replace('.', ',') + ' ms', onChange: (v) => { P().attack = Math.round(v * 10) / 10; }, onEnd: commit });
+    const kHold = proKnob(fp, { label: 'Maintien', min: 0, max: 500, val: P().hold ?? 50, fmt: (v) => Math.round(v) + ' ms', onChange: (v) => { P().hold = Math.round(v); }, onEnd: commit });
+    const kRel = proKnob(fp, { label: 'Retour', min: 20, max: 500, val: P().release ?? 150, fmt: (v) => Math.round(v) + ' ms', onChange: (v) => { P().release = Math.round(v); }, onEnd: commit });
+    sep();
+    // Déclencheur : ce que le gate écoute (coupe-bas / coupe-haut). Deux poignées, ou la zone entière qu'on fait glisser
+    const rg = document.createElement('div'); rg.className = 'lim-col gate-rgc';
+    rg.innerHTML = `<span class="lim-t">Déclencheur</span><div class="gate-rg" data-tooltip="Ce que le gate écoute pour s'ouvrir : tire une poignée, ou la zone entière"><div class="gate-rf"></div><i class="gate-h a"></i><i class="gate-h b"></i></div><div class="gate-rv"><span class="va"></span><span class="vb"></span></div>`;
+    fp.appendChild(rg);
+    const FMIN = 20, FMAX = 20000, X = (f) => Math.log(f / FMIN) / Math.log(FMAX / FMIN) * 100, F = (p) => FMIN * Math.pow(FMAX / FMIN, p / 100);
+    const lo = () => P().hp > 20 ? P().hp : 20, hi = () => P().lp > 0 && P().lp < 20000 ? P().lp : 20000;
+    const drawRange = () => {
+        rg.querySelector('.gate-rf').style.cssText = `left:${X(lo())}%;width:${X(hi()) - X(lo())}%`;
+        rg.querySelector('.a').style.left = X(lo()) + '%'; rg.querySelector('.b').style.left = X(hi()) + '%';
+        rg.querySelector('.va').textContent = lo() <= 20 ? 'Off' : fmtF(lo()); rg.querySelector('.vb').textContent = hi() >= 20000 ? 'Off' : fmtF(hi());
+    };
+    const setRange = (a, b) => {
+        a = Math.round(a); b = Math.round(b);
+        if (a <= 21) delete P().hp; else P().hp = a;
+        if (b >= 19900) delete P().lp; else P().lp = b;
+        drawRange();
+    };
+    const bar = rg.querySelector('.gate-rg');
+    const dragOn = (el, move) => el.addEventListener('mousedown', (e) => {
+        e.preventDefault(); e.stopPropagation();
+        const r = bar.getBoundingClientRect(), x0 = e.clientX, l0 = lo(), h0 = hi();
+        const mv = (ev) => move((ev.clientX - r.left) / r.width * 100, (ev.clientX - x0) / r.width * 100, l0, h0);
+        const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); commit(); };
+        document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
+    });
+    dragOn(rg.querySelector('.a'), (p) => setRange(Math.min(F(Math.max(0, p)), hi() / 1.3), hi()));
+    dragOn(rg.querySelector('.b'), (p) => setRange(lo(), Math.max(F(Math.min(100, p)), lo() * 1.3)));
+    dragOn(rg.querySelector('.gate-rf'), (p, dp, l0, h0) => {
+        let a = X(l0) + dp, z = X(h0) + dp; if (a < 0) { z -= a; a = 0; } if (z > 100) { a -= z - 100; z = 100; }
+        setRange(F(a), F(z));
+    });
+    bar.addEventListener('dblclick', () => { setRange(20, 20000); commit(); });
+    // historique pendant la lecture : niveau vu par le gate (e) et gain appliqué (g)
+    const he = [], hg = [];
+    let gMin = 1;
+    const draw = () => {
+        const thr = P().threshold ?? -45;
+        let s = `<defs><pattern id="gateht" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="3" height="7" fill="#ffffff0a"/></pattern>
+            <linearGradient id="gatev" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#C084FC"/><stop offset="1" stop-color="#7C3AED"/></linearGradient></defs>`;
+        s += `<line x1="0" x2="${PL}" y1="${mid}" y2="${mid}" class="lim-grid z"/>`;
+        const n = he.length, xs = (i) => (i + N - n) / (N - 1) * PL;
+        if (n > 1) {
+            // zones baissées (gain sous 0,5) en sombre hachuré
+            let s0 = -1;
+            for (let i = 0; i <= n; i++) {
+                const cl = i < n && hg[i] < 0.5;
+                if (cl && s0 < 0) s0 = i;
+                if (!cl && s0 >= 0) { const x = xs(s0), w = xs(i - 1) - x + PL / N; s += `<rect x="${x.toFixed(1)}" y="${T}" width="${w.toFixed(1)}" height="${B - T}" fill="#05030a" opacity=".6"/><rect x="${x.toFixed(1)}" y="${T}" width="${w.toFixed(1)}" height="${B - T}" fill="url(#gateht)"/>`; s0 = -1; }
+            }
+            let up = '', dn = '', up2 = '', dn2 = '';
+            for (let i = 0; i < n; i++) {
+                const x = xs(i).toFixed(1), a = amp(db(he[i])), a2 = amp(db(he[i] * hg[i]));
+                up += `${i ? 'L' : 'M'}${x} ${(mid - a).toFixed(1)}`; dn = `L${x} ${(mid + a).toFixed(1)}` + dn;
+                up2 += `${i ? 'L' : 'M'}${x} ${(mid - a2).toFixed(1)}`; dn2 = `L${x} ${(mid + a2).toFixed(1)}` + dn2;
+            }
+            s += `<path d="${up}${dn}Z" class="gate-in"/><path d="${up2}${dn2}Z" fill="url(#gatev)" class="gate-out"/>`;
+        } else s += `<text x="${PL / 2}" y="${mid - 30}" class="lim-txt big" text-anchor="middle">Lance la lecture : la voix défile ici, la zone sombre montre ce que le gate baisse</text>`;
+        // seuil : ligne jaune (et son reflet en bas), pastille à tirer
+        const ty = mid - amp(thr);
+        s += `<line x1="0" x2="${PL}" y1="${ty}" y2="${ty}" class="gate-thr"/><line x1="0" x2="${PL}" y1="${2 * mid - ty}" y2="${2 * mid - ty}" class="gate-thr ghost"/>
+            <g class="gate-thrh"><rect x="0" y="${ty - 14}" width="${PL - 170}" height="28" fill="transparent"/><rect x="14" y="${ty - 12}" width="86" height="24" rx="12" class="gate-pill"/><text x="57" y="${ty + 4}" class="gate-pillt" text-anchor="middle">${Math.round(thr)} dB</text></g>`;
+        // courbe entrée → sortie, en haut à droite
+        const cx = PL - 160, cy = T + 4, cs = 132;
+        s += `<rect x="${cx}" y="${cy}" width="${cs}" height="${cs}" rx="12" class="gate-io"/>`;
+        const Pt = (i, o) => [cx + 10 + (i + 70) / 70 * (cs - 20), cy + cs - 10 - (Math.max(-70, o) + 70) / 70 * (cs - 20)];
+        let c = '';
+        for (let d = -70; d <= 0; d += 0.5) { const [x, y] = Pt(d, d - red(d)); c += (d === -70 ? 'M' : 'L') + x.toFixed(1) + ' ' + y.toFixed(1); }
+        s += `<path d="${c}" class="gate-curve"/><text x="${cx + cs / 2}" y="${cy + cs + 13}" class="lim-txt" text-anchor="middle">entrée → sortie</text>`;
+        // vumètres entrée / sortie
+        const le = n ? he[n - 1] : 0, lg = n ? hg[n - 1] : 1, toF = (v) => Math.max(0, Math.min(1, (db(v) + 70) / 70));
+        [[PL + 14, le, 'IN'], [PL + 40, le * lg, 'OUT']].forEach(([x, v, nm]) => {
+            const yT = T + 16, yB = B, yv = yB - toF(v) * (yB - yT);
+            s += `<rect x="${x}" y="${yT}" width="14" height="${yB - yT}" rx="3" class="lim-mbg"/><rect x="${x}" y="${yv}" width="14" height="${yB - yv}" rx="3" class="lim-m"/><text x="${x + 7}" y="${T + 8}" class="lim-txt" text-anchor="middle">${nm}</text>`;
+        });
+        svg.innerHTML = s;
+        panel.querySelectorAll('.gate-sty span').forEach(el => {
+            const st = GATE_STYLES[el.dataset.sty].p;
+            el.classList.toggle('on', Object.keys(st).every(k => (P()[k] ?? (k === 'ratio' ? 0 : undefined)) === st[k]));
+        });
+        panel.querySelector('.gate-listen').classList.toggle('on', !!P().listen);
+        panel.querySelector('.gate-hint').textContent = P().listen ? '🎧 tu entends ce que le gate « voit »' : 'violet = ce qui passe · zone sombre = baissé';
+    };
+    const syncKnobs = () => { kThr.set(P().threshold ?? -45); kRat.set(ratioOf()); kRng.set(P().reduction ?? 40); kKnee.set(P().knee || 0); kAtt.set(P().attack ?? 2); kHold.set(P().hold ?? 50); kRel.set(P().release ?? 150); drawRange(); draw(); };
+    let lastPush = 0;
+    const loop = (ts) => {
+        if (!panel.isConnected) return;
+        const m = (state.playing || state.recording) && t.effects && t.effects.includes('gate') ? PulseAudio.getGateMeter(key) : null;
+        if (m && ts - lastPush > 33) {
+            lastPush = ts; he.push(m.e); hg.push(m.g); if (he.length > N) { he.shift(); hg.shift(); }
+            gMin = Math.min(gMin, m.g); panel.querySelector('.gate-g').textContent = '−' + Math.round(-db(gMin)) + ' dB';
+            draw();
+        }
+        requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+    // tirer la ligne du seuil
+    svg.addEventListener('mousedown', (e) => {
+        if (!e.target.closest('.gate-thrh')) return;
+        e.preventDefault();
+        const r = svg.getBoundingClientRect(), k = W / r.width;
+        const mv = (ev) => { const y = (ev.clientY - r.top) * k; P().threshold = Math.round(Math.max(-70, Math.min(-20, (mid - y) / (mid - T - 4) * 70 - 70))); kThr.set(P().threshold); draw(); };
+        const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); commit(); };
+        document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
+    });
+    panel.querySelectorAll('.gate-sty span').forEach(el => el.addEventListener('click', () => {
+        const st = GATE_STYLES[el.dataset.sty].p;
+        commit(); Object.assign(P(), st); if (!('hp' in st)) delete P().hp; if (!st.ratio) delete P().ratio;
+        refreshPlaybackSoon(); saveProject(); syncKnobs();
+        flash(`Gate : style ${GATE_STYLES[el.dataset.sty].label}`);
+    }));
+    // écoute du déclencheur : seulement le temps de la fenêtre (jamais à l'export)
+    panel.querySelector('.gate-listen').addEventListener('click', () => { if (P().listen) delete P().listen; else P().listen = true; refreshPlaybackSoon(); draw(); });
+    const stopListen = () => { if (P().listen) { delete P().listen; refreshPlaybackSoon(); } };
+    panel.querySelector('.fx-panel-close').addEventListener('click', () => { stopListen(); panel.remove(); });
+    new MutationObserver((_, o) => { if (!panel.isConnected) { stopListen(); o.disconnect(); } }).observe(document.body, { childList: true });
+    panel.querySelector('.fx-bypass').addEventListener('change', (e) => {
+        pushUndo(); t.effects = t.effects || [];
+        if (e.target.checked) { if (!t.effects.includes('gate')) t.effects.push('gate'); } else { const i = t.effects.indexOf('gate'); if (i >= 0) t.effects.splice(i, 1); }
+        refreshPlaybackSoon(); saveProject(); refreshStrips();
+    });
+    syncKnobs();
+    const rect = (anchorEl && anchorEl.getBoundingClientRect) ? anchorEl.getBoundingClientRect() : { left: 80, right: 80, top: 80 };
+    const pw = Math.min(900, window.innerWidth - 16);
+    let left = rect.right + 8; if (left + pw > window.innerWidth) left = Math.max(8, rect.left - pw - 8);
+    panel.style.left = Math.max(8, Math.min(left, window.innerWidth - pw - 8)) + 'px';
+    panel.style.top = Math.max(8, Math.min(rect.top - 20, window.innerHeight - panel.offsetHeight - 8)) + 'px';
+    makePlugWindow(panel, t, 'gate', trackIdx);
+}
+
 // Réglages de chaque effet (partagés : fenêtres de plugin et menu d'automation)
 const FX_PANEL_DEFS = {
     eq: [
@@ -7305,6 +7563,7 @@ const FX_PANEL_DEFS = {
 function openEffectPanel(trackIdx, fxName, anchorEl) {
     if (fxName === 'eq') return openEqPanel(trackIdx, anchorEl);
     if (fxName === 'limit') return openLimiterPanel(trackIdx, anchorEl);
+    if (fxName === 'gate') return openGatePanel(trackIdx, anchorEl);
     closeTransientPanels();
     // trackIdx : numéro de piste, ou directement un groupe
     const t = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;
@@ -8247,6 +8506,7 @@ function bindMixerEvents() {
     document.querySelectorAll('.mixer-strips .strip-return').forEach(strip => {
         const id = strip.dataset.send;
         strip.querySelector('.return-edit').addEventListener('click', (e) => openSendPanel(id, e.currentTarget));
+        const tb = strip.querySelector('.return-tobus'); if (tb) tb.addEventListener('click', () => convertSendToBus(id));
         const f = strip.querySelector('.return-fader');
         let undone = false;
         f.addEventListener('input', () => {
@@ -8277,8 +8537,10 @@ function bindMixerEvents() {
         const kind = strip.dataset.kind;
         if (kind === 'send') return;
         const i = parseInt(strip.dataset.i);
+        // Listes d'effets et d'envois (les mêmes que la tranche de gauche) : clic, croix, glisser, « + »
+        if (kind === 'track' || kind === 'bus') bindSlotLists(strip, kind, kind === 'track' ? state.project.tracks[i] : state.project.buses[i], i);
 
-        // Clics sur slots FX
+        // Clics sur slots FX (ne reste que la case « Groupe » d'un groupe verrouillé)
         strip.querySelectorAll('.strip-fx-slot').forEach(slot => {
             slot.addEventListener('click', () => {
                 if (kind === 'bus') {

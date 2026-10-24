@@ -12,8 +12,8 @@ export default async (c) => {
     else if (s0 !== s1) r += '  <-- PAS ANNULABLE';
     console.log(label.padEnd(46), r); };
   // piste Lead = strip index 2
-  await test('mixeur : bouton EQ d une piste (activer)', async () => { const p = await pos(ev, '.mixer-strips .strip[data-kind="track"][data-i="2"] .strip-fx-slot[data-fx="eq"]'); await Ms.click(p.x, p.y); await sleep(200); await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`); });
-  await test('mixeur : clic droit EQ (retirer)', async () => { const p = await pos(ev, '.mixer-strips .strip[data-kind="track"][data-i="2"] .strip-fx-slot[data-fx="eq"]'); await Ms.rclick(p.x, p.y); });
+  await test('mixeur : + puis EQ sur une piste (activer)', async () => { const p = await pos(ev, '.mixer-strips .strip[data-kind="track"][data-i="2"] .slot-plus[data-plus="fx"]'); await Ms.click(p.x, p.y); await sleep(200); await ev(`[...document.querySelectorAll('.fx-add-menu .fam-fx[data-fx="eq"]')].forEach(e=>e.click())`); await sleep(200); await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`); });
+  await test('mixeur : croix EQ (retirer)', async () => { const p = await pos(ev, '.mixer-strips .strip[data-kind="track"][data-i="2"] .insp-fx-row[data-fx="eq"] .insp-del'); await Ms.click(p.x, p.y); await sleep(200); });
   await test('mixeur : bouton de gauche/droite (glisser)', async () => { const p = await pos(ev, '.mixer-strips .strip[data-kind="track"][data-i="2"] .strip-pan-knob'); await Ms.drag(p.x, p.y, p.x + 20, p.y, 4); });
   await test('mixeur : fader de retour (Rev Long)', async () => { await ev(`(()=>{const f=document.querySelector('.strip-return .return-fader'); f.value=40; f.dispatchEvent(new Event('input',{bubbles:true})); f.dispatchEvent(new Event('change',{bubbles:true}));})()`); });
   await test('liste : fader de groupe (en-tête)', async () => { await ev(`(()=>{const f=document.querySelector('.group-header .group-vol'); f.value=30; f.dispatchEvent(new Event('input',{bubbles:true})); f.dispatchEvent(new Event('change',{bubbles:true}));})()`); });

@@ -217,6 +217,8 @@ pub struct ReverbParams {
     pub low: Option<f64>,
     pub high: Option<f64>,
     pub duck: Option<f64>,
+    /// Sortie de l'effet (dB, 0 = normal) : un bus d'envoi Reverb la met à -9,5 dB pour sonner comme un retour
+    pub out: Option<f64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
