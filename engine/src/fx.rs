@@ -92,6 +92,133 @@ impl Biquad {
     }
 }
 
+/// Saturation multibande : même calcul que le worklet `pulse-msat` de audio.js (tout à 4 fois la cadence, filtre `sat_fir`).
+const MSAT_VK: [f64; 3] = [0.6, 1.0, 1.7];
+fn msat_curve(sty: &str, x: f64, k: f64) -> f64 {
+    let x = x.clamp(-4.0, 4.0);
+    match sty {
+        "lampe" => (k * (x + 0.18 * x * x)).tanh() / (k * 1.18).tanh(),
+        "ampli" => { let a = k * x; (a / (1.0 + a.abs()) * (1.0 + 1.0 / k)).clamp(-1.0, 1.0) }
+        "transfo" => ((x * (0.6 + k * 0.08)).clamp(-1.0, 1.0) * PI / 2.0).sin(),
+        "repli" => { let mut a = x * (1.0 + k * 0.35); for _ in 0..4 { if a > 1.0 { a = 2.0 - a; } else if a < -1.0 { a = -2.0 - a; } } a }
+        "lofi" => { let q = 10.0 - k.min(7.0); ((k * x).tanh() / k.tanh() * q + 0.5).floor() / q }
+        _ => (k * x * 0.9).tanh() / (k * 0.9).tanh(),
+    }
+}
+/// Auto gain : un son à −12 dB (sinus d'amplitude 0,25) ressort au même niveau, quelle que soit la chaleur
+fn msat_trim(sty: &str, k: f64) -> f64 {
+    let s: f64 = (0..64).map(|i| { let y = msat_curve(sty, 0.25 * (2.0 * PI * i as f64 / 64.0).sin(), k); y * y }).sum();
+    0.25 * std::f64::consts::FRAC_1_SQRT_2 / (s / 64.0).sqrt().max(1e-6)
+}
+struct MsBand {
+    ks: [Vec<Biquad>; 2], tone: [Vec<Biquad>; 2], sty: String, k: f64, trim: f64, dynamics: f64, env: f64, att: f64, rel: f64,
+    fbk: f64, bp: [Biquad; 2], last: [f64; 2], hold: u64, hc: u64, hv: [f64; 2], mix: f64, lvl: f64, solo: bool,
+}
+pub struct MultiSat { free: Vec<MsBand>, base: Option<MsBand>, any_solo: bool, gmix: f64, gout: f64, h: [f64; 64], xin: [[f64; 16]; 2], xs: [[f64; 64]; 2], pos: [usize; 2] }
+impl MultiSat {
+    pub fn new(p: &crate::model::MsatParams, sr: f64) -> Option<Self> {
+        let sr4 = sr * 4.0;
+        let biq = |hp: bool, f: f64| {
+            let w = 2.0 * PI * f / sr4;
+            let (c, al) = (w.cos(), w.sin() / (2.0 * std::f64::consts::FRAC_1_SQRT_2));
+            if hp { Biquad::new((1.0 + c) / 2.0, -(1.0 + c), (1.0 + c) / 2.0, 1.0 + al, -2.0 * c, 1.0 - al) }
+            else { Biquad::new((1.0 - c) / 2.0, 1.0 - c, (1.0 - c) / 2.0, 1.0 + al, -2.0 * c, 1.0 - al) }
+        };
+        let bpf = |f: f64| { let w = 2.0 * PI * f / sr4; let al = w.sin() / 4.0; Biquad::new(al, 0.0, -al, 1.0 + al, -2.0 * w.cos(), 1.0 - al) };
+        let co = |ms: f64| 1.0 - (-1.0 / (ms / 1000.0 * sr4)).exp();
+        let ag = p.ag != Some(false);
+        let mk = |b: &crate::model::MsatBand, is_base: bool| {
+            let lo = if is_base { 20.0 } else { b.lo.unwrap_or(20.0).clamp(20.0, 20000.0) };
+            let hi = if is_base { 20000.0 } else { b.hi.unwrap_or(20000.0).min(20000.0).max(lo * 1.05) };
+            let sl = b.slope.unwrap_or(24.0);
+            let n = if sl >= 48.0 { 4 } else if sl >= 24.0 { 2 } else { 1 };
+            let mut ks = Vec::new();
+            if !is_base { if lo > 20.5 { for _ in 0..n { ks.push(biq(true, lo)); } } if hi < 19999.0 { for _ in 0..n { ks.push(biq(false, hi)); } } }
+            let sty = b.sty.clone().unwrap_or_else(|| "bande".into());
+            let va = (b.va.unwrap_or(1.0).round() as usize).min(2);
+            let heat = b.heat.unwrap_or(30.0).clamp(0.0, 100.0);
+            let k = (1.0 + heat / 100.0 * 7.0) * MSAT_VK[va];
+            let tone: Vec<Biquad> = [("lowshelf", 150.0, b.lo2, 0.7071), ("bell", 1000.0, b.md, 0.7), ("highshelf", 6000.0, b.hi2, 0.7071), ("bell", 3500.0, b.pr, 1.2)].iter()
+                .filter(|t| t.2.unwrap_or(0.0) != 0.0)
+                .flat_map(|t| eq_sections(&EqBand { kind: t.0.into(), freq: t.1, gain: t.2.unwrap_or(0.0), q: t.3, ..Default::default() }, sr4)).collect();
+            let fc = if is_base { 1000.0 } else { (lo * hi).sqrt() };
+            MsBand {
+                ks: [ks.clone(), ks], tone: [tone.clone(), tone], trim: if ag { msat_trim(&sty, k) } else { 1.0 }, k,
+                dynamics: b.dynamics.unwrap_or(0.0).clamp(-50.0, 50.0), env: 0.0, att: co(5.0), rel: co(80.0),
+                fbk: b.fb.unwrap_or(0.0).clamp(0.0, 100.0) / 100.0 * 0.6, bp: [bpf(fc), bpf(fc)], last: [0.0; 2],
+                hold: if sty == "lofi" && va == 1 { 4 * (1 + (heat / 100.0 * 15.0).floor() as u64) } else { 0 }, hc: 0, hv: [0.0; 2],
+                mix: b.mix.unwrap_or(100.0).clamp(0.0, 100.0) / 100.0,
+                lvl: if b.mute.unwrap_or(false) { 0.0 } else { 10f64.powf(b.out.unwrap_or(0.0).clamp(-60.0, 24.0) / 20.0) },
+                solo: b.solo.unwrap_or(false), sty,
+            }
+        };
+        let all: Vec<&crate::model::MsatBand> = p.bands.iter().filter(|b| b.on != Some(false)).collect();
+        if all.is_empty() { return None; }
+        let free: Vec<MsBand> = all.iter().filter(|b| b.base != Some(true)).take(6).map(|b| mk(b, false)).collect();
+        let base = all.iter().find(|b| b.base == Some(true)).map(|b| mk(b, true));
+        let any_solo = free.iter().any(|b| b.solo) || base.as_ref().is_some_and(|b| b.solo);
+        Some(Self { free, base, any_solo, gmix: p.mix.unwrap_or(100.0).clamp(0.0, 100.0) / 100.0, gout: 10f64.powf(p.out.unwrap_or(0.0).clamp(-24.0, 24.0) / 20.0),
+            h: sat_fir(), xin: [[0.0; 16]; 2], xs: [[0.0; 64]; 2], pos: [0; 2] })
+    }
+    fn band(b: &mut MsBand, v: &mut [f64; 2], nc: usize) {
+        let mut pk = 0.0f64;
+        for ch in 0..nc { pk = pk.max(v[ch].abs()); }
+        b.env += (pk - b.env) * if pk > b.env { b.att } else { b.rel };
+        let mut gd = 1.0;
+        if b.dynamics != 0.0 {
+            let l = 20.0 * b.env.max(1e-9).log10();
+            let mut r = 0.0;
+            if b.dynamics > 0.0 { r = ((l + 24.0).max(0.0) * b.dynamics / 50.0 * 0.75).min(24.0); }
+            else if l > -70.0 { r = ((-24.0 - l).max(0.0) * -b.dynamics / 50.0 * 0.75).min(24.0); }
+            gd = 10f64.powf(-r / 20.0);
+        }
+        let do_hold = b.hold > 0 && b.hc % b.hold == 0;
+        if b.hold > 0 { b.hc += 1; }
+        for ch in 0..nc {
+            let dry = v[ch];
+            let mut u = dry * gd;
+            if b.fbk > 0.0 { u += b.fbk * b.bp[ch].tick(b.last[ch]); }
+            let mut w = msat_curve(&b.sty, u, b.k);
+            b.last[ch] = w;
+            if b.hold > 0 { if do_hold { b.hv[ch] = w; } w = b.hv[ch]; }
+            w *= b.trim;
+            for f in &mut b.tone[ch] { w = f.tick(w); }
+            v[ch] = (dry * (1.0 - b.mix) + w * b.mix) * b.lvl;
+        }
+    }
+    fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
+        for ch in 0..nc { self.xin[ch].copy_within(0..15, 1); self.xin[ch][0] = x[ch]; }
+        for p4 in 0..4 {
+            let mut x4 = [0.0f64; 2];
+            for ch in 0..nc { let mut u = 0.0; for j in 0..16 { u += self.h[p4 + 4 * j] * self.xin[ch][j]; } x4[ch] = 4.0 * u; }
+            let mut res = x4;
+            let mut acc = [0.0f64; 2];
+            let any_solo = self.any_solo;
+            for b in &mut self.free {
+                let mut o = [0.0f64; 2];
+                for ch in 0..nc { let mut s = x4[ch]; for f in &mut b.ks[ch] { s = f.tick(s); } o[ch] = s; res[ch] -= s; }
+                Self::band(b, &mut o, nc);
+                if !any_solo || b.solo { for ch in 0..nc { acc[ch] += o[ch]; } }
+            }
+            if let Some(b) = &mut self.base {
+                let mut v = res;
+                Self::band(b, &mut v, nc);
+                if !any_solo || b.solo { for ch in 0..nc { acc[ch] += v[ch]; } }
+            } else if !any_solo { for ch in 0..nc { acc[ch] += res[ch]; } }
+            for ch in 0..nc {
+                let y = (x4[ch] * (1.0 - self.gmix) + acc[ch] * self.gmix) * self.gout;
+                self.pos[ch] = (self.pos[ch] + 1) % 64;
+                self.xs[ch][self.pos[ch]] = y;
+            }
+        }
+        for ch in 0..nc {
+            let (mut y, mut idx) = (0.0, self.pos[ch]);
+            for hj in self.h.iter() { y += hj * self.xs[ch][idx]; idx = (idx + 63) % 64; }
+            x[ch] = y;
+        }
+    }
+}
+
 /// Multibande à bandes libres : même calcul que le worklet `pulse-mband` de audio.js.
 struct MbBand { ks: [Vec<Biquad>; 2], env: f64, att: f64, rel: f64, thr: f64, range: f64, out: f64, solo: bool, mute: bool }
 pub struct MultiBand { bands: Vec<MbBand>, any_solo: bool }
@@ -1002,6 +1129,7 @@ pub struct Chain {
     deess: Option<Deesser>,
     deess2: Option<DeesserV2>,
     mband: Option<MultiBand>,
+    msat: Option<MultiSat>,
     comp: Option<Compressor>,
     master: Option<Master>,
     limit: Option<Limiter>,
@@ -1281,6 +1409,7 @@ impl Chain {
         let sat = Saturator::new(drive);
         let de = effect_params.deess.clone().unwrap_or_default();
         let deess2 = (has("deess") && de.thr.is_some()).then(|| DeesserV2::new(&de, sr));
+        let msat = if has("msat") { effect_params.msat.as_ref().and_then(|m| MultiSat::new(m, sr)) } else { None };
         let mband = if has("mband") { effect_params.mband.as_ref().and_then(|m| MultiBand::new(m, sr)) } else { None };
         let deess = (has("deess") && de.thr.is_none() && de.amount > 0.0).then(|| Deesser::new(de.amount, de.freq.unwrap_or(5500.0), sr));
         let gate = has("gate").then(|| Gate::new(&effect_params.gate.clone().unwrap_or_default(), sr));
@@ -1311,7 +1440,7 @@ impl Chain {
         let pitch = (has("pitch") && effect_params.pitch.as_ref().and_then(|p| p.semi).unwrap_or(0.0) != 0.0)
             .then(|| Pitch::new(&effect_params.pitch.clone().unwrap_or_default(), sr));
         let comp_p = effect_params.comp.clone().unwrap_or_default();
-        Self { cut, filters, dyn_eq, sat, gate, crush, util, width, modfx, deess, deess2, mband, comp, master, limit, delay, reverb, pitch, order: Stage::DEFAULT.to_vec(),
+        Self { cut, filters, dyn_eq, sat, gate, crush, util, width, modfx, deess, deess2, mband, msat, comp, master, limit, delay, reverb, pitch, order: Stage::DEFAULT.to_vec(),
             auto: Vec::new(), auto_from: 0.0, sr, comp_p, eq_bands, cut_kinds, names: effects.to_vec(), deess_freq: de.freq.unwrap_or(5500.0) }
     }
     /// Branche les courbes d'automation des réglages d'effet (`from` = instant du premier échantillon traité)
@@ -1403,7 +1532,7 @@ impl Chain {
         self
     }
     pub fn is_empty(&self) -> bool {
-        self.cut.is_empty() && self.filters.is_empty() && self.dyn_eq.is_empty() && self.sat.is_none() && self.gate.is_none() && self.crush.is_none() && self.util.is_none() && self.width.is_none() && self.modfx.is_empty() && self.deess.is_none() && self.deess2.is_none() && self.mband.is_none() && self.comp.is_none() && self.master.is_none() && self.limit.is_none() && self.delay.is_none() && self.reverb.is_none() && self.pitch.is_none()
+        self.cut.is_empty() && self.filters.is_empty() && self.dyn_eq.is_empty() && self.sat.is_none() && self.gate.is_none() && self.crush.is_none() && self.util.is_none() && self.width.is_none() && self.modfx.is_empty() && self.deess.is_none() && self.deess2.is_none() && self.mband.is_none() && self.msat.is_none() && self.comp.is_none() && self.master.is_none() && self.limit.is_none() && self.delay.is_none() && self.reverb.is_none() && self.pitch.is_none()
     }
     /// Une piste avec reverb sort toujours en stéréo, même si ses sons sont mono.
     pub fn makes_stereo(&self) -> bool {
@@ -1478,6 +1607,11 @@ impl Chain {
                             d.tick(&mut x, nc);
                         }
                     }
+                    Stage::Msat => {
+                        if let Some(m) = &mut self.msat {
+                            m.tick(&mut x, nc);
+                        }
+                    }
                     Stage::Mband => {
                         if let Some(m) = &mut self.mband {
                             m.tick(&mut x, nc);
@@ -1536,6 +1670,7 @@ enum Stage {
     Gate,
     Eq,
     Sat,
+    Msat,
     Crush,
     Deess,
     Comp,
@@ -1556,7 +1691,7 @@ enum Stage {
 }
 
 impl Stage {
-    const DEFAULT: [Stage; 21] = [Stage::Pitch, Stage::Filter, Stage::Gate, Stage::Eq, Stage::Sat, Stage::Crush, Stage::Deess, Stage::Comp, Stage::Mband, Stage::Util, Stage::Width, Stage::Tremolo, Stage::Phaser, Stage::Flanger, Stage::Chorus, Stage::Doubler, Stage::Slapback, Stage::Master, Stage::Limit, Stage::Delay, Stage::Reverb];
+    const DEFAULT: [Stage; 22] = [Stage::Pitch, Stage::Filter, Stage::Gate, Stage::Eq, Stage::Sat, Stage::Msat, Stage::Crush, Stage::Deess, Stage::Comp, Stage::Mband, Stage::Util, Stage::Width, Stage::Tremolo, Stage::Phaser, Stage::Flanger, Stage::Chorus, Stage::Doubler, Stage::Slapback, Stage::Master, Stage::Limit, Stage::Delay, Stage::Reverb];
     fn parse(name: &str) -> Option<Stage> {
         Some(match name {
             "filter" => Stage::Filter,
@@ -1572,6 +1707,7 @@ impl Stage {
             "slapback" => Stage::Slapback,
             "eq" => Stage::Eq,
             "sat" => Stage::Sat,
+            "msat" => Stage::Msat,
             "deess" => Stage::Deess,
             "comp" => Stage::Comp,
             "mband" => Stage::Mband,

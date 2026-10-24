@@ -3574,3 +3574,22 @@ body.automation-mode .track-item .t-auto .auto-chip { max-width: 150px; height: 
 .mb-pill.on.mb-so { background: #FBBF24; color: #2a1a05; border-color: #FBBF24; }
 .mb-pill.on.mb-mu { background: #F87171; color: #2a0505; border-color: #F87171; }
 .mb-pill.mb-del:hover { border-color: #F87171; color: #fff; }
+
+/* Saturation multibande */
+.ms-spec { fill: #FBBF2412; stroke: #FBBF24; stroke-opacity: .55; stroke-width: 1.2; filter: drop-shadow(0 0 5px #FBBF2477); }
+.ms-smt { fill: #cbbfe3; font-size: 9.5px; font-weight: 700; pointer-events: none; } .ms-smt.on { fill: #1a0f05; }
+.ms-plus { cursor: pointer; } .ms-plust { fill: #fff; font-size: 14px; font-weight: 700; pointer-events: none; }
+.ms-s, .ms-m, .ms-slp { cursor: pointer; }
+.ms-glob { display: flex; gap: 2px; margin-left: 6px; }
+.ms-glob .pk { width: 64px; } .ms-glob .pk svg { width: 30px; height: 30px; }
+.ms-glob .pk-l { font-size: 8.5px; } .ms-glob .pk-v { font-size: 10.5px; }
+.ms-panel .ms-ag { margin-left: auto; }
+.ms-stys { display: grid; grid-template-columns: repeat(3, auto); gap: 4px; }
+.ms-sty { display: flex; align-items: center; gap: 5px; padding: 3px 8px 3px 4px; border-radius: 9px; background: #ffffff08; border: 1px solid #ffffff14; color: #d9cfee; font-size: 11px; cursor: pointer; }
+.ms-sty.on { background: #2a1840; border-color: var(--c, #A855F7); color: #fff; }
+.ms-tone { align-items: center; } .ms-tk { display: flex; gap: 2px; }
+.ms-tk .pk { width: 58px; } .ms-tk .pk svg { width: 38px; height: 38px; }
+.ms-fp { flex-wrap: nowrap; justify-content: center; width: max-content; max-width: calc(100% - 16px); gap: 6px; padding: 8px 10px 6px; }
+.ms-fp > .pk { width: 66px; } .ms-fp > .pk svg { width: 46px; height: 46px; } .ms-fp > .pk.big svg { width: 58px; height: 58px; }
+.ms-fp .ms-tk .pk { width: 52px; } .ms-fp .ms-tk .pk svg { width: 34px; height: 34px; }
+.ms-fp .ms-stys { gap: 3px; } .ms-fp .ms-sty { padding: 2px 6px 2px 3px; font-size: 10.5px; }

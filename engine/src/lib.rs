@@ -166,6 +166,34 @@ mod tests {
         near(rms(&l, 1.5, 2.5), 0.005723);
     }
 
+    /// Saturation multibande : mêmes chiffres que tests/scenarios/msat-parite.mjs (Chrome).
+    #[test]
+    fn saturation_multibande_comme_le_navigateur() {
+        let sr = SR as usize;
+        let mut media = Media::new();
+        let v: Vec<f32> = (0..sr).map(|i| { let t = i as f64 / SR as f64; ((0.4 * (2.0 * std::f64::consts::PI * 200.0 * t).sin()
+            + 0.15 * (2.0 * std::f64::consts::PI * 3000.0 * t).sin()) * if t < 0.5 { 1.0 } else { 0.3 }) as f32 }).collect();
+        media.insert("ms".into(), Source { channels: vec![v], sample_rate: SR });
+        let rms = |x: &[f32], a: f64, z: f64| {
+            let (a, z) = ((a * SR as f64).round() as usize, (z * SR as f64).round() as usize);
+            (x[a..z].iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / (z - a) as f64).sqrt()
+        };
+        let check = |mp: &str, want: [f64; 3], nom: &str| {
+            let json = format!(r#"{{"tracks":[{{"volume":100,"clips":[{{"id":"ms","start":0,"duration":1}}],"effects":["msat"],"effectParams":{{"msat":{mp}}}}}]}}"#);
+            let p: Project = serde_json::from_str(&json).unwrap();
+            let l = render(&p, &media, &RenderOptions { only_track: Some(0), ..opts() }).0;
+            let hf = ((4800..19200).map(|i| { let d = l[i] as f64 - 2.0 * l[i - 1] as f64 + l[i - 2] as f64; d * d }).sum::<f64>() / 14400.0).sqrt();
+            let got = [rms(&l, 0.1, 0.4), rms(&l, 0.6, 0.9), hf];
+            for k in 0..3 { assert!((got[k] - want[k]).abs() < want[k] * 0.01 + 2e-5, "{nom} : {got:?} au lieu de {want:?}"); }
+        };
+        check(r#"{"bands":[{"base":true,"sty":"bande","va":1,"heat":50}]}"#, [0.159609, 0.073363, 0.008539], "base");
+        check(r#"{"bands":[{"base":true,"sty":"lampe","va":1,"heat":40},{"lo":2000,"hi":6000,"sty":"ampli","va":2,"heat":60,"dyn":20,"fb":30,"hi2":3,"mix":70,"out":-2}]}"#, [0.175589, 0.075585, 0.022301], "libre");
+        check(r#"{"bands":[{"lo":100,"hi":400,"sty":"repli","va":1,"heat":80,"slope":48}]}"#, [0.211164, 0.06407, 0.011453], "sansbase");
+        check(r#"{"bands":[{"base":true,"sty":"lofi","va":1,"heat":30}],"mix":60,"out":-3}"#, [0.131526, 0.048781, 0.019729], "lofi");
+        check(r#"{"bands":[{"base":true,"sty":"transfo","va":0,"heat":50},{"lo":2000,"hi":6000,"sty":"bande","va":0,"heat":20,"solo":true,"dyn":-30}]}"#, [0.060186, 0.013669, 0.009164], "solo");
+        check(r#"{"bands":[{"base":true,"sty":"bande","va":1,"heat":50}],"ag":false}"#, [0.523942, 0.240843, 0.028031], "sansag");
+    }
+
     /// Multibande à bandes libres : mêmes chiffres que tests/scenarios/mband-parite.mjs (Chrome).
     #[test]
     fn multibande_comme_le_navigateur() {

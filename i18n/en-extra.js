@@ -392,3 +392,17 @@ Object.assign(exact, {
   'Double-clic là où tu veux travailler pour créer une bande (le reste du son n\'est pas touché)': 'Double-click where you want to work to create a band (the rest of the sound is untouched)',
   'Grave': 'Low', 'Boue': 'Mud', 'Médium': 'Mid', 'Présence': 'Presence', 'Sifflantes': 'Sibilance', 'Air': 'Air' });
 patterns.push(P('§ bandes au plus', '$1 bands at most'), P('● §', '● $1'));
+// 25/10 (fin) : Saturation multibande
+Object.assign(exact, {
+  'Saturation multibande': 'Multiband saturation', 'chaleur et grain par zone : des graves ronds, des médiums qui grognent, des aigus qui brillent': 'warmth and grit per zone: round lows, growling mids, shiny highs',
+  'Auto gain : le volume ne bouge presque pas quand on monte la chaleur': 'Auto gain: the volume barely moves when you turn up the warmth',
+  '« + » en haut ou double-clic = nouvelle bande · le rond : gauche / droite = déplacer, haut / bas = chaleur': '"+" at the top or double-click = new band · the dot: left / right = move, up / down = warmth',
+  'Lance la lecture : le son de la piste (avec la chaleur ajoutée) s\'affiche ici': 'Start playback: the track sound (with the added warmth) shows here',
+  'Sans bande de départ : seules tes bandes saturent, le reste du son reste propre': 'Without the starting band: only your bands saturate, the rest of the sound stays clean',
+  'Retirer la bande de départ : seules tes bandes saturent': 'Remove the starting band: only your bands saturate', 'Tout le son': 'Whole sound',
+  'Chaleur': 'Warmth', 'Dynamique': 'Dynamics', 'Résonance': 'Resonance', 'Mélange': 'Mix', 'Niveau': 'Level', 'Ton du son saturé': 'Tone of the saturated sound',
+  'Grave': 'Low', 'Médium': 'Mid', 'Aigu': 'High', 'Présence': 'Presence',
+  'Bande': 'Tape', 'Lampe': 'Tube', 'Ampli': 'Amp', 'Transfo': 'Transformer', 'Repli': 'Fold', 'Lo-fi': 'Lo-fi',
+  'Propre': 'Clean', 'Chaude': 'Warm', 'Poussée': 'Pushed', 'Douce': 'Soft', 'Juteuse': 'Juicy', 'Cassée': 'Broken', 'Rond': 'Round', 'Crunch': 'Crunch', 'Hurlant': 'Screaming',
+  'Léger': 'Light', 'Coloré': 'Colourful', 'Doux': 'Soft', 'Dur': 'Hard', 'Bits': 'Bits', 'Échantillons': 'Samples' });
+patterns.push(P('§ bandes au plus (en plus de la bande de départ)', '$1 bands at most (on top of the starting band)'), P('pente § dB', 'slope $1 dB'), P('tasse §', 'tightens $1'), P('aère §', 'opens $1'));

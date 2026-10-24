@@ -85,11 +85,48 @@ pub struct EffectParams {
     pub deess: Option<DeessParams>,
     pub comp: Option<CompParams>,
     pub mband: Option<MbandParams>,
+    pub msat: Option<MsatParams>,
     pub reverb: Option<ReverbParams>,
     pub delay: Option<DelayParams>,
     pub master: Option<MasterParams>,
     pub limit: Option<LimitParams>,
     pub pitch: Option<PitchParams>,
+}
+
+/// Saturation multibande : bande de départ (`base`, le reste du son) + jusqu'à 6 bandes libres ; mélange (%) et sortie (dB) globaux,
+/// `ag` = auto gain (par défaut oui)
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct MsatParams {
+    pub bands: Vec<MsatBand>,
+    pub mix: Option<f64>,
+    pub out: Option<f64>,
+    pub ag: Option<bool>,
+}
+/// Une bande : style (bande, lampe, ampli, transfo, repli, lofi) et variante (0-2), chaleur (0-100), dynamique (-50 aère … +50 tasse),
+/// résonance (0-100), ton du son saturé (dB : grave, médium, aigu, présence), mélange (%), niveau (dB), pente (12/24/48)
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct MsatBand {
+    pub base: Option<bool>,
+    pub lo: Option<f64>,
+    pub hi: Option<f64>,
+    pub sty: Option<String>,
+    pub va: Option<f64>,
+    pub heat: Option<f64>,
+    #[serde(rename = "dyn")]
+    pub dynamics: Option<f64>,
+    pub fb: Option<f64>,
+    pub lo2: Option<f64>,
+    pub md: Option<f64>,
+    pub hi2: Option<f64>,
+    pub pr: Option<f64>,
+    pub mix: Option<f64>,
+    pub out: Option<f64>,
+    pub solo: Option<bool>,
+    pub mute: Option<bool>,
+    pub slope: Option<f64>,
+    pub on: Option<bool>,
 }
 
 /// Multibande à bandes libres (jusqu'à 6)

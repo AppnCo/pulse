@@ -1668,8 +1668,8 @@ function migrateProject() {
 
 // === Tranche à gauche (inspecteur) : la piste sélectionnée et, à sa droite, là où elle sort ===
 // Évite d'ouvrir le mixer pour voir les effets d'une piste ou régler son volume.
-const FX_NAMES = { mband: 'Multibande', pitch: 'Pitch', crush: 'Bitcrusher', util: 'Utilitaire', width: 'Largeur', tremolo: 'Trémolo', phaser: 'Phaser', flanger: 'Flanger', chorus: 'Chorus', doubler: 'Doubleur', slapback: 'Slapback', filter: 'Filtre', gate: 'Gate', eq: 'EQ', sat: 'Saturation', deess: 'De-esser', comp: 'Compresseur', master: 'Finition', limit: 'Limiteur', delay: 'Écho', reverb: 'Reverb' };
-const FX_ORDER = ['pitch', 'filter', 'gate', 'eq', 'sat', 'crush', 'deess', 'comp', 'mband', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'reverb'];
+const FX_NAMES = { msat: 'Saturation multibande', mband: 'Multibande', pitch: 'Pitch', crush: 'Bitcrusher', util: 'Utilitaire', width: 'Largeur', tremolo: 'Trémolo', phaser: 'Phaser', flanger: 'Flanger', chorus: 'Chorus', doubler: 'Doubleur', slapback: 'Slapback', filter: 'Filtre', gate: 'Gate', eq: 'EQ', sat: 'Saturation', deess: 'De-esser', comp: 'Compresseur', master: 'Finition', limit: 'Limiteur', delay: 'Écho', reverb: 'Reverb' };
+const FX_ORDER = ['pitch', 'filter', 'gate', 'eq', 'sat', 'msat', 'crush', 'deess', 'comp', 'mband', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'reverb'];
 function inspectorOpen() { try { return localStorage.getItem('pulse_inspector') !== '0'; } catch { return true; } }
 function setInspectorOpen(open) {
     try { localStorage.setItem('pulse_inspector', open ? '1' : '0'); } catch {}
@@ -2203,12 +2203,12 @@ function openOutputMenu(anchor, kind, x, idx) {
 // Effets qu'on peut poser sur une piste ou un bus (chacun a son panneau)
 const ADD_FX_CHOICES = [['crush', 'Bitcrusher (son lo-fi)'], ['util', 'Utilitaire (gain, mono, phase)'], ['width', 'Largeur stéréo'],
     ['tremolo', 'Trémolo (volume qui pulse)'], ['phaser', 'Phaser'], ['flanger', 'Flanger'], ['chorus', 'Chorus'],
-    ['doubler', 'Doubleur de voix'], ['slapback', 'Slapback (écho court)'], ['gate', 'Gate (coupe le bruit entre les phrases)'], ['filter', 'Filtre (coupe-bas / coupe-haut)'], ['eq', 'EQ'], ['comp', 'Compresseur'], ['mband', 'Multibande'], ['deess', 'De-esser'], ['sat', 'Saturation'], ['delay', 'Écho'], ['reverb', 'Reverb']];
+    ['doubler', 'Doubleur de voix'], ['slapback', 'Slapback (écho court)'], ['gate', 'Gate (coupe le bruit entre les phrases)'], ['filter', 'Filtre (coupe-bas / coupe-haut)'], ['eq', 'EQ'], ['comp', 'Compresseur'], ['mband', 'Multibande'], ['deess', 'De-esser'], ['sat', 'Saturation'], ['msat', 'Saturation multibande'], ['delay', 'Écho'], ['reverb', 'Reverb']];
 // Rangés par catégorie comme dans Logic (voir PLUGINS-CATALOGUE.md) : un nouvel effet = une ligne dans sa catégorie
 const ADD_FX_CATEGORIES = [
     ['Dynamique', ['comp', 'mband', 'deess', 'gate']],
     ['Égaliseur et filtre', ['eq', 'filter']],
-    ['Distorsion', ['sat', 'crush']],
+    ['Distorsion', ['sat', 'msat', 'crush']],
     ['Mouvement', ['chorus', 'flanger', 'phaser', 'tremolo']],
     ['Voix et hauteur', ['pitch', 'doubler']],
     ['Écho et espace', ['delay', 'slapback', 'reverb']],
@@ -2216,12 +2216,12 @@ const ADD_FX_CATEGORIES = [
     ['Utilitaires', ['util']]
 ];
 // Une phrase par effet dans le menu « + Effet », et les mots qu'on tape pour le trouver
-const FX_DESC = { mband: 'travaille seulement une zone du son (graves, boue, sifflantes…), quand elle déborde', pitch: 'monte ou descend la voix (demi-tons), pour un effet sur un passage', comp: 'resserre l\'écart entre les passages forts et faibles', deess: 'adoucit les « s » qui sifflent', eq: 'corrige les graves, médiums et aigus',
+const FX_DESC = { msat: 'chaleur et grain par zone : des graves ronds, des médiums qui grognent, des aigus qui brillent', mband: 'travaille seulement une zone du son (graves, boue, sifflantes…), quand elle déborde', pitch: 'monte ou descend la voix (demi-tons), pour un effet sur un passage', comp: 'resserre l\'écart entre les passages forts et faibles', deess: 'adoucit les « s » qui sifflent', eq: 'corrige les graves, médiums et aigus',
     sat: 'chaleur et grain, comme une bande ou une lampe', delay: 'répétitions calées sur le tempo (1/8, 1/4…)', reverb: 'ajoute de l\'espace, une pièce',
     width: 'élargit ou resserre l\'image stéréo', chorus: 'épaissit le son en le dédoublant légèrement', flanger: 'balayage métallique qui tourne',
     phaser: 'balayage doux et rond', tremolo: 'le volume pulse en rythme', doubler: 'donne l\'impression de deux prises', slapback: 'écho court, très utilisé en rap',
     crush: 'son lo-fi, numérique abîmé', util: 'volume, phase, passage en mono', filter: 'coupe les graves ou les aigus' };
-const FX_WORDS = { mband: 'multiband multibande compressor dynamic dynamique', pitch: 'pitch shift hauteur transpose alterboy grave aigu', comp: 'compressor compression dynamique', deess: 'deesser sibilance', gate: 'noise gate bruit', eq: 'equalizer egaliseur', filter: 'hpf lpf high pass low pass coupe-bas coupe-haut',
+const FX_WORDS = { msat: 'saturation multiband multibande saturn distortion drive chaleur tape tube', mband: 'multiband multibande compressor dynamic dynamique', pitch: 'pitch shift hauteur transpose alterboy grave aigu', comp: 'compressor compression dynamique', deess: 'deesser sibilance', gate: 'noise gate bruit', eq: 'equalizer egaliseur', filter: 'hpf lpf high pass low pass coupe-bas coupe-haut',
     sat: 'saturation distortion saturator drive', crush: 'bitcrusher lofi', delay: 'delay echo', reverb: 'reverb reverberation', slapback: 'slap delay echo',
     chorus: 'modulation', flanger: 'modulation', phaser: 'modulation', tremolo: 'modulation', doubler: 'doubler double', width: 'stereo imager', util: 'utility gain mono phase', tune: 'autotune pitch justesse' };
 const FX_START = {
@@ -2230,7 +2230,7 @@ const FX_START = {
     crush: { bits: 8, down: 4, mix: 100 }, util: { gain: 0, invert: 0, mono: 0 }, width: { width: 100 },
     tremolo: { rate: 5, depth: 50 }, phaser: { rate: 0.4, depth: 70, feedback: 40, mix: 50 }, flanger: { rate: 0.25, depth: 2, feedback: 50, mix: 50 },
     chorus: { rate: 0.8, depth: 5, mix: 50 }, doubler: { width: 50, mix: 50 }, slapback: { time: 110, feedback: 12, mix: 25 },
-    gate: { threshold: -45, release: 150, reduction: 40 }, filter: { hpf: 80, lpf: 20000, slope: 12 }, sat: { drive: 25 }, mband: { bands: [] }, deess: { thr: -26, range: 10, lo: 5000, hi: 11000 }, delay: { beats: 0.5, feedback: 35, wet: 25 } };
+    gate: { threshold: -45, release: 150, reduction: 40 }, filter: { hpf: 80, lpf: 20000, slope: 12 }, sat: { drive: 25 }, msat: { bands: [{ base: true, sty: 'bande', va: 1, heat: 30 }] }, mband: { bands: [] }, deess: { thr: -26, range: 10, lo: 5000, hi: 11000 }, delay: { beats: 0.5, feedback: 35, wet: 25 } };
 function openAddEffectMenu(anchor, target, x) {
     closeAllMenus();
     const r = anchor.getBoundingClientRect();
@@ -7964,6 +7964,202 @@ function openMbandPanel(trackIdx, anchorEl) {
     makePlugWindow(panel, t, 'mband', trackIdx);
 }
 
+// === Saturation multibande (planche validée, choix B) : une bande de départ sur tout le son, puis des bandes libres posées dessus ===
+// Chaque bande libre prend sa zone à la bande de départ (rien n'est saturé deux fois). « + » en haut ou double-clic = nouvelle bande.
+const MSAT_STY = {
+    bande: { n: 'Bande', v: ['Propre', 'Chaude', 'Poussée'] }, lampe: { n: 'Lampe', v: ['Douce', 'Juteuse', 'Cassée'] }, ampli: { n: 'Ampli', v: ['Rond', 'Crunch', 'Hurlant'] },
+    transfo: { n: 'Transfo', v: ['Léger', 'Coloré'] }, repli: { n: 'Repli', v: ['Doux', 'Dur'] }, lofi: { n: 'Lo-fi', v: ['Bits', 'Échantillons'] }
+};
+const MSAT_COLORS = ['#A855F7', '#F59E0B', '#22D3EE', '#F472B6', '#34D399', '#60A5FA', '#FB7185'];
+// même courbe que le moteur (audio.js, msatCurve) : pour l'icône et l'encart « entrée → sortie »
+function msatCurveUI(sty, x, k) {
+    x = Math.max(-4, Math.min(4, x));
+    if (sty === 'lampe') return Math.tanh(k * (x + 0.18 * x * x)) / Math.tanh(k * 1.18);
+    if (sty === 'ampli') { const a = k * x; return Math.max(-1, Math.min(1, a / (1 + Math.abs(a)) * (1 + 1 / k))); }
+    if (sty === 'transfo') return Math.sin(Math.max(-1, Math.min(1, x * (0.6 + k * 0.08))) * Math.PI / 2);
+    if (sty === 'repli') { let a = x * (1 + k * 0.35); for (let i = 0; i < 4; i++) { if (a > 1) a = 2 - a; else if (a < -1) a = -2 - a; } return a; }
+    if (sty === 'lofi') { const q = 10 - Math.min(7, k); return Math.floor(Math.tanh(k * x) / Math.tanh(k) * q + 0.5) / q; }
+    return Math.tanh(k * x * 0.9) / Math.tanh(k * 0.9);
+}
+const msatIcon = (k) => { let p = ''; for (let i = 0; i <= 20; i++) { const x = -1 + i / 10, y = msatCurveUI(k, x, 4); p += (i ? 'L' : 'M') + (1 + (x + 1) / 2 * 20).toFixed(1) + ' ' + (15 - (Math.max(-1, Math.min(1, y)) + 1) / 2 * 14).toFixed(1); } return `<svg viewBox="0 0 22 16" width="22" height="16"><path d="${p}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>`; };
+function openMsatPanel(trackIdx, anchorEl) {
+    closeTransientPanels();
+    const t = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;
+    if (!t) return;
+    const already = findPlugWin(t, 'msat');
+    if (already) { plugFront(already); return; }
+    t.effectParams = t.effectParams || {};
+    if (!t.effectParams.msat) t.effectParams.msat = JSON.parse(JSON.stringify(FX_START.msat));
+    const P = () => t.effectParams.msat, BS = () => (P().bands = P().bands || []);
+    const W = 900, H = 520, T = 40, B = H - 130, PL = 846, F0 = 20, F1 = 20000, MAXB = 6;
+    const X = (f) => Math.log(f / F0) / Math.log(F1 / F0) * PL, F = (x) => F0 * Math.pow(F1 / F0, Math.max(0, Math.min(PL, x)) / PL);
+    const YS = (d) => B - ((Math.max(-96, Math.min(-12, d)) + 96) / 84) * (B - T - 40);
+    const fmtF = (f) => f >= 1000 ? (f / 1000).toFixed(f >= 10000 ? 1 : 2).replace(/\.?0+$/, '').replace('.', ',') + ' kHz' : Math.round(f) + ' Hz';
+    const free = () => BS().filter(b => !b.base), base = () => BS().find(b => b.base);
+    const nm = (b) => b.base ? 'Tout le son' : mbName(b);
+    const VKU = [0.6, 1, 1.7];
+    let sel = BS().length > 1 ? 1 : 0, undoArmed = false, hx = null;
+    const arm = () => { if (!undoArmed) { pushUndo(); undoArmed = true; } };
+    const finish = () => { t.effects = t.effects || []; if (!t.effects.includes('msat')) t.effects.push('msat'); refreshPlaybackSoon(); saveProject(); undoArmed = false; };
+    const step = (fn) => { pushUndo(); fn(); finish(); };
+    const panel = document.createElement('div');
+    panel.className = 'fx-panel lim-panel mb-panel ms-panel';
+    panel.innerHTML = `
+        <div class="fx-panel-header">
+            <label class="fx-bypass-label fx-power" data-tooltip="Allumer ou éteindre l'effet"><input type="checkbox" class="fx-bypass" ${t.effects?.includes('msat') ? 'checked' : ''}><span class="fx-power-btn">⏻</span></label>
+            <span class="fx-title lim-title">Saturation multibande <i>— ${esc(t.name || '')}</i></span>
+            <button class="lim-tp ms-ag" data-tooltip="Auto gain : le volume ne bouge presque pas quand on monte la chaleur">Auto gain</button>
+            <span class="ms-glob"></span>
+            <button class="fx-panel-close">×</button>
+        </div>
+        <div class="lim-face"><svg class="lim-svg ms-svg" viewBox="0 0 ${W} ${H}"></svg><div class="lim-fp mb-fp ms-fp"></div></div>
+        <div class="lim-sb"><span>Bandes <b class="ms-n"></b></span><span class="lim-spacer"></span><span>« + » en haut ou double-clic = nouvelle bande · le rond : gauche / droite = déplacer, haut / bas = chaleur</span></div>`;
+    document.body.appendChild(panel);
+    const svg = panel.querySelector('.ms-svg'), fp = panel.querySelector('.ms-fp');
+    // Mélange et Sortie de tout l'effet, dans le bandeau
+    const glob = panel.querySelector('.ms-glob');
+    const gk1 = proKnob(glob, { label: 'Mélange', min: 0, max: 100, val: P().mix ?? 100, fmt: (v) => Math.round(v) + ' %', onChange: (v) => { arm(); P().mix = Math.round(v); }, onEnd: finish });
+    const gk2 = proKnob(glob, { label: 'Sortie', min: -12, max: 12, val: P().out || 0, fmt: (v) => (v > 0 ? '+' : '') + v.toFixed(1).replace('.', ',') + ' dB', onChange: (v) => { arm(); P().out = Math.round(v * 2) / 2; }, onEnd: finish });
+    let bins = null;
+    const draw = () => {
+        const bands = BS(), bs = base(), bi = bands.indexOf(bs);
+        let g = '<defs>' + bands.map((b, i) => `<linearGradient id="msc${i}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${MSAT_COLORS[i % 7]}" stop-opacity="${b.base ? 0.1 : 0.2}"/><stop offset="1" stop-color="${MSAT_COLORS[i % 7]}" stop-opacity=".02"/></linearGradient>`).join('') + '</defs>';
+        if (bs) g += `<rect class="mb-col" data-i="${bi}" x="0" y="${T}" width="${PL}" height="${B - T}" fill="url(#msc${bi})" opacity="${bi === sel ? 1 : 0.6}"/>`;
+        free().forEach(b => { const i = bands.indexOf(b), x0 = X(b.lo), x1 = X(b.hi), c = MSAT_COLORS[i % 7]; g += `<rect class="mb-col" data-i="${i}" x="${x0.toFixed(1)}" y="${T}" width="${(x1 - x0).toFixed(1)}" height="${B - T}" fill="#0b0712" opacity=".5"/><rect class="mb-col" data-i="${i}" x="${x0.toFixed(1)}" y="${T}" width="${(x1 - x0).toFixed(1)}" height="${B - T}" fill="url(#msc${i})" opacity="${i === sel ? 1 : 0.6}"/><line x1="${x0}" x2="${x0}" y1="${T}" y2="${B}" stroke="${c}" stroke-opacity=".5" stroke-dasharray="3 5"/><line x1="${x1}" x2="${x1}" y1="${T}" y2="${B}" stroke="${c}" stroke-opacity=".5" stroke-dasharray="3 5"/>`; });
+        for (const f of [50, 100, 200, 500, 1000, 2000, 5000, 10000]) g += `<line x1="${X(f).toFixed(1)}" x2="${X(f).toFixed(1)}" y1="${T}" y2="${B}" class="lim-grid"/><text x="${(X(f) + 3).toFixed(1)}" y="${B + 14}" class="lim-txt">${f >= 1000 ? f / 1000 + 'k' : f}</text>`;
+        const an = (state.playing || state.recording) ? (typeof trackIdx === 'number' ? PulseAudio.getTrackSpectrum(trackIdx) : (t.id && PulseAudio.getBusSpectrum ? PulseAudio.getBusSpectrum(t.id) : null)) : null;
+        if (an) {
+            if (!bins || bins.length !== an.frequencyBinCount) bins = new Float32Array(an.frequencyBinCount);
+            an.getFloatFrequencyData(bins);
+            const nyq = (PulseAudio.getContext() ? PulseAudio.getContext().sampleRate : 48000) / 2;
+            let d = `M0 ${B}`;
+            for (let x = 0; x <= PL; x += 4) { const k = Math.min(bins.length - 1, Math.max(0, Math.round(F(x) / nyq * (bins.length - 1)))); const v = Number.isFinite(bins[k]) ? bins[k] : -120; d += ` L${x} ${YS(v).toFixed(1)}`; }
+            g += `<path d="${d} L${PL} ${B} Z" class="ms-spec"/>`;
+        } else g += `<text x="${PL / 2}" y="${B - 16}" class="lim-txt" text-anchor="middle">Lance la lecture : le son de la piste (avec la chaleur ajoutée) s'affiche ici</text>`;
+        if (!bs) g += `<text x="${PL / 2}" y="${T + 70}" class="lim-txt big" text-anchor="middle">Sans bande de départ : seules tes bandes saturent, le reste du son reste propre</text>`;
+        bands.forEach((b, i) => {
+            const on = i === sel, c = MSAT_COLORS[i % 7], heat = b.heat ?? 30, x = b.base ? PL * 0.16 : (X(b.lo) + X(b.hi)) / 2, y = B - 20 - (heat / 100) * (B - T - 90);
+            const sty = MSAT_STY[b.sty || 'bande'] || MSAT_STY.bande;
+            g += `<g class="mb-dot" data-i="${i}" style="cursor:${b.base ? 'ns-resize' : 'move'}"><circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="20" fill="transparent"/>${on ? `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="13" fill="none" stroke="#fff" stroke-width="2"/>` : ''}<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${on ? 9 : 7}" fill="${b.mute ? '#3a2c50' : c}" stroke="#0b0712" stroke-width="2"/>
+                <text x="${x.toFixed(1)}" y="${(y - 20).toFixed(1)}" class="mb-lab" text-anchor="middle">${esc(nm(b))} · ${sty.n} ${sty.v[b.va ?? 1] || ''} · ${heat} %</text></g>`;
+            const zx = b.base ? 8 : X(b.lo) + 6, zy = b.base ? T + 8 : T + 30;
+            g += `<g class="ms-sm"><rect class="ms-s" data-i="${i}" x="${zx}" y="${zy}" width="18" height="16" rx="5" fill="${b.solo ? '#FBBF24' : '#ffffff10'}" stroke="#ffffff22"/><text x="${zx + 9}" y="${zy + 11.5}" class="ms-smt ${b.solo ? 'on' : ''}" text-anchor="middle">S</text>
+                <rect class="ms-m" data-i="${i}" x="${zx + 22}" y="${zy}" width="18" height="16" rx="5" fill="${b.mute ? '#F87171' : '#ffffff10'}" stroke="#ffffff22"/><text x="${zx + 31}" y="${zy + 11.5}" class="ms-smt ${b.mute ? 'on' : ''}" text-anchor="middle">M</text></g>`;
+            if (!b.base && on) {
+                const x0 = X(b.lo), x1 = X(b.hi), by = B - 24;
+                g += `<line x1="${x0}" x2="${x1}" y1="${by}" y2="${by}" stroke="${c}" stroke-width="4" stroke-linecap="round" style="filter:drop-shadow(0 0 5px ${c})"/>
+                    <g class="mb-tri" data-k="lo"><rect x="${x0 - 14}" y="${by - 18}" width="28" height="32" fill="transparent"/><path d="M${x0 - 11} ${by + 8} L${x0 + 3} ${by - 12} L${x0 + 3} ${by + 8} Z" fill="#e9e2f5"/></g>
+                    <g class="mb-tri" data-k="hi"><rect x="${x1 - 14}" y="${by - 18}" width="28" height="32" fill="transparent"/><path d="M${x1 + 11} ${by + 8} L${x1 - 3} ${by - 12} L${x1 - 3} ${by + 8} Z" fill="#e9e2f5"/></g>
+                    <g class="ms-slp"><rect x="${((x0 + x1) / 2 - 32).toFixed(1)}" y="${by - 34}" width="64" height="18" rx="9" fill="#1a1228" stroke="${c}aa"/><text x="${((x0 + x1) / 2).toFixed(1)}" y="${by - 21}" class="ms-smt" text-anchor="middle">pente ${b.slope || 24} dB</text></g>`;
+            }
+        });
+        if (hx !== null && free().length < MAXB) g += `<g class="ms-plus"><circle cx="${hx.toFixed(1)}" cy="${T + 12}" r="10" fill="#7C3AED" stroke="#C084FC"/><text x="${hx.toFixed(1)}" y="${T + 16.5}" class="ms-plust" text-anchor="middle">+</text></g>`;
+        // encart : la courbe du style choisi
+        const zs = bands[sel];
+        if (zs) {
+            const cx = PL - 136, cy = T + 40, cs = 120, k = (1 + (zs.heat ?? 30) / 100 * 7) * VKU[zs.va ?? 1], c = MSAT_COLORS[sel % 7];
+            let p = ''; for (let i = 0; i <= 60; i++) { const xx = -1 + i / 30, yy = msatCurveUI(zs.sty || 'bande', xx, k); p += (i ? 'L' : 'M') + (cx + 8 + (xx + 1) / 2 * (cs - 16)).toFixed(1) + ' ' + (cy + cs - 8 - (Math.max(-1, Math.min(1, yy)) + 1) / 2 * (cs - 16)).toFixed(1); }
+            g += `<rect x="${cx}" y="${cy}" width="${cs}" height="${cs}" rx="12" fill="#0b0712cc" stroke="${c}66"/><line x1="${cx + 8}" y1="${cy + cs - 8}" x2="${cx + cs - 8}" y2="${cy + 8}" stroke="#ffffff22" stroke-dasharray="3 4"/><path d="${p}" fill="none" stroke="${c}" stroke-width="2.2" style="filter:drop-shadow(0 0 5px ${c})"/><text x="${cx + cs / 2}" y="${cy + cs + 14}" class="lim-txt" text-anchor="middle">entrée → sortie</text>`;
+        }
+        svg.innerHTML = g;
+        panel.querySelector('.ms-n').textContent = (bs ? 'départ + ' : '') + free().length + ' / ' + MAXB;
+        panel.querySelector('.ms-ag').classList.toggle('on', P().ag !== false);
+    };
+    let kHeat = null;
+    const buildFp = () => {
+        fp.innerHTML = ''; const b = BS()[sel]; fp.style.display = b ? '' : 'none'; if (!b) return;
+        const c = MSAT_COLORS[sel % 7]; fp.style.borderColor = c + '77';
+        const sty = MSAT_STY[b.sty || 'bande'] || MSAT_STY.bande;
+        const c0 = document.createElement('div'); c0.className = 'lim-col mb-c0';
+        c0.innerHTML = `<span class="lim-t" style="color:${c}">● ${esc(nm(b))} · style</span>
+            <div class="ms-stys">${Object.entries(MSAT_STY).map(([k, s2]) => `<button class="ms-sty ${(b.sty || 'bande') === k ? 'on' : ''}" data-k="${k}" style="--c:${c}">${msatIcon(k)}${s2.n}</button>`).join('')}</div>
+            <span class="mb-sm"><span class="lim-seg ms-va">${sty.v.map((n, i) => `<span data-i="${i}" class="${(b.va ?? 1) === i ? 'on' : ''}">${n}</span>`).join('')}</span><span class="mb-pill mb-del" data-tooltip="${b.base ? 'Retirer la bande de départ : seules tes bandes saturent' : 'Retirer cette bande'}">✕</span></span>`;
+        fp.appendChild(c0);
+        c0.querySelectorAll('.ms-sty').forEach(x => x.addEventListener('click', () => { step(() => { b.sty = x.dataset.k; b.va = Math.min(b.va ?? 1, MSAT_STY[b.sty].v.length - 1); }); buildFp(); draw(); }));
+        c0.querySelectorAll('.ms-va span').forEach(x => x.addEventListener('click', () => { step(() => { b.va = +x.dataset.i; }); buildFp(); draw(); }));
+        c0.querySelector('.mb-del').addEventListener('click', () => { step(() => { BS().splice(sel, 1); sel = Math.max(0, Math.min(sel, BS().length - 1)); }); buildFp(); draw(); });
+        const sep = () => { const d = document.createElement('div'); d.className = 'lim-sep'; fp.appendChild(d); }; sep();
+        const pm = (v) => (v > 0 ? '+' : '') + Math.round(v);
+        const k = (host, key, o) => proKnob(host, { color: c, onEnd: finish, ...o, onChange: (v) => { arm(); b[key] = o.round ? o.round(v) : Math.round(v); draw(); } });
+        kHeat = k(fp, 'heat', { label: 'Chaleur', min: 0, max: 100, val: b.heat ?? 30, big: true, fmt: (v) => Math.round(v) + ' %' });
+        k(fp, 'dyn', { label: 'Dynamique', min: -50, max: 50, val: b.dyn || 0, fmt: (v) => { v = Math.round(v); return v > 0 ? 'tasse ' + v : v < 0 ? 'aère ' + (-v) : '0'; } });
+        k(fp, 'fb', { label: 'Résonance', min: 0, max: 100, val: b.fb || 0, fmt: (v) => Math.round(v) + ' %' });
+        k(fp, 'mix', { label: 'Mélange', min: 0, max: 100, val: b.mix ?? 100, fmt: (v) => Math.round(v) + ' %' });
+        k(fp, 'out', { label: 'Niveau', min: -24, max: 12, val: b.out || 0, fmt: (v) => pm(v) + ' dB', round: (v) => Math.round(v * 2) / 2 });
+        sep();
+        const tc = document.createElement('div'); tc.className = 'lim-col ms-tone'; tc.innerHTML = '<span class="lim-t">Ton du son saturé</span><div class="ms-tk"></div>'; fp.appendChild(tc);
+        const tk = tc.querySelector('.ms-tk');
+        [['lo2', 'Grave'], ['md', 'Médium'], ['hi2', 'Aigu'], ['pr', 'Présence']].forEach(([key, l]) => k(tk, key, { label: l, min: -12, max: 12, val: b[key] || 0, fmt: (v) => pm(v) + ' dB', round: (v) => Math.round(v * 2) / 2 }));
+    };
+    const at = (e) => { const r = svg.getBoundingClientRect(); return [(e.clientX - r.left) * W / r.width, (e.clientY - r.top) * H / r.height]; };
+    // nouvelle bande libre : une octave autour de la souris, sans chevaucher les autres
+    const addBand = (f) => {
+        if (free().length >= MAXB) { flash(`${MAXB} bandes au plus (en plus de la bande de départ)`); return; }
+        let lo = f / Math.SQRT2, hi = f * Math.SQRT2;
+        for (const b of free()) { if (f >= b.lo && f < b.hi) return; if (b.hi <= f) lo = Math.max(lo, b.hi); if (b.lo >= f) hi = Math.min(hi, b.lo); }
+        if (hi / lo < 1.2) return;
+        step(() => { BS().push({ lo: Math.max(F0, Math.round(lo)), hi: Math.min(F1, Math.round(hi)), sty: 'ampli', va: 0, heat: 30 }); sel = BS().length - 1; });
+        buildFp(); draw();
+    };
+    const near = (b, side) => { let v = side ? F1 : F0; for (const o of free()) { if (o === b) continue; if (side && o.lo >= b.hi - 1) v = Math.min(v, o.lo); if (!side && o.hi <= b.lo + 1) v = Math.max(v, o.hi); } return v; };
+    svg.addEventListener('mouseleave', () => { if (hx !== null) { hx = null; draw(); } });
+    svg.addEventListener('mousemove', (e) => { if (e.buttons) return; const [x, y] = at(e); const n = y < T + 26 && x < PL ? x : null; if (n !== hx) { hx = n; draw(); } });
+    svg.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        const tg = e.target;
+        if (tg.closest('.ms-plus')) { e.preventDefault(); addBand(F(hx)); return; }
+        if (tg.closest('.ms-s')) { const b = BS()[+tg.dataset.i]; step(() => { b.solo = !b.solo; if (b.solo) delete b.mute; else delete b.solo; }); draw(); return; }
+        if (tg.closest('.ms-m')) { const b = BS()[+tg.dataset.i]; step(() => { b.mute = !b.mute; if (b.mute) delete b.solo; else delete b.mute; }); draw(); return; }
+        if (tg.closest('.ms-slp')) { const b = BS()[sel], L = [12, 24, 48]; step(() => { b.slope = L[(L.indexOf(b.slope || 24) + 1) % 3]; }); draw(); return; }
+        const tri = tg.closest('.mb-tri'), dot = tg.closest('.mb-dot'), col = tg.closest('.mb-col');
+        if (!tri && !dot) { if (col && +col.dataset.i !== sel) { sel = +col.dataset.i; buildFp(); draw(); } return; }
+        e.preventDefault();
+        if (dot && +dot.dataset.i !== sel) { sel = +dot.dataset.i; buildFp(); }
+        const b = BS()[sel]; if (!b) return;
+        const [x0, y0] = at(e), lo0 = b.lo, hi0 = b.hi, h0 = b.heat ?? 30;
+        let moved = false; undoArmed = false;
+        const mv = (ev) => {
+            const [x, y] = at(ev); if (!moved && Math.hypot(x - x0, y - y0) < 2) return; if (!moved) arm(); moved = true;
+            if (tri && tri.dataset.k === 'lo') b.lo = Math.round(Math.max(near(b, 0), Math.min(b.hi / 1.25, F(x))));
+            else if (tri) b.hi = Math.round(Math.min(near(b, 1), Math.max(b.lo * 1.25, F(x))));
+            else {
+                if (!b.base) {
+                    const k = F(X(Math.sqrt(lo0 * hi0)) + (x - x0)) / Math.sqrt(lo0 * hi0); let lo = lo0 * k, hi = hi0 * k; const L = near(b, 0), R = near(b, 1);
+                    if (lo < L) { hi *= L / lo; lo = L; } if (hi > R) { lo *= R / hi; hi = R; }
+                    if (lo >= L - 0.5 && hi <= R + 0.5) { b.lo = Math.round(lo); b.hi = Math.round(hi); }
+                }
+                b.heat = Math.round(Math.max(0, Math.min(100, h0 + (y0 - y) / (B - T - 90) * 100)));
+                if (kHeat) kHeat.set(b.heat);
+            }
+            draw();
+        };
+        const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); if (moved) finish(); buildFp(); draw(); };
+        document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
+    });
+    svg.addEventListener('dblclick', (e) => {
+        if (e.target.closest('.mb-dot, .mb-tri, .ms-s, .ms-m, .ms-slp, .ms-plus')) return;
+        const [x] = at(e); if (x > PL) return;
+        addBand(F(x));
+    });
+    panel.querySelector('.ms-ag').addEventListener('click', () => { step(() => { if (P().ag === false) delete P().ag; else P().ag = false; }); draw(); });
+    let last = 0;
+    const loop = (ts) => { if (!panel.isConnected) return; if ((state.playing || state.recording) && ts - last > 50) { last = ts; draw(); } requestAnimationFrame(loop); };
+    requestAnimationFrame(loop);
+    panel.querySelector('.fx-panel-close').addEventListener('click', () => panel.remove());
+    panel.querySelector('.fx-bypass').addEventListener('change', (e) => {
+        pushUndo(); t.effects = t.effects || [];
+        if (e.target.checked) { if (!t.effects.includes('msat')) t.effects.push('msat'); } else { const i = t.effects.indexOf('msat'); if (i >= 0) t.effects.splice(i, 1); }
+        refreshPlaybackSoon(); saveProject(); refreshStrips();
+    });
+    buildFp(); draw();
+    const rect = (anchorEl && anchorEl.getBoundingClientRect) ? anchorEl.getBoundingClientRect() : { left: 80, right: 80, top: 80 };
+    const pw = Math.min(900, window.innerWidth - 16);
+    let left = rect.right + 8; if (left + pw > window.innerWidth) left = Math.max(8, rect.left - pw - 8);
+    panel.style.left = Math.max(8, Math.min(left, window.innerWidth - pw - 8)) + 'px';
+    panel.style.top = Math.max(8, Math.min(rect.top - 20, window.innerHeight - panel.offsetHeight - 8)) + 'px';
+    makePlugWindow(panel, t, 'msat', trackIdx);
+}
+
 // Réglages de chaque effet (partagés : fenêtres de plugin et menu d'automation)
 const FX_PANEL_DEFS = {
     eq: [
@@ -8081,6 +8277,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
     if (fxName === 'gate') return openGatePanel(trackIdx, anchorEl);
     if (fxName === 'deess') return openDeessPanel(trackIdx, anchorEl);
     if (fxName === 'mband') return openMbandPanel(trackIdx, anchorEl);
+    if (fxName === 'msat') return openMsatPanel(trackIdx, anchorEl);
     closeTransientPanels();
     // trackIdx : numéro de piste, ou directement un groupe
     const t = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;

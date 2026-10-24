@@ -183,6 +183,101 @@ window.PulseAudio = (function() {
             }
         }
         registerProcessor('pulse-deesser2', PulseDeesser2);
+        // Saturation multibande : même calcul que MultiSat dans engine/src/fx.rs. Tout se fait à 4 fois la cadence
+        // (même filtre que pulse-sat), donc bandes, son non traité et mélange restent alignés.
+        // Bandes libres (elles prennent leur zone) + bande de départ (« base ») qui reçoit le reste du son.
+        const MSAT_VK = [0.6, 1, 1.7];
+        const msatCurve = (sty, x, k) => {
+            x = Math.max(-4, Math.min(4, x));
+            if (sty === 'lampe') return Math.tanh(k * (x + 0.18 * x * x)) / Math.tanh(k * 1.18);
+            if (sty === 'ampli') { const a = k * x; return Math.max(-1, Math.min(1, a / (1 + Math.abs(a)) * (1 + 1 / k))); }
+            if (sty === 'transfo') return Math.sin(Math.max(-1, Math.min(1, x * (0.6 + k * 0.08))) * Math.PI / 2);
+            if (sty === 'repli') { let a = x * (1 + k * 0.35); for (let i = 0; i < 4; i++) { if (a > 1) a = 2 - a; else if (a < -1) a = -2 - a; } return a; }
+            if (sty === 'lofi') { const q = 10 - Math.min(7, k); return Math.floor(Math.tanh(k * x) / Math.tanh(k) * q + 0.5) / q; }
+            return Math.tanh(k * x * 0.9) / Math.tanh(k * 0.9);
+        };
+        // Auto gain : un son à −12 dB (sinus d'amplitude 0,25) ressort au même niveau, quelle que soit la chaleur
+        const msatTrim = (sty, k) => { let s = 0; for (let i = 0; i < 64; i++) { const y = msatCurve(sty, 0.25 * Math.sin(2 * Math.PI * i / 64), k); s += y * y; } return 0.25 * Math.SQRT1_2 / Math.max(1e-6, Math.sqrt(s / 64)); };
+        class PulseMsat extends AudioWorkletProcessor {
+            constructor(o) {
+                super();
+                const p = (o && o.processorOptions) || {}, sr4 = sampleRate * 4;
+                const biq = (hp, f) => { const w = 2 * Math.PI * f / sr4, c = Math.cos(w), al = Math.sin(w) / (2 * Math.SQRT1_2), a0 = 1 + al;
+                    return hp ? [(1 + c) / 2 / a0, -(1 + c) / a0, (1 + c) / 2 / a0, -2 * c / a0, (1 - al) / a0] : [(1 - c) / 2 / a0, (1 - c) / a0, (1 - c) / 2 / a0, -2 * c / a0, (1 - al) / a0]; };
+                const bpf = (f) => { const w = 2 * Math.PI * f / sr4, al = Math.sin(w) / 4, a0 = 1 + al; return [al / a0, 0, -al / a0, -2 * Math.cos(w) / a0, (1 - al) / a0]; };
+                const co = (ms) => 1 - Math.exp(-1 / (ms / 1000 * sr4));
+                const all = (Array.isArray(p.bands) ? p.bands : []).filter(b => b && b.on !== false);
+                const mk = (b, isBase) => {
+                    const lo = isBase ? 20 : Math.max(20, Math.min(20000, b.lo || 20)), hi = isBase ? 20000 : Math.max(lo * 1.05, Math.min(20000, b.hi || 20000));
+                    const n = (b.slope || 24) >= 48 ? 4 : (b.slope || 24) >= 24 ? 2 : 1, ks = [];
+                    if (!isBase) { if (lo > 20.5) for (let i = 0; i < n; i++) ks.push(biq(true, lo)); if (hi < 19999) for (let i = 0; i < n; i++) ks.push(biq(false, hi)); }
+                    const sty = b.sty || 'bande', va = Math.max(0, Math.min(2, b.va ?? 1)), k = (1 + Math.max(0, Math.min(100, b.heat ?? 30)) / 100 * 7) * MSAT_VK[va];
+                    const tone = [['lowshelf', 150, b.lo2, 0.7071], ['bell', 1000, b.md, 0.7], ['highshelf', 6000, b.hi2, 0.7071], ['bell', 3500, b.pr, 1.2]]
+                        .filter(t => t[2]).flatMap(t => eqBandCoefs({ type: t[0], freq: t[1], gain: t[2], q: t[3] }, sr4));
+                    return { ks, st: [ks.map(() => [0, 0, 0, 0]), ks.map(() => [0, 0, 0, 0])], tone, ts: [tone.map(() => [0, 0, 0, 0]), tone.map(() => [0, 0, 0, 0])],
+                        sty, k, trim: p.ag === false ? 1 : msatTrim(sty, k),
+                        dyn: Math.max(-50, Math.min(50, b.dyn || 0)), env: 0, att: co(5), rel: co(80),
+                        fbk: Math.max(0, Math.min(100, b.fb || 0)) / 100 * 0.6, bp: bpf(isBase ? 1000 : Math.sqrt(lo * hi)), fs: [[0, 0, 0, 0], [0, 0, 0, 0]], last: [0, 0],
+                        hold: sty === 'lofi' && va === 1 ? 4 * (1 + Math.floor(Math.max(0, Math.min(100, b.heat ?? 30)) / 100 * 15)) : 0, hc: 0, hv: [0, 0],
+                        mix: Math.max(0, Math.min(100, b.mix ?? 100)) / 100, lvl: b.mute ? 0 : Math.pow(10, Math.max(-60, Math.min(24, b.out || 0)) / 20), solo: !!b.solo };
+                };
+                const bb = all.find(b => b.base);
+                this.free = all.filter(b => !b.base).slice(0, 6).map(b => mk(b, false));
+                this.base = bb ? mk(bb, true) : null;
+                this.anySolo = this.free.some(b => b.solo) || !!(this.base && this.base.solo);
+                this.gmix = Math.max(0, Math.min(100, p.mix ?? 100)) / 100; this.gout = Math.pow(10, Math.max(-24, Math.min(24, p.out || 0)) / 20);
+                this.xin = [new Float64Array(16), new Float64Array(16)]; this.xs = [new Float64Array(64), new Float64Array(64)]; this.pos = [0, 0];
+            }
+            band(b, v, nc) {   // v : [g, d] le son de la bande pour chaque côté ; renvoie dans v la sortie de la bande
+                let pk = 0; for (let ch = 0; ch < nc; ch++) { const a = v[ch] < 0 ? -v[ch] : v[ch]; if (a > pk) pk = a; }
+                b.env += (pk - b.env) * (pk > b.env ? b.att : b.rel);
+                let gd = 1;
+                if (b.dyn !== 0) { const L = 20 * Math.log10(Math.max(b.env, 1e-9)); let r = 0;
+                    if (b.dyn > 0) r = Math.min(24, Math.max(0, L + 24) * b.dyn / 50 * 0.75); else if (L > -70) r = Math.min(24, Math.max(0, -24 - L) * -b.dyn / 50 * 0.75);
+                    gd = Math.pow(10, -r / 20); }
+                const doHold = b.hold > 0 && (b.hc++ % b.hold === 0);
+                for (let ch = 0; ch < nc; ch++) {
+                    const dry = v[ch];
+                    let u = dry * gd;
+                    if (b.fbk > 0) u += b.fbk * biqRun(b.bp, b.fs[ch], b.last[ch]);
+                    let w = msatCurve(b.sty, u, b.k); b.last[ch] = w;
+                    if (b.hold > 0) { if (doHold) b.hv[ch] = w; w = b.hv[ch]; }
+                    w *= b.trim;
+                    const ts = b.ts[ch]; for (let j = 0; j < b.tone.length; j++) w = biqRun(b.tone[j], ts[j], w);
+                    v[ch] = (dry * (1 - b.mix) + w * b.mix) * b.lvl;
+                }
+            }
+            process(inputs, outputs) {
+                const inp = inputs[0], out = outputs[0];
+                if (!inp || !inp.length) return true;
+                const n = inp[0].length, nc = Math.min(inp.length, out.length, 2), h = satFir, fr = this.free, nf = fr.length;
+                const x4 = this._x4 || (this._x4 = [0, 0]), res = this._r || (this._r = [0, 0]), acc = this._a || (this._a = [0, 0]), v = this._v || (this._v = [0, 0]);
+                const bv = this._bv || (this._bv = [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0]]);
+                for (let i = 0; i < n; i++) {
+                    for (let ch = 0; ch < nc; ch++) { const xin = this.xin[ch]; xin.copyWithin(1, 0, 15); xin[0] = inp[ch][i]; }
+                    for (let p4 = 0; p4 < 4; p4++) {
+                        for (let ch = 0; ch < nc; ch++) { const xin = this.xin[ch]; let u = 0; for (let j = 0; j < 16; j++) u += h[p4 + 4 * j] * xin[j]; x4[ch] = 4 * u; res[ch] = x4[ch]; acc[ch] = 0; }
+                        // bandes libres : chacune prend sa zone au son
+                        for (let k = 0; k < nf; k++) {
+                            const b = fr[k], o = bv[k];
+                            for (let ch = 0; ch < nc; ch++) { let s = x4[ch]; const st = b.st[ch]; for (let j = 0; j < b.ks.length; j++) s = biqRun(b.ks[j], st[j], s); o[ch] = s; res[ch] -= s; }
+                            this.band(b, o, nc);
+                            if (!this.anySolo || b.solo) for (let ch = 0; ch < nc; ch++) acc[ch] += o[ch];
+                        }
+                        // le reste du son : la bande de départ, ou tel quel sans elle
+                        if (this.base) { v[0] = res[0]; v[1] = res[1]; this.band(this.base, v, nc); if (!this.anySolo || this.base.solo) for (let ch = 0; ch < nc; ch++) acc[ch] += v[ch]; }
+                        else if (!this.anySolo) for (let ch = 0; ch < nc; ch++) acc[ch] += res[ch];
+                        for (let ch = 0; ch < nc; ch++) {
+                            const y = (x4[ch] * (1 - this.gmix) + acc[ch] * this.gmix) * this.gout;
+                            const xs = this.xs[ch]; this.pos[ch] = (this.pos[ch] + 1) % 64; xs[this.pos[ch]] = y;
+                        }
+                    }
+                    for (let ch = 0; ch < nc; ch++) { const xs = this.xs[ch]; let y = 0, idx = this.pos[ch]; for (let j = 0; j < 64; j++) { y += h[j] * xs[idx]; idx = (idx + 63) % 64; } out[ch][i] = y; }
+                }
+                return true;
+            }
+        }
+        registerProcessor('pulse-msat', PulseMsat);
         // Multibande à bandes libres : même calcul que MultiBand dans engine/src/fx.rs.
         // Chaque bande isole sa zone (Linkwitz-Riley 24 dB/oct : deux filtres 2e ordre de chaque côté) et la monte ou la baisse
         // selon son niveau : gain = plage × (dépassement du seuil / 12 dB, entre 0 et 1), plus sa sortie. Sortie = son + Σ bande × (gain − 1) :
@@ -908,7 +1003,7 @@ window.PulseAudio = (function() {
         }
         registerProcessor('pulse-width', PulseWidth);`;
 
-    const FX_CHAIN = ['pitch', 'filter', 'gate', 'eq', 'sat', 'crush', 'deess', 'comp', 'mband', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'reverb']; // ordre habituel des effets
+    const FX_CHAIN = ['pitch', 'filter', 'gate', 'eq', 'sat', 'msat', 'crush', 'deess', 'comp', 'mband', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'reverb']; // ordre habituel des effets
     const SEND_REVERB_TRIM = 1 / 3; // la reverb seule sort 3 fois trop fort par rapport au son direct : on la ramène à niveau
 
     // Temps de l'écho en secondes : calé sur le rythme (beats = nombre de temps) ou donné en millisecondes
@@ -2191,6 +2286,13 @@ window.PulseAudio = (function() {
                     processorOptions: { amount: deess, freq: (params.deess || {}).freq || 5500, ...autoAll('deess') }
                 }));
             }
+        };
+
+        // Saturation multibande
+        B.msat = () => {
+            const sp = params.msat || {}, bands = (sp.bands || []).filter(b => b && b.on !== false);
+            if (!enabled.includes('msat') || !bands.length || !fxReady.has(actx)) return;
+            connect(new AudioWorkletNode(actx, 'pulse-msat', { numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max', processorOptions: { bands, mix: sp.mix, out: sp.out, ag: sp.ag } }));
         };
 
         // Multibande (bandes libres)
