@@ -125,6 +125,64 @@ window.PulseAudio = (function() {
                 return true;
             }
         }
+        // De-esser « pro » (seuil, plage, zone des « s ») : même calcul que DeesserV2 dans engine/src/fx.rs.
+        // Détection : passe-bande (coupe-bas à lo + coupe-haut à hi, 2e ordre). Voix seule = niveau des « s » ;
+        // Tout-terrain = niveau des « s » par rapport à toute la voix. Séparé = on baisse seulement au-dessus de lo ; Large = toute la voix.
+        class PulseDeesser2 extends AudioWorkletProcessor {
+            constructor(o) {
+                super();
+                const p = (o && o.processorOptions) || {};
+                const biq = (hp, f) => { const w = 2 * Math.PI * f / sampleRate, c = Math.cos(w), al = Math.sin(w) / (2 * Math.SQRT1_2), a0 = 1 + al;
+                    return hp ? [(1 + c) / 2 / a0, -(1 + c) / a0, (1 + c) / 2 / a0, -2 * c / a0, (1 - al) / a0] : [(1 - c) / 2 / a0, (1 - c) / a0, (1 - c) / 2 / a0, -2 * c / a0, (1 - al) / a0]; };
+                this.lo = Math.max(1000, Math.min(16000, p.lo || 5000));
+                this.hi = Math.max(this.lo * 1.2, Math.min(20000, sampleRate * 0.45, p.hi || 11000));
+                this.khp = biq(true, this.lo); this.klp = biq(false, this.hi);
+                this.thr = p.thr ?? -26; this.range = Math.max(0, Math.min(30, p.range ?? 10));
+                this.wide = !!p.wide; this.rel = !!p.rel; this.listen = !!p.listen; this.live = !!p.live;
+                this.k = Math.exp(-2 * Math.PI * this.lo * 0.5 / sampleRate);
+                this.zh = []; this.zl = []; this.lp = [];
+                this.envB = 0; this.envF = 0; this.gain = 1;
+                this.att = 1 - Math.exp(-1 / (0.001 * sampleRate));
+                this.relc = 1 - Math.exp(-1 / (0.060 * sampleRate));
+                this.smooth = 1 - Math.exp(-1 / (0.002 * sampleRate));
+                this.cnt = 0; this.mV = 0; this.mS = 0; this.mR = 0;
+            }
+            process(inputs, outputs) {
+                const inp = inputs[0], out = outputs[0];
+                if (!inp || !inp.length) return true;
+                const n = inp[0].length, nc = Math.min(inp.length, out.length);
+                while (this.zh.length < nc) { this.zh.push([0, 0, 0, 0]); this.zl.push([0, 0, 0, 0]); this.lp.push(0); }
+                const band = this._b || (this._b = [0, 0]), hs = this._hs || (this._hs = [0, 0]);
+                for (let i = 0; i < n; i++) {
+                    let pkB = 0, pkF = 0;
+                    for (let ch = 0; ch < nc; ch++) {
+                        const x = inp[ch][i];
+                        const h = biqRun(this.khp, this.zh[ch], x), b = biqRun(this.klp, this.zl[ch], h);
+                        band[ch] = b;
+                        this.lp[ch] = x + (this.lp[ch] - x) * this.k; hs[ch] = x - this.lp[ch];
+                        const ab = b < 0 ? -b : b, af = x < 0 ? -x : x;
+                        if (ab > pkB) pkB = ab; if (af > pkF) pkF = af;
+                    }
+                    this.envB += (pkB - this.envB) * (pkB > this.envB ? this.att : this.relc);
+                    this.envF += (pkF - this.envF) * (pkF > this.envF ? this.att : this.relc);
+                    let red = 0;
+                    if (this.envF > 0.001) {
+                        const det = 20 * Math.log10(Math.max(this.envB, 1e-9) / (this.rel ? this.envF : 1));
+                        red = Math.max(0, Math.min(this.range, det - this.thr));
+                    }
+                    const target = Math.pow(10, -red / 20);
+                    this.gain += (target - this.gain) * this.smooth;
+                    for (let ch = 0; ch < nc; ch++) {
+                        const x = inp[ch][i];
+                        out[ch][i] = this.listen ? band[ch] : this.wide ? x * this.gain : x + hs[ch] * (this.gain - 1);
+                    }
+                    if (this.live) { if (pkF > this.mV) this.mV = pkF; if (this.envB > this.mS) this.mS = this.envB; const rd = -20 * Math.log10(this.gain); if (rd > this.mR) this.mR = rd; }
+                }
+                if (this.live && (this.cnt += n) >= 1200) { this.cnt = 0; this.port.postMessage({ v: this.mV, s: this.mS, r: this.mR, f: this.envF }); this.mV = 0; this.mS = 0; this.mR = 0; }
+                return true;
+            }
+        }
+        registerProcessor('pulse-deesser2', PulseDeesser2);
         // Saturation suréchantillonnée ×4 : même calcul que Saturator dans engine/src/fx.rs
         // (filtre de 64 coefficients, Blackman, coupure 0,1125 de la cadence ×4 ; parasites −22 dB → −99 dB)
         const satFir = (() => {
@@ -892,6 +950,8 @@ window.PulseAudio = (function() {
     // La valeur de l'aiguille vient du compresseur en cours de lecture ; si plus rien n'arrive (arrêt, graphe reconstruit), elle est périmée
     // Gate en lecture : { e: niveau vu par le gate, g: gain appliqué } pour son écran
     const gateLive = new Map();
+    const deessLive = new Map();
+    function getDeessMeter(key) { const v = deessLive.get(key); return v && performance.now() - v.ts < 250 ? v : null; }
     function getGateMeter(key) { const v = gateLive.get(key); return v && performance.now() - v.ts < 250 ? v : null; }
     // Limiteur en lecture : { i: crête d'entrée, o: crête de sortie, gr: gain le plus bas } pour son écran
     const limLive = new Map();
@@ -2059,6 +2119,16 @@ window.PulseAudio = (function() {
 
         // De-esser : adoucit les « S » qui sifflent, sans toucher au reste de la voix
         B.deess = () => {
+            const dp = params.deess || {};
+            // Nouveau De-esser (seuil, plage, zone) : dès qu'un seuil est réglé
+            if (enabled.includes('deess') && dp.thr !== undefined && fxReady.has(actx)) {
+                const live = !!params.grKey && !(typeof OfflineAudioContext !== 'undefined' && actx instanceof OfflineAudioContext);
+                const node = new AudioWorkletNode(actx, 'pulse-deesser2', { numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max',
+                    processorOptions: { thr: dp.thr, range: dp.range, lo: dp.lo, hi: dp.hi, wide: !!dp.wide, rel: !!dp.rel, listen: live && !!dp.listen, live } });
+                if (live) { const key = params.grKey; node.port.onmessage = (e) => deessLive.set(key, { ...e.data, ts: performance.now() }); }
+                connect(node);
+                return;
+            }
             const deess = enabled.includes('deess') ? ((params.deess || {}).amount || 0) : 0;
             if ((deess > 0 || (enabled.includes('deess') && hasAuto('deess'))) && fxReady.has(actx)) {
                 connect(new AudioWorkletNode(actx, 'pulse-deesser', {
@@ -2482,7 +2552,7 @@ window.PulseAudio = (function() {
         startRecording, stopRecording,
         registerBuffer, hasBuffer, getBuffer, getBufferDuration, clearBuffers, computePeaks,
         play, stopAll, getPlaybackPosition, setNativeBackend, isNative, setBeatsPerBar,
-        updateTrackVolume, updateTrackPan, updateComp, setAutoRanges, eqSections, eqIsDynamic, getEqDyn, eqBandCoefs, getLimiterMeter, getGateMeter, refreshAudibility, clearLiveNodes,
+        updateTrackVolume, updateTrackPan, updateComp, setAutoRanges, eqSections, eqIsDynamic, getEqDyn, eqBandCoefs, getLimiterMeter, getGateMeter, getDeessMeter, refreshAudibility, clearLiveNodes,
         getTrackAnalyser, getTrackMeters, trackChannelCount, getMasterAnalyser, getTrackSpectrum, getBusSpectrum, getCompReduction, setMasterVolume,
         setMetronome, setMetronomeBpm, setCountIn, isCountInEnabled,
         startMetronome, stopMetronome, playCountIn, stopCountIn, isCountingIn,

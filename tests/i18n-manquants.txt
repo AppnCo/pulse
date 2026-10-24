@@ -9,10 +9,13 @@ A−
 Back
 Back ▾
 Bitcrusher
+Caler la boucle sur la région choisie (ou les régions choisies)
 Chorus
 Clic pour régler · clic maintenu et glisser pour changer l'ordre · clic droit pour copier ou supprimer
 De-esser
 E / Z
+Effacer ce qui est à droite du curseur de base
+Effacer ce qui est à gauche du curseur de base (sur la piste choisie)
 Flanger
 Gate
 IV
@@ -25,6 +28,8 @@ PulseTune
 Rap Studio
 Recent projects
 Reverb
+Répéter la région choisie une fois de plus, juste après (autant de fois que tu appuies)
+S (ou ⌥S)
 Simple Beat
 Simple setup: 1 vocal + 1 instrumental. Perfect for a quick first track.
 Slapback
@@ -52,6 +57,7 @@ vii°
 ⌘E
 ⌘G
 ⌘N
+⌘R
 ⌘S
 ⌘S · ⌘⌥S · ⌘Q
 ⌘V

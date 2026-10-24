@@ -92,6 +92,67 @@ impl Biquad {
     }
 }
 
+/// Nouveau De-esser : même calcul que le worklet `pulse-deesser2` de audio.js.
+pub struct DeesserV2 {
+    hp: [Biquad; 2],
+    lpf: [Biquad; 2],
+    k: f64,
+    lp: [f64; 2],
+    thr: f64,
+    range: f64,
+    wide: bool,
+    rel: bool,
+    env_b: f64,
+    env_f: f64,
+    gain: f64,
+    att: f64,
+    relc: f64,
+    smooth: f64,
+}
+impl DeesserV2 {
+    pub fn new(p: &crate::model::DeessParams, sr: f64) -> Self {
+        let coef = |sec: f64| 1.0 - (-1.0 / (sec * sr)).exp();
+        let lo = p.lo.unwrap_or(5000.0).clamp(1000.0, 16000.0);
+        let hi = p.hi.unwrap_or(11000.0).min(20000.0).min(sr * 0.45).max(lo * 1.2);
+        let biq = |hp: bool, f: f64| {
+            let w = 2.0 * PI * f / sr;
+            let (c, al) = (w.cos(), w.sin() / (2.0 * std::f64::consts::FRAC_1_SQRT_2));
+            if hp { Biquad::new((1.0 + c) / 2.0, -(1.0 + c), (1.0 + c) / 2.0, 1.0 + al, -2.0 * c, 1.0 - al) }
+            else { Biquad::new((1.0 - c) / 2.0, 1.0 - c, (1.0 - c) / 2.0, 1.0 + al, -2.0 * c, 1.0 - al) }
+        };
+        Self {
+            hp: [biq(true, lo), biq(true, lo)], lpf: [biq(false, hi), biq(false, hi)],
+            k: (-2.0 * PI * lo * 0.5 / sr).exp(), lp: [0.0; 2],
+            thr: p.thr.unwrap_or(-26.0), range: p.range.unwrap_or(10.0).clamp(0.0, 30.0),
+            wide: p.wide.unwrap_or(false), rel: p.rel.unwrap_or(false),
+            env_b: 0.0, env_f: 0.0, gain: 1.0, att: coef(0.001), relc: coef(0.060), smooth: coef(0.002),
+        }
+    }
+    fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
+        let (mut pk_b, mut pk_f) = (0.0f64, 0.0f64);
+        let mut hs = [0.0f64; 2];
+        for ch in 0..nc {
+            let b = self.lpf[ch].tick(self.hp[ch].tick(x[ch]));
+            self.lp[ch] = x[ch] + (self.lp[ch] - x[ch]) * self.k;
+            hs[ch] = x[ch] - self.lp[ch];
+            pk_b = pk_b.max(b.abs());
+            pk_f = pk_f.max(x[ch].abs());
+        }
+        self.env_b += (pk_b - self.env_b) * if pk_b > self.env_b { self.att } else { self.relc };
+        self.env_f += (pk_f - self.env_f) * if pk_f > self.env_f { self.att } else { self.relc };
+        let mut red = 0.0;
+        if self.env_f > 0.001 {
+            let det = 20.0 * (self.env_b.max(1e-9) / if self.rel { self.env_f } else { 1.0 }).log10();
+            red = (det - self.thr).clamp(0.0, self.range);
+        }
+        let target = 10f64.powf(-red / 20.0);
+        self.gain += (target - self.gain) * self.smooth;
+        for ch in 0..nc {
+            x[ch] = if self.wide { x[ch] * self.gain } else { x[ch] + hs[ch] * (self.gain - 1.0) };
+        }
+    }
+}
+
 /// De-esser : même calcul que le worklet `pulse-deesser` de audio.js (les deux doivent sonner pareil).
 struct Deesser {
     max_red: f64,
@@ -891,6 +952,7 @@ pub struct Chain {
     width: Option<Util>,
     modfx: Vec<(Stage, ModFx)>,
     deess: Option<Deesser>,
+    deess2: Option<DeesserV2>,
     comp: Option<Compressor>,
     master: Option<Master>,
     limit: Option<Limiter>,
@@ -1169,7 +1231,8 @@ impl Chain {
         let drive = if has("sat") { effect_params.sat.as_ref().map_or(0.0, |s| s.drive) } else { 0.0 };
         let sat = Saturator::new(drive);
         let de = effect_params.deess.clone().unwrap_or_default();
-        let deess = (has("deess") && de.amount > 0.0).then(|| Deesser::new(de.amount, de.freq.unwrap_or(5500.0), sr));
+        let deess2 = (has("deess") && de.thr.is_some()).then(|| DeesserV2::new(&de, sr));
+        let deess = (has("deess") && de.thr.is_none() && de.amount > 0.0).then(|| Deesser::new(de.amount, de.freq.unwrap_or(5500.0), sr));
         let gate = has("gate").then(|| Gate::new(&effect_params.gate.clone().unwrap_or_default(), sr));
         let crush = has("crush").then(|| Crush::new(&effect_params.crush.clone().unwrap_or_default()));
         let util = has("util").then(|| {
@@ -1198,7 +1261,7 @@ impl Chain {
         let pitch = (has("pitch") && effect_params.pitch.as_ref().and_then(|p| p.semi).unwrap_or(0.0) != 0.0)
             .then(|| Pitch::new(&effect_params.pitch.clone().unwrap_or_default(), sr));
         let comp_p = effect_params.comp.clone().unwrap_or_default();
-        Self { cut, filters, dyn_eq, sat, gate, crush, util, width, modfx, deess, comp, master, limit, delay, reverb, pitch, order: Stage::DEFAULT.to_vec(),
+        Self { cut, filters, dyn_eq, sat, gate, crush, util, width, modfx, deess, deess2, comp, master, limit, delay, reverb, pitch, order: Stage::DEFAULT.to_vec(),
             auto: Vec::new(), auto_from: 0.0, sr, comp_p, eq_bands, cut_kinds, names: effects.to_vec(), deess_freq: de.freq.unwrap_or(5500.0) }
     }
     /// Branche les courbes d'automation des réglages d'effet (`from` = instant du premier échantillon traité)
@@ -1214,7 +1277,7 @@ impl Chain {
         self.auto_from = from;
         // De-esser / pitch réglés à zéro mais automatisés : on les crée quand même (comme le navigateur)
         let has = |fx: &str| self.names.iter().any(|n| n == fx) && self.auto.iter().any(|a| a.fx == fx);
-        if self.deess.is_none() && has("deess") { self.deess = Some(Deesser::new(0.0, self.deess_freq, self.sr)); }
+        if self.deess.is_none() && self.deess2.is_none() && has("deess") { self.deess = Some(Deesser::new(0.0, self.deess_freq, self.sr)); }
         if self.pitch.is_none() && has("pitch") { self.pitch = Some(Pitch::new(&PitchParams::default(), self.sr)); }
         self
     }
@@ -1290,7 +1353,7 @@ impl Chain {
         self
     }
     pub fn is_empty(&self) -> bool {
-        self.cut.is_empty() && self.filters.is_empty() && self.dyn_eq.is_empty() && self.sat.is_none() && self.gate.is_none() && self.crush.is_none() && self.util.is_none() && self.width.is_none() && self.modfx.is_empty() && self.deess.is_none() && self.comp.is_none() && self.master.is_none() && self.limit.is_none() && self.delay.is_none() && self.reverb.is_none() && self.pitch.is_none()
+        self.cut.is_empty() && self.filters.is_empty() && self.dyn_eq.is_empty() && self.sat.is_none() && self.gate.is_none() && self.crush.is_none() && self.util.is_none() && self.width.is_none() && self.modfx.is_empty() && self.deess.is_none() && self.deess2.is_none() && self.comp.is_none() && self.master.is_none() && self.limit.is_none() && self.delay.is_none() && self.reverb.is_none() && self.pitch.is_none()
     }
     /// Une piste avec reverb sort toujours en stéréo, même si ses sons sont mono.
     pub fn makes_stereo(&self) -> bool {
@@ -1359,6 +1422,9 @@ impl Chain {
                     }
                     Stage::Deess => {
                         if let Some(d) = &mut self.deess {
+                            d.tick(&mut x, nc);
+                        }
+                        if let Some(d) = &mut self.deess2 {
                             d.tick(&mut x, nc);
                         }
                     }

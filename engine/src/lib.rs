@@ -166,6 +166,38 @@ mod tests {
         near(rms(&l, 1.5, 2.5), 0.005723);
     }
 
+    /// Nouveau De-esser (seuil, plage, zone) : mêmes chiffres que tests/scenarios/deess-parite.mjs (Chrome).
+    #[test]
+    fn deesser_v2_comme_le_navigateur() {
+        let sr = SR as usize;
+        let mut media = Media::new();
+        let mut v = vec![0.0f32; sr];
+        let mut r: u64 = 7;
+        for (i, x) in v.iter_mut().enumerate() {
+            let t = i as f64 / SR as f64;
+            r = (r * 16807) % 2147483647;
+            let s = (t > 0.3 && t < 0.4) || (t > 0.7 && t < 0.75);
+            *x = (0.3 * (2.0 * std::f64::consts::PI * 300.0 * t).sin() + if s { 0.25 * (r as f64 / 1073741823.5 - 1.0) } else { 0.0 }) as f32;
+        }
+        media.insert("vs".into(), Source { channels: vec![v], sample_rate: SR });
+        let rms = |x: &[f32], a: f64, z: f64| {
+            let (a, z) = ((a * SR as f64).round() as usize, (z * SR as f64).round() as usize);
+            (x[a..z].iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / (z - a) as f64).sqrt()
+        };
+        let run = |dp: &str| {
+            let json = format!(r#"{{"tracks":[{{"volume":100,"clips":[{{"id":"vs","start":0,"duration":1}}],"effects":["deess"],"effectParams":{{"deess":{dp}}}}}]}}"#);
+            let p: Project = serde_json::from_str(&json).unwrap();
+            render(&p, &media, &RenderOptions { only_track: Some(0), ..opts() }).0
+        };
+        let near = |v: f64, want: f64| assert!((v - want).abs() < want * 0.01 + 2e-5, "{v} au lieu de {want}");
+        let l = run(r#"{"thr":-30,"range":12,"lo":4000,"hi":12000}"#);
+        near(rms(&l, 0.1, 0.2), 0.149985); near(rms(&l, 0.31, 0.39), 0.156845); near(rms(&l, 0.71, 0.74), 0.157646);
+        let l = run(r#"{"thr":-30,"range":12,"lo":4000,"hi":12000,"wide":true}"#);
+        near(rms(&l, 0.31, 0.39), 0.045775); near(rms(&l, 0.71, 0.74), 0.046511);
+        let l = run(r#"{"thr":-12,"range":8,"lo":5000,"hi":11000,"rel":true}"#);
+        near(rms(&l, 0.31, 0.39), 0.17565); near(rms(&l, 0.71, 0.74), 0.17756);
+    }
+
     /// Écho avec EQ des répétitions (la voix d'origine n'y passe pas) : mêmes chiffres que tests/scenarios/echo-eq.mjs (Chrome).
     #[test]
     fn echo_eq_comme_le_navigateur() {

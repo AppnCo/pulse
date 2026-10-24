@@ -3550,3 +3550,13 @@ body.automation-mode .track-item .t-auto .auto-chip { max-width: 150px; height: 
 .ctx-has-sub::after { content: '›'; margin-left: auto; padding-left: 14px; opacity: .6; font-size: 15px; line-height: 1; }
 .ctx-item.has-icon.ctx-has-sub::after { margin-left: auto; }
 .ctx-subpanel { box-shadow: 0 8px 24px rgba(0,0,0,.45); }
+
+/* De-esser (façade de la gamme Digital) */
+.ds-voice { fill: #ffffff1c; stroke: #ffffff2a; }
+.ds-s { filter: drop-shadow(0 0 6px #FBBF24aa); }
+.ds-pill { fill: #FBBF24; } .ds-pillt { fill: #2a1a05; font-size: 10.5px; font-weight: 700; }
+.lim-m.ds-m { fill: #FBBF24; }
+.ds-lvl { position: absolute; left: 50%; top: 0; width: 66px; height: 66px; transform: translateX(-50%); pointer-events: none; }
+.pk:not(.big) .ds-lvl { width: 52px; height: 52px; }
+.ds-panel .lim-seg { margin-left: 8px; flex: none; }
+.ds-panel .ds-md { margin-left: auto; }

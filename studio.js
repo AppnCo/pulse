@@ -2230,7 +2230,7 @@ const FX_START = {
     crush: { bits: 8, down: 4, mix: 100 }, util: { gain: 0, invert: 0, mono: 0 }, width: { width: 100 },
     tremolo: { rate: 5, depth: 50 }, phaser: { rate: 0.4, depth: 70, feedback: 40, mix: 50 }, flanger: { rate: 0.25, depth: 2, feedback: 50, mix: 50 },
     chorus: { rate: 0.8, depth: 5, mix: 50 }, doubler: { width: 50, mix: 50 }, slapback: { time: 110, feedback: 12, mix: 25 },
-    gate: { threshold: -45, release: 150, reduction: 40 }, filter: { hpf: 80, lpf: 20000, slope: 12 }, sat: { drive: 25 }, deess: { amount: 40, freq: 5500 }, delay: { beats: 0.5, feedback: 35, wet: 25 } };
+    gate: { threshold: -45, release: 150, reduction: 40 }, filter: { hpf: 80, lpf: 20000, slope: 12 }, sat: { drive: 25 }, deess: { thr: -26, range: 10, lo: 5000, hi: 11000 }, delay: { beats: 0.5, feedback: 35, wet: 25 } };
 function openAddEffectMenu(anchor, target, x) {
     closeAllMenus();
     const r = anchor.getBoundingClientRect();
@@ -7615,6 +7615,182 @@ function openGatePanel(trackIdx, anchorEl) {
     makePlugWindow(panel, t, 'gate', trackIdx);
 }
 
+// === De-esser (planche validée) : la voix défile, chaque « s » détecté s'allume en orange avec ce qu'on lui retire ===
+// Seuil, Plage, zone des « s » (deux poignées, ou la zone entière qu'on fait glisser), Séparé / Large, Voix seule / Tout-terrain, Écouter.
+const DEESS_V2 = { thr: -26, range: 10, lo: 5000, hi: 11000 };
+function openDeessPanel(trackIdx, anchorEl) {
+    closeTransientPanels();
+    const t = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;
+    if (!t) return;
+    const already = findPlugWin(t, 'deess');
+    if (already) { plugFront(already); return; }
+    t.effectParams = t.effectParams || {};
+    if (!t.effectParams.deess) t.effectParams.deess = { ...DEESS_V2 };
+    const P = () => t.effectParams.deess;
+    const old = () => P().thr === undefined;          // ancien réglage (Force) : il passe au nouveau moteur dès qu'on touche un bouton
+    const V = (k) => P()[k] ?? DEESS_V2[k];
+    const key = typeof trackIdx === 'number' ? 't' + trackIdx : 'b' + t.id;
+    const W = 900, H = 400, T = 16, B = H - 128, mid = (T + B) / 2, PL = W - 70, N = 260;
+    const db = (v) => 20 * Math.log10(Math.max(v, 1e-6));
+    const amp = (d) => Math.max(0, (Math.max(-60, Math.min(0, d)) + 60) / 60) * (mid - T - 4);
+    const fmtF = (f) => (f / 1000).toFixed(f >= 10000 ? 1 : 1).replace('.', ',') + ' kHz';
+    let undoArmed = false;
+    const commit = () => {
+        if (!undoArmed) { pushUndo(); undoArmed = true; setTimeout(() => undoArmed = false, 800); }
+        if (old()) { Object.keys(DEESS_V2).forEach(k => { if (P()[k] === undefined) P()[k] = DEESS_V2[k]; }); }
+        delete P().amount; delete P().freq;
+        t.effects = t.effects || []; if (!t.effects.includes('deess')) t.effects.push('deess');
+        refreshPlaybackSoon(); saveProject();
+    };
+    const panel = document.createElement('div');
+    panel.className = 'fx-panel lim-panel gate-panel ds-panel';
+    panel.innerHTML = `
+        <div class="fx-panel-header">
+            <label class="fx-bypass-label fx-power" data-tooltip="Allumer ou éteindre l'effet"><input type="checkbox" class="fx-bypass" ${t.effects?.includes('deess') ? 'checked' : ''}><span class="fx-power-btn">⏻</span></label>
+            <span class="fx-title lim-title">De-esser <i>— ${esc(t.name || '')}</i></span>
+            <span class="lim-seg ds-md"><span data-v="0" data-tooltip="Séparé : on baisse seulement les aigus, le reste de la voix ne bouge pas">Séparé</span><span data-v="1" data-tooltip="Large : toute la voix baisse un instant pendant le « s » (plus naturel sur certaines voix)">Large</span></span>
+            <span class="lim-seg ds-rel"><span data-v="0" data-tooltip="Voix seule : réagit au niveau des « s » (une voix seule, bien enregistrée)">Voix seule</span><span data-v="1" data-tooltip="Tout-terrain : réagit aux « s » par rapport au reste de la voix (voix qui bouge beaucoup, bus de voix)">Tout-terrain</span></span>
+            <button class="lim-tp ds-listen" data-tooltip="Écouter seulement ce qui est détecté (la zone des « s »), pendant la lecture. Se coupe à la fermeture">🎧 Écouter</button>
+            <button class="fx-panel-close">×</button>
+        </div>
+        <div class="lim-face">
+            <svg class="lim-svg gate-svg ds-svg" viewBox="0 0 ${W} ${H}"></svg>
+            <div class="lim-fp gate-fp ds-fp"></div>
+        </div>
+        <div class="lim-sb"><span class="ds-hint"></span><span class="lim-spacer"></span><span>Réduction <b class="ds-r">0,0 dB</b></span></div>`;
+    document.body.appendChild(panel);
+    const svg = panel.querySelector('.ds-svg'), fp = panel.querySelector('.ds-fp');
+    const sep = () => { const d = document.createElement('div'); d.className = 'lim-sep'; fp.appendChild(d); };
+    const kThr = proKnob(fp, { label: 'Seuil', min: -60, max: 0, val: V('thr'), big: true, color: '#FBBF24', fmt: (v) => Math.round(v) + ' dB', onChange: (v) => { P().thr = Math.round(v); draw(); }, onEnd: commit });
+    const kRng = proKnob(fp, { label: 'Plage', min: 0, max: 24, val: V('range'), big: true, color: '#FBBF24', fmt: (v) => Math.round(v) + ' dB', onChange: (v) => { if (old()) P().thr = V('thr'); P().range = Math.round(v); draw(); }, onEnd: commit });
+    // anneau fin autour du Seuil : le niveau des « s » en direct (vert sous le seuil, orange au-dessus)
+    kThr.el.style.position = 'relative';
+    kThr.el.insertAdjacentHTML('beforeend', '<svg class="ds-lvl" viewBox="0 0 64 64"><path class="ds-lvl-a" fill="none" stroke-width="2" stroke-linecap="round"/></svg>');
+    const lvlArc = (fr, over) => {
+        // le bouton se redessine en entier quand il bouge : on remet l'anneau si besoin
+        if (!kThr.el.querySelector('.ds-lvl')) kThr.el.insertAdjacentHTML('beforeend', '<svg class="ds-lvl" viewBox="0 0 64 64"><path class="ds-lvl-a" fill="none" stroke-width="2" stroke-linecap="round"/></svg>');
+        const a = kThr.el.querySelector('.ds-lvl-a');
+        const P2 = (d) => { const r = (d - 90) * Math.PI / 180; return [32 + 31 * Math.cos(r), 32 + 31 * Math.sin(r)]; };
+        const f = Math.max(0, Math.min(1, fr)), e = -135 + 270 * f, [x1, y1] = P2(-135), [x2, y2] = P2(e);
+        a.setAttribute('d', f > 0.005 ? `M${x1} ${y1} A31 31 0 ${f * 270 > 180 ? 1 : 0} 1 ${x2} ${y2}` : '');
+        a.setAttribute('stroke', over ? '#FB923C' : '#34D399');
+    };
+    sep();
+    const rg = document.createElement('div'); rg.className = 'lim-col gate-rgc';
+    rg.innerHTML = `<span class="lim-t">Zone des « s »</span><div class="gate-rg ds-rg" data-tooltip="Où sont les sifflantes : tire une poignée, ou attrape le milieu pour déplacer toute la zone (double-clic = 5 à 11 kHz)"><div class="gate-rf"></div><i class="gate-h a"></i><i class="gate-h b"></i></div><div class="gate-rv"><span class="va"></span><span class="vb"></span></div>`;
+    fp.appendChild(rg);
+    const FMIN = 2000, FMAX = 20000, X = (f) => Math.log(f / FMIN) / Math.log(FMAX / FMIN) * 100, F = (p) => FMIN * Math.pow(FMAX / FMIN, Math.max(0, Math.min(100, p)) / 100);
+    const drawRange = () => {
+        rg.querySelector('.gate-rf').style.cssText = `left:${X(V('lo'))}%;width:${X(V('hi')) - X(V('lo'))}%`;
+        rg.querySelector('.a').style.left = X(V('lo')) + '%'; rg.querySelector('.b').style.left = X(V('hi')) + '%';
+        rg.querySelector('.va').textContent = fmtF(V('lo')); rg.querySelector('.vb').textContent = fmtF(V('hi'));
+    };
+    const setRange = (a, b) => { if (old()) P().thr = V('thr'); P().lo = Math.round(Math.max(FMIN, a) / 50) * 50; P().hi = Math.round(Math.min(FMAX, b) / 50) * 50; drawRange(); };
+    const bar = rg.querySelector('.gate-rg');
+    const dragOn = (el, move) => el.addEventListener('mousedown', (e) => {
+        e.preventDefault(); e.stopPropagation();
+        const r = bar.getBoundingClientRect(), x0 = e.clientX, l0 = V('lo'), h0 = V('hi');
+        const mv = (ev) => move((ev.clientX - r.left) / r.width * 100, (ev.clientX - x0) / r.width * 100, l0, h0);
+        const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); commit(); };
+        document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
+    });
+    dragOn(rg.querySelector('.a'), (p) => setRange(Math.min(F(p), V('hi') / 1.25), V('hi')));
+    dragOn(rg.querySelector('.b'), (p) => setRange(V('lo'), Math.max(F(p), V('lo') * 1.25)));
+    dragOn(rg.querySelector('.gate-rf'), (p, dp, l0, h0) => {
+        let a = X(l0) + dp, z = X(h0) + dp; if (a < 0) { z -= a; a = 0; } if (z > 100) { a -= z - 100; z = 100; }
+        setRange(F(a), F(z));
+    });
+    bar.addEventListener('dblclick', () => { setRange(5000, 11000); commit(); });
+    sep();
+    // historique pendant la lecture : voix (v), niveau des « s » (s), réduction (r, dB)
+    const hv = [], hs = [], hr = [];
+    let rMax = 0;
+    const draw = () => {
+        const thr = V('thr'), rel = !!P().rel;
+        let s = `<defs><linearGradient id="dsg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FDE68A"/><stop offset="1" stop-color="#F59E0B"/></linearGradient></defs>`;
+        for (const d of [0, -12, -24, -36, -48]) { const y = mid - amp(d); s += `<line x1="0" x2="${PL}" y1="${y}" y2="${y}" class="lim-grid ${d === 0 ? 'z' : ''}"/><text x="6" y="${y - 3}" class="lim-txt">${d} dB</text>`; }
+        s += `<line x1="0" x2="${PL}" y1="${mid}" y2="${mid}" class="lim-grid z"/>`;
+        const n = hv.length, xs = (i) => (i + N - n) / (N - 1) * PL;
+        if (n > 1) {
+            let up = '', dn = '';
+            for (let i = 0; i < n; i++) { const x = xs(i).toFixed(1), a = amp(db(hv[i])); up += `${i ? 'L' : 'M'}${x} ${(mid - a).toFixed(1)}`; dn = `L${x} ${(mid + a * 0.85).toFixed(1)}` + dn; }
+            s += `<path d="${up}${dn}Z" class="ds-voice"/>`;
+            // chaque « s » baissé : la zone orange (avant) et ce qu'il en reste, avec une pastille « −x dB »
+            let i0 = -1;
+            for (let i = 0; i <= n; i++) {
+                const on = i < n && hr[i] > 0.3;
+                if (on && i0 < 0) i0 = i;
+                if (!on && i0 >= 0) {
+                    let a1 = '', a2 = '', b1 = '', mx = 0;
+                    for (let k = i0; k < i; k++) { const x = xs(k).toFixed(1), sv = amp(db(hs[k])), s2 = amp(db(hs[k]) - hr[k]); a1 += `${k > i0 ? 'L' : 'M'}${x} ${(mid - sv).toFixed(1)}`; a2 += `${k > i0 ? 'L' : 'M'}${x} ${(mid - s2).toFixed(1)}`; mx = Math.max(mx, hr[k]); }
+                    const xa = xs(i0).toFixed(1), xb = xs(i - 1).toFixed(1);
+                    s += `<path d="${a1}L${xb} ${mid}L${xa} ${mid}Z" fill="url(#dsg)" opacity=".35"/><path d="${a2}L${xb} ${mid}L${xa} ${mid}Z" fill="url(#dsg)" class="ds-s"/>`;
+                    s += `<rect x="${(+xa - 4).toFixed(1)}" y="${T + 2}" width="56" height="19" rx="9.5" class="ds-pill"/><text x="${(+xa + 24).toFixed(1)}" y="${T + 15}" class="ds-pillt" text-anchor="middle">−${mx.toFixed(1).replace('.', ',')}</text>`;
+                    i0 = -1;
+                }
+            }
+        } else s += `<text x="${PL / 2}" y="${mid - 30}" class="lim-txt big" text-anchor="middle">Lance la lecture : la voix défile ici, et chaque « s » baissé s'allume en orange</text>`;
+        const ty = mid - amp(rel ? thr - 6 : thr);
+        s += `<line x1="0" x2="${PL}" y1="${ty}" y2="${ty}" class="gate-thr"/>
+            <g class="gate-thrh ds-thrh"><rect x="0" y="${ty - 14}" width="${PL}" height="28" fill="transparent"/><rect x="${PL - 150}" y="${ty - 12}" width="136" height="24" rx="12" class="gate-pill"/><text x="${PL - 82}" y="${ty + 4}" class="gate-pillt" text-anchor="middle">seuil ${Math.round(thr)} dB${rel ? ' (relatif)' : ''}</text></g>`;
+        const lr = n ? hr[n - 1] : 0, lv = n ? hv[n - 1] : 0;
+        [[PL + 14, Math.min(1, lr / Math.max(1, V('range'))), 'RÉD.', 'ds-m'], [PL + 40, Math.max(0, Math.min(1, (db(lv) + 60) / 60)), 'IN', '']].forEach(([x, f, nm, c]) => {
+            const yT = T + 16, yB = B, yv = c ? yT + f * (yB - yT) : yB - f * (yB - yT);
+            s += `<rect x="${x}" y="${yT}" width="14" height="${yB - yT}" rx="3" class="lim-mbg"/>${c ? `<rect x="${x}" y="${yT}" width="14" height="${(yv - yT).toFixed(1)}" rx="3" class="lim-m ${c}"/>` : `<rect x="${x}" y="${yv}" width="14" height="${yB - yv}" rx="3" class="lim-m"/>`}<text x="${x + 7}" y="${T + 8}" class="lim-txt" text-anchor="middle">${nm}</text>`;
+        });
+        svg.innerHTML = s;
+        panel.querySelectorAll('.ds-md span').forEach(el => el.classList.toggle('on', +el.dataset.v === (P().wide ? 1 : 0)));
+        panel.querySelectorAll('.ds-rel span').forEach(el => el.classList.toggle('on', +el.dataset.v === (P().rel ? 1 : 0)));
+        panel.querySelector('.ds-listen').classList.toggle('on', !!P().listen);
+        panel.querySelector('.ds-hint').textContent = P().listen ? '🎧 tu entends seulement les « s » détectés'
+            : old() ? `Ancien réglage (force ${Math.round(P().amount || 0)} %) : touche un bouton pour passer au nouveau de-esser` : 'gris = la voix · orange = chaque « s » détecté, et ce qu\'il en reste';
+    };
+    const syncKnobs = () => { kThr.set(V('thr')); kRng.set(V('range')); drawRange(); draw(); };
+    let lastPush = 0;
+    const loop = (ts) => {
+        if (!panel.isConnected) return;
+        const m = (state.playing || state.recording) && t.effects && t.effects.includes('deess') && PulseAudio.getDeessMeter ? PulseAudio.getDeessMeter(key) : null;
+        if (m && ts - lastPush > 33) {
+            lastPush = ts; hv.push(m.v); hs.push(m.s); hr.push(m.r); if (hv.length > N) { hv.shift(); hs.shift(); hr.shift(); }
+            rMax = Math.max(rMax, m.r); panel.querySelector('.ds-r').textContent = '−' + m.r.toFixed(1).replace('.', ',') + ' dB (max −' + rMax.toFixed(1).replace('.', ',') + ')';
+            const det = P().rel ? db(m.s) - db(Math.max(m.f || m.v, 1e-6)) : db(m.s);
+            lvlArc((det + 60) / 60, det > V('thr'));
+            draw();
+        }
+        requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+    svg.addEventListener('mousedown', (e) => {
+        if (!e.target.closest('.ds-thrh')) return;
+        e.preventDefault();
+        const r = svg.getBoundingClientRect(), k = W / r.width, rel = !!P().rel;
+        const mv = (ev) => { const y = (ev.clientY - r.top) * k; P().thr = Math.round(Math.max(-60, Math.min(0, (mid - y) / (mid - T - 4) * 60 - 60 + (rel ? 6 : 0)))); kThr.set(P().thr); draw(); };
+        const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); commit(); };
+        document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
+    });
+    const seg = (sel, k) => panel.querySelectorAll(sel + ' span').forEach(el => el.addEventListener('click', () => {
+        commit(); if (+el.dataset.v) P()[k] = true; else delete P()[k];
+        refreshPlaybackSoon(); saveProject(); draw();
+    }));
+    seg('.ds-md', 'wide'); seg('.ds-rel', 'rel');
+    panel.querySelector('.ds-listen').addEventListener('click', () => { if (old()) commit(); if (P().listen) delete P().listen; else P().listen = true; refreshPlaybackSoon(); draw(); });
+    const stopListen = () => { if (P().listen) { delete P().listen; refreshPlaybackSoon(); } };
+    panel.querySelector('.fx-panel-close').addEventListener('click', () => { stopListen(); panel.remove(); });
+    new MutationObserver((_, o) => { if (!panel.isConnected) { stopListen(); o.disconnect(); } }).observe(document.body, { childList: true });
+    panel.querySelector('.fx-bypass').addEventListener('change', (e) => {
+        pushUndo(); t.effects = t.effects || [];
+        if (e.target.checked) { if (!t.effects.includes('deess')) t.effects.push('deess'); } else { const i = t.effects.indexOf('deess'); if (i >= 0) t.effects.splice(i, 1); }
+        refreshPlaybackSoon(); saveProject(); refreshStrips();
+    });
+    syncKnobs(); lvlArc(0, false);
+    const rect = (anchorEl && anchorEl.getBoundingClientRect) ? anchorEl.getBoundingClientRect() : { left: 80, right: 80, top: 80 };
+    const pw = Math.min(900, window.innerWidth - 16);
+    let left = rect.right + 8; if (left + pw > window.innerWidth) left = Math.max(8, rect.left - pw - 8);
+    panel.style.left = Math.max(8, Math.min(left, window.innerWidth - pw - 8)) + 'px';
+    panel.style.top = Math.max(8, Math.min(rect.top - 20, window.innerHeight - panel.offsetHeight - 8)) + 'px';
+    makePlugWindow(panel, t, 'deess', trackIdx);
+}
+
 // Réglages de chaque effet (partagés : fenêtres de plugin et menu d'automation)
 const FX_PANEL_DEFS = {
     eq: [
@@ -7730,6 +7906,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
     if (fxName === 'eq') return openEqPanel(trackIdx, anchorEl);
     if (fxName === 'limit') return openLimiterPanel(trackIdx, anchorEl);
     if (fxName === 'gate') return openGatePanel(trackIdx, anchorEl);
+    if (fxName === 'deess') return openDeessPanel(trackIdx, anchorEl);
     closeTransientPanels();
     // trackIdx : numéro de piste, ou directement un groupe
     const t = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;

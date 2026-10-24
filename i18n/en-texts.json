@@ -1114,7 +1114,23 @@
   "Queue qui se pousse (ducking)": "Tail that steps aside (ducking)",
   "EQ de l'écho": "Echo EQ",
   "Queue de la reverb": "Reverb tail",
-  "Retirer tous les points de l'EQ de l'écho": "Remove all points from the echo EQ"
+  "Retirer tous les points de l'EQ de l'écho": "Remove all points from the echo EQ",
+  "Séparé": "Split",
+  "Large": "Wide",
+  "Voix seule": "Single vocal",
+  "Tout-terrain": "All-round",
+  "Plage": "Range",
+  "Zone des « s »": "Sibilance range",
+  "Séparé : on baisse seulement les aigus, le reste de la voix ne bouge pas": "Split: only the highs are lowered, the rest of the voice stays put",
+  "Large : toute la voix baisse un instant pendant le « s » (plus naturel sur certaines voix)": "Wide: the whole voice dips for a moment during the \"s\" (more natural on some voices)",
+  "Voix seule : réagit au niveau des « s » (une voix seule, bien enregistrée)": "Single vocal: reacts to the level of the \"s\" (a single, well-recorded voice)",
+  "Tout-terrain : réagit aux « s » par rapport au reste de la voix (voix qui bouge beaucoup, bus de voix)": "All-round: reacts to the \"s\" compared with the rest of the voice (voices that move a lot, vocal buses)",
+  "Écouter seulement ce qui est détecté (la zone des « s »), pendant la lecture. Se coupe à la fermeture": "Listen only to what is detected (the sibilance range), during playback. Turns off when closed",
+  "Où sont les sifflantes : tire une poignée, ou attrape le milieu pour déplacer toute la zone (double-clic = 5 à 11 kHz)": "Where the sibilants are: drag a handle, or grab the middle to move the whole range (double-click = 5 to 11 kHz)",
+  "🎧 tu entends seulement les « s » détectés": "🎧 you only hear the detected \"s\"",
+  "gris = la voix · orange = chaque « s » détecté, et ce qu'il en reste": "grey = the voice · orange = each detected \"s\", and what is left of it",
+  "Lance la lecture : la voix défile ici, et chaque « s » baissé s'allume en orange": "Start playback: the voice scrolls here, and each lowered \"s\" lights up orange",
+  "Réduction": "Reduction"
  },
  "patterns": [
   [
@@ -1860,6 +1876,18 @@
   [
    "(.+?) points au plus dans l'EQ de l'écho",
    "$1 points at most in the echo EQ"
+  ],
+  [
+   "Ancien réglage \\(force (.+?) %\\) : touche un bouton pour passer au nouveau de-esser",
+   "Old setting (strength $1 %): touch any control to switch to the new de-esser"
+  ],
+  [
+   "seuil (.+?) dB \\(relatif\\)",
+   "threshold $1 dB (relative)"
+  ],
+  [
+   "seuil (.+?) dB",
+   "threshold $1 dB"
   ]
  ]
 }

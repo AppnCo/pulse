@@ -234,6 +234,14 @@ pub struct ReverbParams {
 pub struct DeessParams {
     pub amount: f64,
     pub freq: Option<f64>,
+    /// Nouveau De-esser (dès que `thr` est donné) : seuil (dB), plage (dB), zone des « s » (Hz),
+    /// Large (baisse toute la voix) au lieu de Séparé, Tout-terrain (`rel`, niveau relatif) au lieu de Voix seule
+    pub thr: Option<f64>,
+    pub range: Option<f64>,
+    pub lo: Option<f64>,
+    pub hi: Option<f64>,
+    pub wide: Option<bool>,
+    pub rel: Option<bool>,
 }
 
 /// Seuil en dB, attaque et relâchement en millisecondes.
