@@ -1111,7 +1111,10 @@
   "Grande salle": "Large hall",
   "Cathédrale": "Cathedral",
   "Sombre et lointaine": "Dark and distant",
-  "Queue qui se pousse (ducking)": "Tail that steps aside (ducking)"
+  "Queue qui se pousse (ducking)": "Tail that steps aside (ducking)",
+  "EQ de l'écho": "Echo EQ",
+  "Queue de la reverb": "Reverb tail",
+  "Retirer tous les points de l'EQ de l'écho": "Remove all points from the echo EQ"
  },
  "patterns": [
   [
@@ -1853,6 +1856,10 @@
   [
    "Pente (.+?) dB/oct",
    "Slope $1 dB/oct"
+  ],
+  [
+   "(.+?) points au plus dans l'EQ de l'écho",
+   "$1 points at most in the echo EQ"
   ]
  ]
 }

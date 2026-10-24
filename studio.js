@@ -4176,6 +4176,7 @@ const SHORTCUT_GROUPS = [
             ['Shift + glisser puis R', 'Enregistrer seulement dans la zone choisie'],
             ['Entrée (aussi celle du pavé numérique)', 'Retour au début'],
             ['L ou C', 'Répéter un passage en boucle (oui / non)'],
+            ['U', 'Caler la boucle sur la région choisie (ou les régions choisies)'],
             ['Règle (haut) · glisser', 'Dessiner la boucle ; clic dessus = l\'allumer / l\'éteindre ; tirer un bord = l\'étirer ; tirer le milieu = la déplacer'],
             ['Règle (en dessous) · clic ou glisser', 'Placer le curseur'],
             ['⌘↵', 'Jouer depuis le début de la boucle'],
@@ -4192,13 +4193,14 @@ const SHORTCUT_GROUPS = [
     {
         title: 'Édition rapide',
         items: [
-            ['S', 'Effacer ce qui est à gauche du curseur (sur la piste choisie)'],
-            ['D', 'Effacer ce qui est à droite du curseur'],
+            ['D', 'Effacer ce qui est à gauche du curseur de base (sur la piste choisie)'],
+            ['F', 'Effacer ce qui est à droite du curseur de base'],
             ['⌘X', 'Couper la région : la copier et l\'effacer d\'un coup (⌘V la recolle)'],
             ['B', 'Ciseaux : scinder une région là où tu cliques'],
             ['Double-clic sur une région', 'La scinder : garde le 2e clic enfoncé, glisse pour choisir l\'endroit, relâche pour couper (Échap annule) — sur son nom : la renommer'],
             ['⌘C', 'Copier la région choisie'],
             ['⌘V', 'Coller à la position du curseur'],
+            ['⌘R', 'Répéter la région choisie une fois de plus, juste après (autant de fois que tu appuies)'],
             ['⌘Z / ⌘⇧Z', 'Annuler / Rétablir (30 niveaux) — marche aussi sur une prise ratée'],
             ['Tirer le bord d\'une prise', 'Récupérer ce qui a été dit avant ou après (curseur « barre et flèches » = étirer la région ; curseur « courbe » = fondu, dans le coin du haut)'],
             ['⌘ + clic sur une région', 'La muter / la démuter (réglable)'],
@@ -4223,7 +4225,7 @@ const SHORTCUT_GROUPS = [
         title: 'Pistes',
         items: [
             ['M', 'Couper le son de la piste choisie'],
-            ['Shift + S', 'N\'écouter que la piste choisie'],
+            ['S (ou ⌥S)', 'N\'écouter que la piste choisie'],
             ['⌘⇧S', 'Tout réécouter (annule les « seulement celle-ci »)'],
             ['⌘⇧T', 'Nouvelle piste audio'],
             ['⌘S · ⌘⌥S · ⌘Q', 'Sauvegarder (dans l\'appli : choisir le dossier la 1re fois) · Enregistrer sous… · Quitter'],
@@ -6333,7 +6335,7 @@ function reverbVizSvg(p) {
 // EQ de la reverb (comme l'EQ de sortie des reverbs pro) : il ne colore que l'effet, la voix d'origine n'est pas touchée.
 // Double-clic = poser un point (tout à gauche = coupe-bas, tout à droite = coupe-haut), tirer, molette = largeur,
 // double-clic sur un point = le retirer, clic droit = sa forme.
-const RVEQ = { W: 420, H: 120, DB: 18, MAX: 8 };
+const RVEQ = { W: 420, H: 150, DB: 18, MAX: 8 };
 const rvFx = (f) => Math.log(f / 20) / Math.log(1000) * RVEQ.W;
 const rvXf = (x) => 20 * Math.pow(1000, Math.max(0, Math.min(1, x / RVEQ.W)));
 const rvDy = (d) => RVEQ.H / 2 - Math.max(-RVEQ.DB, Math.min(RVEQ.DB, d)) / RVEQ.DB * (RVEQ.H / 2 - 10);
@@ -6366,11 +6368,11 @@ function reverbEqSvg(bands, sel) {
     if (!bands.length) g += `<text x="${W / 2}" y="${H / 2 - 8}" text-anchor="middle" class="viz-txt rveq-empty">double-clic pour poser un point · tout à gauche = coupe-bas · tout à droite = coupe-haut</text>`;
     return `<svg class="viz-svg rveq-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${g}</svg>`;
 }
-function bindReverbEq(panel, t) {
+function bindFxEq(panel, t, fxName = 'reverb') {
     const host = panel.querySelector('.rv-eq-host'), read = panel.querySelector('.rv-eq-read');
     if (!host) return;
     let sel = -1, undone = false;
-    const bands = () => (((t.effectParams || {}).reverb || {}).eq || []).map(b => ({ ...b }));
+    const bands = () => (((t.effectParams || {})[fxName] || {}).eq || []).map(b => ({ ...b }));
     const draw = () => {
         const arr = bands(); if (sel >= arr.length) sel = arr.length - 1;
         host.innerHTML = reverbEqSvg(arr, sel);
@@ -6384,12 +6386,12 @@ function bindReverbEq(panel, t) {
     const save = (arr) => {
         if (!undone) { pushUndo(); undone = true; setTimeout(() => { undone = false; }, 1500); }
         t.effectParams = t.effectParams || {};
-        const rp = t.effectParams.reverb = t.effectParams.reverb || {};
+        const rp = t.effectParams[fxName] = t.effectParams[fxName] || {};
         if (arr.length) rp.eq = arr; else delete rp.eq;
         delete rp._preset;
-        (t.proKeep = t.proKeep || {}).reverb = true;
+        (t.proKeep = t.proKeep || {})[fxName] = true;
         t.effects = t.effects || [];
-        if (!t.effects.includes('reverb')) t.effects.push('reverb');
+        if (!t.effects.includes(fxName)) t.effects.push(fxName);
         refreshPlaybackSoon(); saveProject(); draw();
     };
     const at = (e) => { const svg = host.querySelector('svg'), r = svg.getBoundingClientRect(); return [(e.clientX - r.left) * RVEQ.W / r.width, (e.clientY - r.top) * RVEQ.H / r.height]; };
@@ -6418,7 +6420,7 @@ function bindReverbEq(panel, t) {
         e.preventDefault();
         const i = ptOf(e), arr = bands();
         if (i >= 0) { arr.splice(i, 1); sel = -1; save(arr); return; }
-        if (arr.length >= RVEQ.MAX) { flash(`${RVEQ.MAX} points au plus dans l'EQ de la reverb`); return; }
+        if (arr.length >= RVEQ.MAX) { flash(`${RVEQ.MAX} points au plus dans l'EQ ${fxName === 'delay' ? 'de l\'écho' : 'de la reverb'}`); return; }
         const [x, y] = at(e);
         const b = x < RVEQ.W * 0.06 ? { type: 'hpf', freq: 120, gain: 0, q: 0.7071, slope: 24 }
             : x > RVEQ.W * 0.94 ? { type: 'lpf', freq: 9000, gain: 0, q: 0.7071, slope: 24 }
@@ -6620,8 +6622,8 @@ function openEqPanel(trackIdx, anchorEl) {
     panel.className = 'fx-panel eq-panel';
     panel.innerHTML = `
         <div class="fx-panel-header">
-            <span>EQ — ${esc(t.name || '')}</span>
-            <label class="fx-bypass-label"><input type="checkbox" class="fx-bypass" ${t.effects?.includes('eq') ? 'checked' : ''}> Actif</label>
+            <label class="fx-bypass-label fx-power" data-tooltip="Allumer ou éteindre l'effet"><input type="checkbox" class="fx-bypass" ${t.effects?.includes('eq') ? 'checked' : ''}><span class="fx-power-btn">⏻</span></label>
+            <span class="fx-title lim-title">EQ <i>— ${esc(t.name || '')}</i></span>
             <button class="fx-panel-close">×</button>
         </div>
         <div class="eq-bar">
@@ -7055,8 +7057,19 @@ function fxStepIdx(d, v, autoRel) {
     d.busSteps.forEach((st, i) => { if (st !== 'auto' && Math.abs(Math.log(st / v)) < best) { best = Math.abs(Math.log(st / v)); k = i; } });
     return k;
 }
+// Bouton plat à anneau lumineux (écran plein, gamme Digital) : l'anneau part du zéro pour un réglage + / −
+function fxRingKnobSvg(d, v, big) {
+    const S = big ? 66 : 54, c = S / 2, R = S * 0.42, f = Math.max(0, Math.min(1, fxFrac(d, v))), from = (d.min < 0 && d.max > 0) ? fxFrac(d, 0) : 0;
+    const P = (fr, r) => { const a = (-135 + 270 * fr - 90) * Math.PI / 180; return [c + r * Math.cos(a), c + r * Math.sin(a)]; };
+    const arc = (a, b) => { if (b < a) [a, b] = [b, a]; const [x1, y1] = P(a, R), [x2, y2] = P(b, R); return `M${x1.toFixed(1)} ${y1.toFixed(1)}A${R} ${R} 0 ${(b - a) * 270 > 180 ? 1 : 0} 1 ${x2.toFixed(1)} ${y2.toFixed(1)}`; };
+    const [ix, iy] = P(f, R * 0.62), [jx, jy] = P(f, R * 0.3);
+    return `<svg class="ring-knob" width="${S}" height="${S}" viewBox="0 0 ${S} ${S}"><path d="${arc(0, 1)}" fill="none" stroke="#ffffff14" stroke-width="4.5" stroke-linecap="round"/>
+        ${Math.abs(f - from) > 0.003 ? `<path d="${arc(from, f)}" fill="none" stroke="var(--fx-ring, #A855F7)" stroke-width="4.5" stroke-linecap="round" style="filter:drop-shadow(0 0 4px #A855F799)"/>` : ''}
+        <circle cx="${c}" cy="${c}" r="${(R * 0.74).toFixed(1)}" fill="#120c1b" stroke="#ffffff1f"/><line x1="${jx.toFixed(1)}" y1="${jy.toFixed(1)}" x2="${ix.toFixed(1)}" y2="${iy.toFixed(1)}" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/></svg>`;
+}
 function fxKnobSvg(d, v, big = !d.adv, skin = 'P', autoRel = false) {
     if (fxStepped(d, skin)) return fxKnobSteppedSvg(d, v, skin, autoRel);
+    if (skin === 'S') return fxRingKnobSvg(d, v, big);
     const S = big ? 76 : 62, c = S / 2, R = S * 0.25, ang = (f) => -135 + 270 * f, id = 'km' + (++fxKnobId);
     const p = (deg, r) => [c + r * Math.sin(deg * Math.PI / 180), c - r * Math.cos(deg * Math.PI / 180)];
     const arc = (a, b, r) => {
@@ -7738,11 +7751,12 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
     let advanced = false;
     try { advanced = localStorage.getItem('pulse_fx_adv') === '1'; } catch {}
     const cat = (ADD_FX_CATEGORIES.find(c => c[1].includes(fxName)) || ['Effet'])[0];
-    panel.className = 'fx-panel fx-pro' + (hasAdv && !advanced ? ' simple' : '') + (fxName === 'delay' || fxName === 'reverb' ? ' fx-wideface' : '');
+    panel.className = 'fx-panel fx-pro' + (hasAdv && !advanced ? ' simple' : '') + (fxName === 'delay' || fxName === 'reverb' ? ' fx-wideface fx-screen' : '');
     panel.style.setProperty('--fx-accent', FX_CAT_COLORS[cat] || 'var(--violet-2)');
     const valOf = (d) => params[d.key] !== undefined ? params[d.key] : d.def;
     // Façade : seul le compresseur change d'habillage selon son caractère (Propre reste net, numérique)
-    const skinOf = () => fxName === 'comp' ? (FX_SKINS[Math.round((t.effectParams.comp || {}).mode || 0)] || 'P') : 'P';
+    const SCREEN = fxName === 'delay' || fxName === 'reverb';   // écran plein + panneau flottant (gamme Digital)
+    const skinOf = () => fxName === 'comp' ? (FX_SKINS[Math.round((t.effectParams.comp || {}).mode || 0)] || 'P') : SCREEN ? 'S' : 'P';
     panel.innerHTML = `
         <div class="fx-panel-header">
             <label class="fx-bypass-label fx-power" data-tooltip="Allumer ou éteindre l'effet">
@@ -7766,8 +7780,9 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
             <input class="fx-preset-name" type="text" maxlength="28" placeholder="Nom du préréglage, puis Entrée" hidden>
         </div>
         <div class="fx-face">
-        ${fxName === 'comp' || fxName === 'delay' || fxName === 'reverb' ? `<div class="fx-viz ${fxName === 'comp' ? '' : 'fx-viz-wide'}"></div>` : ''}
-        ${fxName === 'reverb' ? `<div class="rv-eq"><div class="rv-eq-head"><b>EQ de la reverb</b><span class="rv-eq-read"></span><button class="rv-eq-clear" data-tooltip="Retirer tous les points de l'EQ de la reverb">Effacer</button></div><div class="rv-eq-host"></div></div>` : ''}
+        ${fxName === 'comp' ? '<div class="fx-viz"></div>' : ''}
+        ${fxName === 'delay' || fxName === 'reverb' ? `<div class="scr-col"><div class="rv-eq-head"><b>${fxName === 'delay' ? 'Répétitions' : 'Queue de la reverb'}</b></div><div class="fx-viz fx-viz-wide"></div></div>` : ''}
+        ${fxName === 'reverb' || fxName === 'delay' ? `<div class="rv-eq"><div class="rv-eq-head"><b>${fxName === 'delay' ? 'EQ de l\'écho' : 'EQ de la reverb'}</b><span class="rv-eq-read"></span><button class="rv-eq-clear" data-tooltip="${fxName === 'delay' ? 'Retirer tous les points de l\'EQ de l\'écho' : 'Retirer tous les points de l\'EQ de la reverb'}">Effacer</button></div><div class="rv-eq-host"></div></div>` : ''}
         <div class="fx-main">
         <div class="fx-panel-body fx-knobs">
             ${defs.map(d => {
@@ -7877,7 +7892,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
             viz.innerHTML = fxName === 'delay' ? delayVizSvg(curP(), state.project.bpm || 90) : fxName === 'reverb' ? reverbVizSvg(curP())
                 : analog ? compAnalogSvg(needle, skinOf() === 'U') : compVizSvg(curP());
             const sv = viz.querySelector('.viz-svg'), sk = skinOf();
-            if (sv && sk !== 'P') { const w = document.createElement('div'); w.className = 'viz-screen'; sv.replaceWith(w); w.appendChild(sv); w.insertAdjacentHTML('beforeend', fxGlassSvg(FX_SKIN_SEED[sk])); }
+            if (sv && sk !== 'P' && sk !== 'S') { const w = document.createElement('div'); w.className = 'viz-screen'; sv.replaceWith(w); w.appendChild(sv); w.insertAdjacentHTML('beforeend', fxGlassSvg(FX_SKIN_SEED[sk])); }
         }
         if (viewBtn) viewBtn.textContent = analog ? 'Courbe' : 'Analogique';
     };
@@ -7940,7 +7955,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
         requestAnimationFrame(tick);
     }
 
-    if (fxName === 'reverb') bindReverbEq(panel, t);
+    if (fxName === 'reverb' || fxName === 'delay') bindFxEq(panel, t, fxName);
 
     // Events
     panel.querySelector('.fx-panel-close').addEventListener('click', () => panel.remove());
@@ -7989,10 +8004,10 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
             defs.forEach(d => { if (d.busSteps) { const v = valOf2(d), st = d.busSteps[fxStepIdx(d, v, false)]; if (st !== v) { (t.effectParams[fxName] = t.effectParams[fxName] || {})[d.key] = st; moved = true; } } });
             if (moved) commit();
         }
-        ['P', 'O', 'F', 'U'].forEach(x => panel.classList.toggle('skin-' + x, x === sk));
+        ['P', 'O', 'F', 'U', 'S'].forEach(x => panel.classList.toggle('skin-' + x, x === sk));
         const face = panel.querySelector('.fx-face'), old = face.querySelector('.fx-wear');
         if (old) old.remove();
-        if (sk !== 'P') face.insertAdjacentHTML('afterbegin', fxWearSvg(sk, FX_SKIN_SEED[sk], face.offsetWidth || 340, face.offsetHeight || 340));   // à la taille réelle : vis bien rondes
+        if (sk !== 'P' && sk !== 'S') face.insertAdjacentHTML('afterbegin', fxWearSvg(sk, FX_SKIN_SEED[sk], face.offsetWidth || 340, face.offsetHeight || 340));   // à la taille réelle : vis bien rondes
         if (keepRect) {   // la façade Bus est plus large : on recale la fenêtre, mais elle reste exactement où elle était si elle tient à l'écran
             place(keepRect.left);
             const z = parseFloat(panel.style.zoom) || 1;
@@ -8339,6 +8354,32 @@ function selectAllClipsOnTrack() {
     renderTimelineTracks();
     renderLoopOverlay();
     flash(`${t.clips.length} clip${t.clips.length > 1 ? 's' : ''} sélectionné${t.clips.length > 1 ? 's' : ''}`);
+}
+
+// U = boucle calée sur les régions choisies (comme « Set Locators by Selection » de Logic) ; la lecture reste où elle est
+function loopFromSelection() {
+    const keys = state.selectedClips.size ? [...state.selectedClips]
+        : (state.selectedClip ? [`${state.selectedClip.trackIdx}:${state.selectedClip.clipIdx}`] : []);
+    const cs = keys.map(k => { const [ti, ci] = k.split(':').map(Number); const t = state.project.tracks[ti]; return t && t.clips[ci]; }).filter(Boolean);
+    if (!cs.length) { flash('Choisis une région d\'abord : U cale la boucle dessus'); return; }
+    state.loop = { start: Math.min(...cs.map(c => c.start)), end: Math.max(...cs.map(c => c.start + c.duration)) };
+    state.looping = true;
+    renderLoopOverlay(); updateLoopButton(); saveProject(); refreshPlaybackSoon();
+    flash(cs.length > 1 ? 'Boucle calée sur les régions choisies' : 'Boucle calée sur la région choisie');
+}
+
+// ⌘R = répéter la région choisie une fois de plus, juste après elle (comme « Repeat Regions » de Logic) ; même mécanique que la poignée en bas à droite
+function repeatSelectedClip() {
+    if (!state.selectedClip) { flash('Choisis une région d\'abord : ⌘R la répète juste après'); return; }
+    const { trackIdx, clipIdx } = state.selectedClip;
+    const t = state.project.tracks[trackIdx], clip = t && t.clips[clipIdx];
+    if (!clip || clip.recording || !clip.duration) return;
+    pushUndo();
+    const cur = (clip.loopEnd && clip.loopEnd > clip.start + clip.duration) ? clip.loopEnd : clip.start + clip.duration;
+    clip.loopEnd = cur + clip.duration;
+    carveBehind(t, clip, clip.start, clip.loopEnd);
+    renderAll(); saveProject(); refreshPlaybackSoon();
+    flash('Région répétée × ' + (((clip.loopEnd - clip.start) / clip.duration)).toFixed(0) + ' (⌘R encore pour ajouter une répétition)');
 }
 
 // Zoom to fit : tout le projet visible d'un coup (Cmd+Shift+F)
@@ -9238,6 +9279,100 @@ document.addEventListener('mousedown', (e) => {
     openClipFx(clip, el.dataset.fx, el);
 }, true);
 
+// --- Joindre / décaler / verrouiller des régions (menu Édition) ---
+const clipEndOf = (c) => (c.loopEnd && c.loopEnd > c.start + c.duration) ? c.loopEnd : c.start + c.duration;
+// Joindre : les régions audio choisies sur la même piste deviennent UNE région (rendu à l'identique, effets de région compris)
+async function joinSelectedClips(trackIdx, clipIdx) {
+    const t = state.project.tracks[trackIdx];
+    const cs = clipsActedOn(trackIdx, clipIdx).filter(c => t.clips.includes(c));
+    if (cs.length < 2) { flash('Choisis au moins deux régions de la même piste (Shift + clic, ou ⌘A) puis Joindre'); return; }
+    if (cs.some(c => c.midi)) { flash('Joindre marche sur les régions audio (pas encore sur les notes)'); return; }
+    flash('Jonction en cours…');
+    try {
+        const t0 = Math.min(...cs.map(c => c.start)), t1 = Math.max(...cs.map(clipEndOf));
+        const solo = { ...t, clips: JSON.parse(JSON.stringify(cs)), volume: 100, pan: 0, effects: undefined, effectParams: undefined,
+            sound: undefined, automation: undefined, sends: {}, busSends: {}, takes: [], muted: false, group: undefined };
+        const tmp = { ...state.project, tracks: [solo], buses: [], sends: [] };
+        const wav = await PulseAudio.exportTrackWav(tmp, 0);
+        if (!wav) { flash('Ces régions sont vides : rien à joindre'); return; }
+        const ctx = PulseAudio.getContext();
+        const full = await ctx.decodeAudioData((await wav.arrayBuffer()).slice(0));
+        const sr = full.sampleRate, a = Math.round(t0 * sr), b = Math.min(full.length, Math.round(t1 * sr));
+        const out = ctx.createBuffer(full.numberOfChannels, Math.max(1, b - a), sr);
+        for (let ch = 0; ch < full.numberOfChannels; ch++) out.getChannelData(ch).set(full.getChannelData(ch).subarray(a, b));
+        const blob = PulseAudio.audioBufferToWav(out);
+        const newId = `join_${Date.now().toString(36)}`;
+        PulseAudio.registerBuffer(newId, out);
+        if (window.PulsePersist) await PulsePersist.saveBlob(newId, blob, { kind: 'join' });
+        pushUndo();
+        t.clips = t.clips.filter(c => !cs.includes(c));
+        t.clips.push({ id: newId, name: cs[0].name ? `${cs[0].name} (joint)` : `${t.name} (joint)`, start: t0, duration: out.duration, peaks: makePeaks(out) });
+        t.clips.sort((x, y) => x.start - y.start);
+        state.selectedClip = null; state.selectedClips.clear();
+        renderAll(); saveProject(); refreshPlaybackSoon();
+        flash(`✓ ${cs.length} régions jointes en une seule — ⌘Z pour revenir en arrière`);
+    } catch (err) {
+        console.error(err);
+        flash('La jonction n\'a pas marché — rien n\'a été modifié');
+    }
+}
+// Décaler les régions choisies de quelques millisecondes (recaler finement une prise)
+function nudgeClipsMs(clips, ms) {
+    clips = (clips || []).filter(c => c && !c.recording && !c.locked);
+    if (!clips.length) { flash('Région verrouillée : déverrouille-la d\'abord'); return; }
+    pushUndo();
+    clips.forEach(c => { const d = Math.max(-c.start, ms / 1000); c.start += d; if (c.loopEnd) c.loopEnd += d; });
+    renderTimelineTracks(); saveProject(); refreshPlaybackSoon();
+    flash(`Région décalée de ${ms > 0 ? '+' : ''}${ms} ms`);
+}
+function toggleClipsLocked(clips) {
+    clips = (clips || []).filter(c => c && !c.recording);
+    if (!clips.length) return;
+    const lock = !clips.every(c => c.locked);
+    pushUndo(); clips.forEach(c => { if (lock) c.locked = true; else delete c.locked; });
+    renderTimelineTracks(); saveProject();
+    flash(lock ? '🔒 Région verrouillée : elle ne bouge plus ni ne se coupe par accident' : 'Région déverrouillée');
+}
+function clipIsLocked(clip) {
+    if (clip && clip.locked) { flash('🔒 Région verrouillée (clic droit > Réglages > Déverrouiller)'); return true; }
+    return false;
+}
+// Ligne de menu avec sous-menu qui s'ouvre à droite (ou à gauche s'il n'y a pas la place)
+function ctxAddSubmenu(menu, item) {
+    const row = document.createElement('div');
+    row.className = 'ctx-item ctx-has-sub';
+    row.textContent = item.label;
+    let panel = null, timer = null;
+    const closePanel = () => { if (panel) { panel.remove(); panel = null; } };
+    const open = () => {
+        clearTimeout(timer);
+        menu.querySelectorAll('.ctx-subpanel').forEach(p => { if (p !== panel) p.remove(); });
+        if (panel) return;
+        panel = document.createElement('div');
+        panel.className = 'track-ctx-menu clip-ctx-menu ctx-subpanel';
+        panel.style.cssText = 'position:fixed;z-index:201;';
+        item.children.filter(Boolean).forEach(ch => {
+            if (ch.sep) { const d = document.createElement('div'); d.className = 'ctx-sep'; panel.appendChild(d); return; }
+            const el = document.createElement('div');
+            el.className = 'ctx-item' + (ch.danger ? ' ctx-danger' : '');
+            el.textContent = ch.label;
+            el.addEventListener('click', () => { ch.action(); menu.remove(); });
+            panel.appendChild(el);
+        });
+        menu.appendChild(panel);
+        const rr = row.getBoundingClientRect(), pr = panel.getBoundingClientRect();
+        let left = rr.right + 2; if (left + pr.width > window.innerWidth) left = Math.max(4, rr.left - pr.width - 2);
+        let top = rr.top - 6; if (top + pr.height > window.innerHeight) top = Math.max(4, window.innerHeight - pr.height - 6);
+        panel.style.left = left + 'px'; panel.style.top = top + 'px';
+        panel.addEventListener('mouseenter', () => clearTimeout(timer));
+        panel.addEventListener('mouseleave', () => { timer = setTimeout(closePanel, 250); });
+    };
+    row.addEventListener('mouseenter', open);
+    row.addEventListener('click', open);
+    row.addEventListener('mouseleave', () => { timer = setTimeout(closePanel, 250); });
+    menu.appendChild(row);
+}
+
 // --- Menu contextuel sur un clip ---
 function openClipContextMenu(x, y, trackIdx, clipIdx) {
     closeAllMenus();
@@ -9281,6 +9416,8 @@ function openClipContextMenu(x, y, trackIdx, clipIdx) {
         [first, first === 'in' ? 'out' : 'in'].forEach(w => { if (has[w]) fadeItems.push({ label: label(w), action: () => removeFade(w) }); });
     }
 
+    const acted = () => clipsActedOn(trackIdx, clipIdx);
+    const selectThis = () => { if (!(state.selectedClips.size > 1 && state.selectedClips.has(`${trackIdx}:${clipIdx}`))) state.selectedClip = { trackIdx, clipIdx }; };
     const items = [
         clip.midi ? { label: clip.midi.inst === 'drums' ? '🥁 Ouvrir le séquenceur de pas' : '🎹 Ouvrir le piano roll', action: () => openMidiEditor(trackIdx, clipIdx) } : null,
         clip.midi ? { label: '🔗 Dupliquer en lien (les deux restent identiques)', action: () => linkDuplicateMidi(trackIdx, clipIdx) } : null,
@@ -9288,45 +9425,64 @@ function openClipContextMenu(x, y, trackIdx, clipIdx) {
         clip.midi && clip.midi.pid ? { label: 'Rendre cette région indépendante', action: () => { pushUndo(); delete clip.midi.pid; renderTimelineTracks(); saveProject(); flash('Cette région n\'est plus liée aux autres'); } } : null,
         (!clip.midi && String(clip.id || '').startsWith('rec_')) ? { label: '🎙 Refaire cette prise', action: () => redoTake(trackIdx, clipIdx) } : null,
         { label: 'Renommer',        action: () => startClipRename(trackIdx, clipIdx) },
-        { label: 'Dupliquer',       action: () => {
-            pushUndo();
-            const fullEnd = (clip.loopEnd && clip.loopEnd > clip.start + clip.duration) ? clip.loopEnd : clip.start + clip.duration;
-            const copy = { ...JSON.parse(JSON.stringify(clip)), start: fullEnd };    // juste après la région (répétition comprise)
-            if (clip.loopEnd) copy.loopEnd = fullEnd + (clip.loopEnd - clip.start);
-            state.project.tracks[trackIdx].clips.push(copy);
-            carveBehind(state.project.tracks[trackIdx], copy, copy.start, (copy.loopEnd && copy.loopEnd > copy.start + copy.duration) ? copy.loopEnd : copy.start + copy.duration);
-            state.project.tracks[trackIdx].clips.sort((a, b) => a.start - b.start);
-            state.selectedClip = { trackIdx, clipIdx: state.project.tracks[trackIdx].clips.indexOf(copy) };
-            renderTimelineTracks(); saveProject();
-        }},
-        { label: 'Scinder ici', action: () => splitClipAt(trackIdx, clipIdx, state.playhead) },
-        clip.midi ? null : { label: clipHasFx(clip) ? '✦ Effets de la région…' : '✦ Effet sur cette région…', action: () => openClipFxMenu(x, y, trackIdx, clipIdx) },
-        clip.midi || !clipHasFx(clip) ? null : { label: 'Retirer les effets de la région', action: () => removeClipFx(clip, null) },
-        { label: 'Caler le début sur la grille', action: () => quantizeClipsToGrid(clipsActedOn(trackIdx, clipIdx)) },
         { sep: true },
-        { label: clip.muted ? 'Remettre le son du clip' : 'Couper le son du clip', action: () => {
-            const all = clipsActedOn(trackIdx, clipIdx), m = !clip.muted;
-            pushUndo(); all.forEach(c => { c.muted = m; }); renderTimelineTracks(); saveProject();
-        }},
-        clip.midi ? null : { label: clip.rev ? '⏪ Remettre à l\'endroit' : '⏪ Inverser le son (à l\'envers)', action: () => toggleReverse(clip) },
-        clip.midi ? null : { label: clip.warp ? '⏱ Warp (modifier ou retirer)…' : '⏱ Caler sur le tempo du projet…', action: () => openWarpPanel(trackIdx, clipIdx, x, y) },
-        { label: 'Volume de ce clip…', action: () => openClipGainPanel(trackIdx, clipIdx) },
-        { label: 'Monter ce clip au volume maximum', action: () => {
-            if (!clip.id) { flash('Le son de ce clip n\'est pas encore chargé — attends une seconde et réessaie'); return; }
-            const gain = PulseAudio.computeNormalizeGain(clip.id);
-            if (gain === null) { flash('Ce clip est silencieux — il n\'y a rien à monter'); return; }
-            pushUndo();
-            clip.gain = Math.round(gain * 1000) / 1000;
-            renderTimelineTracks(); saveProject();
-            flash('✓ Clip monté au volume maximum — ⌘Z pour revenir en arrière');
-        }},
-        ...fadeItems,
-        { label: 'Remettre le volume d\'origine', action: () => {
-            pushUndo(); delete clip.gain; renderTimelineTracks(); saveProject(); flash('Volume du clip remis comme à l\'origine');
-        }},
-        clip.loopEnd ? { label: 'Supprimer la répétition', action: () => {
-            pushUndo(); delete clip.loopEnd; renderTimelineTracks(); saveProject();
-        }} : null,
+        { label: 'Édition', children: [
+            { label: 'Scinder ici', action: () => splitClipAt(trackIdx, clipIdx, state.playhead) },
+            { label: 'Dupliquer', action: () => {
+                pushUndo();
+                const fullEnd = (clip.loopEnd && clip.loopEnd > clip.start + clip.duration) ? clip.loopEnd : clip.start + clip.duration;
+                const copy = { ...JSON.parse(JSON.stringify(clip)), start: fullEnd };    // juste après la région (répétition comprise)
+                if (clip.loopEnd) copy.loopEnd = fullEnd + (clip.loopEnd - clip.start);
+                state.project.tracks[trackIdx].clips.push(copy);
+                carveBehind(state.project.tracks[trackIdx], copy, copy.start, (copy.loopEnd && copy.loopEnd > copy.start + copy.duration) ? copy.loopEnd : copy.start + copy.duration);
+                state.project.tracks[trackIdx].clips.sort((a, b) => a.start - b.start);
+                state.selectedClip = { trackIdx, clipIdx: state.project.tracks[trackIdx].clips.indexOf(copy) };
+                renderTimelineTracks(); saveProject();
+            }},
+            { label: 'Joindre les régions choisies', action: () => joinSelectedClips(trackIdx, clipIdx) },
+            { label: 'Répéter une fois de plus  (⌘R)', action: () => { state.selectedClip = { trackIdx, clipIdx }; repeatSelectedClip(); } },
+            clip.loopEnd ? { label: 'Supprimer la répétition', action: () => { pushUndo(); delete clip.loopEnd; renderTimelineTracks(); saveProject(); } } : null,
+            { sep: true },
+            { label: 'Couper  (⌘X)', action: () => { selectThis(); cutSelectedClip(); } },
+            { label: 'Copier  (⌘C)', action: () => { selectThis(); copySelectedClip(); } },
+            { label: 'Coller au curseur  (⌘V)', action: () => pasteClip() },
+            { sep: true },
+            { label: 'Caler le début sur la grille', action: () => quantizeClipsToGrid(acted()) },
+            { label: 'Décaler de −10 ms', action: () => nudgeClipsMs(acted(), -10) },
+            { label: 'Décaler de +10 ms', action: () => nudgeClipsMs(acted(), 10) },
+            { label: 'Décaler de −1 ms', action: () => nudgeClipsMs(acted(), -1) },
+            { label: 'Décaler de +1 ms', action: () => nudgeClipsMs(acted(), 1) },
+            { label: 'Caler la boucle sur cette région  (U)', action: () => { state.selectedClip = { trackIdx, clipIdx }; loopFromSelection(); } }
+        ]},
+        { label: 'Son', children: [
+            { label: 'Volume de ce clip…', action: () => openClipGainPanel(trackIdx, clipIdx) },
+            { label: 'Monter ce clip au volume maximum', action: () => {
+                if (!clip.id) { flash('Le son de ce clip n\'est pas encore chargé — attends une seconde et réessaie'); return; }
+                const gain = PulseAudio.computeNormalizeGain(clip.id);
+                if (gain === null) { flash('Ce clip est silencieux — il n\'y a rien à monter'); return; }
+                pushUndo();
+                clip.gain = Math.round(gain * 1000) / 1000;
+                renderTimelineTracks(); saveProject();
+                flash('✓ Clip monté au volume maximum — ⌘Z pour revenir en arrière');
+            }},
+            { label: 'Remettre le volume d\'origine', action: () => {
+                pushUndo(); delete clip.gain; renderTimelineTracks(); saveProject(); flash('Volume du clip remis comme à l\'origine');
+            }},
+            clip.midi ? null : { label: clip.rev ? '⏪ Remettre à l\'endroit' : '⏪ Inverser le son (à l\'envers)', action: () => toggleReverse(clip) },
+            clip.midi ? null : { label: clip.warp ? '⏱ Warp (modifier ou retirer)…' : '⏱ Caler sur le tempo du projet…', action: () => openWarpPanel(trackIdx, clipIdx, x, y) }
+        ]},
+        fadeItems.length ? { label: 'Fondus', children: fadeItems } : null,
+        clip.midi ? null : { label: 'Effets', children: [
+            { label: clipHasFx(clip) ? '✦ Effets de la région…' : '✦ Effet sur cette région…', action: () => openClipFxMenu(x, y, trackIdx, clipIdx) },
+            clipHasFx(clip) ? { label: 'Retirer les effets de la région', action: () => removeClipFx(clip, null) } : null
+        ]},
+        { label: 'Réglages', children: [
+            { label: clip.muted ? 'Remettre le son du clip' : 'Couper le son du clip', action: () => {
+                const all = acted(), m = !clip.muted;
+                pushUndo(); all.forEach(c => { c.muted = m; }); renderTimelineTracks(); saveProject();
+            }},
+            { label: clip.locked ? 'Déverrouiller la région' : 'Verrouiller la région', action: () => toggleClipsLocked(acted()) }
+        ]},
         { sep: true },
         { label: 'Supprimer',       action: () => {
             state.selectedClip = { trackIdx, clipIdx };
@@ -9341,6 +9497,7 @@ function openClipContextMenu(x, y, trackIdx, clipIdx) {
 
     items.forEach(item => {
         if (item.sep) { const d = document.createElement('div'); d.className = 'ctx-sep'; menu.appendChild(d); return; }
+        if (item.children) { ctxAddSubmenu(menu, item); return; }
         if (item.submenu) {
             const lbl = document.createElement('div');
             lbl.className = 'ctx-item-label';
@@ -10281,6 +10438,7 @@ function startClipDrag(startEvent, clipEl, trackIdx) {
     const t = state.project.tracks[trackIdx];
     const clip = t.clips[clipIdx];
     if (!clip || clip.recording) return;
+    if (clipIsLocked(clip)) return;
 
     // La région est choisie dès l'appui (comme Logic), sans attendre le relâché : plus besoin d'« insister » pour la saisir
     if (!startEvent.altKey && !(state.selectedClips.size > 1 && state.selectedClips.has(`${trackIdx}:${clipIdx}`))) {
@@ -10784,6 +10942,7 @@ function startLoopDrag(startEvent, clipEl, trackIdx, clipIdx) {
     const t = state.project.tracks[trackIdx];
     const clip = t.clips[clipIdx];
     if (!clip || clip.recording) return;
+    if (clipIsLocked(clip)) return;
     pushUndo();
     document.body.classList.add('is-trimming');
 
@@ -10837,6 +10996,7 @@ function startClipTrim(startEvent, clipEl, trackIdx, clipIdx, side) {
     const t = state.project.tracks[trackIdx];
     const clip = t.clips[clipIdx];
     if (!clip) return;
+    if (clipIsLocked(clip)) return;
     pushUndo(); // snapshot avant modification
     document.body.classList.add('is-trimming');
     const startX = startEvent.clientX;
@@ -11526,6 +11686,7 @@ function startFadeDrag(startEvent, fadeDir, trackIdx, clipIdx) {
     const t = state.project.tracks[trackIdx];
     const clip = t.clips[clipIdx];
     if (!clip) return;
+    if (clipIsLocked(clip)) return;
     pushUndo(); // snapshot avant modification
     const startX = startEvent.clientX;
     const originalFade = fadeDir === 'in' ? (clip.fadeIn || 0) : (clip.fadeOut || 0);
@@ -11888,6 +12049,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (mod && k === 'd')          { e.preventDefault(); duplicateTrack(state.selectedTrack); return; }
         if (mod && k === 'g')          { e.preventDefault(); toggleSmartMode(); return; }
         if (mod && k === 'c')          { e.preventDefault(); copySelectedClip(); return; }
+        if (mod && k === 'r' && !shift && !e.altKey) { e.preventDefault(); repeatSelectedClip(); return; }
         if (mod && k === 'v')          { e.preventDefault(); pasteClip(); return; }
 
         // Transport (Espace est détourné en mode tap)
@@ -11905,7 +12067,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (k === 'r') { toggleRec(); return; }
 
         // Édition (coupes rapides) : D efface ce qui est à gauche du curseur de base, F ce qui est à droite (Z / E = zoom : tout reste près de R)
-        if (k === 'q' && !mod) { e.preventDefault(); trimLeft();  return; }
         if (k === 'd' && !shift && !mod && !e.altKey) { e.preventDefault(); trimLeft(); return; }
         if (k === 'f' && !shift && !mod && !e.altKey) { e.preventDefault(); trimRight(); return; }
         // ⌘X / Ctrl+X : couper la région (la copier et l'effacer d'un coup), main droite restée sur la souris
@@ -11921,6 +12082,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (k === 'm') { selectedTrackIdxs().forEach(i => toggleMute(i)); return; }
 
         // Transport secondaires
+        if (k === 'u' && !mod && !shift && !e.altKey) { e.preventDefault(); loopFromSelection(); return; }
         if (k === 'l' || (k === 'c' && !mod && !shift && !e.altKey)) { document.getElementById('btnLoop').click(); return; }   // C = boucle (cycle) comme dans Logic
         if (k === 'k') { document.getElementById('btnMetronome').click(); return; }  // K = click/métronome (comme Logic)
         if (k === 't') { e.preventDefault(); toggleTapMode(); return; }              // T = toggle mode tap (puis Espace tape)

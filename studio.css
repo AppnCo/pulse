@@ -3513,3 +3513,40 @@ body.automation-mode .track-item .t-auto .auto-chip { max-width: 150px; height: 
 .rveq-pt.sel circle { fill: #A855F7; stroke: #fff; filter: drop-shadow(0 0 5px #A855F7); }
 .rveq-pt.off circle { fill: #1a1228; stroke: #5b4d75; }
 .rveq-pt.off text { fill: #6f6390; }
+
+/* Écho et Reverb : « écran plein + panneau flottant » (gamme Digital, comme le Limiteur et le Gate) */
+.fx-panel.fx-pro.fx-screen { width: 880px; max-width: calc(100vw - 16px); padding: 0; overflow: hidden; background: #0f0a18; }
+.fx-pro.fx-screen .fx-toolbar, .fx-pro.fx-screen .fx-presets-bar { padding-left: 14px; padding-right: 14px; }
+.fx-pro.fx-screen .fx-presets-bar .fx-preset { max-width: 320px; }
+.fx-pro.fx-screen .fx-face { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; padding: 12px 14px 0; background: radial-gradient(ellipse at 50% 0%, #1d1430 0%, #0c0814 75%); border-top: 1px solid rgba(255,255,255,.05); }
+.fx-pro.fx-screen .scr-col, .fx-pro.fx-screen .rv-eq { padding: 0; min-width: 0; }
+.fx-pro.fx-screen .fx-viz-wide { padding: 0; }
+.fx-pro.fx-screen .fx-viz-wide .viz-svg, .fx-pro.fx-screen .rv-eq-host .viz-svg { border-radius: 14px; border: 1px solid rgba(168,85,247,.22); box-shadow: inset 0 2px 14px #000a; background: linear-gradient(#0b0712, #120b1f); }
+.fx-pro.fx-screen .fx-viz-wide .viz-txt { font-size: 9px; }
+/* le panneau des boutons flotte sur le bas de l'écran */
+.fx-pro.fx-screen .fx-main { grid-column: 1 / -1; justify-self: center; position: relative; z-index: 2; margin: 10px 0 12px; width: auto; max-width: 100%;
+  display: flex; align-items: stretch; gap: 8px; padding: 8px 12px 6px; border-radius: 20px; background: rgba(24,16,36,.86); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(168,85,247,.28); box-shadow: 0 12px 40px #0009, inset 0 1px 0 rgba(255,255,255,.05); }
+.fx-pro.fx-screen .fx-panel-body.fx-knobs { display: flex; flex-direction: row; flex-wrap: wrap; justify-content: center; align-items: flex-end; gap: 2px 4px; padding: 0; width: 740px; max-width: calc(100vw - 120px); flex: 0 0 auto; }
+.fx-pro.fx-screen .fx-row { width: 80px; }
+.fx-pro.fx-screen .fx-row.fx-wide { flex: 0 0 auto; width: auto; flex-direction: row; justify-content: center; align-items: center; gap: 8px; margin: 2px 10px 8px; }
+.fx-pro.fx-screen .fx-row.fx-wide .fx-label { order: -1; margin: 0; }
+.fx-pro.fx-screen .fx-row .fx-label { color: #cbbfe3; font-size: 9.5px; letter-spacing: .08em; }
+.fx-pro.fx-screen .fx-row .fx-val { color: #fff; font-weight: 600; }
+.fx-pro.fx-screen .fx-knob { display: flex; justify-content: center; }
+.fx-pro.fx-screen .ring-knob { display: block; }
+.fx-pro.fx-screen .fx-meter { width: 22px; }
+.fx-pro.fx-screen .fx-panel-footer { background: #0a0710; border-top: 1px solid rgba(255,255,255,.06); padding: 6px 14px; }
+.fx-pro.fx-screen .fx-seg button.on, .fx-pro.fx-screen .fx-choice button.on { background: #A855F7; color: #fff; box-shadow: 0 0 10px #A855F777; }
+
+/* EQ : même famille que l'Écho, la Reverb, le Limiteur (écran encastré, barre d'aide en bas) */
+.eq-panel { width: 860px; padding: 0; overflow: hidden; background: #0f0a18; }
+.eq-panel .eq-bar { padding: 8px 14px; }
+.eq-panel .eq-graph { margin: 0 14px 12px; border-radius: 14px; border: 1px solid rgba(168,85,247,.22); box-shadow: inset 0 2px 16px #000b; }
+.eq-panel .eq-hint { background: #0a0710; border-top: 1px solid rgba(255,255,255,.06); color: #8a7cab; padding: 7px 14px; }
+
+/* Sous-menus des clics droits (région) : flèche à droite */
+.ctx-has-sub { position: relative; }
+.ctx-has-sub::after { content: '›'; margin-left: auto; padding-left: 14px; opacity: .6; font-size: 15px; line-height: 1; }
+.ctx-item.has-icon.ctx-has-sub::after { margin-left: auto; }
+.ctx-subpanel { box-shadow: 0 8px 24px rgba(0,0,0,.45); }

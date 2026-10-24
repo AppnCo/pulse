@@ -236,7 +236,7 @@ pub fn render(project: &Project, media: &Media, opts: &RenderOptions) -> (Vec<f3
         // 2. Effets de la piste
         let mut chain = crate::fx::Chain::for_track(track, sr, project.bpm).with_auto(&track.automation, from);
         let mono_in = !stereo;
-        let stereo = stereo || chain.makes_stereo();
+        let stereo = stereo || chain.outputs_stereo();   // écho ping-pong aussi : une piste mono en ressort stéréo (comme le navigateur)
         if stereo && tr.is_empty() {
             tr = vec![0.0f32; frames];
         }

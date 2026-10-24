@@ -553,6 +553,8 @@ pub struct Delay {
     dry: f64,
     k: f64,
     pp: bool,
+    /// EQ des répétitions (un jeu de filtres par côté)
+    eq: [Vec<Biquad>; 2],
 }
 
 impl Delay {
@@ -570,6 +572,9 @@ impl Delay {
         }
         n.lp = self.lp;
         n.i = 0;
+        if n.eq[0].len() == self.eq[0].len() {
+            for ch in 0..2 { for (j, b) in n.eq[ch].iter_mut().enumerate() { let mut e = self.eq[ch][j]; e.retune(*b); *b = e; } }
+        }
         *self = n;
     }
     pub fn new(p: &DelayParams, sr: f64, bpm: f64) -> Self {
@@ -578,6 +583,7 @@ impl Delay {
             None => 60.0 / if bpm > 0.0 { bpm } else { 90.0 } * p.beats.filter(|b| *b > 0.0).unwrap_or(0.5),
         };
         let d = ((time * sr).round() as usize).clamp(1, (4.0 * sr) as usize);
+        let eq: Vec<Biquad> = p.eq.as_deref().unwrap_or(&[]).iter().filter(|b| b.on != Some(false)).flat_map(|b| eq_sections(b, sr)).collect();
         Self {
             duck: Ducker::new(p.duck, sr),
             kh: p.hpf.filter(|h| *h > 20.0).map_or(0.0, |h| (-2.0 * PI * h / sr).exp()),
@@ -590,7 +596,13 @@ impl Delay {
             dry: (p.dry.unwrap_or(100.0) / 100.0).clamp(0.0, 1.0),
             k: (-2.0 * PI * p.lpf.filter(|l| *l > 0.0).map_or(4000.0, |l| l.min(20_000.0)) / sr).exp(),
             pp: p.pp.unwrap_or(0.0) >= 0.5,
+            eq: [eq.clone(), eq],
         }
+    }
+    #[inline]
+    fn eqw(&mut self, ch: usize, mut v: f64) -> f64 {
+        for b in &mut self.eq[ch] { v = b.tick(v); }
+        v
     }
     #[inline]
     fn hp(&mut self, ch: usize, x: f64) -> f64 {
@@ -610,8 +622,8 @@ impl Delay {
             let feed = self.hp(0, 0.5 * (inl + inr));
             self.buf[0][self.i] = feed + self.lp[1] * self.fb;
             self.buf[1][self.i] = self.lp[0] * self.fb;
-            x[0] = inl * self.dry + dl * g;
-            x[1] = inr * self.dry + dr * g;
+            x[0] = inl * self.dry + self.eqw(0, dl) * g;
+            x[1] = inr * self.dry + self.eqw(1, dr) * g;
             self.i = (self.i + 1) % self.buf[0].len();
             return 2;
         }
@@ -622,7 +634,7 @@ impl Delay {
             self.lp[ch] = d + (self.lp[ch] - d) * self.k;
             let feed = self.hp(ch, x[ch]);
             self.buf[ch][self.i] = feed + self.lp[ch] * self.fb;
-            x[ch] = x[ch] * self.dry + d * g;
+            x[ch] = x[ch] * self.dry + self.eqw(ch, d) * g;
         }
         self.i = (self.i + 1) % self.buf[0].len();
         nc

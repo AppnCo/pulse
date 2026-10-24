@@ -363,3 +363,8 @@ Object.assign(exact, {
   'Petite pièce': 'Small room', 'Chambre': 'Chamber', 'Plaque': 'Plate', 'Plaque voix': 'Vocal plate',
   'Salle': 'Hall', 'Grande salle': 'Large hall', 'Cathédrale': 'Cathedral', 'Sombre et lointaine': 'Dark and distant', 'Queue qui se pousse (ducking)': 'Tail that steps aside (ducking)' });
 patterns.push(P('§ points au plus dans l\'EQ de la reverb', '$1 points at most in the reverb EQ'), P('Pente § dB/oct', 'Slope $1 dB/oct'));
+// 25/10 (fin) : EQ de l'écho, écran plein pour l'Écho, la Reverb et l'EQ
+Object.assign(exact, {
+  'EQ de l\'écho': 'Echo EQ', 'Queue de la reverb': 'Reverb tail', 'Répétitions': 'Repeats',
+  'Retirer tous les points de l\'EQ de l\'écho': 'Remove all points from the echo EQ' });
+patterns.push(P('§ points au plus dans l\'EQ de l\'écho', '$1 points at most in the echo EQ'));

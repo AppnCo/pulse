@@ -202,6 +202,8 @@ pub struct DelayParams {
     pub lpf: Option<f64>,
     /// Ducking (0-100 %) : l'écho se pousse quand la voix joue
     pub duck: Option<f64>,
+    /// EQ de l'écho : il colore les répétitions, pas la voix d'origine
+    pub eq: Option<Vec<EqBand>>,
 }
 
 /// `wet` en pourcentage (0-100), `size` de 1.2 (petite pièce) à 3.2 (grande salle).

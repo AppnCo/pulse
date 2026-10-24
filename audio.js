@@ -738,7 +738,11 @@ window.PulseAudio = (function() {
                 if (p.lpf > 0) this.k = Math.exp(-2 * Math.PI * Math.min(20000, p.lpf) / sampleRate);
                 this.kh = p.hpf > 20 ? Math.exp(-2 * Math.PI * p.hpf / sampleRate) : 0; this.zh = [0, 0];
                 this.duck = new Ducker(p.duck);
+                // EQ de l'écho : il colore les répétitions qu'on entend, pas la voix d'origine (mêmes filtres que l'EQ, comme fx.rs)
+                this.eq = (Array.isArray(p.eq) ? p.eq : []).filter(b => b && b.on !== false).flatMap(b => eqBandCoefs({ ...b, freq: Math.max(20, Math.min(20000, b.freq || 1000)) }, sampleRate));
+                this.eqs = [this.eq.map(() => [0, 0, 0, 0]), this.eq.map(() => [0, 0, 0, 0])];
             }
+            eqw(ch, v) { const ks = this.eq; if (!ks.length) return v; const st = this.eqs[ch] || (this.eqs[ch] = ks.map(() => [0, 0, 0, 0])); for (let e = 0; e < ks.length; e++) v = biqRun(ks[e], st[e], v); return v; }
             hp(ch, x) { if (!this.kh) return x; this.zh[ch] = x + (this.zh[ch] - x) * this.kh; return x - this.zh[ch]; }
             process(inputs, outputs) {
                 const inp = inputs[0], out = outputs[0];
@@ -754,8 +758,8 @@ window.PulseAudio = (function() {
                         this.lp[1] = dr + (this.lp[1] - dr) * this.k;
                         bl[this.i] = this.hp(0, 0.5 * (xl + xr)) + this.lp[1] * this.fb;
                         br[this.i] = this.lp[0] * this.fb;
-                        out[0][i] = xl * this.dry + dl * g;
-                        out[1][i] = xr * this.dry + dr * g;
+                        out[0][i] = xl * this.dry + this.eqw(0, dl) * g;
+                        out[1][i] = xr * this.dry + this.eqw(1, dr) * g;
                         if (++this.i >= this.D) this.i = 0;
                     }
                     return true;
@@ -768,7 +772,7 @@ window.PulseAudio = (function() {
                         const d = b[this.i];
                         this.lp[ch] = d + (this.lp[ch] - d) * this.k;
                         b[this.i] = this.hp(ch, x) + this.lp[ch] * this.fb;
-                        out[ch][i] = x * this.dry + d * g;
+                        out[ch][i] = x * this.dry + this.eqw(ch, d) * g;
                     }
                     if (++this.i >= this.D) this.i = 0;
                 }
@@ -2139,7 +2143,7 @@ window.PulseAudio = (function() {
                     numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max',
                     ...(dp.pp ? { outputChannelCount: [2] } : {}),
                     processorOptions: { time: delaySeconds(dp, bpm), feedback: (dp.feedback ?? 35) / 100, wet: (dp.wet ?? 25) / 100, dry: (dp.dry ?? 100) / 100, pp: !!dp.pp,
-                        hpf: dp.hpf || 0, lpf: dp.lpf || 0, duck: dp.duck || 0,
+                        hpf: dp.hpf || 0, lpf: dp.lpf || 0, duck: dp.duck || 0, eq: dp.eq,
                         ...autoOpts('delay', { feedback: (x) => x / 100, wet: (x) => x / 100, dry: (x) => x / 100 }) }
                 }));
             }

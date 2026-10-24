@@ -1,5 +1,6 @@
 // Clic droit sur une région : « Supprimer le fondu » retire celui du côté cliqué (fondu simple ou enchaîné)
 import { boot, mouse } from './qa-lib.mjs';
+const HOV = (n) => `{const r=[...document.querySelectorAll('.clip-ctx-menu .ctx-has-sub')].find(e=>new RegExp('^\\s*${n}').test(e.textContent)); if(r) r.dispatchEvent(new MouseEvent('mouseenter',{bubbles:true}));}`;   // les entrées sont rangées en sous-menus : on survole d'abord le bon
 export default async (c) => {
   const { ev, sleep, send } = c;
   await boot(c, { id: 'fs', name: 'FS', bpm: 120, buses: [], tracks: [{ name: 'A', type: 'audio', color: '#A855F7', clips: [] }] });
@@ -11,17 +12,17 @@ export default async (c) => {
   const menu = async (frac) => {
     const r = JSON.parse(await ev(`JSON.stringify((()=>{const r=document.querySelector('.timeline-track[data-i="0"] .clip[data-ci="1"]').getBoundingClientRect(); return {x:r.left+r.width*${frac}, y:r.top+r.height*0.6}})())`));
     await Ms.rclick(r.x, r.y); await sleep(200);
-    return JSON.parse(await ev(`JSON.stringify([...document.querySelectorAll('.clip-ctx-menu .ctx-item')].map(e=>e.textContent.trim()).filter(t=>/fondu/i.test(t)))`));
+    return JSON.parse(await ev(`JSON.stringify((()=>{${HOV('Fondus')} return [...document.querySelectorAll('.clip-ctx-menu .ctx-item')].map(e=>e.textContent.trim()).filter(t=>/fondu/i.test(t))})())`));
   };
   const left = await menu(0.3);
   console.log('entrées « fondu » (moitié gauche) :', JSON.stringify(left));
-  await ev(`[...document.querySelectorAll('.clip-ctx-menu .ctx-item')].find(e=>/fondu enchaîné \\(début\\)/.test(e.textContent)).click()`); await sleep(300);
+  await ev(`${HOV('Fondus')} [...document.querySelectorAll('.clip-ctx-menu .ctx-item')].find(e=>/fondu enchaîné \\(début\\)/.test(e.textContent)).click()`); await sleep(300);
   const c2 = await ev(`JSON.stringify(state.project.tracks[0].clips.find(c=>c.name==='2'))`);
   console.log('région 2 après :', c2);
   const j = JSON.parse(c2);
   if (Math.abs(j.start - 3) > 0.01 || Math.abs(j.offset - 2) > 0.01) throw new Error('Le fondu enchaîné n\'est pas retiré');
   const right = await menu(0.9);
   console.log('entrées « fondu » (moitié droite) :', JSON.stringify(right));
-  await ev(`[...document.querySelectorAll('.clip-ctx-menu .ctx-item')].find(e=>/fondu de sortie/.test(e.textContent)).click()`); await sleep(300);
+  await ev(`${HOV('Fondus')} [...document.querySelectorAll('.clip-ctx-menu .ctx-item')].find(e=>/fondu de sortie/.test(e.textContent)).click()`); await sleep(300);
   console.log('fadeOut après :', await ev(`state.project.tracks[0].clips.find(c=>c.name==='2').fadeOut`));
 };

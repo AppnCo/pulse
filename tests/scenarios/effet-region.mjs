@@ -1,5 +1,6 @@
 // Effet sur une région (planche A) : clic droit → effet rapide, pastille sur la région, réglage, retrait ; le son ne change que sur ce passage
 import { boot, instru } from './qa-lib.mjs';
+const HOV = (n) => `{const r=[...document.querySelectorAll('.clip-ctx-menu .ctx-has-sub')].find(e=>new RegExp('^\\s*${n}').test(e.textContent)); if(r) r.dispatchEvent(new MouseEvent('mouseenter',{bubbles:true}));}`;   // les entrées sont rangées en sous-menus : on survole d'abord le bon
 export default async (c) => {
   const { ev, sleep, check } = c;
   await boot(c, { id: 'p', name: 'P', bpm: 120, sends: [], buses: [], tracks: [{ name: 'Voix', type: 'audio', color: '#A855F7', clips: [] }] });
@@ -9,7 +10,7 @@ export default async (c) => {
   check('deux régions', await ev(`state.project.tracks[0].clips.length`) === 2);
   // clic droit sur la 2e → Effet sur cette région → Pitch −
   await ev(`openClipContextMenu(300, 300, 0, 1)`); await sleep(150);
-  await ev(`[...document.querySelectorAll('.track-ctx-menu .ctx-item')].find(e=>/Effet sur cette région/.test(e.textContent)).click()`); await sleep(150);
+  await ev(`${HOV('Effets')} [...document.querySelectorAll('.track-ctx-menu .ctx-item')].find(e=>/Effet sur cette région/.test(e.textContent)).click()`); await sleep(150);
   const items = await ev(`[...document.querySelectorAll('.track-ctx-menu .ctx-item')].map(e=>e.textContent).join('|')`);
   check('menu rapide : écho, pitch, phone, autre', /Écho 1\/8/.test(items) && /Pitch −/.test(items) && /Phone/.test(items) && /Autre effet/.test(items), items);
   await ev(`[...document.querySelectorAll('.track-ctx-menu .ctx-item')].find(e=>e.textContent==='Pitch −').dispatchEvent(new MouseEvent('mousedown',{bubbles:true}))`); await sleep(300);

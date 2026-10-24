@@ -166,6 +166,41 @@ mod tests {
         near(rms(&l, 1.5, 2.5), 0.005723);
     }
 
+    /// Écho avec EQ des répétitions (la voix d'origine n'y passe pas) : mêmes chiffres que tests/scenarios/echo-eq.mjs (Chrome).
+    #[test]
+    fn echo_eq_comme_le_navigateur() {
+        let sr = SR as usize;
+        let mut media = Media::new();
+        let mut burst = vec![0.0f32; sr];
+        let mut r: u64 = 1;
+        for v in burst.iter_mut().take(4800) {
+            r = (r * 16807) % 2147483647;
+            *v = (0.5 * (r as f64 / 1073741823.5 - 1.0)) as f32;
+        }
+        media.insert("clap".into(), Source { channels: vec![burst], sample_rate: SR });
+        let rms = |x: &[f32], a: f64, z: f64| {
+            let (a, z) = ((a * SR as f64).round() as usize, (z * SR as f64).round() as usize);
+            (x[a..z].iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / (z - a) as f64).sqrt()
+        };
+        let run = |dp: &str| {
+            let json = format!(r#"{{"bpm":120,"tracks":[{{"volume":100,"clips":[{{"id":"clap","start":0,"duration":1}}],"effects":["delay"],"effectParams":{{"delay":{dp}}}}}]}}"#);
+            let p: Project = serde_json::from_str(&json).unwrap();
+            render(&p, &media, &RenderOptions { only_track: Some(0), ..opts() })
+        };
+        let near = |v: f64, want: f64| assert!((v - want).abs() < want * 0.01 + 2e-5, "{v} au lieu de {want}");
+        let eq = r#""eq":[{"type":"hpf","freq":400,"gain":0,"q":0.7071,"slope":24},{"type":"bell","freq":2000,"gain":6,"q":1},{"type":"lpf","freq":6000,"gain":0,"q":0.7071,"slope":12}]"#;
+        let (l, r) = run(&format!(r#"{{"wet":50,"feedback":40,"beats":0.5,{eq}}}"#));
+        near(rms(&l, 0.0, 0.1), 0.20249);
+        near(rms(&l, 0.25, 0.35), 0.069415);
+        near(rms(&l, 0.5, 0.6), 0.02198);
+        near(rms(&r, 0.5, 0.6), 0.02198);
+        let (l, r) = run(&format!(r#"{{"wet":50,"feedback":40,"beats":0.5,"pp":1,{eq}}}"#));
+        near(rms(&l, 0.0, 0.1), 0.28637);
+        near(rms(&l, 0.25, 0.35), 0.098173);
+        near(rms(&r, 0.5, 0.6), 0.03109);
+        assert!(rms(&l, 0.5, 0.6) < 1e-4, "ping-pong : la 2e répétition est à droite");
+    }
+
     /// Reverb avec EQ intégré (sur l'effet seulement), brillance et largeur : mêmes chiffres que tests/scenarios/reverb-eq.mjs (Chrome).
     #[test]
     fn reverb_eq_comme_le_navigateur() {

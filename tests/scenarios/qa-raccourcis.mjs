@@ -27,7 +27,7 @@ export default async (c) => {
   console.log('flash:', await ev(`document.getElementById('flash').textContent`));
   await t('⌘E (exporter)', () => K('e', 4));
   await K('Escape'); await sleep(200); await ev(`document.querySelectorAll('.modal-backdrop').forEach(e=>e.remove())`);
-  await t('Q (couper gauche)', async () => { await ev(`state.selectedTrack=0; seekPlayhead(2)`); await K('q'); });
+  await t('D (couper gauche)', async () => { await ev(`state.selectedTrack=0; seekPlayhead(2)`); await K('d'); });
   await t('S (couper droite)', async () => { await ev(`seekPlayhead(6)`); await K('s'); });
   await t('⌘Z', () => K('z', 4)); await t('⌘⇧Z', () => K('z', 12));
   await t('? / h (aide)', () => K('?'));
