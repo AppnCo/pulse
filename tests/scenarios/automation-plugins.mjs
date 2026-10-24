@@ -17,6 +17,9 @@ export default async ({ ev, nav, send, sleep }) => {
     res.filtre=await seg({effects:['filter'],effectParams:{filter:{hpf:20,lpf:20000,slope:24}},automation:{'fx:filter:hpf':{points:${down}}}});
     res.echo=await seg({effects:['delay'],effectParams:{delay:{beats:0.25,feedback:20,wet:50,dry:0}},automation:{'fx:delay:wet':{points:${ramp}}}});
     res.rev=await seg({effects:['reverb'],effectParams:{reverb:{wet:50,size:1.8}},automation:{'fx:reverb:wet':{points:${ramp}}}});
+    res.util=await seg({effects:['util'],effectParams:{util:{gain:0}},automation:{'fx:util:gain':{points:${ramp}}}});
+    res.eq=await seg({effects:['eq'],effectParams:{eq:{bands:[{type:'bell',freq:300,gain:0,q:1}]}},automation:{'fx:eq:b0-gain':{points:${ramp}}}});
+    res.trem=await seg({effects:['tremolo'],effectParams:{tremolo:{rate:5,depth:0}},automation:{'fx:tremolo:depth':{points:${ramp}}}});
     return JSON.stringify(res);
   })()`);
   const r = JSON.parse(out), f = (a) => a.map(x => x.toFixed(1)).join(' → ') + ' dB';
@@ -26,4 +29,7 @@ export default async ({ ev, nav, send, sleep }) => {
   ok(r.filtre[0] < r.filtre[1] - 6, 'filtre : coupe-bas automatisé (1 kHz puis ouvert) ' + f(r.filtre));
   ok(r.echo[0] < r.echo[1] - 20, 'écho : quantité automatisée ' + f(r.echo));
   ok(Math.abs(r.rev[0] - r.rev[1]) > 0.5, 'reverb : quantité automatisée ' + f(r.rev));
+  ok(r.util[0] < r.util[1] - 20, 'utilitaire : gain automatisé (−24 puis +24 dB) ' + f(r.util));
+  ok(r.eq[0] < r.eq[1] - 20, 'EQ : gain d\'une bande automatisé (−18 puis +18 dB à 300 Hz) ' + f(r.eq));
+  ok(r.trem[0] > r.trem[1] + 1, 'trémolo : profondeur automatisée (0 puis 100 %) ' + f(r.trem));
 };

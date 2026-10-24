@@ -1,5 +1,5 @@
 //! Effets de piste : mêmes formules que les noeuds Web Audio du prototype (BiquadFilter, WaveShaper).
-use crate::model::{PitchParams, CrushParams, GateParams, ModParams, CompParams, DelayParams, EffectParams, MasterParams, ReverbParams, Send, Track};
+use crate::model::{Automation, Curve, EqBand, PitchParams, CrushParams, GateParams, ModParams, CompParams, DelayParams, EffectParams, MasterParams, ReverbParams, Send, Track};
 use std::f64::consts::PI;
 
 /// Filtre biquad (forme directe I).
@@ -10,6 +10,12 @@ pub struct Biquad {
 }
 
 impl Biquad {
+    /// Mêmes coefficients que `other` (nouveau réglage), en gardant la mémoire du filtre en cours (pas de clic)
+    fn retune(&mut self, other: Biquad) {
+        let (x1, x2, y1, y2) = (self.x1, self.x2, self.y1, self.y2);
+        *self = other;
+        self.x1 = x1; self.x2 = x2; self.y1 = y1; self.y2 = y2;
+    }
     fn new(b0: f64, b1: f64, b2: f64, a0: f64, a1: f64, a2: f64) -> Self {
         Self { b0: b0 / a0, b1: b1 / a0, b2: b2 / a0, a1: a1 / a0, a2: a2 / a0, x1: 0.0, x2: 0.0, y1: 0.0, y2: 0.0 }
     }
@@ -62,6 +68,22 @@ impl Biquad {
             (a + 1.0) - (a - 1.0) * c - beta,
         )
     }
+    /// Encoche (même formule que le BiquadFilter « notch » de Web Audio).
+    pub fn notch(sr: f64, freq: f64, q: f64) -> Self {
+        let w = 2.0 * PI * freq / sr;
+        let alpha = w.sin() / (2.0 * q);
+        let c = w.cos();
+        Self::new(1.0, -2.0 * c, 1.0, 1.0 + alpha, -2.0 * c, 1.0 - alpha)
+    }
+    /// Passe-bande (gain 0 dB au centre, comme le BiquadFilter « bandpass » de Web Audio).
+    pub fn bandpass(sr: f64, freq: f64, q: f64) -> Self {
+        let w = 2.0 * PI * freq / sr;
+        let alpha = w.sin() / (2.0 * q);
+        let c = w.cos();
+        Self::new(alpha, 0.0, -alpha, 1.0 + alpha, -2.0 * c, 1.0 - alpha)
+    }
+    /// Simple gain (sortie de l'EQ)
+    pub fn gain(db: f64) -> Self { Self::new(10f64.powf(db / 20.0), 0.0, 0.0, 1.0, 0.0, 0.0) }
     #[inline]
     pub fn tick(&mut self, x: f64) -> f64 {
         let y = self.b0 * x + self.b1 * self.x1 + self.b2 * self.x2 - self.a1 * self.y1 - self.a2 * self.y2;
@@ -443,7 +465,28 @@ impl Compressor {
 }
 
 /// Écho : même calcul que le worklet `pulse-delay` de audio.js.
+/// Ducking (écho, reverb) : même calcul que `Ducker` dans audio.js — suiveur 10 ms / 100 ms, de rien à -30 dBFS à plein effet à -10 dBFS.
+#[derive(Clone)]
+struct Ducker { amt: f64, env: f64, att: f64, rel: f64 }
+impl Ducker {
+    fn new(amount: Option<f64>, sr: f64) -> Self {
+        Self { amt: (amount.unwrap_or(0.0) / 100.0).clamp(0.0, 1.0), env: 0.0, att: (-1.0 / (0.01 * sr)).exp(), rel: (-1.0 / (0.1 * sr)).exp() }
+    }
+    #[inline]
+    fn gain(&mut self, x: f64) -> f64 {
+        let d = x.abs();
+        let k = if d > self.env { self.att } else { self.rel };
+        self.env = k * self.env + (1.0 - k) * d;
+        if self.amt <= 0.0 { return 1.0; }
+        let a = ((20.0 * (self.env + 1e-9).log10() + 30.0) / 20.0).clamp(0.0, 1.0);
+        1.0 - self.amt * a
+    }
+}
+
 pub struct Delay {
+    duck: Ducker,
+    kh: f64,
+    zh: [f64; 2],
     buf: [Vec<f64>; 2],
     lp: [f64; 2],
     i: usize,
@@ -478,15 +521,24 @@ impl Delay {
         };
         let d = ((time * sr).round() as usize).clamp(1, (4.0 * sr) as usize);
         Self {
+            duck: Ducker::new(p.duck, sr),
+            kh: p.hpf.filter(|h| *h > 20.0).map_or(0.0, |h| (-2.0 * PI * h / sr).exp()),
+            zh: [0.0; 2],
             buf: [vec![0.0; d], vec![0.0; d]],
             lp: [0.0; 2],
             i: 0,
             fb: (p.feedback.unwrap_or(35.0) / 100.0).clamp(0.0, 0.9),
             wet: (p.wet.unwrap_or(25.0) / 100.0).clamp(0.0, 1.0),
             dry: (p.dry.unwrap_or(100.0) / 100.0).clamp(0.0, 1.0),
-            k: (-2.0 * PI * 4000.0 / sr).exp(),
+            k: (-2.0 * PI * p.lpf.filter(|l| *l > 0.0).map_or(4000.0, |l| l.min(20_000.0)) / sr).exp(),
             pp: p.pp.unwrap_or(0.0) >= 0.5,
         }
+    }
+    #[inline]
+    fn hp(&mut self, ch: usize, x: f64) -> f64 {
+        if self.kh == 0.0 { return x; }
+        self.zh[ch] = x + (self.zh[ch] - x) * self.kh;
+        x - self.zh[ch]
     }
     /// Renvoie le nombre de canaux en sortie (le ping-pong rend toujours du stéréo).
     pub fn tick(&mut self, x: &mut [f64; 2], nc: usize) -> usize {
@@ -494,20 +546,25 @@ impl Delay {
             // Même calcul que le worklet `pulse-delay` : la voix part à gauche, rebondit à droite, et ainsi de suite
             let (inl, inr) = (x[0], if nc > 1 { x[1] } else { x[0] });
             let (dl, dr) = (self.buf[0][self.i], self.buf[1][self.i]);
+            let g = self.wet * self.duck.gain(0.5 * (inl + inr));
             self.lp[0] = dl + (self.lp[0] - dl) * self.k;
             self.lp[1] = dr + (self.lp[1] - dr) * self.k;
-            self.buf[0][self.i] = 0.5 * (inl + inr) + self.lp[1] * self.fb;
+            let feed = self.hp(0, 0.5 * (inl + inr));
+            self.buf[0][self.i] = feed + self.lp[1] * self.fb;
             self.buf[1][self.i] = self.lp[0] * self.fb;
-            x[0] = inl * self.dry + dl * self.wet;
-            x[1] = inr * self.dry + dr * self.wet;
+            x[0] = inl * self.dry + dl * g;
+            x[1] = inr * self.dry + dr * g;
             self.i = (self.i + 1) % self.buf[0].len();
             return 2;
         }
+        let m = x[..nc].iter().sum::<f64>() / nc as f64;
+        let g = self.wet * self.duck.gain(m);
         for ch in 0..nc {
             let d = self.buf[ch][self.i];
             self.lp[ch] = d + (self.lp[ch] - d) * self.k;
-            self.buf[ch][self.i] = x[ch] + self.lp[ch] * self.fb;
-            x[ch] = x[ch] * self.dry + d * self.wet;
+            let feed = self.hp(ch, x[ch]);
+            self.buf[ch][self.i] = feed + self.lp[ch] * self.fb;
+            x[ch] = x[ch] * self.dry + d * g;
         }
         self.i = (self.i + 1) % self.buf[0].len();
         nc
@@ -588,6 +645,11 @@ impl Line {
 
 /// Reverb : même calcul que le worklet `pulse-reverb` de audio.js (schéma Freeverb, sans hasard).
 pub struct Reverb {
+    duck: Ducker,
+    kl: f64,
+    zl: f64,
+    kh: f64,
+    zh: f64,
     wet: f64,
     fb: f64,
     damp: f64,
@@ -609,13 +671,19 @@ impl Reverb {
         const COMB: [usize; 8] = [1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617];
         const AP: [usize; 4] = [556, 441, 341, 225];
         let lines = |t: &[usize], spread: usize| t.iter().map(|n| Line::new(n + spread, sr)).collect::<Vec<_>>();
+        let pre = ((p.pre.unwrap_or(0.0) / 1000.0).clamp(0.0, 0.5) * sr).round() as usize;
         Self {
+            duck: Ducker::new(p.duck, sr),
+            kl: p.low.filter(|l| *l > 20.0).map_or(0.0, |l| (-2.0 * PI * l / sr).exp()),
+            zl: 0.0,
+            kh: p.high.filter(|h| *h > 0.0 && *h < 20_000.0).map_or(0.0, |h| (-2.0 * PI * h / sr).exp()),
+            zh: 0.0,
             wet: (p.wet.unwrap_or(18.0) / 100.0).clamp(0.0, 1.0),
             fb: (0.72 + 0.2 * ((p.size.unwrap_or(1.8) - 1.2) / 2.0).clamp(0.0, 1.0) + (p.decay.unwrap_or(2.5) - 2.5) * 0.025).clamp(0.5, 0.97),
             damp: 0.35,
             comb: [lines(&COMB, 0), lines(&COMB, 23)],
             ap: [lines(&AP, 0), lines(&AP, 23)],
-            pre: Vec::new(),
+            pre: vec![0.0; pre],
             pi: 0,
         }
     }
@@ -626,6 +694,9 @@ impl Reverb {
         let (dry, wet) = ((1.0 - self.wet) * scale, self.wet * 3.0 * scale);
         let (xl, xr) = (x[0], if mono { x[0] } else { x[1] });
         let mut input = (xl + xr) * 0.015;
+        let dg = self.duck.gain((xl + xr) * 0.5);
+        if self.kl != 0.0 { self.zl = input + (self.zl - input) * self.kl; input -= self.zl; }
+        if self.kh != 0.0 { self.zh = input + (self.zh - input) * self.kh; input = self.zh; }
         if !self.pre.is_empty() {
             input = std::mem::replace(&mut self.pre[self.pi], input);
             self.pi = (self.pi + 1) % self.pre.len();
@@ -645,7 +716,7 @@ impl Reverb {
                 f.i = (f.i + 1) % f.buf.len();
                 acc = y - acc;
             }
-            x[ch] = if ch == 0 { xl } else { xr } * dry + acc * wet;
+            x[ch] = if ch == 0 { xl } else { xr } * dry + acc * wet * dg;
         }
     }
 }
@@ -657,7 +728,56 @@ pub fn sat_coeffs(drive: f64) -> Option<(f64, f64)> {
         (k, 1.0 / (k / k.tanh()).sqrt())
     })
 }
-/// Un échantillon saturé (même calcul que la chaîne et le worklet du navigateur)
+/// Filtre de suréchantillonnage ×4 : 64 coefficients, sinus cardinal fenêtré (Blackman), coupure à 0,1125 de la cadence ×4
+/// (≈ 21,6 kHz à 48 kHz). Même filtre que `satFir` dans audio.js. Parasites d'une saturation poussée : −22 dB → −99 dB.
+pub fn sat_fir() -> [f64; 64] {
+    let mut h = [0.0; 64];
+    let fc = 0.1125;
+    for (i, v) in h.iter_mut().enumerate() {
+        let m = i as f64 - 31.5;
+        let x = 2.0 * fc * m;
+        let sinc = if x.abs() < 1e-12 { 1.0 } else { (PI * x).sin() / (PI * x) };
+        let w = 0.42 - 0.5 * (2.0 * PI * i as f64 / 63.0).cos() + 0.08 * (4.0 * PI * i as f64 / 63.0).cos();
+        *v = 2.0 * fc * sinc * w;
+    }
+    let s: f64 = h.iter().sum();
+    for v in h.iter_mut() { *v /= s; }
+    h
+}
+/// Saturation suréchantillonnée ×4 (même calcul que le worklet `pulse-sat`) : la courbe tanh est calculée 4 fois plus vite,
+/// puis on revient à la cadence normale à travers le même filtre. Retard : ~16 échantillons.
+pub struct Saturator {
+    k: f64,
+    trim: f64,
+    h: [f64; 64],
+    xin: [[f64; 16]; 2],
+    xs: [[f64; 64]; 2],
+    pos: [usize; 2],
+}
+impl Saturator {
+    pub fn new(drive: f64) -> Option<Self> {
+        sat_coeffs(drive).map(|(k, trim)| Self { k, trim, h: sat_fir(), xin: [[0.0; 16]; 2], xs: [[0.0; 64]; 2], pos: [0; 2] })
+    }
+    #[inline]
+    pub fn tick(&mut self, v: f64, ch: usize) -> f64 {
+        let xin = &mut self.xin[ch];
+        xin.copy_within(0..15, 1);
+        xin[0] = v;
+        let (h, k, tk) = (&self.h, self.k, self.k.tanh());
+        let xs = &mut self.xs[ch];
+        for p in 0..4 {
+            let mut u = 0.0;
+            for j in 0..16 { u += h[p + 4 * j] * xin[j]; }
+            let y = (k * (4.0 * u).clamp(-1.0, 1.0)).tanh() / tk;
+            self.pos[ch] = (self.pos[ch] + 1) % 64;
+            xs[self.pos[ch]] = y;
+        }
+        let (mut out, mut idx) = (0.0, self.pos[ch]);
+        for hi in h.iter() { out += hi * xs[idx]; idx = (idx + 63) % 64; }
+        out * self.trim
+    }
+}
+/// Un échantillon saturé, sans suréchantillonnage (plugin AU de saturation, gardé tel quel)
 pub fn sat_tick(v: f64, k: f64, trim: f64) -> f64 {
     (k * v.clamp(-1.0, 1.0)).tanh() / k.tanh() * trim
 }
@@ -667,8 +787,10 @@ pub struct Chain {
     /// Filtre (coupe-bas / coupe-haut), avant l'EQ
     cut: Vec<[Biquad; 2]>,
     filters: Vec<[Biquad; 2]>,
+    /// Points dynamiques de l'EQ (après les points fixes et la sortie)
+    dyn_eq: Vec<DynBand>,
     /// Saturation : (k, compensation de volume)
-    sat: Option<(f64, f64)>,
+    sat: Option<Saturator>,
     gate: Option<Gate>,
     crush: Option<Crush>,
     util: Option<Util>,
@@ -682,6 +804,223 @@ pub struct Chain {
     reverb: Option<Reverb>,
     pitch: Option<Pitch>,
     order: Vec<Stage>,
+    /// Automation des réglages d'effet (même liste de réglages que le navigateur, voir AUTO_FX dans studio.js)
+    auto: Vec<AutoParam>,
+    auto_from: f64,
+    sr: f64,
+    comp_p: CompParams,
+    /// Bandes de l'EQ libre et filtre de la chaîne pour chacune (None = bande ignorée)
+    eq_bands: Vec<(EqBand, Option<(usize, usize)>)>,
+    /// Filtre coupe-bas / coupe-haut : (coupe-bas ?, Q en dB) pour chaque cellule de `cut`
+    cut_kinds: Vec<(bool, f64)>,
+    names: Vec<String>,
+    deess_freq: f64,
+}
+
+/// Un réglage d'effet automatisé : sa courbe (0..1) et sa plage
+struct AutoParam {
+    fx: String,
+    key: String,
+    curve: Curve,
+    min: f64,
+    max: f64,
+    log: bool,
+}
+
+/// Plages des réglages automatisables (mêmes que FX_PANEL_DEFS dans studio.js)
+fn auto_range(fx: &str, key: &str) -> Option<(f64, f64, bool)> {
+    Some(match (fx, key) {
+        ("comp", "threshold") => (-40.0, 0.0, false),
+        ("comp", "ratio") => (1.0, 20.0, false),
+        ("comp", "mix") => (0.0, 100.0, false),
+        ("comp", "attack") => (0.1, 100.0, true),
+        ("comp", "release") => (10.0, 1200.0, true),
+        ("comp", "knee") => (0.0, 24.0, false),
+        ("comp", "makeup") => (-12.0, 24.0, false),
+        ("delay", "wet") | ("delay", "dry") | ("reverb", "wet") => (0.0, 100.0, false),
+        ("delay", "feedback") => (0.0, 85.0, false),
+        ("util", "gain") => (-24.0, 24.0, false),
+        ("width", "width") => (0.0, 200.0, false),
+        ("filter", "hpf") => (20.0, 1000.0, true),
+        ("filter", "lpf") => (1000.0, 20_000.0, true),
+        ("deess", "amount") => (0.0, 100.0, false),
+        ("gate", "threshold") => (-70.0, -20.0, false),
+        ("gate", "release") => (20.0, 500.0, false),
+        ("gate", "reduction") => (6.0, 80.0, false),
+        ("crush", "bits") => (4.0, 16.0, false),
+        ("crush", "down") => (1.0, 32.0, false),
+        ("crush", "mix") | ("pitch", "mix") => (0.0, 100.0, false),
+        ("pitch", "semi") => (-12.0, 12.0, false),
+        ("tremolo", "rate") => (0.5, 15.0, false),
+        ("tremolo", "depth") | ("phaser", "depth") => (0.0, 100.0, false),
+        ("phaser", "rate") => (0.05, 3.0, false),
+        ("phaser", "feedback") | ("flanger", "feedback") => (0.0, 90.0, false),
+        ("flanger", "rate") => (0.05, 2.0, false),
+        ("flanger", "depth") => (0.5, 5.0, false),
+        ("chorus", "rate") => (0.1, 3.0, false),
+        ("chorus", "depth") => (1.0, 10.0, false),
+        ("doubler", "width") => (0.0, 100.0, false),
+        ("slapback", "time") => (30.0, 300.0, false),
+        ("slapback", "feedback") => (0.0, 50.0, false),
+        ("phaser", "mix") | ("flanger", "mix") | ("chorus", "mix") | ("doubler", "mix") | ("slapback", "mix") => (0.0, 100.0, false),
+        ("eq", k) if k.ends_with("-freq") => (20.0, 20_000.0, true),
+        ("eq", k) if k.ends_with("-gain") => (-18.0, 18.0, false),
+        _ => return None,
+    })
+}
+
+/// Un point dynamique de l'EQ : il écoute sa zone (passe-bande) et ne bouge que quand elle dépasse le seuil.
+/// Même calcul que le worklet `pulse-dyneq` de audio.js : gain = gain + plage × min(1, dépassement / 12 dB),
+/// suiveur 5 ms / 80 ms, filtres recalculés tous les 32 échantillons.
+pub fn eq_is_dynamic(bd: &EqBand) -> bool {
+    bd.dyn_range.is_some_and(|d| d != 0.0) && matches!(bd.kind.as_str(), "bell" | "lowshelf" | "highshelf" | "tilt")
+}
+struct DynBand {
+    bd: EqBand,
+    sr: f64,
+    det: Biquad,
+    env: f64,
+    att: f64,
+    rel: f64,
+    secs: Vec<[Biquad; 2]>,
+    cnt: usize,
+}
+impl DynBand {
+    fn new(bd: &EqBand, sr: f64) -> Self {
+        let q = if bd.kind == "bell" && bd.q > 0.0 { bd.q } else { 0.7 };
+        let secs = eq_sections(bd, sr).into_iter().map(|b| [b.clone(), b]).collect();
+        Self { bd: bd.clone(), sr, det: Biquad::bandpass(sr, bd.freq.clamp(20.0, 20_000.0), q), env: 0.0,
+            att: (-1.0 / (0.005 * sr)).exp(), rel: (-1.0 / (0.08 * sr)).exp(), secs, cnt: 0 }
+    }
+    fn gain_now(&self) -> f64 {
+        let over = (20.0 * (self.env + 1e-9).log10() - self.bd.thr.unwrap_or(-30.0)).max(0.0);
+        self.bd.gain + self.bd.dyn_range.unwrap_or(0.0) * (over / 12.0).min(1.0)
+    }
+    fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
+        if self.cnt % 32 == 0 {
+            let bd = EqBand { gain: self.gain_now(), ..self.bd.clone() };
+            for (j, b) in eq_sections(&bd, self.sr).into_iter().enumerate() {
+                for ch in 0..2 { self.secs[j][ch].retune(b.clone()); }
+            }
+        }
+        self.cnt += 1;
+        let m = if nc == 2 { (x[0] + x[1]) * 0.5 } else { x[0] };
+        let d = self.det.tick(m).abs();
+        let k = if d > self.env { self.att } else { self.rel };
+        self.env = k * self.env + (1.0 - k) * d;
+        for ch in 0..nc {
+            for s in &mut self.secs { x[ch] = s[ch].tick(x[ch]); }
+        }
+    }
+}
+
+/// Filtres d'une bande d'EQ (mêmes calculs que `eqSections` dans audio.js).
+/// EQ « calé sur l'analogique » (filtres matched, M. Vicanek 2016) : même calcul que `eqMatched` dans audio.js.
+/// `kind` : peaking, lowshelf, highshelf, highpass, lowpass, notch ; `q` linéaire.
+pub fn eq_matched(kind: &str, f0: f64, q: f64, g: f64, sr: f64) -> Biquad {
+    let f = f0.clamp(10.0, sr * 0.499);
+    let poles = |w: f64, qq: f64| {
+        let z = 1.0 / (2.0 * qq);
+        let a1 = if z <= 1.0 { -2.0 * (-z * w).exp() * ((1.0 - z * z).sqrt() * w).cos() } else { -2.0 * (-z * w).exp() * ((z * z - 1.0).sqrt() * w).cosh() };
+        (a1, (-2.0 * z * w).exp())
+    };
+    let ph = |fr: f64| { let p1 = (PI * fr / sr).sin().powi(2); (1.0 - p1, p1, 4.0 * (1.0 - p1) * p1) };
+    let from_b = |b0_: f64, b1_: f64, b2_: f64, a1: f64, a2: f64| {
+        let (s0, s1) = (b0_.max(0.0).sqrt(), b1_.max(0.0).sqrt());
+        let w = 0.5 * (s0 + s1);
+        let b0 = 0.5 * (w + (w * w + b2_).max(0.0).sqrt());
+        [b0, 0.5 * (s0 - s1), -b2_ / (4.0 * b0), a1, a2]
+    };
+    let w0 = 2.0 * PI * f / sr;
+    let k: [f64; 5] = match kind {
+        "peaking" | "bell" => {
+            let a = 10f64.powf(g / 40.0);
+            let gg = a * a;
+            let (a1, a2) = poles(w0, a * q);
+            let (p0, p1, p2) = ph(f);
+            let (aa0, aa1, aa2) = ((1.0 + a1 + a2).powi(2), (1.0 - a1 + a2).powi(2), -4.0 * a2);
+            let r1 = (aa0 * p0 + aa1 * p1 + aa2 * p2) * gg * gg;
+            let r2 = (-aa0 + aa1 + 4.0 * (p0 - p1) * aa2) * gg * gg;
+            let bb0 = aa0;
+            let bb2 = (r1 - r2 * p1 - bb0) / (4.0 * p1 * p1);
+            let bb1 = r2 + bb0 + 4.0 * (p1 - p0) * bb2;
+            from_b(bb0, bb1, bb2, a1, a2)
+        }
+        "lowpass" | "highpass" => {
+            let (a1, a2) = poles(w0, q);
+            let (p0, p1, p2) = ph(f);
+            let (aa0, aa1, aa2) = ((1.0 + a1 + a2).powi(2), (1.0 - a1 + a2).powi(2), -4.0 * a2);
+            if kind == "highpass" {
+                let b0 = (aa0 * p0 + aa1 * p1 + aa2 * p2).max(0.0).sqrt() * q / (4.0 * p1);
+                [b0, -2.0 * b0, b0, a1, a2]
+            } else {
+                let bb1 = ((aa0 * p0 + aa1 * p1 + aa2 * p2) * q * q - aa0 * p0) / p1;
+                let b0 = 0.5 * (aa0.sqrt() + bb1.max(0.0).sqrt());
+                [b0, aa0.sqrt() - b0, 0.0, a1, a2]
+            }
+        }
+        "notch" => {
+            let (a1, a2) = poles(w0, q);
+            let c = w0.cos();
+            let k = (1.0 + a1 + a2) / (2.0 - 2.0 * c);
+            [k, -2.0 * c * k, k, a1, a2]
+        }
+        _ => {
+            // Plateaux : on calcule la forme dont les pôles restent sous la fréquence, puis on l'inverse si besoin
+            let ls = kind == "lowshelf";
+            let inv = (ls && g < 0.0) || (!ls && g > 0.0);
+            let gd = if inv { -g } else { g };
+            let a = 10f64.powf(gd / 40.0);
+            let (qq, sa) = (std::f64::consts::FRAC_1_SQRT_2, a.sqrt());
+            let h2 = |fr: f64| {
+                let w = fr.max(1e-6) / f;
+                let (re, im) = (-w * w, w * sa / qq);
+                let (nr, ni, dr, di) = if ls { (a * (re + a), a * im, a * re + 1.0, im) } else { (a * (a * re + 1.0), a * im, re + a, im) };
+                (nr * nr + ni * ni) / (dr * dr + di * di)
+            };
+            let (a1, a2) = poles(2.0 * PI * (if ls { f / sa } else { f * sa }) / sr, qq);
+            let (p0, p1, p2) = ph(f);
+            let (aa0, aa1, aa2) = ((1.0 + a1 + a2).powi(2), (1.0 - a1 + a2).powi(2), -4.0 * a2);
+            let bb0 = aa0 * h2(0.0);
+            let bb1 = aa1 * h2(sr / 2.0);
+            let bb2 = (h2(f) * (aa0 * p0 + aa1 * p1 + aa2 * p2) - bb0 * p0 - bb1 * p1) / p2;
+            let c = from_b(bb0, bb1, bb2, a1, a2);
+            if inv { [1.0 / c[0], a1 / c[0], a2 / c[0], c[1] / c[0], c[2] / c[0]] } else { c }
+        }
+    };
+    Biquad::new(k[0], k[1], k[2], 1.0, k[3], k[4])
+}
+
+/// Filtres d'une bande d'EQ (mêmes calculs que `eqBandCoefs` dans audio.js).
+fn eq_sections(bd: &EqBand, sr: f64) -> Vec<Biquad> {
+    let freq = bd.freq.clamp(20.0, 20_000.0);
+    let q = if bd.q > 0.0 { bd.q } else { 1.0 };
+    match bd.kind.as_str() {
+        "hpf" | "lpf" => {
+            let kind = if bd.kind == "hpf" { "highpass" } else { "lowpass" };
+            let n = ((bd.slope.unwrap_or(12.0) / 12.0).round() as usize).clamp(1, 4);
+            let qs: Vec<f64> = if n == 1 { vec![q] } else {
+                (0..n).map(|k| {
+                    let qk = 1.0 / (2.0 * ((2 * k + 1) as f64 * PI / (4 * n) as f64).cos());
+                    if k == n - 1 { qk * q / std::f64::consts::FRAC_1_SQRT_2 } else { qk }
+                }).collect()
+            };
+            qs.into_iter().map(|qk| eq_matched(kind, freq, qk, 0.0, sr)).collect()
+        }
+        "lowshelf" | "highshelf" => vec![eq_matched(&bd.kind, freq, std::f64::consts::FRAC_1_SQRT_2, bd.gain, sr)],
+        "notch" => vec![eq_matched("notch", freq, q, 0.0, sr)],
+        "tilt" => vec![eq_matched("lowshelf", freq, std::f64::consts::FRAC_1_SQRT_2, -bd.gain / 2.0, sr), eq_matched("highshelf", freq, std::f64::consts::FRAC_1_SQRT_2, bd.gain / 2.0, sr)],
+        _ => vec![eq_matched("peaking", freq, q, bd.gain, sr)],
+    }
+}
+
+/// Ancienne chaîne fixe (projets d'avant l'EQ libre) = 4 points, comme `legacyEqBands` dans audio.js
+fn legacy_eq_bands(p: &crate::model::EqParams) -> Vec<EqBand> {
+    let b = |kind: &str, freq: f64, gain: f64, q: f64| EqBand { kind: kind.into(), freq, gain, q, ..Default::default() };
+    let mut out = vec![b("hpf", p.hpf.unwrap_or(80.0), 0.0, 1.0839), b("bell", 300.0, p.mid_gain.unwrap_or(-2.0), 1.0),
+        b("bell", 4000.0, p.presence.unwrap_or(2.0), 0.7), b("highshelf", 10_000.0, p.air.unwrap_or(1.0), 0.7)];
+    if let Some(l) = p.lpf.filter(|f| *f > 0.0) { out.push(b("lpf", l, 0.0, 1.0839)); }
+    out
 }
 
 impl Chain {
@@ -692,47 +1031,49 @@ impl Chain {
     pub fn new(effects: &[String], effect_params: &EffectParams, sr: f64, bpm: f64, ceiling_db: f64) -> Self {
         let has = |name: &str| effects.iter().any(|e| e == name);
         let mut cut = Vec::new();
+        let mut cut_kinds = Vec::new();
+        let mut eq_bands = Vec::new();
+        let mut dyn_eq = Vec::new();
         if has("filter") {
             // Butterworth : une cellule (Q 0,7071) à 12 dB / octave, deux (Q 0,5412 puis 1,3066) à 24 dB
             let p = effect_params.filter.clone().unwrap_or_default();
             let (hpf, lpf) = (p.hpf.unwrap_or(80.0), p.lpf.unwrap_or(20_000.0));
             let qs: &[f64] = if p.slope == Some(24.0) { &[0.5412, 1.3066] } else { &[std::f64::consts::FRAC_1_SQRT_2] };
             if hpf > 20.0 {
-                for q in qs { let b = Biquad::highpass(sr, hpf.min(20_000.0), 20.0 * q.log10()); cut.push([b.clone(), b]); }
+                for q in qs { let b = Biquad::highpass(sr, hpf.min(20_000.0), 20.0 * q.log10()); cut.push([b.clone(), b]); cut_kinds.push((true, 20.0 * q.log10())); }
             }
             if lpf < 20_000.0 {
-                for q in qs { let b = Biquad::lowpass(sr, lpf.max(20.0), 20.0 * q.log10()); cut.push([b.clone(), b]); }
+                for q in qs { let b = Biquad::lowpass(sr, lpf.max(20.0), 20.0 * q.log10()); cut.push([b.clone(), b]); cut_kinds.push((false, 20.0 * q.log10())); }
             }
         }
         let mut filters = Vec::new();
         let mut push = |b: Biquad| filters.push([b.clone(), b]);
         if has("eq") {
             let p = effect_params.eq.clone().unwrap_or_default();
-            if let Some(bands) = p.bands.as_ref() {
+            let legacy;
+            let bands = match p.bands.as_ref() { Some(b) => b, None => { legacy = legacy_eq_bands(&p); &legacy } };
+            {
                 // EQ libre : mêmes bandes que le navigateur (24 au plus, Q linéaire, dB pour les coupes)
-                for bd in bands.iter().take(24).filter(|b| b.on != Some(false) && b.freq > 0.0) {
-                    let freq = bd.freq.clamp(20.0, 20_000.0);
-                    let q = if bd.q > 0.0 { bd.q } else { 1.0 };
-                    push(match bd.kind.as_str() {
-                        "hpf" => Biquad::highpass(sr, freq, 20.0 * q.log10()),
-                        "lpf" => Biquad::lowpass(sr, freq, 20.0 * q.log10()),
-                        "lowshelf" => Biquad::lowshelf(sr, freq, bd.gain),
-                        "highshelf" => Biquad::highshelf(sr, freq, bd.gain),
-                        _ => Biquad::peaking(sr, freq, q, bd.gain),
-                    });
+                let mut k = 0;
+                for bd in bands.iter().take(24) {
+                    if bd.on != Some(false) && bd.freq > 0.0 && eq_is_dynamic(bd) {
+                        dyn_eq.push(DynBand::new(bd, sr));
+                        eq_bands.push((bd.clone(), None));
+                    } else if bd.on != Some(false) && bd.freq > 0.0 {
+                        let secs = eq_sections(bd, sr);
+                        let n = secs.len();
+                        for b in secs { push(b); }
+                        eq_bands.push((bd.clone(), Some((k, n))));
+                        k += n;
+                    } else {
+                        eq_bands.push((bd.clone(), None));
+                    }
                 }
-            } else {
-                push(Biquad::highpass(sr, p.hpf.unwrap_or(80.0), 0.7));
-                push(Biquad::peaking(sr, 300.0, 1.0, p.mid_gain.unwrap_or(-2.0)));
-                push(Biquad::peaking(sr, 4000.0, 0.7, p.presence.unwrap_or(2.0)));
-                push(Biquad::highshelf(sr, 10_000.0, p.air.unwrap_or(1.0)));
-                if let Some(lpf) = p.lpf.filter(|f| *f > 0.0) {
-                    push(Biquad::lowpass(sr, lpf, 0.7));
-                }
+                if let Some(out) = p.out.filter(|o| *o != 0.0) { push(Biquad::gain(out)); }
             }
         }
         let drive = if has("sat") { effect_params.sat.as_ref().map_or(0.0, |s| s.drive) } else { 0.0 };
-        let sat = sat_coeffs(drive);
+        let sat = Saturator::new(drive);
         let de = effect_params.deess.clone().unwrap_or_default();
         let deess = (has("deess") && de.amount > 0.0).then(|| Deesser::new(de.amount, de.freq.unwrap_or(5500.0), sr));
         let gate = has("gate").then(|| Gate::new(&effect_params.gate.clone().unwrap_or_default(), sr));
@@ -762,24 +1103,117 @@ impl Chain {
         let limit = has("limit").then(|| Limiter::new(effect_params.limit.as_ref().and_then(|l| l.ceiling).unwrap_or(ceiling_db), sr));
         let pitch = (has("pitch") && effect_params.pitch.as_ref().and_then(|p| p.semi).unwrap_or(0.0) != 0.0)
             .then(|| Pitch::new(&effect_params.pitch.clone().unwrap_or_default(), sr));
-        Self { cut, filters, sat, gate, crush, util, width, modfx, deess, comp, master, limit, delay, reverb, pitch, order: Stage::DEFAULT.to_vec() }
+        let comp_p = effect_params.comp.clone().unwrap_or_default();
+        Self { cut, filters, dyn_eq, sat, gate, crush, util, width, modfx, deess, comp, master, limit, delay, reverb, pitch, order: Stage::DEFAULT.to_vec(),
+            auto: Vec::new(), auto_from: 0.0, sr, comp_p, eq_bands, cut_kinds, names: effects.to_vec(), deess_freq: de.freq.unwrap_or(5500.0) }
+    }
+    /// Branche les courbes d'automation des réglages d'effet (`from` = instant du premier échantillon traité)
+    pub fn with_auto(mut self, automation: &Automation, from: f64) -> Self {
+        for (k, c) in &automation.other {
+            let mut it = k.splitn(3, ':');
+            let (Some("fx"), Some(fx), Some(key)) = (it.next(), it.next(), it.next()) else { continue };
+            let Some((min, max, log)) = auto_range(fx, key) else { continue };
+            let Some(curve) = automation.curve(k) else { continue };
+            let _ = c;
+            self.auto.push(AutoParam { fx: fx.to_owned(), key: key.to_owned(), curve, min, max, log });
+        }
+        self.auto_from = from;
+        // De-esser / pitch réglés à zéro mais automatisés : on les crée quand même (comme le navigateur)
+        let has = |fx: &str| self.names.iter().any(|n| n == fx) && self.auto.iter().any(|a| a.fx == fx);
+        if self.deess.is_none() && has("deess") { self.deess = Some(Deesser::new(0.0, self.deess_freq, self.sr)); }
+        if self.pitch.is_none() && has("pitch") { self.pitch = Some(Pitch::new(&PitchParams::default(), self.sr)); }
+        self
+    }
+    fn apply_auto(&mut self, t: f64) {
+        let mut comp_changed = false;
+        let mut cut_changed = false;
+        for i in 0..self.auto.len() {
+            let a = &self.auto[i];
+            let n = a.curve.at(t).clamp(0.0, 1.0);
+            let v = if a.log && a.min > 0.0 { a.min * (a.max / a.min).powf(n) } else { a.min + n * (a.max - a.min) };
+            let (fx, key) = (a.fx.clone(), a.key.clone());
+            match (fx.as_str(), key.as_str()) {
+                ("comp", k) => {
+                    let p = &mut self.comp_p;
+                    match k { "threshold" => p.threshold = Some(v), "ratio" => p.ratio = Some(v), "mix" => p.mix = Some(v), "attack" => p.attack = Some(v),
+                        "release" => p.release = Some(v), "knee" => p.knee = Some(v), "makeup" => p.makeup = Some(v), _ => {} }
+                    comp_changed = true;
+                }
+                ("delay", k) => if let Some(d) = &mut self.delay {
+                    match k { "wet" => d.wet = (v / 100.0).clamp(0.0, 1.0), "dry" => d.dry = v / 100.0, "feedback" => d.fb = (v / 100.0).clamp(0.0, 0.9), _ => {} }
+                },
+                ("reverb", "wet") => if let Some(r) = &mut self.reverb { r.wet = (v / 100.0).clamp(0.0, 1.0); },
+                ("util", "gain") => if let Some(u) = &mut self.util { let sign = if u.g < 0.0 { -1.0 } else { 1.0 }; u.g = 10f64.powf(v / 20.0) * sign; },
+                ("width", "width") => if let Some(w) = &mut self.width { w.width = v / 100.0; },
+                ("deess", "amount") => if let Some(d) = &mut self.deess { let a = v.clamp(0.0, 100.0); d.max_red = a * 0.24; d.slope = a / 100.0 * 3.0; },
+                ("gate", k) => if let Some(g) = &mut self.gate {
+                    let sr = self.sr;
+                    match k { "threshold" => g.thr = 10f64.powf(v / 20.0), "reduction" => g.floor = 10f64.powf(-v / 20.0),
+                        "release" => g.g_rel = 1.0 - (-1.0 / ((v / 1000.0).max(0.005) * sr)).exp(), _ => {} }
+                },
+                ("crush", k) => if let Some(c) = &mut self.crush {
+                    match k { "bits" => c.q = 2f64.powf(v - 1.0), "down" => c.down = (v.round() as usize).max(1), "mix" => c.mix = v / 100.0, _ => {} }
+                },
+                ("pitch", k) => if let Some(p) = &mut self.pitch {
+                    match k { "semi" => p.step = (1.0 - 2f64.powf(v.clamp(-12.0, 12.0) / 12.0)) / p.w, "mix" => p.mix = (v / 100.0).clamp(0.0, 1.0), _ => {} }
+                },
+                (m @ ("tremolo" | "phaser" | "flanger" | "chorus" | "doubler" | "slapback"), k) => {
+                    let st = match m { "tremolo" => Stage::Tremolo, "phaser" => Stage::Phaser, "flanger" => Stage::Flanger, "chorus" => Stage::Chorus, "doubler" => Stage::Doubler, _ => Stage::Slapback };
+                    if let Some((_, f)) = self.modfx.iter_mut().find(|(s2, _)| *s2 == st) {
+                        match k { "rate" => f.rate = v, "depth" => f.depth = v, "width" => f.width = v, "feedback" => f.fb = v / 100.0, "mix" => f.mix = v / 100.0, "time" => f.time = v / 1000.0, _ => {} }
+                    }
+                }
+                ("filter", "hpf") | ("filter", "lpf") => {
+                    let hp = key == "hpf";
+                    for (j, (is_hp, qdb)) in self.cut_kinds.iter().enumerate() {
+                        if *is_hp != hp { continue; }
+                        let b = if hp { Biquad::highpass(self.sr, v.min(20_000.0), *qdb) } else { Biquad::lowpass(self.sr, v.max(20.0), *qdb) };
+                        for ch in 0..2 { self.cut[j][ch].retune(b.clone()); }
+                    }
+                    cut_changed = true;
+                }
+                ("eq", k) => {
+                    let Some((idx, field)) = k.strip_prefix('b').and_then(|r| r.split_once('-')) else { continue };
+                    let Ok(bi) = idx.parse::<usize>() else { continue };
+                    let Some((bd, Some((fi, _)))) = self.eq_bands.get_mut(bi) else { continue };
+                    if field == "freq" { bd.freq = v } else { bd.gain = v }
+                    let fi = *fi;
+                    for (j, b) in eq_sections(bd, self.sr).into_iter().enumerate() {
+                        for ch in 0..2 { self.filters[fi + j][ch].retune(b.clone()); }
+                    }
+                }
+                _ => {}
+            }
+        }
+        let _ = cut_changed;
+        if comp_changed {
+            let p = self.comp_p.clone();
+            if let Some(c) = &mut self.comp { c.retune(&p, self.sr); }
+        }
     }
     pub fn with_order(mut self, custom: &[String]) -> Self {
         self.order = Stage::order(custom);
         self
     }
     pub fn is_empty(&self) -> bool {
-        self.cut.is_empty() && self.filters.is_empty() && self.sat.is_none() && self.gate.is_none() && self.crush.is_none() && self.util.is_none() && self.width.is_none() && self.modfx.is_empty() && self.deess.is_none() && self.comp.is_none() && self.master.is_none() && self.limit.is_none() && self.delay.is_none() && self.reverb.is_none() && self.pitch.is_none()
+        self.cut.is_empty() && self.filters.is_empty() && self.dyn_eq.is_empty() && self.sat.is_none() && self.gate.is_none() && self.crush.is_none() && self.util.is_none() && self.width.is_none() && self.modfx.is_empty() && self.deess.is_none() && self.comp.is_none() && self.master.is_none() && self.limit.is_none() && self.delay.is_none() && self.reverb.is_none() && self.pitch.is_none()
     }
     /// Une piste avec reverb sort toujours en stéréo, même si ses sons sont mono.
     pub fn makes_stereo(&self) -> bool {
         self.reverb.is_some() || self.master.is_some() || self.limit.is_some()
+    }
+    /// La sortie est en stéréo même pour une entrée mono (reverb, écho ping-pong…), comme les worklets à 2 canaux du navigateur
+    pub fn outputs_stereo(&self) -> bool {
+        self.makes_stereo() || self.delay.as_ref().is_some_and(|d| d.pp)
     }
     /// `mono` : la piste n'a que des sons mono (seul `left` est lu). Si la chaîne élargit en stéréo
     /// (`makes_stereo`), `right` doit quand même avoir la taille de `left` : il reçoit le canal droit.
     pub fn process(&mut self, left: &mut [f32], right: &mut [f32], mono: bool) {
         let order = self.order.clone();
         for n in 0..left.len() {
+            if !self.auto.is_empty() && n % 128 == 0 {
+                self.apply_auto(self.auto_from + n as f64 / self.sr);
+            }
             let mut nc = if mono { 1 } else { 2 };
             let mut x = [left[n] as f64, if nc == 2 { right[n] as f64 } else { 0.0 }];
             for stage in &order {
@@ -822,12 +1256,11 @@ impl Chain {
                                 x[ch] = f[ch].tick(x[ch]);
                             }
                         }
+                        for d in &mut self.dyn_eq { d.tick(&mut x, nc); }
                     }
                     Stage::Sat => {
-                        if let Some((k, trim)) = self.sat {
-                            for v in &mut x[..nc] {
-                                *v = (k * v.clamp(-1.0, 1.0)).tanh() / k.tanh() * trim;
-                            }
+                        if let Some(sat) = &mut self.sat {
+                            for (ch, v) in x[..nc].iter_mut().enumerate() { *v = sat.tick(*v, ch); }
                         }
                     }
                     Stage::Deess => {
@@ -1064,12 +1497,12 @@ impl Master {
 pub fn process_send(send: &Send, left: &mut [f32], right: &mut [f32], sr: f64, bpm: f64) {
     let trim = if send.kind == "delay" { 1.0 } else { 1.0 / 3.0 } * send.volume.unwrap_or(100.0) / 100.0;
     let mut delay = (send.kind == "delay").then(|| {
-        let mut d = Delay::new(&DelayParams { wet: Some(100.0), feedback: send.feedback, ms: send.ms, beats: send.beats, pp: send.pp, dry: None }, sr, bpm);
+        let mut d = Delay::new(&DelayParams { wet: Some(100.0), feedback: send.feedback, ms: send.ms, beats: send.beats, pp: send.pp, dry: None, ..Default::default() }, sr, bpm);
         d.dry = 0.0;
         d
     });
     let mut reverb = (send.kind != "delay").then(|| {
-        let mut r = Reverb::new(&ReverbParams { wet: Some(100.0), size: Some(send.size.unwrap_or(3.2)), decay: None }, sr);
+        let mut r = Reverb::new(&ReverbParams { wet: Some(100.0), size: Some(send.size.unwrap_or(3.2)), ..Default::default() }, sr);
         r.pre = vec![0.0; ((send.pre.unwrap_or(0.0).clamp(0.0, 500.0) / 1000.0) * sr).round() as usize];
         r
     });
@@ -1121,7 +1554,7 @@ mod tests_pitch_pingpong {
     fn retune_garde_les_echos() {
         // Un clic, puis on tourne « Répétitions » juste avant le 1er écho : l'écho doit quand même sortir
         let sr = 48_000.0;
-        let p = |fb: f64| DelayParams { wet: Some(100.0), feedback: Some(fb), ms: Some(100.0), beats: None, pp: None, dry: Some(0.0) };
+        let p = |fb: f64| DelayParams { wet: Some(100.0), feedback: Some(fb), ms: Some(100.0), beats: None, pp: None, dry: Some(0.0), ..Default::default() };
         let mut d = Delay::new(&p(30.0), sr, 120.0);
         let mut seen = 0.0f64;
         for n in 0..9_600 {
@@ -1136,7 +1569,7 @@ mod tests_pitch_pingpong {
     #[test]
     fn ping_pong_alterne() {
         let sr = 48_000.0;
-        let mut d = Delay::new(&DelayParams { wet: Some(100.0), feedback: Some(50.0), ms: Some(100.0), beats: None, pp: Some(1.0), dry: None }, sr, 120.0);
+        let mut d = Delay::new(&DelayParams { wet: Some(100.0), feedback: Some(50.0), ms: Some(100.0), beats: None, pp: Some(1.0), dry: None, ..Default::default() }, sr, 120.0);
         d.dry = 0.0;
         let (mut l, mut r) = (vec![0.0; 24_000], vec![0.0; 24_000]);
         for n in 0..24_000 {

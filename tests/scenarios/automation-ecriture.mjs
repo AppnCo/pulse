@@ -17,7 +17,7 @@ export default async (c) => {
   let p = await pts();
   check('Touch : le geste est écrit (plusieurs points)', p.length >= 4, JSON.stringify(p));
   check('Touch : au relâchement la courbe revient au centre', Math.abs(p[p.length - 1].v - 0.5) < 0.02 && p.some(x => x.v > 0.9), JSON.stringify(p.map(x => x.v)));
-  check('pastille : mode Touch affiché', /Touch/.test(await ev(`document.querySelector('.timeline-track .auto-chip')?.textContent||''`)));
+  check('pastille : mode Touch affiché', /Touch/.test(await ev(`document.querySelector('.track-item .auto-chip')?.textContent||''`)));
   // Latch
   await ev(`state.project.tracks[0].automation={}; state.project.tracks[0].pan=0; state.project.tracks[0].autoMode='latch'; renderInspector(); renderTimelineTracks()`);
   await ev(`state.playhead=0; togglePlay()`); await sleep(300);

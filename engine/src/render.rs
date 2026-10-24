@@ -90,7 +90,7 @@ fn clip_level(clip: &Clip, x: f64, xin: f64, xout: f64) -> f64 {
 
 /// Rend le projet en stéréo. Retourne (gauche, droite).
 /// Envois vers un groupe (Aux) : (dose fixe, courbe éventuelle, gain jusqu'à la destination, groupe à effets de destination)
-fn aux_sends(project: &Project, sends: &HashMap<String, f64>, auto: &crate::model::Automation, own_out: Option<&str>, master_volume: f64) -> Vec<(f32, Option<Curve>, f32, Option<usize>)> {
+fn aux_sends(project: &Project, sends: &HashMap<String, f64>, auto: &crate::model::Automation, pre: &HashMap<String, bool>, own_out: Option<&str>, master_volume: f64) -> Vec<(f32, Option<Curve>, f32, Option<usize>, bool)> {
     let mut ids: Vec<String> = sends.keys().cloned().collect();
     for k in auto.other.keys() {
         if let Some(id) = k.strip_prefix("busSend:") {
@@ -110,7 +110,7 @@ fn aux_sends(project: &Project, sends: &HashMap<String, f64>, auto: &crate::mode
             }
             let (g, dest) = project.route(Some(&id));
             let g = g * if dest.is_some() { 1.0 } else { master_volume };
-            Some(((lvl / 100.0) as f32, c, g as f32, dest))
+            Some(((lvl / 100.0) as f32, c, g as f32, dest, pre.get(&format!("busSend:{id}")).copied().unwrap_or(false)))
         })
         .collect()
 }
@@ -121,7 +121,8 @@ pub fn render(project: &Project, media: &Media, opts: &RenderOptions) -> (Vec<f3
     // Queue : comme le navigateur, on laisse mourir les échos (4 s) ou la reverb (2,5 s) quand on rend tout le projet
     let uses = |name: &str| {
         let has = |fx: &[String]| fx.iter().any(|e| e == name);
-        project.tracks.iter().enumerate().any(|(i, t)| opts.only_track.map_or(true, |o| o == i) && has(&t.effects))
+        project.tracks.iter().enumerate().any(|(i, t)| opts.only_track.map_or(true, |o| o == i)
+            && (has(&t.effects) || t.clips.iter().any(|c| c.fx.as_ref().is_some_and(|f| has(&f.effects)))))
             || (opts.only_track.is_none() && project.buses.iter().any(|b| has(&b.effects)))
     };
     let send_used = |delay: bool| {
@@ -152,16 +153,18 @@ pub fn render(project: &Project, media: &Media, opts: &RenderOptions) -> (Vec<f3
         let route_gain = (bus * master) as f32; // de la sortie de la piste jusqu'à sa destination
         // Envois de cette piste : (indice de l'envoi, dose)
         // (indice de l'envoi, dose, courbe d'automation éventuelle : elle remplace la dose, comme dans le navigateur)
-        let track_sends: Vec<(usize, f32, Option<Curve>)> = project.sends.iter().enumerate()
+        let pre_of = |pre: &HashMap<String, bool>, key: String| pre.get(&key).copied().unwrap_or(false);
+        let track_sends: Vec<(usize, f32, Option<Curve>, bool)> = project.sends.iter().enumerate()
             .filter(|(_, sd)| !sd.muted)
             .filter_map(|(i, sd)| {
                 let lvl = track.sends.get(&sd.id).copied().unwrap_or(0.0);
                 let c = track.automation.curve(&format!("send:{}", sd.id));
-                (lvl > 0.0 || c.is_some()).then(|| (i, (lvl / 100.0) as f32, c))
+                (lvl > 0.0 || c.is_some()).then(|| (i, (lvl / 100.0) as f32, c, pre_of(&track.pre_sends, format!("send:{}", sd.id))))
             })
             .collect();
-        let track_aux = if stem { Vec::new() } else { aux_sends(project, &track.bus_sends, &track.automation, track.output.as_deref(), opts.master_volume) };
-        if vol == 0.0 || (route_gain == 0.0 && track_sends.is_empty() && track_aux.is_empty()) {
+        let track_aux = if stem { Vec::new() } else { aux_sends(project, &track.bus_sends, &track.automation, &track.pre_sends, track.output.as_deref(), opts.master_volume) };
+        let any_pre = track_sends.iter().any(|s| s.3) || track_aux.iter().any(|a| a.4);
+        if (vol == 0.0 && !any_pre) || (route_gain == 0.0 && track_sends.is_empty() && track_aux.is_empty()) {
             continue;
         }
 
@@ -176,11 +179,14 @@ pub fn render(project: &Project, media: &Media, opts: &RenderOptions) -> (Vec<f3
             continue;
         }
         let force_mono = track.mono.unwrap_or(false);
-        let stereo = !force_mono && clips.iter().any(|(_, s)| s.channels.len() > 1);
+        // Effets d'une région (avant ceux de la piste) : une chaîne par région qui en a
+        let mut clip_fx: Vec<Option<crate::fx::Chain>> = clips.iter().map(|(c, _)| c.fx.as_ref().filter(|f| !f.effects.is_empty())
+            .map(|f| crate::fx::Chain::new(&f.effects, &f.effect_params, sr, project.bpm, project.ceiling()).with_order(&f.fx_order))).collect();
+        let stereo = !force_mono && (clips.iter().any(|(_, s)| s.channels.len() > 1) || clip_fx.iter().flatten().any(|c| c.outputs_stereo()));
         let mut tl = vec![0.0f32; frames];
         let mut tr = if stereo { vec![0.0f32; frames] } else { Vec::new() };
         let all: Vec<&Clip> = clips.iter().map(|(c, _)| *c).collect();
-        for (clip, src) in &clips {
+        for (ci, (clip, src)) in clips.iter().enumerate() {
             let (xin, xout) = crossfade_extents(&all, clip);
             let offset = clip.offset.unwrap_or(0.0).max(0.0);
             let seg_start = clip.start.max(from);
@@ -190,6 +196,9 @@ pub fn render(project: &Project, media: &Media, opts: &RenderOptions) -> (Vec<f3
             }
             let first = ((seg_start - from) * sr).round() as usize;
             let last = (((seg_end - from) * sr).round() as usize).min(frames);
+            let src_stereo = !force_mono && src.channels.len() > 1;
+            let has_fx = clip_fx[ci].is_some();
+            let (mut cl, mut cr) = if has_fx { (vec![0.0f32; frames], vec![0.0f32; frames]) } else { (Vec::new(), Vec::new()) };
             for n in first..last {
                 let x = from + n as f64 / sr - clip.start; // position dans le clip
                 // Répétition : on reboucle sur la portion [offset, offset + duration)
@@ -200,15 +209,32 @@ pub fn render(project: &Project, media: &Media, opts: &RenderOptions) -> (Vec<f3
                 let g = clip_level(clip, x, xin, xout) as f32;
                 // Piste forcée en mono : les deux côtés sont mélangés à parts égales (comme Web Audio, 2 → 1 canal)
                 let l = if force_mono && src.channels.len() > 1 { 0.5 * (src.at(0, in_src) + src.at(1, in_src)) * g } else { src.at(0, in_src) * g };
+                let r = if src.channels.len() > 1 && !force_mono { src.at(1, in_src) * g } else { l };
+                if has_fx {
+                    cl[n] = l;
+                    cr[n] = r;
+                    continue;
+                }
                 tl[n] += l;
                 if stereo {
-                    tr[n] += if src.channels.len() > 1 { src.at(1, in_src) * g } else { l };
+                    tr[n] += r;
+                }
+            }
+            // La région passe dans ses effets ; l'écho / la reverb continuent après sa fin (queue)
+            if let Some(chain) = clip_fx[ci].as_mut() {
+                let out_stereo = src_stereo || chain.outputs_stereo();
+                chain.process(&mut cl, &mut cr, !src_stereo);
+                for n in 0..frames {
+                    tl[n] += cl[n];
+                    if stereo {
+                        tr[n] += if out_stereo { cr[n] } else { cl[n] };
+                    }
                 }
             }
         }
 
         // 2. Effets de la piste
-        let mut chain = crate::fx::Chain::for_track(track, sr, project.bpm);
+        let mut chain = crate::fx::Chain::for_track(track, sr, project.bpm).with_auto(&track.automation, from);
         let mono_in = !stereo;
         let stereo = stereo || chain.makes_stereo();
         if stereo && tr.is_empty() {
@@ -236,6 +262,8 @@ pub fn render(project: &Project, media: &Media, opts: &RenderOptions) -> (Vec<f3
             let auto = curve.as_ref().map_or(1.0, |c| c.at(t));
             let pan = pan_curve.as_ref().map_or(pan0, |c| (-1.0 + 2.0 * c.at(t)).clamp(-1.0, 1.0));
             let g = (vol * auto) as f32;
+            // Signal avant le fader (Pre) : après les effets, sans fader ni pan
+            let (pre_l, pre_r) = (tl[n], if stereo { tr[n] } else { tl[n] });
             let l_in = tl[n] * g;
             let (l, r) = if stereo {
                 let r_in = tr[n] * g;
@@ -254,21 +282,23 @@ pub fn render(project: &Project, media: &Media, opts: &RenderOptions) -> (Vec<f3
             };
             left[n] += l * route_gain;
             right[n] += r * route_gain;
-            for (i, level, c) in &track_sends {
+            for (i, level, c, pre) in &track_sends {
                 let level = c.as_ref().map_or(*level, |c| c.at(t) as f32);
+                let (sl, sr2) = if *pre { (pre_l, pre_r) } else { (l, r) };
                 let b = send_in[*i].get_or_insert_with(|| (vec![0.0f32; frames], vec![0.0f32; frames]));
-                b.0[n] += l * level;
-                b.1[n] += r * level;
+                b.0[n] += sl * level;
+                b.1[n] += sr2 * level;
             }
-            for (k, (level, c, _, _)) in track_aux.iter().enumerate() {
+            for (k, (level, c, _, _, pre)) in track_aux.iter().enumerate() {
                 let level = c.as_ref().map_or(*level, |c| c.at(t) as f32);
-                aux_buf[k].0[n] += l * level;
-                aux_buf[k].1[n] += r * level;
+                let (sl, sr2) = if *pre { (pre_l, pre_r) } else { (l, r) };
+                aux_buf[k].0[n] += sl * level;
+                aux_buf[k].1[n] += sr2 * level;
             }
         }
         }
         // Envois vers un groupe : vers son entrée (groupe à effets) ou directement vers le master
-        for ((_, _, g, d), (al, ar)) in track_aux.iter().zip(aux_buf) {
+        for ((_, _, g, d, _), (al, ar)) in track_aux.iter().zip(aux_buf) {
             let (dl, dr) = match d {
                 Some(i) => { let b = bus_in[*i].get_or_insert_with(|| (vec![0.0f32; frames], vec![0.0f32; frames])); (&mut b.0, &mut b.1) }
                 None => (&mut left, &mut right),
@@ -294,7 +324,7 @@ pub fn render(project: &Project, media: &Media, opts: &RenderOptions) -> (Vec<f3
     for i in order {
         let Some((mut bl, mut br)) = bus_in[i].take() else { continue };
         let bus = &project.buses[i];
-        crate::fx::Chain::new(&bus.effects, &bus.effect_params, sr, project.bpm, project.ceiling()).with_order(&bus.fx_order).process(&mut bl, &mut br, false);
+        crate::fx::Chain::new(&bus.effects, &bus.effect_params, sr, project.bpm, project.ceiling()).with_order(&bus.fx_order).with_auto(&bus.automation, from).process(&mut bl, &mut br, false);
         let own = if bus.muted { 0.0 } else { bus.volume.unwrap_or(100.0) / 100.0 };
         let (up, dest) = project.route(bus.output.as_deref());
         let g = (own * up * if dest.is_some() { 1.0 } else { opts.master_volume }) as f32;
@@ -318,14 +348,14 @@ pub fn render(project: &Project, media: &Media, opts: &RenderOptions) -> (Vec<f3
         };
         let law0 = pan_law(pan0);
         // Envois de ce groupe vers un autre groupe (posés après le traitement ; un groupe déjà traité ne les reçoit plus)
-        let bus_aux = aux_sends(project, &bus.bus_sends, &bus.automation, bus.output.as_deref(), opts.master_volume);
+        let bus_aux = aux_sends(project, &bus.bus_sends, &bus.automation, &bus.pre_sends, bus.output.as_deref(), opts.master_volume);
         let mut aux_buf: Vec<(Vec<f32>, Vec<f32>)> = bus_aux.iter().map(|_| (vec![0.0f32; frames], vec![0.0f32; frames])).collect();
-        let bus_sends: Vec<(usize, f32, Option<Curve>)> = project.sends.iter().enumerate()
+        let bus_sends: Vec<(usize, f32, Option<Curve>, bool)> = project.sends.iter().enumerate()
             .filter(|(_, sd)| !sd.muted)
             .filter_map(|(k, sd)| {
                 let lvl = bus.sends.get(&sd.id).copied().unwrap_or(0.0);
                 let c = bus.automation.curve(&format!("send:{}", sd.id));
-                (lvl > 0.0 || c.is_some()).then(|| (k, (lvl / 100.0) as f32, c))
+                (lvl > 0.0 || c.is_some()).then(|| (k, (lvl / 100.0) as f32, c, bus.pre_sends.get(&format!("send:{}", sd.id)).copied().unwrap_or(false)))
             })
             .collect();
         for n in 0..frames {
@@ -335,24 +365,28 @@ pub fn render(project: &Project, media: &Media, opts: &RenderOptions) -> (Vec<f3
             let (pl_l, pl_r, pr_l, pr_r) = if pan_curve.is_some() { pan_law(pan) } else { law0 };
             let own_g = (own as f32) * auto;      // volume du groupe (sans la route vers le master)
             let (xl, xr) = (bl[n] * own_g, br[n] * own_g);
+            let busmute = if bus.muted { 0.0f32 } else { 1.0 };
+            let (pre_l, pre_r) = (bl[n] * busmute, br[n] * busmute);
             let (l, r) = if pan <= 0.0 { (xl * pl_l + xr * pl_r, xr * pr_r) } else { (xl * pl_l, xr * pr_r + xl * pr_l) };
             let route = (up * if dest.is_some() { 1.0 } else { opts.master_volume }) as f32;
             dl[n] += l * route;
             dr[n] += r * route;
-            for (k, level, c) in &bus_sends {
+            for (k, level, c, pre) in &bus_sends {
                 let level = c.as_ref().map_or(*level, |c| c.at(t) as f32);
+                let (sl, sr2) = if *pre { (pre_l, pre_r) } else { (l, r) };
                 let b = send_in[*k].get_or_insert_with(|| (vec![0.0f32; frames], vec![0.0f32; frames]));
-                b.0[n] += l * level;
-                b.1[n] += r * level;
+                b.0[n] += sl * level;
+                b.1[n] += sr2 * level;
             }
-            for (k, (level, c, _, _)) in bus_aux.iter().enumerate() {
+            for (k, (level, c, _, _, pre)) in bus_aux.iter().enumerate() {
                 let level = c.as_ref().map_or(*level, |c| c.at(t) as f32);
-                aux_buf[k].0[n] += l * level;
-                aux_buf[k].1[n] += r * level;
+                let (sl, sr2) = if *pre { (pre_l, pre_r) } else { (l, r) };
+                aux_buf[k].0[n] += sl * level;
+                aux_buf[k].1[n] += sr2 * level;
             }
         }
         let _ = g;
-        for ((_, _, g, d), (al, ar)) in bus_aux.iter().zip(aux_buf) {
+        for ((_, _, g, d, _), (al, ar)) in bus_aux.iter().zip(aux_buf) {
             let (dl, dr) = match d {
                 Some(j) if *j != i => { let b = bus_in[*j].get_or_insert_with(|| (vec![0.0f32; frames], vec![0.0f32; frames])); (&mut b.0, &mut b.1) }
                 Some(_) => continue,

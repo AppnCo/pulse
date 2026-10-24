@@ -12,10 +12,10 @@ export default async (c) => {
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   // mode A
   await ev(`toggleAutomationMode()`); await sleep(300);
-  check('pastille Volume visible', await ev(`document.querySelector('.timeline-track .auto-chip')?.textContent`) !== undefined && /Volume/.test(await ev(`document.querySelector('.timeline-track .auto-chip')?.textContent||''`)));
+  check('pastille Volume visible', await ev(`document.querySelector('.track-item .auto-chip')?.textContent`) !== undefined && /Volume/.test(await ev(`document.querySelector('.track-item .auto-chip')?.textContent||''`)));
   // autosélection : toucher le gauche/droite de la tranche
   await ev(`document.querySelector('#inspector .insp-strip:first-child .insp-pan-input').dispatchEvent(new MouseEvent('mousedown',{bubbles:true}))`); await sleep(300);
-  check('toucher le pan affiche sa courbe', await ev(`state.project.tracks[0].autoParam`) === 'pan' && /Gauche/.test(await ev(`document.querySelector('.timeline-track .auto-chip')?.textContent||''`)));
+  check('toucher le pan affiche sa courbe', await ev(`state.project.tracks[0].autoParam`) === 'pan' && /Gauche/.test(await ev(`document.querySelector('.track-item .auto-chip')?.textContent||''`)));
   // poser un point sur la courbe
   const r = await ev(`(()=>{const b=document.querySelector('.timeline-track .vol-curve').getBoundingClientRect(); return {x:b.left+320,y:b.top+10};})()`);
   await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: r.x, y: r.y, button: 'left', clickCount: 1 });
@@ -24,7 +24,7 @@ export default async (c) => {
   check('le point est rangé dans l’automation du pan (pas du volume)', await ev(`((state.project.tracks[0].automation||{}).pan||{points:[]}).points.length`) >= 1 && !(await ev(`((state.project.tracks[0].automation||{}).volume||{points:[]}).points.length`)));
   // menu de réglage : un envoi vers un groupe
   await ev(`state.project.tracks[0].busSends={g1:40}; renderInspector(); renderTimelineTracks()`); await sleep(200);
-  await ev(`document.querySelector('.timeline-track .auto-chip').click()`); await sleep(150);
+  await ev(`document.querySelector('.track-item .auto-chip').click()`); await sleep(150);
   const menu = await ev(`[...document.querySelectorAll('.track-ctx-menu .ctx-item, .track-ctx-menu .ctx-head')].map(e=>e.textContent).join('|')`);
   check('menu : Volume, Gauche/droite, Envois, Parallèle', /Volume/.test(menu) && /Gauche/.test(menu) && /Envois/.test(menu) && /Parallèle/.test(menu), menu);
   // autosélection d'un plugin : curseur du compresseur
@@ -34,4 +34,18 @@ export default async (c) => {
   // export avec automation : pas d'erreur
   const ok = await ev(`(async()=>{ try { await PulseAudio.exportWav(state.project); return true; } catch(e){ return String(e); } })()`);
   check('export avec courbes sans erreur', ok === true, String(ok));
+  // effacer la courbe affichée depuis le menu de la pastille, ⌘Z la rend
+  await ev(`state.project.tracks[0].autoParam='pan'; renderTimelineTracks()`); await sleep(150);
+  await ev(`document.querySelector('.track-item .auto-chip').click()`); await sleep(150);
+  await ev(`[...document.querySelectorAll('.track-ctx-menu .ctx-item')].find(e=>/Effacer la courbe/.test(e.textContent)).dispatchEvent(new MouseEvent('mousedown',{bubbles:true}))`); await sleep(200);
+  check('effacer la courbe affichée', !((state => state)(await ev(`((state.project.tracks[0].automation||{}).pan||{points:[]}).points.length`))));
+  await ev(`undoAction()`); await sleep(300);
+  check('⌘Z la rend', (await ev(`((state.project.tracks[0].automation||{}).pan||{points:[]}).points.length`)) > 0);
+  // copier la courbe de pan, la coller sur l'envoi vers le groupe
+  await ev(`document.querySelector('.track-item .auto-chip').click()`); await sleep(150);
+  await ev(`[...document.querySelectorAll('.track-ctx-menu .ctx-item')].find(e=>/Copier la courbe/.test(e.textContent)).dispatchEvent(new MouseEvent('mousedown',{bubbles:true}))`); await sleep(150);
+  await ev(`state.project.tracks[0].autoParam='busSend:g1'; renderTimelineTracks()`); await sleep(150);
+  await ev(`document.querySelector('.track-item .auto-chip').click()`); await sleep(150);
+  await ev(`[...document.querySelectorAll('.track-ctx-menu .ctx-item')].find(e=>/Coller la courbe/.test(e.textContent)).dispatchEvent(new MouseEvent('mousedown',{bubbles:true}))`); await sleep(200);
+  check('copier / coller une courbe vers un autre réglage', await ev(`JSON.stringify(state.project.tracks[0].automation['busSend:g1'].points)===JSON.stringify(state.project.tracks[0].automation.pan.points)`));
 };

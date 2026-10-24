@@ -125,7 +125,149 @@ window.PulseAudio = (function() {
                 return true;
             }
         }
-        registerProcessor('pulse-deesser', PulseDeesser);
+        // Saturation suréchantillonnée ×4 : même calcul que Saturator dans engine/src/fx.rs
+        // (filtre de 64 coefficients, Blackman, coupure 0,1125 de la cadence ×4 ; parasites −22 dB → −99 dB)
+        const satFir = (() => {
+            const h = new Float64Array(64), fc = 0.1125;
+            for (let i = 0; i < 64; i++) {
+                const m = i - 31.5, x = 2 * fc * m, sinc = Math.abs(x) < 1e-12 ? 1 : Math.sin(Math.PI * x) / (Math.PI * x);
+                h[i] = 2 * fc * sinc * (0.42 - 0.5 * Math.cos(2 * Math.PI * i / 63) + 0.08 * Math.cos(4 * Math.PI * i / 63));
+            }
+            let s = 0; for (let i = 0; i < 64; i++) s += h[i];
+            for (let i = 0; i < 64; i++) h[i] /= s;
+            return h;
+        })();
+        class PulseSat extends AudioWorkletProcessor {
+            constructor(o) {
+                super();
+                const p = (o && o.processorOptions) || {};
+                this.k = 1 + (p.drive || 0) * 0.05; this.tk = Math.tanh(this.k);
+                this.trim = 1 / Math.sqrt(this.k / this.tk);
+                this.xin = [new Float64Array(16), new Float64Array(16)]; this.xs = [new Float64Array(64), new Float64Array(64)]; this.pos = [0, 0];
+            }
+            process(inputs, outputs) {
+                const inp = inputs[0], out = outputs[0];
+                if (!inp || !inp.length) return true;
+                const n = inp[0].length, nc = Math.min(inp.length, out.length, 2), h = satFir, k = this.k, tk = this.tk;
+                for (let ch = 0; ch < nc; ch++) {
+                    const xin = this.xin[ch], xs = this.xs[ch], a = inp[ch], o = out[ch];
+                    let pos = this.pos[ch];
+                    for (let i = 0; i < n; i++) {
+                        xin.copyWithin(1, 0, 15); xin[0] = a[i];
+                        for (let p = 0; p < 4; p++) {
+                            let u = 0;
+                            for (let j = 0; j < 16; j++) u += h[p + 4 * j] * xin[j];
+                            const v = Math.max(-1, Math.min(1, 4 * u));
+                            pos = (pos + 1) % 64;
+                            xs[pos] = Math.tanh(k * v) / tk;
+                        }
+                        let y = 0, idx = pos;
+                        for (let j = 0; j < 64; j++) { y += h[j] * xs[idx]; idx = (idx + 63) % 64; }
+                        o[i] = y * this.trim;
+                    }
+                    this.pos[ch] = pos;
+                }
+                return true;
+            }
+        }
+        registerProcessor('pulse-sat', PulseSat);
+        // EQ « calé sur l'analogique » : mêmes fonctions que la page (copiées ici telles quelles)
+        ${eqMatched.toString()}
+        ${eqSections.toString()}
+        ${eqBandCoefs.toString()}
+        const biqRun = (k, st, x) => { const y = k[0] * x + k[1] * st[0] + k[2] * st[1] - k[3] * st[2] - k[4] * st[3]; st[1] = st[0]; st[0] = x; st[3] = st[2]; st[2] = y; return y; };
+        class PulseEq extends AudioWorkletProcessor {
+            constructor(o) {
+                super();
+                const p = (o && o.processorOptions) || {};
+                // bandes : { i (place dans la liste, pour l'automation), type, freq, gain, q, slope }
+                this.bands = (p.bands || []).map(b => ({ ...b, k: eqBandCoefs(b, sampleRate) }));
+                this.st = [];
+            }
+            setBand(i, field, v) {
+                const b = this.bands.find(x => x.i === i); if (!b || b[field] === v) return;
+                b[field] = v; b.k = eqBandCoefs(b, sampleRate);
+            }
+            process(inputs, outputs) {
+                const inp = inputs[0], out = outputs[0];
+                if (!inp || !inp.length) return true;
+                const n = inp[0].length, nc = Math.min(inp.length, out.length);
+                for (let ch = 0; ch < nc; ch++) {
+                    if (!this.st[ch]) this.st[ch] = [];
+                    const sts = this.st[ch], o = out[ch];
+                    o.set(inp[ch]);
+                    let si = 0;
+                    for (const b of this.bands) for (const k of b.k) {
+                        const st = sts[si] || (sts[si] = [0, 0, 0, 0]); si++;
+                        for (let i = 0; i < n; i++) o[i] = biqRun(k, st, o[i]);
+                    }
+                }
+                return true;
+            }
+        }
+        registerProcessor('pulse-eq', pulseAuto(PulseEq, (s, v) => {
+            for (const key in v) { const d = key.indexOf('-'); if (key[0] === 'b' && d > 1) s.setBand(+key.slice(1, d), key.slice(d + 1), v[key]); }   // « b3-freq »
+        }));
+        // Point dynamique de l'EQ : même calcul que DynBand dans engine/src/fx.rs (les deux doivent sonner pareil)
+        const dynCoef = (type, f, q, g) => {
+            const w = 2 * Math.PI * f / sampleRate, c = Math.cos(w), sn = Math.sin(w), a = Math.pow(10, g / 40);
+            let k;
+            if (type === 'bandpass') { const al = sn / (2 * q); k = [al, 0, -al, 1 + al, -2 * c, 1 - al]; }
+            else if (type === 'peaking') { const al = sn / (2 * q); k = [1 + al * a, -2 * c, 1 - al * a, 1 + al / a, -2 * c, 1 - al / a]; }
+            else {
+                const be = 2 * Math.sqrt(a) * (sn / 2) * Math.SQRT2;
+                k = type === 'lowshelf'
+                    ? [a * ((a + 1) - (a - 1) * c + be), 2 * a * ((a - 1) - (a + 1) * c), a * ((a + 1) - (a - 1) * c - be), (a + 1) + (a - 1) * c + be, -2 * ((a - 1) + (a + 1) * c), (a + 1) + (a - 1) * c - be]
+                    : [a * ((a + 1) + (a - 1) * c + be), -2 * a * ((a - 1) + (a + 1) * c), a * ((a + 1) + (a - 1) * c - be), (a + 1) - (a - 1) * c + be, 2 * ((a - 1) - (a + 1) * c), (a + 1) - (a - 1) * c - be];
+            }
+            return [k[0] / k[3], k[1] / k[3], k[2] / k[3], k[4] / k[3], k[5] / k[3]];
+        };
+        const dynSecs = (bd, g) => eqBandCoefs({ ...bd, freq: Math.max(20, Math.min(20000, bd.freq)), gain: g }, sampleRate);
+        class PulseDynEq extends AudioWorkletProcessor {
+            constructor(o) {
+                super();
+                const p = (o && o.processorOptions) || {};
+                this.bd = p.band || {}; this.live = !!p.live;
+                const q = this.bd.type === 'bell' && this.bd.q > 0 ? this.bd.q : 0.7;
+                this.det = dynCoef('bandpass', Math.max(20, Math.min(20000, this.bd.freq || 1000)), q, 0); this.dz = [0, 0, 0, 0];
+                this.env = 0; this.att = Math.exp(-1 / (0.005 * sampleRate)); this.rel = Math.exp(-1 / (0.08 * sampleRate));
+                this.k = dynSecs(this.bd, this.bd.gain || 0); this.z = []; this.cnt = 0; this.g = this.bd.gain || 0; this.lastPost = 0;
+            }
+            process(inputs, outputs) {
+                const inp = inputs[0], out = outputs[0];
+                if (!inp || !inp.length) return true;
+                const n = inp[0].length, nc = Math.min(inp.length, out.length), bd = this.bd, ns = this.k.length;
+                while (this.z.length < nc * ns) this.z.push([0, 0, 0, 0]);
+                for (let i = 0; i < n; i++) {
+                    if (this.cnt % 32 === 0) {
+                        const over = Math.max(0, 20 * Math.log10(this.env + 1e-9) - (bd.thr ?? -30));
+                        this.g = (bd.gain || 0) + (bd.dyn || 0) * Math.min(1, over / 12);
+                        this.k = dynSecs(bd, this.g);
+                    }
+                    this.cnt++;
+                    const m = nc === 2 ? (inp[0][i] + inp[1][i]) * 0.5 : inp[0][i];
+                    const d0 = this.det, z = this.dz;
+                    const y = d0[0] * m + d0[1] * z[0] + d0[2] * z[1] - d0[3] * z[2] - d0[4] * z[3];
+                    z[1] = z[0]; z[0] = m; z[3] = z[2]; z[2] = y;
+                    const d = y < 0 ? -y : y, kk = d > this.env ? this.att : this.rel;
+                    this.env = kk * this.env + (1 - kk) * d;
+                    for (let ch = 0; ch < nc; ch++) {
+                        let x = inp[ch][i];
+                        for (let s = 0; s < ns; s++) {
+                            const c = this.k[s], st = this.z[ch * ns + s];
+                            const v = c[0] * x + c[1] * st[0] + c[2] * st[1] - c[3] * st[2] - c[4] * st[3];
+                            st[1] = st[0]; st[0] = x; st[3] = st[2]; st[2] = v; x = v;
+                        }
+                        out[ch][i] = x;
+                    }
+                }
+                // à l'écran : où en est le point (toutes les ~30 ms)
+                if (this.live && currentTime - this.lastPost > 0.03) { this.lastPost = currentTime; this.port.postMessage(this.g); }
+                return true;
+            }
+        }
+        registerProcessor('pulse-dyneq', PulseDynEq);
+        registerProcessor('pulse-deesser', pulseAuto(PulseDeesser, (s, v) => { if (v.amount !== undefined) { const a = Math.max(0, Math.min(100, v.amount)); s.maxRed = a * 0.24; s.slope = a / 100 * 3; } }));
 
         // Gate : coupe le bruit entre deux phrases. Mêmes calculs que Gate dans engine/src/fx.rs.
         // Écoute le plus fort des canaux (pistes liées) ; ouvert = gain 1, fermé = baisse de « reduction » dB, 50 ms de maintien.
@@ -157,7 +299,7 @@ window.PulseAudio = (function() {
                 return true;
             }
         }
-        registerProcessor('pulse-gate', PulseGate);
+        registerProcessor('pulse-gate', pulseAuto(PulseGate, (s, v) => { if (v.threshold !== undefined) s.thr = Math.pow(10, v.threshold / 20); if (v.reduction !== undefined) s.floor = Math.pow(10, -v.reduction / 20); if (v.release !== undefined) s.gRel = 1 - Math.exp(-1 / (Math.max(0.005, v.release / 1000) * sampleRate)); }));
 
         // Effets de mouvement : chorus, flanger, phaser, trémolo, doubleur de voix, slapback.
         // Mêmes calculs que ModFx dans engine/src/fx.rs (une ligne à retard par canal, un LFO commun décalé d'un canal à l'autre).
@@ -228,7 +370,7 @@ window.PulseAudio = (function() {
                 return true;
             }
         }
-        registerProcessor('pulse-mod', PulseMod);
+        registerProcessor('pulse-mod', pulseAuto(PulseMod, (s, v) => { if (v.rate !== undefined) s.rate = v.rate; if (v.depth !== undefined) s.depth = v.depth; if (v.width !== undefined) s.width = v.width; if (v.feedback !== undefined) s.fb = v.feedback / 100; if (v.mix !== undefined) s.mix = v.mix / 100; if (v.time !== undefined) s.time = v.time / 1000; }));
 
         // Bitcrusher : moins de bits et moins d'échantillons par seconde (son lo-fi)
         class PulseCrush extends AudioWorkletProcessor {
@@ -255,7 +397,7 @@ window.PulseAudio = (function() {
                 return true;
             }
         }
-        registerProcessor('pulse-crush', PulseCrush);
+        registerProcessor('pulse-crush', pulseAuto(PulseCrush, (s, v) => { if (v.bits !== undefined) s.q = Math.pow(2, v.bits - 1); if (v.down !== undefined) s.down = Math.max(1, Math.round(v.down)); if (v.mix !== undefined) s.mix = v.mix / 100; }));
 
         // Utilitaire (mono, inversion de phase, gain) et largeur stéréo (milieu / côtés)
         class PulseUtil extends AudioWorkletProcessor {
@@ -286,7 +428,7 @@ window.PulseAudio = (function() {
                 return true;
             }
         }
-        registerProcessor('pulse-util', PulseUtil);
+        registerProcessor('pulse-util', pulseAuto(PulseUtil, (s, v) => { if (v.gain !== undefined) s.g = Math.pow(10, v.gain / 20) * (s._ap.invert ? -1 : 1); if (v.width !== undefined) s.width = v.width / 100; }));
 
         // Compresseur : resserre l'écart entre les mots forts et les mots faibles.
         // Rattrapage de volume modéré et connu d'avance (le compresseur du navigateur, lui, ajoutait jusqu'à +18 dB).
@@ -358,6 +500,18 @@ window.PulseAudio = (function() {
 
         // Reverb : 8 échos très courts en parallèle + 4 diffuseurs en série (schéma « Freeverb »).
         // Aucun hasard dedans : le même réglage donne exactement le même son partout (navigateur, export, moteur natif).
+        // Ducking (écho, reverb) : l'effet se pousse quand la voix joue et ressort dans les trous.
+        // Même calcul que Ducker dans engine/src/fx.rs : suiveur 10 ms / 100 ms, de rien à -30 dBFS à plein effet à -10 dBFS.
+        class Ducker {
+            constructor(amount) { this.amt = Math.max(0, Math.min(1, (amount || 0) / 100)); this.env = 0; this.att = Math.exp(-1 / (0.01 * sampleRate)); this.rel = Math.exp(-1 / (0.1 * sampleRate)); }
+            gain(x) {
+                const d = x < 0 ? -x : x, k = d > this.env ? this.att : this.rel;
+                this.env = k * this.env + (1 - k) * d;
+                if (this.amt <= 0) return 1;
+                const a = Math.max(0, Math.min(1, (20 * Math.log10(this.env + 1e-9) + 30) / 20));
+                return 1 - this.amt * a;
+            }
+        }
         class PulseReverb extends AudioWorkletProcessor {
             constructor(o) {
                 super();
@@ -376,6 +530,10 @@ window.PulseAudio = (function() {
                 // Temps avant que la reverb démarre (pré-délai), 0 par défaut
                 const pre = Math.round(Math.max(0, Math.min(0.5, p.pre || 0)) * sampleRate);
                 this.pre = pre > 0 ? new Float64Array(pre) : null; this.pi = 0;
+                // Grave / Aigu : ce qu'on retire de ce qui entre dans la reverb (0 = rien)
+                this.kl = p.low > 20 ? Math.exp(-2 * Math.PI * p.low / sampleRate) : 0; this.zl = 0;
+                this.kh = p.high > 0 && p.high < 20000 ? Math.exp(-2 * Math.PI * p.high / sampleRate) : 0; this.zh = 0;
+                this.duck = new Ducker(p.duck);
             }
             process(inputs, outputs) {
                 const inp = inputs[0], out = outputs[0];
@@ -387,6 +545,9 @@ window.PulseAudio = (function() {
                 for (let i = 0; i < n; i++) {
                     const xl = a ? a[i] : 0, xr = mono ? xl : (b ? b[i] : 0);
                     let x = (xl + xr) * 0.015;
+                    const dg = this.duck.gain((xl + xr) * 0.5);
+                    if (this.kl) { this.zl = x + (this.zl - x) * this.kl; x = x - this.zl; }
+                    if (this.kh) { this.zh = x + (this.zh - x) * this.kh; x = this.zh; }
                     if (this.pre) { const d = this.pre[this.pi]; this.pre[this.pi] = x; x = d; if (++this.pi >= this.pre.length) this.pi = 0; }
                     for (let ch = 0; ch < 2; ch++) {
                         let acc = 0;
@@ -405,7 +566,7 @@ window.PulseAudio = (function() {
                             if (++f.i >= f.buf.length) f.i = 0;
                             acc = y - acc;
                         }
-                        out[ch][i] = (ch ? xr : xl) * dry + acc * wet;
+                        out[ch][i] = (ch ? xr : xl) * dry + acc * wet * dg;
                     }
                 }
                 return true;
@@ -450,7 +611,7 @@ window.PulseAudio = (function() {
                 return true;
             }
         }
-        registerProcessor('pulse-pitch', PulsePitch);
+        registerProcessor('pulse-pitch', pulseAuto(PulsePitch, (s, v) => { if (v.semi !== undefined) s.step = (1 - Math.pow(2, Math.max(-12, Math.min(12, v.semi)) / 12)) / s.W; if (v.mix !== undefined) s.mix = Math.max(0, Math.min(1, v.mix / 100)); }));
 
         // Limiteur de sécurité du master : ne touche à rien sous -1 dB, retient seulement les crêtes qui satureraient.
         // Il « voit venir » la crête 1,5 ms à l'avance, donc il baisse en douceur au lieu d'écraser.
@@ -505,7 +666,12 @@ window.PulseAudio = (function() {
                 this.k = Math.exp(-2 * Math.PI * 4000 / sampleRate); // chaque répétition perd des aigus
                 this.pp = !!p.pp;   // ping-pong : les répétitions alternent gauche / droite
                 this.buf = []; this.lp = []; this.i = 0;
+                // Filtre des retours : coupe-haut (chaque répétition s'assombrit, 4 kHz par défaut) et coupe-bas (sur ce qui entre)
+                if (p.lpf > 0) this.k = Math.exp(-2 * Math.PI * Math.min(20000, p.lpf) / sampleRate);
+                this.kh = p.hpf > 20 ? Math.exp(-2 * Math.PI * p.hpf / sampleRate) : 0; this.zh = [0, 0];
+                this.duck = new Ducker(p.duck);
             }
+            hp(ch, x) { if (!this.kh) return x; this.zh[ch] = x + (this.zh[ch] - x) * this.kh; return x - this.zh[ch]; }
             process(inputs, outputs) {
                 const inp = inputs[0], out = outputs[0];
                 const n = out[0].length, nc = out.length, ni = inp ? inp.length : 0;
@@ -515,24 +681,26 @@ window.PulseAudio = (function() {
                     const bl = this.buf[0], br = this.buf[1];
                     for (let i = 0; i < n; i++) {
                         const xl = ni > 0 ? inp[0][i] : 0, xr = ni > 1 ? inp[1][i] : xl;
-                        const dl = bl[this.i], dr = br[this.i];
+                        const dl = bl[this.i], dr = br[this.i], g = this.wet * this.duck.gain(0.5 * (xl + xr));
                         this.lp[0] = dl + (this.lp[0] - dl) * this.k;
                         this.lp[1] = dr + (this.lp[1] - dr) * this.k;
-                        bl[this.i] = 0.5 * (xl + xr) + this.lp[1] * this.fb;
+                        bl[this.i] = this.hp(0, 0.5 * (xl + xr)) + this.lp[1] * this.fb;
                         br[this.i] = this.lp[0] * this.fb;
-                        out[0][i] = xl * this.dry + dl * this.wet;
-                        out[1][i] = xr * this.dry + dr * this.wet;
+                        out[0][i] = xl * this.dry + dl * g;
+                        out[1][i] = xr * this.dry + dr * g;
                         if (++this.i >= this.D) this.i = 0;
                     }
                     return true;
                 }
                 for (let i = 0; i < n; i++) {
+                    let m = 0; for (let ch = 0; ch < nc; ch++) m += ch < ni ? inp[ch][i] : 0;
+                    const g = this.wet * this.duck.gain(m / nc);
                     for (let ch = 0; ch < nc; ch++) {
                         const x = ch < ni ? inp[ch][i] : 0, b = this.buf[ch];
                         const d = b[this.i];
                         this.lp[ch] = d + (this.lp[ch] - d) * this.k;
-                        b[this.i] = x + this.lp[ch] * this.fb;
-                        out[ch][i] = x * this.dry + d * this.wet;
+                        b[this.i] = this.hp(ch, x) + this.lp[ch] * this.fb;
+                        out[ch][i] = x * this.dry + d * g;
                     }
                     if (++this.i >= this.D) this.i = 0;
                 }
@@ -1064,13 +1232,104 @@ window.PulseAudio = (function() {
     // Plages des réglages d'effet automatisables ({ 'fx:comp:threshold': { min, max, log } }), données par l'interface
     let autoRanges = {};
     function setAutoRanges(m) { autoRanges = m || {}; }
-    function autoReal(pid, v) { const r = autoRanges[pid]; if (!r) return null; return r.log && r.min > 0 ? r.min * Math.pow(r.max / r.min, v) : r.min + v * (r.max - r.min); }
+    function autoReal(pid, v) {
+        const eqm = /^fx:eq:b\d+-(freq|gain)$/.exec(pid);
+        const r = autoRanges[pid] || (eqm ? (eqm[1] === 'freq' ? { min: 20, max: 20000, log: true } : { min: -18, max: 18 }) : null);
+        if (!r) return null; return r.log && r.min > 0 ? r.min * Math.pow(r.max / r.min, v) : r.min + v * (r.max - r.min); }
     // Automation d'un réglage quelconque : points { t, v } avec v entre 0 et 1 (position dans la plage du réglage)
     function autoCurvePts(owner, pid) {
         const pts = owner && owner.automation && owner.automation[pid] && owner.automation[pid].points;
         return Array.isArray(pts) && pts.length ? pts.slice().sort((p, q) => p.t - q.t) : [];
     }
     function pulseAutoAtMain(pts, t) { return volumeAt(pts, t); }
+    // Filtres d'une bande d'EQ (mêmes calculs que eq_sections dans engine/src/fx.rs)
+    // hpf / lpf : pente 12 (1 filtre, q = résonance), 24, 36 ou 48 dB/oct (Butterworth, la résonance va sur le dernier)
+    // EQ « calé sur l'analogique » (filtres matched, M. Vicanek 2016) : la courbe suit celle d'un EQ analogique jusqu'à 20 kHz,
+    // au lieu de se resserrer dans les aigus comme les filtres standards. Même calcul que eq_matched dans engine/src/fx.rs.
+    // Renvoie [b0, b1, b2, a1, a2] (a0 = 1). type : peaking, lowshelf, highshelf, highpass, lowpass, notch. q linéaire.
+    function eqMatched(type, f0, q, g, sr) {
+        const f = Math.max(10, Math.min(f0, sr * 0.499)), PI = Math.PI;
+        const poles = (w, Q) => {
+            const z = 1 / (2 * Q);
+            const a1 = z <= 1 ? -2 * Math.exp(-z * w) * Math.cos(Math.sqrt(1 - z * z) * w) : -2 * Math.exp(-z * w) * Math.cosh(Math.sqrt(z * z - 1) * w);
+            return [a1, Math.exp(-2 * z * w)];
+        };
+        const ph = (fr) => { const p1 = Math.pow(Math.sin(PI * fr / sr), 2); return [1 - p1, p1, 4 * (1 - p1) * p1]; };
+        const fromB = (B0, B1, B2, a1, a2) => {
+            const s0 = Math.sqrt(Math.max(B0, 0)), s1 = Math.sqrt(Math.max(B1, 0)), W = 0.5 * (s0 + s1);
+            const b0 = 0.5 * (W + Math.sqrt(Math.max(W * W + B2, 0)));
+            return [b0, 0.5 * (s0 - s1), -B2 / (4 * b0), a1, a2];
+        };
+        const w0 = 2 * PI * f / sr;
+        if (type === 'peaking' || type === 'bell') {
+            const A = Math.pow(10, g / 40), G = A * A, [a1, a2] = poles(w0, A * q), [p0, p1, p2] = ph(f);
+            const A0 = (1 + a1 + a2) ** 2, A1 = (1 - a1 + a2) ** 2, A2 = -4 * a2;
+            const R1 = (A0 * p0 + A1 * p1 + A2 * p2) * G * G, R2 = (-A0 + A1 + 4 * (p0 - p1) * A2) * G * G;
+            const B0 = A0, B2 = (R1 - R2 * p1 - B0) / (4 * p1 * p1), B1 = R2 + B0 + 4 * (p1 - p0) * B2;
+            return fromB(B0, B1, B2, a1, a2);
+        }
+        if (type === 'lowpass' || type === 'highpass') {
+            const [a1, a2] = poles(w0, q), [p0, p1, p2] = ph(f);
+            const A0 = (1 + a1 + a2) ** 2, A1 = (1 - a1 + a2) ** 2, A2 = -4 * a2;
+            if (type === 'highpass') { const b0 = Math.sqrt(Math.max(A0 * p0 + A1 * p1 + A2 * p2, 0)) * q / (4 * p1); return [b0, -2 * b0, b0, a1, a2]; }
+            const B1 = ((A0 * p0 + A1 * p1 + A2 * p2) * q * q - A0 * p0) / p1;
+            const b0 = 0.5 * (Math.sqrt(A0) + Math.sqrt(Math.max(B1, 0)));
+            return [b0, Math.sqrt(A0) - b0, 0, a1, a2];
+        }
+        if (type === 'notch') {
+            const [a1, a2] = poles(w0, q), c = Math.cos(w0), k = (1 + a1 + a2) / (2 - 2 * c);
+            return [k, -2 * c * k, k, a1, a2];
+        }
+        // Plateaux : on calcule toujours la forme dont les pôles restent sous la fréquence (plateau grave qui monte,
+        // plateau aigu qui descend), calée sur l'analogique en 0, à la fréquence et à Nyquist ; sinon on l'inverse
+        const ls = type === 'lowshelf', inv = (ls && g < 0) || (!ls && g > 0), gd = inv ? -g : g;
+        const A = Math.pow(10, gd / 40), Q = Math.SQRT1_2, sA = Math.sqrt(A);
+        const H2 = (fr) => {
+            const w = Math.max(fr, 1e-6) / f, re = -w * w, im = w * sA / Q;
+            const [nr, ni, dr, di] = ls ? [A * (re + A), A * im, A * re + 1, im] : [A * (A * re + 1), A * im, re + A, im];
+            return (nr * nr + ni * ni) / (dr * dr + di * di);
+        };
+        const [a1, a2] = poles(2 * PI * (ls ? f / sA : f * sA) / sr, Q), [p0, p1, p2] = ph(f);
+        const A0 = (1 + a1 + a2) ** 2, A1 = (1 - a1 + a2) ** 2, A2 = -4 * a2;
+        const B0 = A0 * H2(0), B1 = A1 * H2(sr / 2), B2 = (H2(f) * (A0 * p0 + A1 * p1 + A2 * p2) - B0 * p0 - B1 * p1) / p2;
+        const c = fromB(B0, B1, B2, a1, a2);
+        if (!inv) return c;
+        // inverse : on échange zéros et pôles (le filtre est à phase minimale, l'inverse reste stable)
+        return [1 / c[0], a1 / c[0], a2 / c[0], c[1] / c[0], c[2] / c[0]];
+    }
+    // Les filtres (coefficients) d'une bande d'EQ, à la fréquence d'échantillonnage donnée
+    function eqBandCoefs(bd, sr) {
+        return eqSections(bd).map(sec => eqMatched(sec.type, bd.freq, sec.qDb !== undefined ? Math.pow(10, sec.qDb / 20) : (sec.q !== undefined ? sec.q : Math.SQRT1_2), sec.gain || 0, sr));
+    }
+    // Ancienne chaîne fixe (projets d'avant l'EQ libre) = 4 points
+    function legacyEqBands(ep) {
+        const g = (k, d) => ep[k] !== undefined ? ep[k] : d;
+        const out = [{ type: 'hpf', freq: g('hpf', 80), gain: 0, q: 1.0839 }, { type: 'bell', freq: 300, gain: g('midGain', -2), q: 1 },
+            { type: 'bell', freq: 4000, gain: g('presence', 2), q: 0.7 }, { type: 'highshelf', freq: 10000, gain: g('air', 1), q: 0.7 }];
+        if (ep.lpf) out.push({ type: 'lpf', freq: ep.lpf, gain: 0, q: 1.0839 });
+        return out;
+    }
+    // Point dynamique (mêmes règles que eq_is_dynamic dans fx.rs)
+    function eqIsDynamic(bd) { return !!bd && Number(bd.dyn) !== 0 && !!bd.dyn && ['bell', 'lowshelf', 'highshelf', 'tilt'].includes(bd.type); }
+    const eqDynLive = new Map();   // 't0:2' (piste 0, point 2) -> { g, ts }
+    function getEqDyn(key) { const v = eqDynLive.get(key); return v && performance.now() - v.ts < 300 ? v.g : null; }
+    function eqSections(bd) {
+        const q = bd.q > 0 ? bd.q : 1;
+        if (bd.type === 'hpf' || bd.type === 'lpf') {
+            const type = bd.type === 'hpf' ? 'highpass' : 'lowpass';
+            const n = Math.max(1, Math.min(4, Math.round((bd.slope || 12) / 12)));
+            if (n === 1) return [{ type, qDb: 20 * Math.log10(q) }];
+            return Array.from({ length: n }, (_, k) => {
+                let qk = 1 / (2 * Math.cos((2 * k + 1) * Math.PI / (4 * n)));
+                if (k === n - 1) qk *= q / Math.SQRT1_2;
+                return { type, qDb: 20 * Math.log10(qk) };
+            });
+        }
+        if (bd.type === 'lowshelf' || bd.type === 'highshelf') return [{ type: bd.type, gain: bd.gain || 0, gainK: 1 }];
+        if (bd.type === 'notch') return [{ type: 'notch', q }];
+        if (bd.type === 'tilt') return [{ type: 'lowshelf', gain: -(bd.gain || 0) / 2, gainK: -0.5 }, { type: 'highshelf', gain: (bd.gain || 0) / 2, gainK: 0.5 }];
+        return [{ type: 'peaking', q, gain: bd.gain || 0, gainK: 1 }];
+    }
     function scheduleAuto(param, pts, toVal, fromTime, t0) {
         if (!pts.length) return;
         param.cancelScheduledValues(0);
@@ -1131,12 +1390,19 @@ window.PulseAudio = (function() {
             // Gauche / droite du groupe (comme une piste)
             if (bus.pan || autoCurvePts(bus, 'pan').length) {
                 const pn = actx.createStereoPanner();
-                scheduleAuto(pn.pan, autoCurvePts(bus, 'pan'), n => -1 + 2 * n, fromTime, t0);
-                pn.pan.value = Math.max(-1, Math.min(1, bus.pan / 100));
+                pn.pan.value = Math.max(-1, Math.min(1, (bus.pan || 0) / 100));
+                scheduleAuto(pn.pan, autoCurvePts(bus, 'pan'), n => -1 + 2 * n, fromTime, t0);   // après la valeur fixe, sinon elle écrase la courbe
                 tail.connect(pn);
                 tail = pn;
             }
             tail.connect(out);
+            // Envoi « avant le fader » d'un groupe : pris à la sortie de ses effets (coupé si le groupe est coupé)
+            let busPre = null;
+            const busTap = (key) => {
+                if (!(bus.preSends || {})[key]) return tail;
+                if (!busPre) { busPre = actx.createGain(); busPre.gain.value = bus.muted ? 0 : 1; fx.output.connect(busPre); }
+                return busPre;
+            };
             // Envois du groupe (reverb, écho…) : pris après son volume et son pan, comme sur une piste
             if (onlyTrack === null) {
                 for (const sendId of new Set([...Object.keys(bus.sends || {}), ...Object.keys(bus.automation || {}).filter(k => k.startsWith('send:')).map(k => k.slice(5))])) {
@@ -1147,15 +1413,17 @@ window.PulseAudio = (function() {
                     const sg = actx.createGain();
                     sg.gain.value = level / 100;
                     scheduleAuto(sg.gain, ap, n => n, fromTime, t0);
-                    tail.connect(sg); sg.connect(sendIn);
+                    busTap('send:' + sendId).connect(sg); sg.connect(sendIn);
                 }
-                for (const [busId, level] of Object.entries(bus.busSends || {})) {
-                    if (!(level > 0) || busId === id) continue;
+                for (const busId of new Set([...Object.keys(bus.busSends || {}), ...Object.keys(bus.automation || {}).filter(k => k.startsWith('busSend:')).map(k => k.slice(8))])) {
+                    const level = (bus.busSends || {})[busId] || 0, ap = autoCurvePts(bus, 'busSend:' + busId);
+                    if ((!(level > 0) && !ap.length) || busId === id) continue;
                     const tgt = getBus(busId);
                     if (!tgt || tgt === dest || tgt === out) continue;
                     const sg = actx.createGain();
                     sg.gain.value = level / 100;
-                    tail.connect(sg); sg.connect(tgt);
+                    scheduleAuto(sg.gain, ap, n => n, fromTime, t0);
+                    busTap('busSend:' + busId).connect(sg); sg.connect(tgt);
                 }
             }
             if (live) {
@@ -1252,6 +1520,14 @@ window.PulseAudio = (function() {
                 panNode.connect(trackDest);
             }
 
+            // Envois « avant le fader » (Pre, comme Logic) : pris après les effets, avant le fader et le pan, coupés par le mute
+            const pre = track.preSends || {};
+            let preTap = null;
+            const tapOf = (key) => {
+                if (!pre[key]) return panNode;
+                if (!preTap) { preTap = actx.createGain(); preTap.gain.value = audible ? 1 : 0; fx.output.connect(preTap); if (live && liveNodes.has(trackIdx)) liveNodes.get(trackIdx).preTap = preTap; }
+                return preTap;
+            };
             const sendIds = new Set([...Object.keys(track.sends || {}), ...Object.keys(track.automation || {}).filter(k => k.startsWith('send:')).map(k => k.slice(5))]);
             for (const sendId of sendIds) {
                 const level = (track.sends || {})[sendId] || 0, ap = autoCurvePts(track, 'send:' + sendId);
@@ -1261,7 +1537,7 @@ window.PulseAudio = (function() {
                 const sg = actx.createGain();
                 sg.gain.value = level / 100;
                 scheduleAuto(sg.gain, ap, n => n, fromTime, t0);
-                panNode.connect(sg); sg.connect(send);
+                tapOf('send:' + sendId).connect(sg); sg.connect(send);
             }
             // Envois vers un groupe (façon Aux de Logic) : le son part en plus vers l'entrée de ce groupe
             for (const busId of new Set([...Object.keys(track.busSends || {}), ...Object.keys(track.automation || {}).filter(k => k.startsWith('busSend:')).map(k => k.slice(8))])) {
@@ -1272,7 +1548,7 @@ window.PulseAudio = (function() {
                 const sg = actx.createGain();
                 sg.gain.value = level / 100;
                 scheduleAuto(sg.gain, ap, n => n, fromTime, t0);
-                panNode.connect(sg); sg.connect(tgt);
+                tapOf('busSend:' + busId).connect(sg); sg.connect(tgt);
             }
 
             (track.clips || []).forEach(clip => {
@@ -1344,7 +1620,13 @@ window.PulseAudio = (function() {
                     ramp(foStart, into + playLen, kOut);
                 }
                 source.connect(g);
-                g.connect(fxIn);
+                // Effets posés sur la région seule : avant ceux de la piste ; l'écho / la reverb continuent après la fin de la région
+                if (clip.fx && (clip.fx.effects || []).length) {
+                    const cfx = createEffectsChain(actx, clip.fx.effects, { ...(clip.fx.effectParams || {}), order: clip.fx.fxOrder }, project.bpm, project.ceilingDb ?? ceilingDb);
+                    g.connect(cfx.input); cfx.output.connect(fxIn);
+                } else {
+                    g.connect(fxIn);
+                }
 
                 try {
                     source.start(when, bufPos, playLen);
@@ -1453,7 +1735,7 @@ window.PulseAudio = (function() {
 
         // Queue de reverb : on laisse l'effet mourir proprement après le dernier clip
         // Queue : on laisse la reverb et les échos mourir proprement après le dernier clip
-        const uses = (name) => project.tracks.some((t, i) => (onlyTrack === null || i === onlyTrack) && (t.effects || []).includes(name))
+        const uses = (name) => project.tracks.some((t, i) => (onlyTrack === null || i === onlyTrack) && ((t.effects || []).includes(name) || (t.clips || []).some(c => c.fx && (c.fx.effects || []).includes(name))))
             || (onlyTrack === null && (project.buses || []).some(b => (b.effects || []).includes(name)));
         const sendUsed = (type) => (project.sends || []).some(sd => !sd.muted && (sd.type === 'delay') === (type === 'delay')
             && (project.tracks.some((t, i) => (onlyTrack === null || i === onlyTrack) && (t.sends || {})[sd.id] > 0)
@@ -1553,9 +1835,11 @@ window.PulseAudio = (function() {
         const autoAt = params.autoAt || { t0: 0, from: 0 };
         const curveOf = (fx, key, conv = (x) => x) => {
             const pid = `fx:${fx}:${key}`, pts = autoCurvePts({ automation: params.auto }, pid);
-            if (!pts.length || !autoRanges[pid]) return null;
+            if (!pts.length || autoReal(pid, 0) === null) return null;
             return pts.map(p => ({ t: p.t, v: conv(autoReal(pid, p.v)) }));
         };
+        const autoAll = (fx) => autoOpts(fx, Object.fromEntries(Object.keys(params.auto || {}).filter(k => k.startsWith(`fx:${fx}:`)).map(k => [k.split(':')[2], null])));
+        const hasAuto = (fx) => Object.keys(params.auto || {}).some(k => k.startsWith(`fx:${fx}:`) && autoCurvePts({ automation: params.auto }, k).length);
         const autoOpts = (fx, map) => {
             const auto = {};
             for (const [key, conv] of Object.entries(map)) { const c = curveOf(fx, key, conv || undefined); if (c) auto[key] = c; }
@@ -1590,12 +1874,12 @@ window.PulseAudio = (function() {
             connect(new AudioWorkletNode(actx, name, {
                 numberOfInputs: 1, numberOfOutputs: 1,
                 channelCountMode: 'max', // une voix mono reste mono
-                processorOptions: { kind, ...(params[kind] || {}) }
+                processorOptions: { kind, ...(params[kind] || {}), ...autoAll(kind) }
             }));
         };
         ['chorus', 'flanger', 'phaser', 'tremolo', 'doubler', 'slapback'].forEach((k) => { B[k] = () => node('pulse-mod', k); });
         B.crush = () => node('pulse-crush', 'crush');
-        B.pitch = () => { if ((params.pitch || {}).semi) node('pulse-pitch', 'pitch'); };
+        B.pitch = () => { if ((params.pitch || {}).semi || hasAuto('pitch')) node('pulse-pitch', 'pitch'); };
         B.util = () => node('pulse-util', 'util');
         B.width = () => node('pulse-util', 'width');
 
@@ -1606,75 +1890,73 @@ window.PulseAudio = (function() {
             connect(new AudioWorkletNode(actx, 'pulse-gate', {
                 numberOfInputs: 1, numberOfOutputs: 1,
                 channelCountMode: 'max', // une voix mono reste mono
-                processorOptions: { threshold: p.threshold ?? -45, release: p.release ?? 150, reduction: p.reduction ?? 40 }
+                processorOptions: { threshold: p.threshold ?? -45, release: p.release ?? 150, reduction: p.reduction ?? 40, ...autoAll('gate') }
             }));
         };
 
         // EQ 4-bandes
         B.eq = () => {
-            if (enabled.includes('eq') && Array.isArray((params.eq || {}).bands)) {
-                // EQ libre : autant de bandes que tu veux (cloche, étagères, coupe-bas, coupe-haut)
-                for (const bd of params.eq.bands.slice(0, 24)) {
-                    if (!bd || bd.on === false || !(bd.freq > 0)) continue;
+            if (!enabled.includes('eq')) return;
+            // EQ libre (ou ancienne chaîne fixe = 4 points) : cloche, plateaux, coupes, encoche, pente
+            const ep = params.eq || {};
+            const sched = (param, key, k = 1) => {
+                const c = curveOf('eq', key); if (!c) return;
+                param.setValueAtTime(pulseAutoAtMain(c, autoAt.from) * k, autoAt.t0);
+                c.forEach(pt => { if (pt.t > autoAt.from) param.linearRampToValueAtTime(pt.v * k, autoAt.t0 + (pt.t - autoAt.from)); });
+            };
+            const isOffline = typeof OfflineAudioContext !== 'undefined' && actx instanceof OfflineAudioContext;
+            const bandsEq = (Array.isArray(ep.bands) ? ep.bands : legacyEqBands(ep)).slice(0, 24);
+            const solo = !isOffline && Number.isInteger(ep.solo) ? bandsEq[ep.solo] : null;
+            const worklet = fxReady.has(actx);
+            const isStatic = (bd) => bd && bd.on !== false && bd.freq > 0 && !(eqIsDynamic(bd) && worklet);
+            if (solo && solo.freq > 0) {
+                // Solo d'une bande (écoute seulement, jamais à l'export) : on n'entend que la zone du point
+                const f = actx.createBiquadFilter();
+                f.type = 'bandpass';
+                f.frequency.value = Math.max(20, Math.min(20000, solo.freq));
+                f.Q.value = solo.type === 'bell' || solo.type === 'notch' ? Math.max(0.5, solo.q || 1) : 0.7;
+                connect(f);
+            } else if (worklet) {
+                // Filtres calés sur l'analogique (worklet pulse-eq), comme le moteur Rust ; l'automation y est suivie à chaque bloc
+                const list = [];
+                bandsEq.forEach((bd, i) => { if (isStatic(bd)) list.push({ i, type: bd.type, freq: Math.max(20, Math.min(20000, bd.freq)), gain: bd.gain || 0, q: bd.q || 1, slope: bd.slope }); });
+                if (list.length) connect(new AudioWorkletNode(actx, 'pulse-eq', { numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max',
+                    processorOptions: { bands: list, ...autoAll('eq') } }));
+            } else for (const [bi, bd] of bandsEq.entries()) {
+                // Sans worklet (navigateur très ancien) : filtres standards du navigateur
+                if (!isStatic(bd)) continue;
+                for (const sec of eqSections(bd)) {
                     const f = actx.createBiquadFilter();
+                    f.type = sec.type;
                     f.frequency.value = Math.max(20, Math.min(20000, bd.freq));
-                    const q = bd.q > 0 ? bd.q : 1;
-                    if (bd.type === 'hpf' || bd.type === 'lpf') {
-                        f.type = bd.type === 'hpf' ? 'highpass' : 'lowpass';
-                        f.Q.value = 20 * Math.log10(q); // Web Audio règle le Q des coupe-bas / coupe-haut en dB
-                    } else if (bd.type === 'lowshelf' || bd.type === 'highshelf') {
-                        f.type = bd.type;
-                        f.gain.value = bd.gain || 0;
-                    } else {
-                        f.type = 'peaking';
-                        f.Q.value = q;
-                        f.gain.value = bd.gain || 0;
-                    }
+                    if (sec.qDb !== undefined) f.Q.value = sec.qDb;     // coupe-bas / coupe-haut : Q en dB dans Web Audio
+                    else if (sec.q !== undefined) f.Q.value = sec.q;
+                    if (sec.gain !== undefined) f.gain.value = sec.gain;
+                    // Courbes posées APRÈS les valeurs fixes (fixer .value ajouterait un événement qui écraserait la courbe)
+                    sched(f.frequency, `b${bi}-freq`);
+                    if (sec.gainK) sched(f.gain, `b${bi}-gain`, sec.gainK);
                     connect(f);
                 }
-            } else if (enabled.includes('eq')) {
-                const ep = params.eq || {};
-                const hpf = actx.createBiquadFilter();
-                hpf.type = 'highpass';
-                hpf.frequency.value = ep.hpf !== undefined ? ep.hpf : 80;
-                hpf.Q.value = 0.7;
-                connect(hpf);
-
-                const midCut = actx.createBiquadFilter();
-                midCut.type = 'peaking';
-                midCut.frequency.value = 300;
-                midCut.Q.value = 1.0;
-                midCut.gain.value = ep.midGain !== undefined ? ep.midGain : -2;
-                connect(midCut);
-
-                const presence = actx.createBiquadFilter();
-                presence.type = 'peaking';
-                presence.frequency.value = 4000;
-                presence.Q.value = 0.7;
-                presence.gain.value = ep.presence !== undefined ? ep.presence : 2;
-                connect(presence);
-
-                const air = actx.createBiquadFilter();
-                air.type = 'highshelf';
-                air.frequency.value = 10000;
-                air.gain.value = ep.air !== undefined ? ep.air : 1;
-                connect(air);
-
-                // Coupe-haut optionnel (effet « téléphone »)
-                if (ep.lpf) {
-                    const lpf = actx.createBiquadFilter();
-                    lpf.type = 'lowpass';
-                    lpf.frequency.value = ep.lpf;
-                    lpf.Q.value = 0.7;
-                    connect(lpf);
-                }
+            }
+            const out = Number(ep.out) || 0;
+            if (out && !solo) { const g = actx.createGain(); g.gain.value = Math.pow(10, out / 20); connect(g); }
+            // Points dynamiques : après les points fixes et la sortie (même ordre que Rust)
+            if (!solo && worklet) for (const [bi, bd] of bandsEq.entries()) {
+                if (!bd || bd.on === false || !(bd.freq > 0) || !eqIsDynamic(bd)) continue;
+                const live = !!params.grKey && !isOffline;
+                const node = new AudioWorkletNode(actx, 'pulse-dyneq', { numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max',
+                    processorOptions: { band: { type: bd.type, freq: bd.freq, gain: bd.gain || 0, q: bd.q || 1, dyn: Number(bd.dyn), thr: bd.thr ?? -30 }, live } });
+                if (live) { const key = params.grKey + ':' + bi; node.port.onmessage = (e) => eqDynLive.set(key, { g: e.data, ts: performance.now() }); }
+                connect(node);
             }
         };
 
         // Saturation douce (« Doux ↔ Agressif »)
         B.sat = () => {
             const drive = enabled.includes('sat') ? ((params.sat || {}).drive || 0) : 0;
-            if (drive > 0) {
+            if (drive > 0 && fxReady.has(actx)) {
+                connect(new AudioWorkletNode(actx, 'pulse-sat', { numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max', processorOptions: { drive } }));
+            } else if (drive > 0) {
                 const k = 1 + drive * 0.05;
                 const curve = new Float32Array(1024);
                 for (let i = 0; i < curve.length; i++) {
@@ -1694,11 +1976,11 @@ window.PulseAudio = (function() {
         // De-esser : adoucit les « S » qui sifflent, sans toucher au reste de la voix
         B.deess = () => {
             const deess = enabled.includes('deess') ? ((params.deess || {}).amount || 0) : 0;
-            if (deess > 0 && fxReady.has(actx)) {
+            if ((deess > 0 || (enabled.includes('deess') && hasAuto('deess'))) && fxReady.has(actx)) {
                 connect(new AudioWorkletNode(actx, 'pulse-deesser', {
                     numberOfInputs: 1, numberOfOutputs: 1,
                     channelCountMode: 'max', // une voix mono reste mono (même volume qu'avant)
-                    processorOptions: { amount: deess, freq: (params.deess || {}).freq || 5500 }
+                    processorOptions: { amount: deess, freq: (params.deess || {}).freq || 5500, ...autoAll('deess') }
                 }));
             }
         };
@@ -1774,6 +2056,7 @@ window.PulseAudio = (function() {
                     numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max',
                     ...(dp.pp ? { outputChannelCount: [2] } : {}),
                     processorOptions: { time: delaySeconds(dp, bpm), feedback: (dp.feedback ?? 35) / 100, wet: (dp.wet ?? 25) / 100, dry: (dp.dry ?? 100) / 100, pp: !!dp.pp,
+                        hpf: dp.hpf || 0, lpf: dp.lpf || 0, duck: dp.duck || 0,
                         ...autoOpts('delay', { feedback: (x) => x / 100, wet: (x) => x / 100, dry: (x) => x / 100 }) }
                 }));
             }
@@ -1785,7 +2068,7 @@ window.PulseAudio = (function() {
                 const rp = params.reverb || {};
                 connect(new AudioWorkletNode(actx, 'pulse-reverb', {
                     numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCountMode: 'max',
-                    processorOptions: { wet: rp.wet !== undefined ? rp.wet / 100 : 0.18, size: rp.size, decay: rp.decay, ...autoOpts('reverb', { wet: (x) => x / 100 }) }
+                    processorOptions: { wet: rp.wet !== undefined ? rp.wet / 100 : 0.18, size: rp.size, decay: rp.decay, pre: (rp.pre || 0) / 1000, low: rp.low || 0, high: rp.high || 0, duck: rp.duck || 0, ...autoOpts('reverb', { wet: (x) => x / 100 }) }
                 }));
             } else if (enabled.includes('reverb')) {
                 const rp = params.reverb || {};
@@ -1879,6 +2162,7 @@ window.PulseAudio = (function() {
             n.audible = isTrackAudible(project, t);
             n.gainNode.gain.cancelScheduledValues(ctx.currentTime);
             n.gainNode.gain.setTargetAtTime(n.audible ? n.vol : 0, ctx.currentTime, 0.008);
+            if (n.preTap) n.preTap.gain.setTargetAtTime(n.audible ? 1 : 0, ctx.currentTime, 0.008);
         });
     }
 
@@ -2111,7 +2395,7 @@ window.PulseAudio = (function() {
         startRecording, stopRecording,
         registerBuffer, hasBuffer, getBuffer, getBufferDuration, clearBuffers, computePeaks,
         play, stopAll, getPlaybackPosition, setNativeBackend, isNative, setBeatsPerBar,
-        updateTrackVolume, updateTrackPan, updateComp, setAutoRanges, refreshAudibility, clearLiveNodes,
+        updateTrackVolume, updateTrackPan, updateComp, setAutoRanges, eqSections, eqIsDynamic, getEqDyn, eqBandCoefs, refreshAudibility, clearLiveNodes,
         getTrackAnalyser, getTrackMeters, trackChannelCount, getMasterAnalyser, getTrackSpectrum, getBusSpectrum, getCompReduction, setMasterVolume,
         setMetronome, setMetronomeBpm, setCountIn, isCountInEnabled,
         startMetronome, stopMetronome, playCountIn, stopCountIn, isCountingIn,

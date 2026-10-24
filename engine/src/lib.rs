@@ -431,6 +431,101 @@ mod tests {
         assert!(eq_gain_db(&t, 3000.0).abs() < 1.0, "bande coupée sans effet : {}", eq_gain_db(&t, 3000.0));
     }
 
+    /// EQ « pro » : pentes raides, encoche, pente (tilt), gain de sortie — mêmes valeurs que tests/scenarios/eq-pro.mjs.
+    #[test]
+    fn eq_pro_formes() {
+        let json = r#"{"effects":["eq"],"effectParams":{"eq":{"out":3,"bands":[
+            {"type":"hpf","freq":80,"q":0.71,"slope":48},{"type":"notch","freq":300,"q":2},
+            {"type":"tilt","freq":3200,"gain":2.5,"q":1}]}}}"#;
+        let t: Track = serde_json::from_str(json).unwrap();
+        // 48 dB/oct : une octave sous la coupure, on perd ~48 dB (12 dB/oct en perdrait ~12)
+        assert!((eq_gain_db(&t, 40.0) + 46.43).abs() < 1.0, "48 dB/oct à 40 Hz : {}", eq_gain_db(&t, 40.0));
+        assert!(eq_gain_db(&t, 300.0) < -30.0, "encoche à 300 Hz : {}", eq_gain_db(&t, 300.0));
+        // chiffres relevés dans le navigateur (eqBandDb) : tilt +2,5 dB + sortie +3 dB
+        assert!((eq_gain_db(&t, 15000.0) - 4.24).abs() < 0.3, "aigus : {}", eq_gain_db(&t, 15000.0));
+        assert!((eq_gain_db(&t, 1000.0) - 1.66).abs() < 0.15, "1 kHz : {}", eq_gain_db(&t, 1000.0));
+    }
+
+    /// Point dynamique : il ne creuse que quand sa zone dépasse le seuil — mêmes chiffres que tests/scenarios/eq-dynamique.mjs.
+    #[test]
+    fn eq_point_dynamique() {
+        let t: Track = serde_json::from_str(r#"{"effects":["eq"],"effectParams":{"eq":{"bands":[
+            {"type":"bell","freq":1000,"gain":0,"q":1,"dyn":-12,"thr":-30}]}}}"#).unwrap();
+        let fort = gain_db(&t, 1000.0, 0.5);
+        let faible = gain_db(&t, 1000.0, 0.005);
+        let loin = gain_db(&t, 100.0, 0.5);
+        println!("dynamique : fort {fort:.2} / faible {faible:.2} / 100 Hz {loin:.2}");
+        assert!(fort < -10.0, "fort : creuse presque toute la plage : {fort}");
+        assert!(faible.abs() < 0.5, "faible : sous le seuil, rien ne bouge : {faible}");
+        assert!(loin.abs() < 1.0, "loin de la zone : intact : {loin}");
+    }
+
+    /// Ducking (écho, reverb) : l'effet se pousse pendant la voix et ressort dans le trou — mêmes chiffres que tests/scenarios/ducking.mjs.
+    #[test]
+    fn ducking_echo_et_reverb() {
+        // 1 s de voix (300 Hz à 0,5), puis 2 s de silence ; on mesure l'effet seul (dry 0 / wet 100)
+        let lvl = |json: &str, a: f64, b: f64| {
+            let t: Track = serde_json::from_str(json).unwrap();
+            let n = 3 * SR as usize;
+            let mut l: Vec<f32> = (0..n).map(|i| if i < SR as usize { (0.5 * (2.0 * std::f64::consts::PI * 300.0 * i as f64 / SR as f64).sin()) as f32 } else { 0.0 }).collect();
+            let mut r = l.clone();
+            crate::fx::Chain::for_track(&t, SR as f64, 120.0).process(&mut l, &mut r, false);
+            let (i0, i1) = ((a * SR as f64) as usize, (b * SR as f64) as usize);
+            20.0 * ((l[i0..i1].iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / (i1 - i0) as f64).sqrt() + 1e-12).log10()
+        };
+        let e = |duck: f64| format!(r#"{{"effects":["delay"],"effectParams":{{"delay":{{"beats":1,"feedback":50,"wet":100,"dry":0,"duck":{duck},"hpf":150,"lpf":6000}}}}}}"#);
+        let rv = |duck: f64| format!(r#"{{"effects":["reverb"],"effectParams":{{"reverb":{{"wet":100,"size":2.4,"pre":20,"low":150,"high":8000,"duck":{duck}}}}}}}"#);
+        let (e0p, e8p, e0a, e8a) = (lvl(&e(0.0), 0.6, 0.95), lvl(&e(80.0), 0.6, 0.95), lvl(&e(0.0), 1.55, 1.95), lvl(&e(80.0), 1.55, 1.95));
+        let (r0p, r8p, r0a, r8a) = (lvl(&rv(0.0), 0.5, 0.95), lvl(&rv(80.0), 0.5, 0.95), lvl(&rv(0.0), 1.4, 1.9), lvl(&rv(80.0), 1.4, 1.9));
+        println!("ducking écho pendant {:.2} → {:.2} / après {:.2} → {:.2} ; reverb pendant {:.2} → {:.2} / après {:.2} → {:.2}", e0p, e8p, e0a, e8a, r0p, r8p, r0a, r8a);
+        assert!(e8p < e0p - 10.0, "écho poussé pendant la voix : {e0p} → {e8p}");
+        assert!((e8a - e0a).abs() < 3.0, "écho revenu dans le trou : {e0a} → {e8a}");
+        assert!(r8p < r0p - 10.0, "reverb poussée pendant la voix : {r0p} → {r8p}");
+        assert!((r8a - r0a).abs() < 4.0, "reverb revenue : {r0a} → {r8a}");
+    }
+
+    /// EQ calé sur l'analogique : mêmes chiffres que tests/scenarios/eq-analogique.mjs (export du navigateur).
+    #[test]
+    fn eq_cale_analogique() {
+        for (f0, g, q, f, attendu) in [(12000.0, 6.0, 0.7, 18000.0, 4.62), (16000.0, 6.0, 0.7, 8000.0, 3.02), (8000.0, -6.0, 0.7, 12000.0, -4.50), (1000.0, 6.0, 1.0, 1500.0, 3.52)] {
+            let t: Track = serde_json::from_str(&format!(r#"{{"effects":["eq"],"effectParams":{{"eq":{{"bands":[{{"type":"bell","freq":{f0},"gain":{g},"q":{q}}}]}}}}}}"#)).unwrap();
+            let m = eq_gain_db(&t, f);
+            assert!((m - attendu).abs() < 0.05, "cloche {g} dB à {f0}, mesurée à {f} : {m} (navigateur {attendu})");
+        }
+    }
+
+    /// Saturation suréchantillonnée ×4 : mêmes chiffres que tests/scenarios/saturation-propre.mjs.
+    #[test]
+    fn saturation_sans_parasites() {
+        let sr = SR as usize;
+        let run = |f: f64, a: f64, drive: f64| {
+            let t: Track = serde_json::from_str(&format!(r#"{{"effects":["sat"],"effectParams":{{"sat":{{"drive":{drive}}}}}}}"#)).unwrap();
+            let mut l: Vec<f32> = (0..sr).map(|i| (a * (2.0 * std::f64::consts::PI * f * i as f64 / SR as f64).sin()) as f32).collect();
+            let mut r = l.clone();
+            crate::fx::Chain::for_track(&t, SR as f64, 120.0).process(&mut l, &mut r, false);
+            l
+        };
+        let goertzel = |x: &[f32], f: f64| {
+            let (mut re, mut im) = (0.0, 0.0);
+            for i in sr / 4..sr * 3 / 4 {
+                let w = 0.5 - 0.5 * (2.0 * std::f64::consts::PI * (i - sr / 4) as f64 / (sr / 2) as f64).cos();
+                let ph = 2.0 * std::f64::consts::PI * f * i as f64 / SR as f64;
+                re += x[i] as f64 * w * ph.cos(); im += x[i] as f64 * w * ph.sin();
+            }
+            (re * re + im * im).sqrt()
+        };
+        let x = run(7000.0, 0.5, 100.0);
+        let f0 = goertzel(&x, 7000.0);
+        let db = |f: f64| 20.0 * (goertzel(&x, f) / f0 + 1e-12).log10();
+        let (p13, p1, h3) = (db(13000.0), db(1000.0), db(21000.0));
+        let g = run(1000.0, 0.25, 50.0);
+        let gain = 10.0 * (g[sr / 2..].iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / (sr / 2) as f64 / (0.25f64.powi(2) / 2.0)).log10();
+        println!("saturation : parasite 13 kHz {p13:.1} / 1 kHz {p1:.1} / 3e harmonique {h3:.1} / gain {gain:.2}");
+        assert!(p13 < -90.0 && p1 < -90.0, "parasites : {p13} / {p1}");
+        assert!((h3 + 17.3).abs() < 0.3, "3e harmonique comme le navigateur (−17,3) : {h3}");
+        assert!((gain - 4.02).abs() < 0.05, "gain comme le navigateur (4,02) : {gain}");
+    }
+
     /// Filtre : coupe-bas / coupe-haut Butterworth. -3 dB à la coupure, 12 puis 24 dB par octave ; éteint = transparent.
     /// Mêmes valeurs que tests/scenarios/filtre.mjs (navigateur).
     #[test]
@@ -547,6 +642,94 @@ mod tests {
         // Courbe d'envoi : 0 au début, la dose fixe ne compte plus
         p.tracks[0].automation = serde_json::from_str(r#"{"busSend:g":{"points":[{"t":0,"v":0}]}}"#).unwrap();
         close(at(&p, &opts(), 1.0), base);
+    }
+
+    #[test]
+    fn automation_d_un_reglage_d_effet() {
+        // Gain de l'utilitaire automatisé : -24 dB au début, 0 dB ensuite (v = 0,5 au milieu de -24..24)
+        let json = r#"{"volume":100,"clips":[{"id":"a","start":0,"duration":8,"offset":0}],"effects":["util"],"effectParams":{"util":{"gain":0}},
+                       "automation":{"fx:util:gain":{"points":[{"t":0,"v":0},{"t":3,"v":0},{"t":3.01,"v":0.5}]}}}"#;
+        let t: Track = serde_json::from_str(json).unwrap();
+        let p = Project { tracks: vec![t], ..Default::default() };
+        let sans = { let mut q = p.clone(); q.tracks[0].automation = Default::default(); q };
+        close(at(&p, &opts(), 2.0), at(&sans, &opts(), 2.0) * 10f64.powf(-24.0 / 20.0));
+        close(at(&p, &opts(), 5.0), at(&sans, &opts(), 5.0));
+    }
+
+    #[test]
+    fn automation_d_une_bande_d_eq() {
+        // Gain d'une bande d'EQ automatisé : la courbe change le son (même réglage fixe dans les deux cas)
+        let mk = |auto: &str| -> Project {
+            let t: Track = serde_json::from_str(&format!(r#"{{"volume":100,"clips":[{{"id":"a","start":0,"duration":8,"offset":0}}],"effects":["eq"],
+                "effectParams":{{"eq":{{"bands":[{{"type":"lowshelf","freq":2000,"gain":0,"q":1}}]}}}},"automation":{{{auto}}}}}"#)).unwrap();
+            Project { tracks: vec![t], ..Default::default() }
+        };
+        let fixe = mk("");
+        let auto = mk(r#""fx:eq:b0-gain":{"points":[{"t":0,"v":1}]}"#);
+        let (a, b) = (at(&auto, &opts(), 4.0), at(&fixe, &opts(), 4.0));
+        assert!((a - b).abs() > 0.05, "la bande automatisée (+18 dB) change le son : {a} / {b}");
+    }
+
+    #[test]
+    fn envoi_avant_le_fader() {
+        // Pre : fader à 0 → l'envoi vers le groupe passe quand même (Post : plus rien)
+        let mut p = project(vec![clip(0.0, 4.0, 5.0)]);
+        let base = at(&p, &opts(), 1.0);
+        let b: Bus = serde_json::from_str(r#"{"id":"g","volume":100,"output":"master"}"#).unwrap();
+        p.buses = vec![b];
+        p.tracks[0].bus_sends.insert("g".into(), 100.0);
+        p.tracks[0].volume = Some(0.0);
+        close(at(&p, &opts(), 1.0), 0.0);
+        p.tracks[0].pre_sends.insert("busSend:g".into(), true);
+        // avant le pan : le signal mono arrive tel quel des deux côtés (sans les -3 dB du pan centré, comme le navigateur)
+        close(at(&p, &opts(), 1.0), base * std::f64::consts::SQRT_2);
+    }
+
+    #[test]
+    fn effet_sur_une_region() {
+        // Deux régions côte à côte ; seule la 2e a un effet (utilitaire -6 dB) : la 1re ne bouge pas
+        let mk = |fx: &str| -> Project {
+            let t: Track = serde_json::from_str(&format!(r#"{{"volume":100,"clips":[{{"id":"a","start":0,"duration":2,"offset":0}},{{"id":"a","start":2,"duration":2,"offset":2{fx}}}]}}"#)).unwrap();
+            Project { tracks: vec![t], ..Default::default() }
+        };
+        let sans = mk("");
+        let avec = mk(r#","fx":{"effects":["util"],"effectParams":{"util":{"gain":-6}}}"#);
+        close(at(&avec, &opts(), 1.0), at(&sans, &opts(), 1.0));
+        close(at(&avec, &opts(), 3.0), at(&sans, &opts(), 3.0) * 10f64.powf(-6.0 / 20.0));
+    }
+
+    #[test]
+    fn echo_d_une_region_deborde_apres_sa_fin() {
+        // Écho sur une région de 1 s : ses répétitions continuent après la fin de la région
+        let t: Track = serde_json::from_str(r#"{"volume":100,"clips":[{"id":"a","start":0,"duration":1,"offset":0,
+            "fx":{"effects":["delay"],"effectParams":{"delay":{"ms":250,"feedback":50,"wet":100,"dry":100}}}}]}"#).unwrap();
+        let p = Project { tracks: vec![t], ..Default::default() };
+        let (l, _) = render(&p, &ramp_media(), &opts());
+        let i = |s: f64| (s * SR as f64).round() as usize;
+        let queue: f32 = (i(1.05)..i(1.6)).map(|n| l[n].abs()).sum();
+        assert!(queue > 1.0, "l'écho s'entend après la région : {queue}");
+    }
+
+    #[test]
+    fn automation_des_autres_effets() {
+        // Trémolo, bitcrusher, pitch : la courbe à 0 = son d'origine, à fond = son changé
+        let mk = |fx: &str, params: &str, key: &str, v: f64| -> Project {
+            let t: Track = serde_json::from_str(&format!(r#"{{"volume":100,"clips":[{{"id":"a","start":0,"duration":8,"offset":0}}],"effects":["{fx}"],
+                "effectParams":{{"{fx}":{params}}},"automation":{{"fx:{fx}:{key}":{{"points":[{{"t":0,"v":{v}}}]}}}}}}"#)).unwrap();
+            Project { tracks: vec![t], ..Default::default() }
+        };
+        let base = Project { tracks: vec![serde_json::from_str(r#"{"volume":100,"clips":[{"id":"a","start":0,"duration":8,"offset":0}]}"#).unwrap()], ..Default::default() };
+        let diff = |p: &Project| { let (a, _) = render(p, &ramp_media(), &opts()); let (b, _) = render(&base, &ramp_media(), &opts()); (SR as usize..3 * SR as usize).map(|n| (a[n] - b[n]).abs()).sum::<f32>() };
+        for (fx, params, key, full) in [("tremolo", r#"{"rate":5,"depth":50}"#, "depth", 1.0), ("crush", r#"{"bits":4,"down":8,"mix":50}"#, "mix", 1.0)] {
+            let zero = diff(&mk(fx, params, key, 0.0));
+            let fort = diff(&mk(fx, params, key, full));
+            assert!(zero < 1.0 && fort > 10.0, "{fx} : courbe à zéro {zero} / à fond {fort}");
+        }
+        // Pitch (il retarde toujours un peu le son) : 0 demi-ton et +12 ne donnent pas le même son
+        let (a, _) = render(&mk("pitch", r#"{"semi":0,"mix":100}"#, "semi", 0.5), &ramp_media(), &opts());
+        let (b, _) = render(&mk("pitch", r#"{"semi":0,"mix":100}"#, "semi", 1.0), &ramp_media(), &opts());
+        let d: f32 = (SR as usize..3 * SR as usize).map(|n| (a[n] - b[n]).abs()).sum();
+        assert!(d > 10.0, "pitch automatisé : {d}");
     }
 
     #[test]

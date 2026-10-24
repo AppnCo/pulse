@@ -10,7 +10,7 @@ export default async (c) => {
     const ME=(t,x,y)=>new MouseEvent(t,{bubbles:true,clientX:x,clientY:y,button:0});
     const el=document.querySelector('.timeline-track[data-i="0"] .clip'); const r=el.getBoundingClientRect();
     const t2=document.querySelector('.timeline-track[data-i="1"]').getBoundingClientRect();
-    const x0=r.left+r.width/2, y0=r.top+r.height/2, px=state.pxPerSecond;
+    const x0=r.left+r.width/2, y0=r.top+r.height*0.25, px=state.pxPerSecond;   // moitié haute = déplacer (la basse = sélection)
     el.dispatchEvent(ME('mousedown',x0,y0));
     document.dispatchEvent(ME('mousemove',x0+4,y0+2));
     document.dispatchEvent(new KeyboardEvent('keydown',{key:'Shift',bubbles:true}));

@@ -163,7 +163,7 @@ const TEMPLATES = [
     {
         id: 'studio',
         name: 'Studio',
-        desc: 'Le circuit du studio : tu enregistres sur REC, ta voix passe dans Vocal 1 puis All Vocal, et tout finit dans les Mix Bus. Back et Ambiance ont leur Auto-Tune. Les effets ponctuels (Del, Pitch, Phone) se créent quand tu en as besoin, avec le bouton ✦ de Vocal 1.',
+        desc: 'Le circuit du studio : tu enregistres sur REC, ta voix passe dans Vocal 1 puis All Vocal, et tout finit dans les Mix Bus. PulseTune s\'ajoute comme un effet, sur la piste de ton choix. Les effets ponctuels (Del, Pitch, Phone) se créent quand tu en as besoin, avec le bouton ✦ de Vocal 1.',
         icon: 'star',
         bpm: 120,
         // Disposition B (validée le 22/10) : l'essentiel visible, le reste n'apparaît qu'à l'usage

@@ -823,6 +823,7 @@ function renderTracksPanel() {
                     <div class="t-meter ${PulseAudio.trackChannelCount(t) === 1 ? 'is-mono' : ''}" data-i="${i}" aria-hidden="true"><i class="mL"></i><i class="mR"></i></div>
                     ${t.isCapture ? '' : `<button class="t-mini m-del" data-del="${i}" data-tooltip="Supprimer la piste">×</button>`}
                 </div>
+                ${state.automationMode ? `<div class="t-auto">${autoChip(t)}</div>` : ''}
             </div>
         </div>${renderTakesPanel(t, i)}`;
     }).join('') + rowBuses().map(renderGroupHeader).join('');
@@ -1007,7 +1008,7 @@ function renderClip(t, c, ci) {
     }
 
     return `
-    <div class="clip ${c.recording ? 'is-recording' : ''} ${c.pending ? 'is-pending' : ''} ${stale ? 'is-stale' : ''} ${selected || multiSelected ? 'is-selected' : ''} ${multiSelected ? 'is-multi-selected' : ''} ${c.muted ? 'is-muted-clip' : ''} ${loopWidthPx > 0 ? 'has-loop' : ''} ${overlap ? 'has-overlap' : ''}"
+    <div class="clip ${clipHasFx(c) ? 'has-fx' : ''} ${c.recording ? 'is-recording' : ''} ${c.pending ? 'is-pending' : ''} ${stale ? 'is-stale' : ''} ${selected || multiSelected ? 'is-selected' : ''} ${multiSelected ? 'is-multi-selected' : ''} ${c.muted ? 'is-muted-clip' : ''} ${loopWidthPx > 0 ? 'has-loop' : ''} ${overlap ? 'has-overlap' : ''}"
          data-ci="${ci}"
          data-tooltip="${esc(tooltip)}"
          style="--clip-color: ${c.color || t.color}; left: ${leftPx}px; width: ${totalWidthPx}px; --orig-w: ${origWidthPx}px">
@@ -1020,6 +1021,7 @@ function renderClip(t, c, ci) {
         ${c.midi ? renderMidiNotes(c, origWidthPx) : renderClipWaveform(c, origWidthPx)}
         ${loopHtml}
         ${!c.recording ? '<div class="clip-loop-handle" data-loop-handle="1"></div>' : ''}
+        ${clipFxHtml(c, totalWidthPx)}
         <div class="clip-name" data-ci="${ci}">${esc(c.name || 'Clip')}${stale ? ' <span class="clip-stale-tag">⚠ audio perdu</span>' : ''}${c.midi ? ` <span class="clip-gain-tag">${c.midi.pid ? '🔗 ' : ''}${c.midi.inst === 'drums' ? 'PAS' : 'MIDI'}</span>` : ''}${c.tune ? ' <span class="clip-gain-tag">TUNE</span>' : ''}${c.rev ? ' <span class="clip-gain-tag">REV</span>' : ''}${c.warp ? ` <span class="clip-gain-tag">WARP ${Math.round(c.warp.srcBpm)}→${Math.round(c.warp.bpm)}</span>` : ''}${c.gain && c.gain !== 1 ? ` <span class="clip-gain-tag">${(20*Math.log10(c.gain)).toFixed(1)}dB</span>` : ''}</div>
     </div>`;
 }
@@ -1749,13 +1751,13 @@ function inspectorStrip(kind, x, idx) {
             <div class="strip-sends-title">Envois</div>
             <div class="insp-slots insp-sends-box" data-add="send">
             ${sends.map(sd => `
-            <label class="strip-send-row send-bar-row ${(x.sends || {})[sd.id] > 0 ? 'on' : ''}" data-send="${esc(sd.id)}" style="--lvl:${(x.sends || {})[sd.id] || 0}%" data-tooltip="Glisser pour envoyer plus · double-clic = écrire le chiffre · ⌘ + clic = remettre à 0 · Maj = réglage fin">
-                <span class="sb-name">${esc(sd.name)}</span><em class="sb-val">${Math.round((x.sends || {})[sd.id] || 0)}</em>
+            <label class="strip-send-row send-bar-row ${(x.sends || {})[sd.id] > 0 ? 'on' : ''}" data-send="${esc(sd.id)}" style="--lvl:${(x.sends || {})[sd.id] || 0}%" data-tooltip="Glisser pour envoyer plus · double-clic = écrire le chiffre · ⌘ + clic = remettre à 0 · Maj = réglage fin · clic droit = avant / après le fader">
+                <span class="sb-name">${esc(sd.name)}</span>${(x.preSends || {})['send:' + sd.id] ? '<b class="sb-pre" data-tooltip="Envoi pris avant le fader (Pre)">PRE</b>' : ''}<em class="sb-val">${Math.round((x.sends || {})[sd.id] || 0)}</em>
                 <input type="range" class="insp-send" min="0" max="100" data-default="0" value="${(x.sends || {})[sd.id] || 0}" hidden>
             </label>`).join('')}
             ${Object.keys(x.busSends || {}).filter(id => busById(id)).map(id => `
-            <label class="strip-send-row send-bar-row on" data-bsend="${esc(id)}" style="--lvl:${x.busSends[id]}%" data-tooltip="Envoi vers le groupe « ${esc(busById(id).name)} » · glisser pour régler · double-clic = écrire le chiffre · ⌘ + clic = remettre à 0 · clic droit = retirer">
-                <span class="sb-name">→ ${esc(busById(id).name)}</span><em class="sb-val">${Math.round(x.busSends[id])}</em>
+            <label class="strip-send-row send-bar-row on" data-bsend="${esc(id)}" style="--lvl:${x.busSends[id]}%" data-tooltip="Envoi vers le groupe « ${esc(busById(id).name)} » · glisser pour régler · double-clic = écrire le chiffre · ⌘ + clic = remettre à 0 · clic droit = avant / après le fader, retirer">
+                <span class="sb-name">→ ${esc(busById(id).name)}</span>${(x.preSends || {})['busSend:' + id] ? '<b class="sb-pre" data-tooltip="Envoi pris avant le fader (Pre)">PRE</b>' : ''}<em class="sb-val">${Math.round(x.busSends[id])}</em>
                 <input type="range" class="insp-send" min="0" max="100" data-default="0" value="${x.busSends[id]}" hidden>
             </label>`).join('')}
             ${Array.from({ length: Math.max(2, 4 - sends.length - Object.keys(x.busSends || {}).length) }, (_, i) => `<div class="insp-slot-empty${i === 0 ? ' insp-add-send' : ''}" data-tooltip="Emplacement libre : clique pour envoyer vers une reverb, un écho ou un groupe"></div>`).join('')}
@@ -1894,10 +1896,27 @@ function renderInspector() {
                 refreshPlaybackSoon();
             });
             sl.addEventListener('change', () => { undoPushed = false; saveProject(); if (state.mixerOpen) { renderMixer(); bindMixerEvents(); } });
-            if (isBusSend) srow.addEventListener('contextmenu', (e) => {
-                e.preventDefault(); e.stopPropagation();
-                pushUndo(); delete x.busSends[id]; saveProject(); refreshPlaybackSoon(); renderInspector();
-                flash('Envoi vers « ' + (busById(id) ? busById(id).name : 'groupe') + ' » retiré');
+            // Clic droit : avant / après le fader (Pre / Post, comme Logic) ; un envoi vers un groupe se retire ici
+            srow.addEventListener('contextmenu', (e) => {
+                e.preventDefault(); e.stopPropagation(); closeAllMenus();
+                const key = (isBusSend ? 'busSend:' : 'send:') + id;
+                const targets = kind === 'track' ? selectedTrackIdxs().map(i => state.project.tracks[i]).filter(Boolean) : [x];
+                const set = targets.includes(x) ? targets : [x];
+                const isPre = !!(x.preSends || {})[key];
+                const menu = document.createElement('div');
+                menu.className = 'track-ctx-menu';
+                menu.style.cssText = `position:fixed;left:${Math.min(e.clientX, window.innerWidth - 240)}px;top:${Math.min(e.clientY, window.innerHeight - 140)}px;z-index:300;min-width:220px`;
+                const item = (label, run) => { const it = document.createElement('div'); it.className = 'ctx-item'; it.textContent = label; it.addEventListener('mousedown', (ev) => { ev.stopPropagation(); closeAllMenus(); run(); }); menu.appendChild(it); };
+                const setPre = (on) => { pushUndo(); set.forEach(o => { o.preSends = o.preSends || {}; if (on) o.preSends[key] = true; else delete o.preSends[key]; }); saveProject(); refreshPlaybackSoon(); renderInspector(); flash(on ? 'Envoi avant le fader (Pre) : il ne suit plus le fader ni le gauche/droite' : 'Envoi après le fader (Post) : il suit le fader'); };
+                item((isPre ? '   ' : '✓ ') + 'Après le fader (Post)', () => setPre(false));
+                item((isPre ? '✓ ' : '   ') + 'Avant le fader (Pre)', () => setPre(true));
+                if (isBusSend) item('Retirer cet envoi', () => {
+                    pushUndo(); set.forEach(o => { if (o.busSends) delete o.busSends[id]; if (o.preSends) delete o.preSends[key]; });
+                    saveProject(); refreshPlaybackSoon(); renderInspector();
+                    flash('Envoi vers « ' + (busById(id) ? busById(id).name : 'groupe') + ' » retiré');
+                });
+                document.body.appendChild(menu);
+                setTimeout(() => document.addEventListener('mousedown', closeAllMenus, { once: true }), 10);
             });
         });
         const pan = strip.querySelector('.insp-pan-input');
@@ -2156,8 +2175,9 @@ function openAddEffectMenu(anchor, target, x) {
         }
         renderInspector();
         if (state.mixerOpen) { renderMixer(); bindMixerEvents(); }
+        if (!state.project.tracks.includes(x) && !(state.project.buses || []).includes(x)) renderTimelineTracks();   // effet d'une région : sa pastille apparaît
         const row = document.querySelector(`#inspector .insp-strip .insp-fx-row[data-fx="${n}"]`);
-        openEffectPanel(target, n, row || anchor);
+        openEffectPanel(target, n, row && row.isConnected ? row : document.body);
     };
     const has = (n) => n === 'tune' ? showTuneSlot(x) : (x.effects || []).includes(n);
     // Colonne de droite : tous les effets existent (rangés par catégorie), on montre ceux de la catégorie choisie ou de la recherche
@@ -3144,6 +3164,7 @@ function openSettings() {
                 <span><input type="number" id="setCeiling" class="set-num" step="0.1" min="-6" max="0" value="${(state.project.ceilingDb ?? -0.3).toFixed(1)}"> dB</span>
             </div>
             ${toggle('setComping', compingOn(), 'Comping : choisir les meilleurs passages de chaque prise', 'Quand tu as enregistré plusieurs prises, glisse sur une prise rangée sous la piste pour garder seulement ce passage-là : ce qui jouait à cet endroit part de côté, le reste de la prise reste rangé. Tu assembles ainsi la meilleure prise phrase par phrase. Décoché : un clic remet la prise entière devant.')}
+            ${toggle('setAutoFollow', autoFollowRegions(), 'L\'automation suit les régions déplacées', 'Comme le réglage de Logic : quand tu déplaces une région, les points d\'automation de sa piste sous cette région partent avec elle (aussi vers une autre piste). Éteint : les courbes restent où elles sont.')}
             ${toggle('setReturn', returnOnStop(), 'Espace : pause, puis relance depuis le départ', 'Un premier Espace met en pause là où tu en es, le deuxième relance depuis l\'endroit où tu avais posé le curseur (la petite marque pointillée). Décoché : Espace reprend toujours là où le son s\'est arrêté.')}
             ${toggle('setShowAll', showAll(), 'Afficher les réglages avancés de la sortie', 'Montre aussi les bus de sortie, pour les régler ou dessiner leur volume. Pas besoin pour enregistrer.')}
 
@@ -3205,6 +3226,10 @@ function openSettings() {
         flushProjectDocSave(); saveProject(); _skipUnloadGuard = true;
         location.reload();
     }));
+    modal.querySelector('#setAutoFollow').addEventListener('change', (e) => {
+        try { localStorage.setItem('pulse_auto_follow_regions', e.target.checked ? '1' : '0'); } catch {}
+        flash(e.target.checked ? 'L\'automation suit maintenant les régions que tu déplaces' : 'L\'automation reste en place quand tu déplaces une région');
+    });
     modal.querySelector('#setComping').addEventListener('change', (e) => {
         try { localStorage.setItem(COMPING_KEY, e.target.checked ? '1' : '0'); } catch {}
         rerenderTracks();
@@ -4853,6 +4878,7 @@ function toggleAutomationMode() {
     flash(state.automationMode
         ? '🎚 Automation — touche un réglage (fader, pan, envoi, plugin) : sa courbe s\'affiche sur la piste. Clique pour poser un point, double-clic pour l\'enlever (A pour quitter)'
         : 'Automation masquée');
+    renderTracksPanel();   // la pastille du réglage dessiné est dans l'en-tête de chaque piste (comme Logic)
     renderTimelineTracks();
 }
 
@@ -6159,6 +6185,9 @@ function biquadDb(type, f0, g, q, f) {
     } else if (type === 'lowpass') {
         const al = sn / (2 * Math.pow(10, q / 20));
         b0 = (1 - cs) / 2; b1 = 1 - cs; b2 = b0; a0 = 1 + al; a1 = -2 * cs; a2 = 1 - al;
+    } else if (type === 'notch') {
+        const al = sn / (2 * q);
+        b0 = 1; b1 = -2 * cs; b2 = 1; a0 = 1 + al; a1 = -2 * cs; a2 = 1 - al;
     } else if (type === 'lowshelf') {
         const sq = 2 * Math.sqrt(A) * (sn / 2 * Math.SQRT2);
         b0 = A * ((A + 1) - (A - 1) * cs + sq); b1 = 2 * A * ((A - 1) - (A + 1) * cs); b2 = A * ((A + 1) - (A - 1) * cs - sq);
@@ -6174,6 +6203,54 @@ function biquadDb(type, f0, g, q, f) {
     return 10 * Math.log10(num / den);
 }
 const VIZ_W = 216;
+// Écho : les répétitions posées sur la grille du tempo (en haut = gauche, en bas = droite en ping-pong)
+function delayVizSvg(p, bpm) {
+    const W = 420, H = 150, bars = 2, beatW = W / (bars * 4), base = H / 2;
+    const beats = p.beats > 0 ? p.beats : 0.5, dt = beats * beatW, pp = !!p.pp;
+    let g = '';
+    for (let i = 0; i <= bars * 4; i++) g += `<line x1="${(i * beatW).toFixed(1)}" x2="${(i * beatW).toFixed(1)}" y1="0" y2="${H - 14}" class="${i % 4 ? 'viz-grid' : 'viz-grid viz-bar'}"/>${i < bars * 4 ? `<text x="${(i * beatW + 3).toFixed(1)}" y="${H - 3}" class="viz-txt">${Math.floor(i / 4) + 1}.${i % 4 + 1}</text>` : ''}`;
+    g += `<line x1="0" x2="${W}" y1="${base}" y2="${base}" class="viz-zero"/>`;
+    if (pp) g += `<text x="4" y="12" class="viz-txt">G</text><text x="4" y="${H - 18}" class="viz-txt">D</text>`;
+    const vw = Math.max(5, Math.min(dt * 0.55, 40));
+    g += `<rect x="2" y="${base - 46}" width="${vw}" height="92" rx="3" class="dl-voice"/>`;
+    const filt = Math.min(1, Math.log10(Math.max(20, p.hpf || 20) / 20) / 2 * 0.4 + (1 - Math.log10((p.lpf || 4000) / 1000) / 1.3) * 0.25);
+    let a = 0.55 + 0.4 * (p.wet ?? 25) / 100, k = 1;
+    for (let x = dt; x < W && a > 0.03; x += dt, k++) {
+        const h = 92 * Math.sqrt(a), top = pp ? (k % 2 ? base - h : base) : base - h / 2, hh = pp ? h : h;
+        g += `<rect x="${(x + 1).toFixed(1)}" y="${top.toFixed(1)}" width="${Math.max(4, Math.min(dt * 0.5, 30)).toFixed(1)}" height="${hh.toFixed(1)}" rx="2" class="dl-rep" style="opacity:${(0.35 + 0.65 * a).toFixed(2)}"/>`;
+        if (k === 1 && (p.duck || 0) > 0) g += `<rect x="${(x + 1).toFixed(1)}" y="${top.toFixed(1)}" width="${Math.max(4, Math.min(dt * 0.5, 30)).toFixed(1)}" height="${(hh * p.duck / 100).toFixed(1)}" rx="2" class="dl-duck"/>`;
+        a *= Math.max(0.05, (p.feedback ?? 35) / 100) * (1 - filt * 0.2);
+    }
+    const ms = Math.round(beats * 60000 / (bpm || 90));
+    g += `<text x="${W - 4}" y="12" class="viz-txt" text-anchor="end">${beatsLabel(beats)} = ${ms} ms · ${Math.round(p.feedback ?? 35)} % de répétitions</text>`;
+    if ((p.duck || 0) > 0) g += `<text x="${W - 4}" y="${H - 18}" class="viz-txt dl-duck-txt" text-anchor="end">ducking ${Math.round(p.duck)} % : l'écho se pousse pendant la voix</text>`;
+    return `<svg class="viz-svg viz-delay" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${g}</svg>`;
+}
+// Reverb : la vie du son — pré-délai, premières réflexions, queue qui s'éteint (et le ducking qui la pousse pendant la voix)
+function reverbVizSvg(p) {
+    const W = 420, H = 150, base = H - 16, secs = 5, X = (t) => 6 + t / secs * (W - 12);
+    let g = '';
+    for (let s2 = 0; s2 <= secs; s2++) g += `<line x1="${X(s2).toFixed(1)}" x2="${X(s2).toFixed(1)}" y1="4" y2="${base}" class="viz-grid"/><text x="${(X(s2) + 3).toFixed(1)}" y="${H - 3}" class="viz-txt">${s2} s</text>`;
+    const pre = (p.pre || 0) / 1000, size = p.size ?? 1.8, decay = p.decay ?? 2.5, duck = (p.duck || 0) / 100;
+    if (pre > 0) g += `<rect x="${X(0)}" y="4" width="${(X(pre) - X(0)).toFixed(1)}" height="${base - 4}" class="rv-pre"/>`;
+    g += `<rect x="${X(0)}" y="${base - 9}" width="${(X(1.2) - X(0)).toFixed(1)}" height="7" rx="3" class="dl-voice"/><text x="${X(0) + 3}" y="${base - 12}" class="viz-txt">voix</text>`;
+    // même forme que le moteur : plus de taille et de déclin = queue plus longue
+    const fb = Math.max(0.5, Math.min(0.97, 0.72 + 0.2 * Math.max(0, Math.min(1, (size - 1.2) / 2)) + (decay - 2.5) * 0.025));
+    const rt = Math.min(secs * 1.2, 0.035 * 6.9 / -Math.log(fb) * (size / 1.8) * 1.6);
+    for (let i = 0; i < 6; i++) { const t2 = pre + 0.008 * (i + 1) * (1 + (i * 37 % 7) / 9) * size, h = (base - 40) * (0.7 - i * 0.07); g += `<rect x="${(X(t2) - 1).toFixed(1)}" y="${(base - h).toFixed(1)}" width="2.5" height="${h.toFixed(1)}" class="rv-er"/>`; }
+    let d = `M${X(pre).toFixed(1)},${base}`, ref = d;
+    for (let i = 0; i <= 140; i++) {
+        const t2 = pre + i / 140 * (secs - pre), env = Math.exp(-6.9 * (t2 - pre) / rt) * (1 - Math.exp(-(t2 - pre) * 60));
+        const db0 = Math.max(0, 1 + 20 * Math.log10(Math.max(env, 1e-6)) / 60);
+        const dk = duck * (t2 < 1.2 ? 1 : Math.exp(-(t2 - 1.2) * 10));
+        d += `L${X(t2).toFixed(1)},${(base - (base - 30) * 0.8 * db0 * (1 - dk * 0.8)).toFixed(1)}`;
+        ref += `L${X(t2).toFixed(1)},${(base - (base - 30) * 0.8 * db0).toFixed(1)}`;
+    }
+    g += `<path d="${d}L${X(secs)},${base}Z" class="rv-tail"/>`;
+    if (duck > 0) g += `<path d="${ref}" class="rv-ref"/><text x="${X(1.3)}" y="22" class="viz-txt dl-duck-txt">ducking ${Math.round(duck * 100)} % : la reverb se pousse pendant la voix</text>`;
+    g += `<text x="${W - 4}" y="12" class="viz-txt" text-anchor="end">queue ≈ ${rt.toFixed(1).replace('.', ',')} s${pre > 0 ? ` · démarre après ${Math.round(pre * 1000)} ms` : ''}</text>`;
+    return `<svg class="viz-svg viz-rev" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><defs><linearGradient id="rvg" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#A855F7" stop-opacity=".8"/><stop offset="1" stop-color="#A855F7" stop-opacity=".08"/></linearGradient></defs>${g}</svg>`;
+}
 // Vue « analogique » du compresseur : un vumètre de réduction (0 dB à droite, 20 dB à gauche)
 // rev = échelle façon console de bus : 0 à gauche, 20 à droite, aiguille dont on ne voit que la pointe
 function compNeedleDeg(g, rev) { const k = Math.max(0, Math.min(20, g)) / 20 * 90; return rev ? -45 + k : 45 - k; }
@@ -6216,8 +6293,15 @@ function compVizSvg(p) {
 }
 
 // === EQ libre (façon Pro-Q) : des points à volonté sur la courbe ===
-const EQ_TYPES = { bell: 'Cloche', lowshelf: 'Étagère basse', highshelf: 'Étagère haute', hpf: 'Coupe-bas', lpf: 'Coupe-haut' };
-const EQ_COLORS = ['#F87171', '#FBBF24', '#34D399', '#22D3EE', '#A855F7', '#F472B6', '#60A5FA', '#A3E635'];
+const EQ_TYPES = { bell: 'Cloche', lowshelf: 'Plateau grave', highshelf: 'Plateau aigu', hpf: 'Coupe-bas', lpf: 'Coupe-haut', notch: 'Encoche', tilt: 'Pente' };
+// Icône de chaque forme = sa petite courbe
+const EQ_ICON_PATHS = { bell: 'M1 12 C6 12 7 3 11 3 C15 3 16 12 21 12', lowshelf: 'M1 4 C6 4 8 4 10 8 C12 12 15 12 21 12', highshelf: 'M1 12 C6 12 9 12 11 8 C13 4 16 4 21 4',
+    hpf: 'M2 14 C5 6 8 4 12 4 L21 4', lpf: 'M1 4 L10 4 C14 4 17 6 20 14', notch: 'M1 4 L8 4 C10 4 10.6 14 11 14 C11.4 14 12 4 14 4 L21 4', tilt: 'M1 12 C8 12 9 9 11 8 C13 7 14 4 21 4' };
+const eqIcon = (k) => `<svg width="22" height="16" viewBox="0 0 22 16"><path d="${EQ_ICON_PATHS[k]}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>`;
+const EQ_FLAT = (t) => t === 'hpf' || t === 'lpf' || t === 'notch';   // points posés sur la courbe (pas de gain)
+const EQ_NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+const eqNote = (f) => { const n = Math.round(12 * Math.log2(f / 440)) + 57; return EQ_NOTES[(n % 12 + 12) % 12] + Math.floor(n / 12); };
+const EQ_COLORS = ['#A855F7', '#F472B6', '#22D3EE', '#FBBF24', '#34D399', '#60A5FA', '#FB7185', '#C084FC'];
 const EQ_MAX_BANDS = 24;
 // Bandes d'un EQ : celles de l'EQ libre, ou celles de l'ancienne chaîne fixe (même son)
 function eqBandsOf(ep) {
@@ -6232,13 +6316,21 @@ function eqBandsOf(ep) {
     if (ep.lpf) out.push({ type: 'lpf', freq: ep.lpf, gain: 0, q: 1.0839 });
     return out;
 }
+// Réponse d'une bande : exactement les filtres du moteur (calés sur l'analogique), mis en cache tant que la bande ne change pas
+const _eqCoefCache = new Map();
 function eqBandDb(b, f) {
     if (b.on === false) return 0;
-    const q = b.q > 0 ? b.q : 1;
-    if (b.type === 'hpf') return biquadDb('highpass', b.freq, 0, 20 * Math.log10(q), f);
-    if (b.type === 'lpf') return biquadDb('lowpass', b.freq, 0, 20 * Math.log10(q), f);
-    if (b.type === 'lowshelf' || b.type === 'highshelf') return biquadDb(b.type, b.freq, b.gain || 0, 1, f);
-    return biquadDb('peaking', b.freq, b.gain || 0, q, f);
+    const key = `${b.type}|${b.freq}|${b.gain || 0}|${b.q}|${b.slope || ''}`;
+    let k = _eqCoefCache.get(key);
+    if (!k) { k = PulseAudio.eqBandCoefs({ ...b, freq: Math.max(20, Math.min(20000, b.freq)) }, 48000); if (_eqCoefCache.size > 500) _eqCoefCache.clear(); _eqCoefCache.set(key, k); }
+    const w = 2 * Math.PI * f / 48000, c1 = Math.cos(w), c2 = Math.cos(2 * w);
+    let db = 0;
+    for (const [b0, b1, b2, a1, a2] of k) {
+        const num = b0 * b0 + b1 * b1 + b2 * b2 + 2 * (b0 * b1 + b1 * b2) * c1 + 2 * b0 * b2 * c2;
+        const den = 1 + a1 * a1 + a2 * a2 + 2 * (a1 + a1 * a2) * c1 + 2 * a2 * c2;
+        db += 10 * Math.log10(Math.max(num, 1e-30) / den);
+    }
+    return db;
 }
 
 // Modèles d'EQ : un point de départ à affiner (hpf / lpf : q = pente)
@@ -6264,11 +6356,27 @@ function openEqPanel(trackIdx, anchorEl) {
     const already = findPlugWin(t, 'eq');
     if (already) { plugFront(already); return; }
     t.effectParams = t.effectParams || {};
-    const W = 420, H = 200, DB = 18, FMIN = 20, FMAX = 20000;
+    const W = 760, H = 300, PB = 20, FMIN = 20, FMAX = 20000;   // PB : bande du bas pour les fréquences
+    let DB = 12; try { DB = +localStorage.getItem('pulse_eq_range') || 12; } catch {}
+    const mid = (H - PB) / 2;
     const fx = (f) => Math.log(f / FMIN) / Math.log(FMAX / FMIN) * W;
     const xf = (x) => FMIN * Math.pow(FMAX / FMIN, Math.max(0, Math.min(1, x / W)));
-    const dy = (d) => H / 2 - Math.max(-DB, Math.min(DB, d)) / DB * (H / 2 - 8);
-    const yd = (y) => (H / 2 - y) / (H / 2 - 8) * DB;
+    const dy = (d) => mid - Math.max(-DB * 1.08, Math.min(DB * 1.08, d)) / DB * (mid - 14);
+    const yd = (y) => (mid - y) / (mid - 14) * DB;
+    let soloI = -1;
+    if (t.effectParams.eq && t.effectParams.eq.solo !== undefined) delete t.effectParams.eq.solo;   // un solo oublié ne reste jamais
+    const setSolo = (i) => {
+        soloI = i;
+        const ep = t.effectParams.eq; if (!ep) return;
+        if (i >= 0) ep.solo = i; else delete ep.solo;
+        refreshPlaybackSoon();
+    };
+    // Auto gain : la sortie compense ce que l'EQ ajoute ou retire en moyenne (de 100 Hz à 8 kHz)
+    const autoOut = (arr) => {
+        let s2 = 0, n = 0;
+        for (let k = 0; k <= 40; k++) { const f = 100 * Math.pow(80, k / 40); s2 += Math.max(-12, arr.reduce((a, b) => a + eqBandDb(b, f), 0)); n++; }   // un creux profond (encoche) ne fausse pas tout
+        return Math.round(-s2 / n * 10) / 10;
+    };
     let sel = 0;
     const multi = new Set();            // points choisis ensemble (⇧ / ⌘ + clic, ou rectangle) ; `sel` reste le point principal
     const isSel = (i) => i === sel || multi.has(i);
@@ -6281,8 +6389,21 @@ function openEqPanel(trackIdx, anchorEl) {
             document.addEventListener('mouseup', () => setTimeout(clear, 0), { once: true, capture: true });
             setTimeout(clear, 2500);   // et pour les valeurs tapées au clavier
         }
+        const before = eqBandsOf(t.effectParams.eq || {});
         t.eqBands = arr;                       // retenu à part : un preset de Son ne l'écrase plus
+        const prev = t.effectParams.eq || {};
         t.effectParams.eq = { bands: arr };
+        if (prev.autogain) { t.effectParams.eq.autogain = true; t.effectParams.eq.out = autoOut(arr); }
+        if (soloI >= 0 && soloI < arr.length) t.effectParams.eq.solo = soloI; else soloI = -1;
+        // Automation (mode A) : la bande qu'on vient de bouger devient la courbe affichée, et s'écrit pendant la lecture
+        if (state.automationMode && arr.length === before.length) {
+            arr.forEach((b, i) => ['freq', 'gain'].forEach(f => {
+                const o0 = before[i] || {};
+                if ((b[f] || 0) === (o0[f] || 0) || (f === 'gain' && !EQ_GAIN_TYPES.includes(b.type))) return;
+                const pid = `fx:eq:b${i}-${f}`;
+                autoSelectParam(t, pid); autoWriteSample(t, pid);
+            }));
+        }
         t.effects = t.effects || [];
         if (!t.effects.includes('eq')) t.effects.push('eq');
         refreshPlaybackSoon(); saveProject();
@@ -6297,12 +6418,46 @@ function openEqPanel(trackIdx, anchorEl) {
             <label class="fx-bypass-label"><input type="checkbox" class="fx-bypass" ${t.effects?.includes('eq') ? 'checked' : ''}> Actif</label>
             <button class="fx-panel-close">×</button>
         </div>
-        <div class="eq-graph"></div>
-        <div class="eq-hint">Double-clic pour poser un point · tire pour régler · molette = largeur (Q) · double-clic sur un point = le retirer</div>
-        <div class="eq-detail"></div>
-        <div class="fx-panel-footer"><select class="eq-preset" data-tooltip="Un point de départ : tu peux ensuite tout bouger"><option value="">Modèles…</option>${Object.entries(EQ_PRESETS).map(([k, v]) => `<option value="${k}">${esc(v.label)}</option>`).join('')}</select><button class="eq-add">+ Ajouter un point</button><button class="fx-reset">Réinitialiser</button></div>`;
+        <div class="eq-bar">
+            <select class="eq-preset" data-tooltip="Un point de départ : tu peux ensuite tout bouger"><option value="">Modèles…</option>${Object.entries(EQ_PRESETS).map(([k, v]) => `<option value="${k}">${esc(v.label)}</option>`).join('')}</select>
+            <button class="eq-add" data-tooltip="Pose un point au milieu (ou double-clic sur la courbe)">+ Point</button>
+            <button class="fx-reset">Réinitialiser</button>
+            <span class="eq-sp"></span>
+            <button class="eq-an on" data-tooltip="Le son de la piste derrière la courbe, pendant la lecture">Analyseur</button>
+            <span class="eq-range" data-tooltip="Échelle verticale (elle s'agrandit toute seule si tu tires un point plus loin)">${[3, 6, 12, 30].map(r => `<span data-r="${r}" class="${r === DB ? 'on' : ''}">${r}</span>`).join('')}<input class="eq-range-in" type="text" value="${DB}" data-tooltip="Tape l'échelle que tu veux (1 à 36 dB)"><i>dB</i></span>
+            <button class="eq-ag ${(t.effectParams.eq || {}).autogain ? 'on' : ''}" data-tooltip="Garde le même volume quand tu creuses ou que tu montes">Auto gain</button>
+            <span class="eq-out" data-tooltip="Sortie de l'EQ">Sortie <b>0,0 dB</b></span>
+        </div>
+        <div class="eq-graph"><div class="eq-svghost"></div><div class="eq-detail eq-bub"></div></div>
+        <div class="eq-hint">Double-clic pour poser un point (tout à gauche = coupe-bas, tout à droite = coupe-haut) · tire pour régler · molette = largeur (Q) · double-clic sur un point = le retirer · ⇧ + glisser = choisir plusieurs points</div>`;
     document.body.appendChild(panel);
-    const graph = panel.querySelector('.eq-graph'), detail = panel.querySelector('.eq-detail');
+    const graph = panel.querySelector('.eq-graph'), detail = panel.querySelector('.eq-detail'), host = panel.querySelector('.eq-svghost');
+    let showAn = true;
+    panel.querySelector('.eq-an').addEventListener('click', (e) => { showAn = !showAn; e.currentTarget.classList.toggle('on', showAn); });
+    // Échelle : boutons, case à taper, et agrandissement automatique quand un point sort de l'écran
+    const setRange = (r) => {
+        DB = Math.max(1, Math.min(36, Math.round(r * 2) / 2));
+        try { localStorage.setItem('pulse_eq_range', DB); } catch {}
+        panel.querySelectorAll('.eq-range span').forEach(x => x.classList.toggle('on', +x.dataset.r === DB));
+        const inp = panel.querySelector('.eq-range-in'); if (inp && document.activeElement !== inp) inp.value = String(DB).replace('.', ',');
+        draw();
+    };
+    const fitRange = (g) => { const a = Math.abs(g); if (a > DB) setRange([6, 12, 18, 24, 30, 36].find(r => r >= a) || 36); };
+    panel.querySelectorAll('.eq-range span').forEach(sp => sp.addEventListener('click', () => setRange(+sp.dataset.r)));
+    const rin = panel.querySelector('.eq-range-in');
+    rin.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') rin.blur(); });
+    rin.addEventListener('change', () => { const v = parseFloat(rin.value.replace(',', '.')); if (Number.isFinite(v)) setRange(Math.abs(v)); else rin.value = DB; });
+    panel.querySelector('.eq-ag').addEventListener('click', (e) => {
+        pushUndo();
+        const on = !(t.effectParams.eq || {}).autogain;
+        const arr = bands();
+        t.effectParams.eq = { ...(t.effectParams.eq || {}), bands: arr };
+        if (on) { t.effectParams.eq.autogain = true; t.effectParams.eq.out = autoOut(arr); } else { delete t.effectParams.eq.autogain; delete t.effectParams.eq.out; }
+        e.currentTarget.classList.toggle('on', on);
+        refreshPlaybackSoon(); saveProject(); draw();
+    });
+    // La fenêtre fermée (n'importe comment) : le solo s'arrête
+    const soloWatch = setInterval(() => { if (!panel.isConnected) { clearInterval(soloWatch); if (soloI >= 0) setSolo(-1); } }, 400);
     panel.querySelector('.eq-preset').addEventListener('change', (e) => {
         const P = EQ_PRESETS[e.target.value]; e.target.value = ''; if (!P) return;
         sel = 0; multi.clear();
@@ -6315,27 +6470,83 @@ function openEqPanel(trackIdx, anchorEl) {
         const arr = bands();
         if (sel >= arr.length) sel = arr.length - 1;
         const total = (f) => arr.reduce((s2, b) => s2 + eqBandDb(b, f), 0);
-        let line = '';
-        for (let i = 0; i <= 160; i++) { const f = FMIN * Math.pow(FMAX / FMIN, i / 160); line += `${i ? 'L' : 'M'}${(i / 160 * W).toFixed(1)},${dy(total(f)).toFixed(1)}`; }
-        const grid = [50, 100, 200, 500, 1000, 2000, 5000, 10000].map(f => `<line x1="${fx(f).toFixed(1)}" y1="0" x2="${fx(f).toFixed(1)}" y2="${H}" class="viz-grid"/><text x="${(fx(f) + 3).toFixed(1)}" y="${H - 4}" class="viz-txt">${f >= 1000 ? f / 1000 + 'k' : f}</text>`).join('');
-        const dbl = [-12, -6, 6, 12].map(d => `<line x1="0" y1="${dy(d)}" x2="${W}" y2="${dy(d)}" class="viz-grid"/><text x="3" y="${dy(d) - 2}" class="viz-txt">${d > 0 ? '+' : ''}${d}</text>`).join('');
+        const N = 220;
+        // La courbe s'arrête quand elle sort par le bas (coupe-bas / coupe-haut) : pas de trait plat collé en bas
+        // Ce que la courbe retire est assombri (entre la courbe et le zéro)
+        const floor = -DB * 1.08;
+        let line = '', shade = '', pen = false;
+        for (let i = 0; i <= N; i++) {
+            const f = FMIN * Math.pow(FMAX / FMIN, i / N), d = total(f), x = (i / N * W).toFixed(1);
+            if (d < floor) { pen = false; continue; }
+            line += `${pen ? 'L' : 'M'}${x},${dy(d).toFixed(1)}`; pen = true;
+        }
+        for (let i = 0; i <= N; i++) { const f = FMIN * Math.pow(FMAX / FMIN, i / N), d = Math.min(0, total(f)); shade += `${i ? 'L' : 'M'}${(i / N * W).toFixed(1)},${(d < floor ? H - PB : dy(d)).toFixed(1)}`; }
+        shade += `L${W},${mid}L0,${mid}Z`;
+        const grid = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000].map(f => `<line x1="${fx(f).toFixed(1)}" y1="0" x2="${fx(f).toFixed(1)}" y2="${H - PB}" class="viz-grid"/><text x="${(fx(f) + 3).toFixed(1)}" y="${H - 6}" class="viz-txt">${f >= 1000 ? f / 1000 + 'k' : f}</text>`).join('');
+        const st = DB <= 6 ? DB / 3 : DB / 2;
+        let dbl = '';
+        for (let d = -DB; d <= DB + 0.01; d += st) if (Math.abs(d) > 0.01) dbl += `<line x1="0" y1="${dy(d).toFixed(1)}" x2="${W}" y2="${dy(d).toFixed(1)}" class="viz-grid"/><text x="${W - 4}" y="${(dy(d) - 3).toFixed(1)}" class="viz-txt" text-anchor="end">${d > 0 ? '+' : ''}${+d.toFixed(1)}</text>`;
+        // la zone du point choisi, teintée de sa couleur
+        let fills = '';
+        arr.forEach((b, i) => {
+            if (!isSel(i) || b.on === false) return;
+            let p = `M0,${mid}`;
+            for (let k = 0; k <= N; k++) { const x = k / N * W; p += `L${x.toFixed(1)},${Math.max(-40, Math.min(H + 40, dy(eqBandDb(b, xf(x))))).toFixed(1)}`; }
+            const c = EQ_COLORS[i % EQ_COLORS.length];
+            fills += `<path d="${p}L${W},${mid}Z" fill="${c}" fill-opacity="${i === sel ? 0.22 : 0.12}" stroke="${c}" stroke-opacity=".3" stroke-width="1"/>`;
+        });
+        // Points dynamiques : jusqu'où ils peuvent aller (pointillés orange) + un trait du point à sa limite
+        let dyns = '';
+        arr.forEach((b, i) => {
+            if (!PulseAudio.eqIsDynamic(b) || b.on === false) return;
+            const lim = { ...b, gain: (b.gain || 0) + Number(b.dyn) };
+            let p = '';
+            for (let k = 0; k <= N; k++) { const x = k / N * W, f = xf(x); p += `${k ? 'L' : 'M'}${x.toFixed(1)},${dy(total(f) - eqBandDb(b, f) + eqBandDb(lim, f)).toFixed(1)}`; }
+            const x = fx(b.freq).toFixed(1);
+            dyns += `<path d="${p}" class="eq-dyn-lim"/><line x1="${x}" x2="${x}" y1="${dy(b.gain || 0).toFixed(1)}" y2="${dy(lim.gain).toFixed(1)}" class="eq-dyn-bar"/><circle cx="${x}" cy="${dy(lim.gain).toFixed(1)}" r="4" class="eq-dyn-end"/>`;
+        });
         const pts = arr.map((b, i) => {
-            const flat = b.type === 'hpf' || b.type === 'lpf';
-            const y = flat ? dy(total(b.freq)) : dy((b.gain || 0));
-            return `<circle cx="${fx(b.freq).toFixed(1)}" cy="${y.toFixed(1)}" r="${i === sel ? 8 : (multi.has(i) ? 7.5 : 6.5)}" class="eq-pt ${isSel(i) ? 'sel' : ''} ${b.on === false ? 'off' : ''}" data-i="${i}" fill="${EQ_COLORS[i % EQ_COLORS.length]}"/>`;
+            const y = EQ_FLAT(b.type) ? dy(total(b.freq)) : dy((b.gain || 0));
+            const x = fx(b.freq).toFixed(1), c = EQ_COLORS[i % EQ_COLORS.length];
+            return `${i === sel ? `<circle cx="${x}" cy="${y.toFixed(1)}" r="14" fill="none" stroke="${c}" stroke-opacity=".55" pointer-events="none"/>` : ''}<circle cx="${x}" cy="${y.toFixed(1)}" r="${i === sel ? 9.5 : (multi.has(i) ? 9 : 8.5)}" class="eq-pt ${isSel(i) ? 'sel' : ''} ${b.on === false ? 'off' : ''}" data-i="${i}" fill="${b.on === false ? '#2a1f3a' : c}"/><text x="${x}" y="${(y + 3.5).toFixed(1)}" class="eq-num-pt" text-anchor="middle">${i + 1}</text>`;
         }).join('');
-        graph.innerHTML = `<svg class="eq-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${grid}${dbl}
-            <line x1="0" y1="${H / 2}" x2="${W}" y2="${H / 2}" class="viz-zero"/>
-            <path d="${line}L${W},${H / 2}L0,${H / 2}Z" class="viz-fill"/><path d="${line}" class="viz-line"/>${pts}</svg>`;
+        host.innerHTML = `<svg class="eq-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${grid}${dbl}
+            <line x1="0" y1="${mid}" x2="${W}" y2="${mid}" class="viz-zero"/>
+            <path d="${shade}" class="eq-cut"/>${fills}${dyns}<path d="${line}" class="viz-line eq-line"/><g class="eq-live"></g>${pts}
+            ${arr.length ? '' : `<text x="${W / 2}" y="${mid - 12}" class="eq-empty-txt" text-anchor="middle">Double-clic sur la courbe pour poser un point</text>`}
+            ${soloI >= 0 ? `<text x="10" y="20" class="eq-solo-txt">🎧 Solo du point ${soloI + 1} : tu n'entends que sa zone</text>` : ''}</svg>`;
+        const ep = t.effectParams.eq || {};
+        panel.querySelector('.eq-out b').textContent = `${(ep.out || 0) > 0 ? '+' : ''}${(ep.out || 0).toFixed(1).replace('.', ',')} dB`;
         const b = arr[sel];
-        detail.innerHTML = b ? `
-            <span class="eq-dot" style="background:${EQ_COLORS[sel % EQ_COLORS.length]}"></span>
-            <select class="eq-type">${Object.entries(EQ_TYPES).map(([k, v]) => `<option value="${k}" ${b.type === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
-            <label>Fréquence <input class="eq-num eq-f" type="text" value="${Math.round(b.freq)}"> Hz</label>
-            <label>Gain <input class="eq-num eq-g" type="text" value="${(b.gain || 0).toFixed(1)}" ${b.type === 'hpf' || b.type === 'lpf' ? 'disabled' : ''}> dB</label>
-            <label>Q <input class="eq-num eq-q" type="text" value="${(b.q || 1).toFixed(2)}" ${b.type === 'lowshelf' || b.type === 'highshelf' ? 'disabled' : ''}></label>
-            <button class="eq-onoff" data-tooltip="Met ce point en pause sans le supprimer">${b.on === false ? 'Réactiver' : 'Désactiver'}</button>
-            <button class="eq-del">Retirer</button>` : '<span class="eq-empty">Aucun point : double-clic sur la courbe pour en poser un.</span>';
+        if (!b) { detail.hidden = true; detail.innerHTML = ''; return; }
+        detail.hidden = false;
+        const flat = EQ_FLAT(b.type), cut = b.type === 'hpf' || b.type === 'lpf', shelf = b.type === 'lowshelf' || b.type === 'highshelf';
+        detail.innerHTML = `
+            <div class="eq-types">${Object.keys(EQ_TYPES).map(k => `<span data-type="${k}" class="${b.type === k ? 'on' : ''}" data-tooltip="${EQ_TYPES[k]}">${eqIcon(k)}</span>`).join('')}</div>
+            <div class="eq-vals">
+                <label><small>Fréq.</small><input class="eq-num eq-f" type="text" value="${Math.round(b.freq)}" style="color:${EQ_COLORS[sel % EQ_COLORS.length]}"><small>Hz · ${eqNote(b.freq)}</small></label>
+                ${cut ? `<label><small>Pente</small><select class="eq-num eq-slope">${[12, 24, 36, 48].map(v => `<option value="${v}" ${(b.slope || 12) === v ? 'selected' : ''}>${v} dB/oct</option>`).join('')}</select><small>&nbsp;</small></label>`
+                      : `<label><small>Gain</small><input class="eq-num eq-g" type="text" value="${(b.gain || 0).toFixed(1)}" ${flat ? 'disabled' : ''}><small>dB</small></label>`}
+                <label><small>${cut ? 'Résonance' : 'Q'}</small><input class="eq-num eq-q" type="text" value="${(b.q || 1).toFixed(2)}" ${shelf || b.type === 'tilt' ? 'disabled' : ''}><small>&nbsp;</small></label>
+            </div>
+            ${PulseAudio.eqIsDynamic(b) ? `<div class="eq-dynrow">⚡ Dynamique · plage <button class="eq-dm">−</button><b>${Number(b.dyn) > 0 ? '+' : ''}${Number(b.dyn)} dB</b><button class="eq-dp">+</button> · seuil <input class="eq-num eq-thr" type="text" value="${b.thr ?? -30}"> dB</div>` : ''}
+            <div class="eq-bub-foot"><span class="eq-tname"><span class="eq-dot" style="background:${EQ_COLORS[sel % EQ_COLORS.length]}"></span>${EQ_TYPES[b.type] || ''}</span>
+                <span class="eq-ic">
+                    <button class="eq-solo ${soloI === sel ? 'on' : ''}" data-tooltip="Solo : n'écouter que la zone de ce point">🎧</button>
+                    <button class="eq-onoff ${b.on === false ? '' : 'on'}" data-tooltip="Met ce point en pause sans le supprimer">⏻</button>
+                    <button class="eq-dyn ${PulseAudio.eqIsDynamic(b) ? 'on dyn' : ''}" ${['bell', 'lowshelf', 'highshelf', 'tilt'].includes(b.type) ? '' : 'disabled'} data-tooltip="Point dynamique : il ne bouge que quand sa zone dépasse le seuil (ex. une voix qui devient boueuse)">⚡</button>
+                    <button class="eq-del" data-tooltip="Retirer ce point">✕</button>
+                </span></div>`;
+        // la bulle se pose au-dessus du point (en dessous s'il est tout en haut)
+        const svg = host.querySelector('svg'), k = svg.clientWidth / W || 1;
+        const px = fx(b.freq) * k, py = (flat ? dy(total(b.freq)) : dy(b.gain || 0)) * k;
+        const bw = detail.offsetWidth || 270, gw = graph.clientWidth, gh = svg.clientHeight || graph.clientHeight, bh = detail.offsetHeight || 110;
+        let bx = px - bw / 2, by;
+        if (py - bh - 20 > 2) by = py - bh - 20;                 // au-dessus du point
+        else if (py + 22 + bh < gh - 2) by = py + 22;            // sinon en dessous
+        else { bx = px + 26 + bw < gw ? px + 26 : px - 26 - bw; by = py - bh / 2; }   // sinon à côté
+        detail.style.left = Math.max(4, Math.min(gw - bw - 4, bx)) + 'px';
+        detail.style.top = Math.max(2, Math.min(gh - bh - 2, by)) + 'px';
     };
     const update = (i, patch) => {
         const arr = bands().map(b => ({ ...b }));
@@ -6344,12 +6555,14 @@ function openEqPanel(trackIdx, anchorEl) {
         arr[i].freq = Math.max(FMIN, Math.min(FMAX, arr[i].freq));
         arr[i].gain = Math.max(-24, Math.min(24, arr[i].gain || 0));
         arr[i].q = Math.max(0.1, Math.min(18, arr[i].q || 1));
-        commit(arr); draw();
+        commit(arr);
+        if (!EQ_FLAT(arr[i].type)) fitRange(arr[i].gain + (PulseAudio.eqIsDynamic(arr[i]) ? Number(arr[i].dyn) : 0));
+        draw();
     };
-    const addBand = (freq, gain) => {
+    const addBand = (freq, gain, type = 'bell') => {
         const arr = bands().map(b => ({ ...b }));
         if (arr.length >= EQ_MAX_BANDS) { flash('24 points au maximum'); return; }
-        arr.push({ type: 'bell', freq, gain, q: 1 });
+        arr.push(type === 'bell' ? { type, freq, gain, q: 1 } : { type, freq, gain: 0, q: 0.71, slope: 24 });
         multi.clear();
         sel = arr.length - 1;
         commit(arr); draw();
@@ -6365,6 +6578,7 @@ function openEqPanel(trackIdx, anchorEl) {
     // Souris sur la courbe
     const pos = (e) => { const r = graph.querySelector('svg').getBoundingClientRect(); return { x: (e.clientX - r.left) * W / r.width, y: (e.clientY - r.top) * H / r.height }; };
     graph.addEventListener('mousedown', (e) => {
+        if (e.target.closest && e.target.closest('.eq-bub')) return;   // la bulle a ses propres boutons
         const pt = e.target.closest && e.target.closest('.eq-pt');
         if (!pt) {
             // Fond de la courbe : un rectangle choisit tous les points qu'il touche
@@ -6379,7 +6593,7 @@ function openEqPanel(trackIdx, anchorEl) {
             graph.appendChild(rect);
             const place = (x1, y1) => {
                 const l = Math.min(x0, x1), tp = Math.min(y0, y1);
-                rect.style.cssText = `left:${20 + l}px;top:${10 + tp}px;width:${Math.abs(x1 - x0)}px;height:${Math.abs(y1 - y0)}px`;
+                rect.style.cssText = `left:${l}px;top:${tp}px;width:${Math.abs(x1 - x0)}px;height:${Math.abs(y1 - y0)}px`;
             };
             let moved = false;
             const mv = (ev) => { const x1 = ev.clientX - box.left, y1 = ev.clientY - box.top; if (Math.abs(x1 - x0) + Math.abs(y1 - y0) > 4) moved = true; place(x1, y1); };
@@ -6392,8 +6606,7 @@ function openEqPanel(trackIdx, anchorEl) {
                 const arr = bands(), hit = [];
                 const total = (f) => arr.reduce((s2, b) => s2 + eqBandDb(b, f), 0);
                 arr.forEach((b, i) => {
-                    const flat = b.type === 'hpf' || b.type === 'lpf';
-                    const cx = fx(b.freq), cy = flat ? dy(total(b.freq)) : dy(b.gain || 0);
+                    const cx = fx(b.freq), cy = EQ_FLAT(b.type) ? dy(total(b.freq)) : dy(b.gain || 0);
                     if (cx >= l && cx <= r2 && cy >= tp && cy <= bt) hit.push(i);
                 });
                 multi.clear();
@@ -6420,37 +6633,45 @@ function openEqPanel(trackIdx, anchorEl) {
         let undoDone = false;
         const start = bands().map(b => ({ ...b }));
         const p0 = pos(e);
+        // le geste garde l'échelle du départ : si elle s'agrandit en route, le point ne s'emballe pas
+        const DB0 = DB, yd0 = (y) => (mid - y) / (mid - 14) * DB0;
         const move = (ev) => {
             const { x, y } = pos(ev), b0 = start[i]; if (!b0) return;
             if (group) {
                 // Tous les points choisis suivent : même décalage de fréquence (en rapport) et de gain
                 const ratio = xf(Math.max(0, Math.min(W, fx(b0.freq) + (x - p0.x)))) / b0.freq;
-                const dg = Math.round((yd(y) - yd(p0.y)) * 2) / 2;
+                const dg = Math.round((yd0(y) - yd0(p0.y)) * 2) / 2;
                 const arr = start.map((b, k) => {
                     if (!group.includes(k)) return { ...b };
-                    const flat = b.type === 'hpf' || b.type === 'lpf';
+                    const flat = EQ_FLAT(b.type);
                     return { ...b, freq: Math.max(FMIN, Math.min(FMAX, b.freq * ratio)), gain: flat ? 0 : Math.max(-24, Math.min(24, (b.gain || 0) + dg)) };
                 });
-                commit(arr); draw();
+                commit(arr);
+                arr.forEach((b, k) => { if (group.includes(k) && !EQ_FLAT(b.type)) fitRange(b.gain); });
+                draw();
                 return;
             }
             const patch = { freq: xf(x) };
-            if (b0.type !== 'hpf' && b0.type !== 'lpf') patch.gain = Math.round(yd(y) * 2) / 2;
+            if (!EQ_FLAT(b0.type)) patch.gain = Math.round(yd0(y) * 2) / 2;
             update(i, patch);
         };
         const up = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
         document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
     });
     graph.addEventListener('dblclick', (e) => {
+        if (e.target.closest && e.target.closest('.eq-bub')) return;
         const pt = e.target.closest && e.target.closest('.eq-pt');
         if (pt) { removeBand(parseInt(pt.dataset.i)); return; }
         const { x, y } = pos(e);
+        // Comme Pro-Q : double-clic tout à gauche = coupe-bas, tout à droite = coupe-haut
+        if (x < W * 0.05 || x > W * 0.95) { addBand(Math.round(xf(x)), 0, x < W * 0.05 ? 'hpf' : 'lpf'); return; }
         addBand(Math.round(xf(x)), Math.round(yd(y) * 2) / 2);
     });
     graph.addEventListener('wheel', (e) => {
+        if (e.target.closest && e.target.closest('.eq-bub')) return;
         const pt = e.target.closest && e.target.closest('.eq-pt');
         const i = pt ? parseInt(pt.dataset.i) : sel;
-        const b = bands()[i]; if (!b || b.type === 'lowshelf' || b.type === 'highshelf') return;
+        const b = bands()[i]; if (!b || b.type === 'lowshelf' || b.type === 'highshelf' || b.type === 'tilt') return;
         e.preventDefault();
         sel = i;
         update(i, { q: (b.q || 1) * (e.deltaY < 0 ? 1.12 : 1 / 1.12) });
@@ -6461,21 +6682,37 @@ function openEqPanel(trackIdx, anchorEl) {
     detail.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') e.target.blur(); });
     detail.addEventListener('change', (e) => {
         const el = e.target;
-        if (el.classList.contains('eq-type')) {
-            const type = el.value, patch = { type };
-            if (type === 'hpf' || type === 'lpf') { patch.gain = 0; patch.q = 1.0839; }
-            update(sel, patch);
+        if (el.classList.contains('eq-slope')) {
+            update(sel, { slope: parseInt(el.value) || 12 });
         } else {
             const v = parseNum(el.value);
             if (!Number.isFinite(v)) { flash('Écris un nombre'); draw(); return; }
             if (el.classList.contains('eq-f')) update(sel, { freq: v });
             else if (el.classList.contains('eq-g')) update(sel, { gain: v });
             else if (el.classList.contains('eq-q')) update(sel, { q: v });
+            else if (el.classList.contains('eq-thr')) update(sel, { thr: Math.max(-80, Math.min(0, v)) });
         }
     });
     detail.addEventListener('click', (e) => {
-        if (e.target.classList.contains('eq-del')) removeBand(sel);
-        if (e.target.classList.contains('eq-onoff')) { const b = bands()[sel]; update(sel, { on: b.on === false ? true : false }); }
+        const tb = e.target.closest('[data-type]');
+        if (tb) {
+            const type = tb.dataset.type, b = bands()[sel]; if (!b || b.type === type) return;
+            const patch = { type };
+            if (type === 'hpf' || type === 'lpf') { patch.gain = 0; patch.q = 0.71; patch.slope = b.slope || 24; }
+            else if (type === 'notch') { patch.gain = 0; patch.q = Math.max(2, b.q || 4); }
+            else if (EQ_FLAT(b.type)) patch.q = 1;
+            update(sel, patch);
+            return;
+        }
+        const btn = e.target.closest('button'); if (!btn) return;
+        if (btn.classList.contains('eq-del')) { if (soloI === sel) setSolo(-1); removeBand(sel); }
+        if (btn.classList.contains('eq-onoff')) { const b = bands()[sel]; update(sel, { on: b.on === false ? true : false }); }
+        if (btn.classList.contains('eq-solo')) { setSolo(soloI === sel ? -1 : sel); draw(); }
+        if (btn.classList.contains('eq-dyn')) { const b = bands()[sel]; update(sel, PulseAudio.eqIsDynamic(b) ? { dyn: 0 } : { dyn: (b.gain || 0) > 0 ? -4 : -6, thr: b.thr ?? -30 }); }
+        if (btn.classList.contains('eq-dm') || btn.classList.contains('eq-dp')) {
+            const b = bands()[sel], v = Math.max(-24, Math.min(24, Number(b.dyn) + (btn.classList.contains('eq-dp') ? 1 : -1)));
+            update(sel, { dyn: v || (btn.classList.contains('eq-dp') ? 1 : -1) });
+        }
     });
     // Suppr / ⌫ : retire les points choisis (et n'efface pas une région derrière)
     const eqKeys = (ev) => {
@@ -6496,7 +6733,7 @@ function openEqPanel(trackIdx, anchorEl) {
         sel = 0; refreshPlaybackSoon(); saveProject(); draw();
         flash('EQ remis comme au départ');
     });
-    panel.querySelector('.fx-panel-close').addEventListener('click', () => panel.remove());
+    panel.querySelector('.fx-panel-close').addEventListener('click', () => { if (soloI >= 0) setSolo(-1); panel.remove(); });
     panel.querySelector('.fx-bypass').addEventListener('change', (e) => {
         pushUndo();
         t.effects = t.effects || [];
@@ -6514,15 +6751,25 @@ function openEqPanel(trackIdx, anchorEl) {
         cv.className = 'eq-spec';
         cv.width = W; cv.height = H;
         graph.style.position = 'relative';
-        graph.appendChild(cv);
+        graph.insertBefore(cv, graph.firstChild);   // derrière la courbe
         const g2 = cv.getContext('2d');
         let bins = null;
         const loop = () => {
             if (!panel.isConnected) return;
-            if (!cv.isConnected) graph.appendChild(cv);        // draw() refait le contenu du cadre
+            if (!cv.isConnected) graph.insertBefore(cv, graph.firstChild);
             const sv = graph.querySelector('svg'); if (sv) { cv.style.width = sv.clientWidth + 'px'; cv.style.height = sv.clientHeight + 'px'; }
             g2.clearRect(0, 0, W, H);
-            const an = state.playing || state.recording ? specOf() : null;
+            // points dynamiques : l'anneau orange montre où ils sont à l'instant
+            const lv = graph.querySelector('.eq-live');
+            if (lv) {
+                const key = typeof trackIdx === 'number' ? 't' + trackIdx : 'b' + t.id;
+                lv.innerHTML = (state.playing || state.recording) ? bands().map((b, i) => {
+                    if (!PulseAudio.eqIsDynamic(b) || b.on === false) return '';
+                    const g = PulseAudio.getEqDyn(key + ':' + i); if (g === null) return '';
+                    return `<circle cx="${fx(b.freq).toFixed(1)}" cy="${dy(g).toFixed(1)}" r="15" class="eq-dyn-ring"/>`;
+                }).join('') : '';
+            }
+            const an = showAn && (state.playing || state.recording) ? specOf() : null;
             if (an) {
                 if (!bins || bins.length !== an.frequencyBinCount) bins = new Float32Array(an.frequencyBinCount);
                 an.getFloatFrequencyData(bins);
@@ -6533,20 +6780,27 @@ function openEqPanel(trackIdx, anchorEl) {
                     const kOf = (f) => Math.min(bins.length - 1, Math.max(0, Math.round(f / nyq * (bins.length - 1))));
                     const k0 = kOf(xf(x - 1)), k1 = Math.max(k0, kOf(xf(x + 1)));
                     let db = -120;
-                    for (let k = k0; k <= k1; k++) if (Number.isFinite(bins[k]) && bins[k] > db) db = bins[k];
-                    const y = H - Math.max(0, Math.min(1, (db + 100) / 80)) * (H - 10);
+                    if (k1 - k0 <= 1) {
+                        // graves : moins d'une raie par pixel → on glisse entre deux raies (pas d'escalier)
+                        const fb = Math.min(bins.length - 1.001, Math.max(0, xf(x) / nyq * (bins.length - 1))), i0 = Math.floor(fb), u = fb - i0;
+                        const a = Number.isFinite(bins[i0]) ? bins[i0] : -120, b2 = Number.isFinite(bins[i0 + 1]) ? bins[i0 + 1] : -120;
+                        db = a + (b2 - a) * u;
+                    } else for (let k = k0; k <= k1; k++) if (Number.isFinite(bins[k]) && bins[k] > db) db = bins[k];
+                    const y = (H - PB) - Math.max(0, Math.min(1, (db + 100) / 80)) * (H - PB - 10);
                     g2.lineTo(x, y);
                 }
                 g2.lineTo(W, H); g2.closePath();
-                g2.fillStyle = 'rgba(56, 189, 248, 0.22)'; g2.fill();
-                g2.strokeStyle = 'rgba(56, 189, 248, 0.7)'; g2.lineWidth = 1; g2.stroke();
+                const gr = g2.createLinearGradient(0, 0, 0, H);
+                gr.addColorStop(0, 'rgba(168, 85, 247, 0.42)'); gr.addColorStop(1, 'rgba(124, 58, 237, 0.04)');
+                g2.fillStyle = gr; g2.fill();
+                g2.strokeStyle = 'rgba(192, 132, 252, 0.55)'; g2.lineWidth = 1; g2.stroke();
             }
             requestAnimationFrame(loop);
         };
         requestAnimationFrame(loop);
     }
 
-    const rect = anchorEl.getBoundingClientRect(), pw = 460;
+    const rect = anchorEl.getBoundingClientRect(), pw = Math.min(800, window.innerWidth - 16);
     let left = rect.right + 8;
     if (left + pw > window.innerWidth) left = Math.max(8, rect.left - pw - 8);
     panel.style.left = left + 'px';
@@ -6567,6 +6821,8 @@ function fxFromFrac(d, f) { return d.log ? d.min * Math.pow(d.max / d.min, f) : 
 // Durée d'écho en notes, comme les noms de pistes du studio (DEL 1/8, DEL 1/4…)
 function beatsLabel(b) {
     const N = { 0.125: '1/32', 0.25: '1/16', 0.375: '1/16 pointée', 0.5: '1/8', 0.75: '1/8 pointée', 1: '1/4', 1.5: '1/4 pointée', 2: '1/2' };
+    if (Math.abs(b - 1 / 3) < 1e-6) return '1/8 triolet';
+    if (Math.abs(b - 2 / 3) < 1e-6) return '1/4 triolet';
     return N[b] || `${b} temps`;
 }
 function fxFmt(d, v, isAuto) {
@@ -6801,7 +7057,11 @@ const FX_PANEL_DEFS = {
     reverb: [
         { key: 'wet',   label: 'Quantité',    unit: '%',  min: 0,   max: 100, def: 18, step: 1 },
         { key: 'size',  label: 'Taille',     unit: 's',  min: 0.3, max: 5,   def: 1.8, step: 0.1 },
-        { key: 'decay', label: 'Déclin',     unit: '',   min: 0.5, max: 5,   def: 2.5, step: 0.1 }
+        { key: 'decay', label: 'Déclin',     unit: '',   min: 0.5, max: 5,   def: 2.5, step: 0.1 },
+        { key: 'pre',   label: 'Pré-délai',  unit: ' ms', min: 0, max: 250, def: 0, step: 1, tip: 'Le temps avant que la reverb démarre : la voix reste devant' },
+        { key: 'duck',  label: 'Ducking',    unit: '%',  min: 0,   max: 100, def: 0, step: 1, tip: 'La reverb se pousse pendant que la voix chante et ressort dans les trous' },
+        { key: 'low',   label: 'Grave',      unit: ' Hz', min: 20, max: 1000, def: 20, step: 5, log: true, adv: true, tip: 'Retire les graves de la reverb (elle ne boue plus)' },
+        { key: 'high',  label: 'Aigu',       unit: ' Hz', min: 1500, max: 20000, def: 20000, step: 100, log: true, adv: true, tip: 'Retire les aigus de la reverb (plus douce, moins de sifflantes)' }
     ],
     crush: [
         { key: 'bits', label: 'Finesse du son', unit: ' bits', min: 4, max: 16, def: 8, step: 1 },
@@ -6868,9 +7128,13 @@ const FX_PANEL_DEFS = {
         { key: 'mix',  label: 'Mélange', unit: '%',   min: 0,   max: 100, def: 100, step: 1, tip: '100 % = seulement la voix transposée' }
     ],
     delay: [
-        { key: 'beats',    label: 'Retour', unit: '',  min: 0.125, max: 2,  def: 0.5, step: 0.125, fmt: beatsLabel },
+        { key: 'beats',    label: 'Temps', unit: '',  min: 0.125, max: 2,  def: 0.5, step: 0.125, fmt: beatsLabel,
+          choices: [0.25, 1 / 3, 0.5, 0.75, 1, 1.5, 2], choiceLabels: ['1/16', '1/8 T', '1/8', '1/8 .', '1/4', '1/4 .', '1/2'] },
         { key: 'feedback', label: 'Répétitions',    unit: '%', min: 0,     max: 85, def: 35,  step: 1 },
         { key: 'wet',      label: 'Quantité',       unit: '%', min: 0,     max: 100, def: 25, step: 1 },
+        { key: 'duck',     label: 'Ducking',        unit: '%', min: 0,     max: 100, def: 0,  step: 1, tip: 'L\'écho se pousse pendant que la voix chante et ressort dans les trous' },
+        { key: 'hpf',      label: 'Coupe-bas',      unit: ' Hz', min: 20,  max: 2000, def: 20, step: 5, log: true, adv: true, tip: 'Retire les graves des répétitions' },
+        { key: 'lpf',      label: 'Coupe-haut',     unit: ' Hz', min: 1000, max: 20000, def: 4000, step: 100, log: true, adv: true, tip: 'Chaque répétition s\'assombrit un peu plus' },
         { key: 'dry',      label: 'Voix d\'origine', unit: '%', min: 0,     max: 100, def: 100, step: 1, adv: true, tip: '0 % = seulement l\'écho (piste d\'effet ponctuel)' },
         { key: 'pp',       label: 'Ping-pong',      unit: '',  min: 0,     max: 1,   def: 0,  step: 1, toggle: true, tip: 'Les répétitions rebondissent de gauche à droite' }
     ]
@@ -6899,7 +7163,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
     let advanced = false;
     try { advanced = localStorage.getItem('pulse_fx_adv') === '1'; } catch {}
     const cat = (ADD_FX_CATEGORIES.find(c => c[1].includes(fxName)) || ['Effet'])[0];
-    panel.className = 'fx-panel fx-pro' + (hasAdv && !advanced ? ' simple' : '');
+    panel.className = 'fx-panel fx-pro' + (hasAdv && !advanced ? ' simple' : '') + (fxName === 'delay' || fxName === 'reverb' ? ' fx-wideface' : '');
     panel.style.setProperty('--fx-accent', FX_CAT_COLORS[cat] || 'var(--violet-2)');
     const valOf = (d) => params[d.key] !== undefined ? params[d.key] : d.def;
     // Façade : seul le compresseur change d'habillage selon son caractère (Propre reste net, numérique)
@@ -6927,7 +7191,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
             <input class="fx-preset-name" type="text" maxlength="28" placeholder="Nom du préréglage, puis Entrée" hidden>
         </div>
         <div class="fx-face">
-        ${fxName === 'comp' ? '<div class="fx-viz"></div>' : ''}
+        ${fxName === 'comp' || fxName === 'delay' || fxName === 'reverb' ? `<div class="fx-viz ${fxName === 'comp' ? '' : 'fx-viz-wide'}"></div>` : ''}
         <div class="fx-main">
         <div class="fx-panel-body fx-knobs">
             ${defs.map(d => {
@@ -6943,7 +7207,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
                     <span class="fx-val" data-key="${d.key}" title="Double-clic : taper une valeur">${fxFmt(d, val, d.auto && params[d.key] === undefined)}</span>
                     <label class="fx-label">${d.label}</label>
                     <input type="range" class="fx-slider" data-key="${d.key}" data-default="${d.def}" hidden
-                        min="${d.min}" max="${d.max}" step="${d.step}" value="${val}">
+                        min="${d.min}" max="${d.max}" step="${d.choices ? 'any' : d.step}" value="${val}">
                 </div>`;
             }).join('')}
             ${fxName === 'comp' ? '<div class="fx-row fx-in-row"><button class="fx-in" data-tooltip="Allumer ou éteindre le compresseur">IN</button></div>' : ''}
@@ -7032,7 +7296,8 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
     const viewBtn = panel.querySelector('.fx-view');
     const drawViz = () => {
         if (viz) {
-            viz.innerHTML = analog ? compAnalogSvg(needle, skinOf() === 'U') : compVizSvg(curP());
+            viz.innerHTML = fxName === 'delay' ? delayVizSvg(curP(), state.project.bpm || 90) : fxName === 'reverb' ? reverbVizSvg(curP())
+                : analog ? compAnalogSvg(needle, skinOf() === 'U') : compVizSvg(curP());
             const sv = viz.querySelector('.viz-svg'), sk = skinOf();
             if (sv && sk !== 'P') { const w = document.createElement('div'); w.className = 'viz-screen'; sv.replaceWith(w); w.appendChild(sv); w.insertAdjacentHTML('beforeend', fxGlassSvg(FX_SKIN_SEED[sk])); }
         }
@@ -7041,7 +7306,8 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
     const setParam = (key, val) => {
         const sl = panel.querySelector(`.fx-slider[data-key="${key}"]`); if (!sl) return;
         const d = defs.find(x => x.key === key);
-        val = Math.round(Math.max(d.min, Math.min(d.max, val)) / d.step) * d.step;
+        val = Math.max(d.min, Math.min(d.max, val));
+        if (!d.choices) val = Math.round(val / d.step) * d.step;   // un choix (1/8 triolet…) garde sa valeur exacte
         sl.value = val; sl.dispatchEvent(new Event('input', { bubbles: true }));
     };
     if (viz) {
@@ -7060,7 +7326,8 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
             const up = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
             document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
         });
-        panel.addEventListener('input', () => { if (!analog) drawViz(); });
+        panel.addEventListener('input', () => { if (!analog || fxName !== 'comp') drawViz(); });
+        panel.addEventListener('click', (e) => { if (fxName !== 'comp' && e.target.closest('.fx-choice, .fx-toggle')) setTimeout(drawViz, 0); });
         if (viewBtn) viewBtn.addEventListener('click', () => {
             analog = !analog;
             try { localStorage.setItem('pulse_comp_view', analog ? 'analog' : 'curve'); } catch {}
@@ -7123,6 +7390,14 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
         panel.querySelectorAll(`.fx-choice[data-key="${key}"] button`).forEach(b => b.classList.toggle('on', +b.dataset.v === val));
         const vl = panel.querySelector(`.fx-val[data-key="${key}"]`); if (vl) vl.textContent = autoRel ? 'Auto' : fxFmt(d, val, isAuto);
     };
+    // Automation : pendant la lecture, les boutons suivent la courbe (affichage seulement) ; à l'arrêt, retour au réglage enregistré
+    panel._autoShow = (key, val) => {
+        const d = defs.find(x => x.key === key); if (!d) return;
+        const sl = panel.querySelector(`.fx-slider[data-key="${key}"]`); if (sl && document.activeElement !== sl) sl.value = val;
+        const kn = panel.querySelector(`.fx-knob[data-key="${key}"]`); if (kn) kn.innerHTML = fxKnobSvg(d, val, undefined, skinOf(), false);
+        const vl = panel.querySelector(`.fx-val[data-key="${key}"]`); if (vl) vl.textContent = fxFmt(d, val, false);
+    };
+    panel._autoRestore = (key) => refreshCell(key);
     let skinNow = null;
     const applySkin = () => {
         const sk = skinOf(); if (sk === skinNow) return;
@@ -7314,346 +7589,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
     // Plus de fermeture au clic ailleurs : la fenêtre reste ouverte comme dans Logic (fermeture : ×)
 }
 
-function openAutomationFor() { flash('En mode A, touche un réglage (fader, envoi, plugin…) : sa courbe s\'affiche sur la piste'); }
-
-// === Automation façon Logic ===
-// owner.automation[paramId] = { points: [{ t (secondes), v (0..1, position dans la plage du réglage) }] }
-// paramId : 'volume' (v = fraction du niveau du fader), 'pan', 'send:<id>', 'busSend:<id>', 'fx:<effet>:<réglage>'
-// owner.autoParam = le réglage dont la courbe est affichée sur la piste (Volume par défaut)
-const VOL_PAD = 7;
-function autoOwnerKey(o) { const i = state.project.tracks.indexOf(o); return i >= 0 ? 't' + i : 'b' + o.id; }
-function autoOwnerFromKey(k) { return k[0] === 't' ? state.project.tracks[+k.slice(1)] : busById(k.slice(1)); }
-// Réglages d'effet que le moteur sait suivre pendant la lecture (les autres viendront effet par effet)
-const AUTO_FX = { comp: ['threshold', 'ratio', 'mix', 'attack', 'release', 'knee', 'makeup'], delay: ['wet', 'feedback', 'dry'], reverb: ['wet'], filter: ['hpf', 'lpf'] };
-function fxNumericDefs(name) { return (FX_PANEL_DEFS[name] || []).filter(d => !d.choices && !d.toggle && d.min !== undefined && (AUTO_FX[name] || []).includes(d.key)); }
-// Le moteur audio reçoit les plages de ces réglages (les courbes sont rangées entre 0 et 1)
-if (window.PulseAudio && PulseAudio.setAutoRanges) PulseAudio.setAutoRanges(Object.fromEntries(Object.entries(AUTO_FX).flatMap(([fx, keys]) =>
-    keys.map(k => (FX_PANEL_DEFS[fx] || []).find(d => d.key === k)).filter(Boolean).map(d => [`fx:${fx}:${d.key}`, { min: d.min, max: d.max, log: !!(d.log && d.min > 0) }]))));
-function autoInfo(o, pid) {
-    if (pid === 'volume') return { label: 'Volume', cur: () => 1, norm: v => v, denorm: v => v, fmt: v => Math.round(v * 100) + ' %' };
-    const lin = (label, min, max, cur, fmt) => ({ label, cur, norm: v => Math.max(0, Math.min(1, (v - min) / (max - min))), denorm: n => min + n * (max - min), fmt });
-    if (pid === 'pan') return lin('Gauche / droite', -100, 100, () => o.pan || 0, v => panLabel(Math.round(v)));
-    const [kind, a, b] = pid.split(':');
-    if (kind === 'send') { const sd = projectSends().find(x => x.id === a); return sd ? lin('Envoi · ' + sd.name, 0, 100, () => (o.sends || {})[a] || 0, v => Math.round(v)) : null; }
-    if (kind === 'busSend') { const bs = busById(a); return bs ? lin('Envoi → ' + bs.name, 0, 100, () => (o.busSends || {})[a] || 0, v => Math.round(v)) : null; }
-    if (kind === 'fx') {
-        const d = fxNumericDefs(a).find(x => x.key === b); if (!d) return null;
-        const cur = () => { const v = (o.effectParams || {})[a] ? o.effectParams[a][b] : undefined; return v !== undefined ? v : d.def; };
-        const label = (FX_NAMES[a] || a) + ' · ' + d.label;
-        if (d.log && d.min > 0) return { label, cur, norm: v => Math.max(0, Math.min(1, Math.log(Math.max(v, d.min) / d.min) / Math.log(d.max / d.min))), denorm: n => d.min * Math.pow(d.max / d.min, n), fmt: v => Math.round(v * 10) / 10 + (d.unit || '') };
-        return { ...lin(label, d.min, d.max, cur, v => Math.round(v * 10) / 10 + (d.unit || '')) };
-    }
-    return null;
-}
-function autoPts(o, pid, create = true) {
-    if (!o.automation || !o.automation[pid]) { if (!create) return []; o.automation = o.automation || {}; o.automation[pid] = { points: [] }; }
-    return o.automation[pid].points;
-}
-function volPoints(t) { return autoPts(t, 'volume'); }
-function autoCurrent(o) { const pid = o.autoParam || 'volume'; const info = autoInfo(o, pid); if (info) return { pid, info }; o.autoParam = 'volume'; return { pid: 'volume', info: autoInfo(o, 'volume') }; }
-function autoStatic(o, pid, info) { return info.norm(info.cur()); }
-// Hauteur de la ligne qui porte la courbe : une piste ou un groupe
-function ownerH(o) { return (state.project.buses || []).includes(o) ? (o.height || 36) : trackH(o); }
-function volY(v, h = state.trackHeight) { return VOL_PAD + (1 - v) * (h - 2 * VOL_PAD); }
-function volFromY(y, h = state.trackHeight) { return Math.max(0, Math.min(1, 1 - (y - VOL_PAD) / (h - 2 * VOL_PAD))); }
-function volCurveInner(t, widthPx) {
-    const H = ownerH(t);
-    const { pid, info } = autoCurrent(t);
-    const pts = autoPts(t, pid, false).slice().sort((a, b) => a.t - b.t);
-    const flat = autoStatic(t, pid, info);
-    const first = pts.length ? pts[0].v : flat, last = pts.length ? pts[pts.length - 1].v : flat;
-    const line = [`0,${volY(first, H)}`, ...pts.map(p => `${(p.t * state.pxPerSecond).toFixed(1)},${volY(p.v, H).toFixed(1)}`), `${widthPx},${volY(last, H)}`].join(' ');
-    return `<polygon class="vol-fill" points="0,${H} ${line} ${widthPx},${H}"/>
-        <polyline class="vol-line ${pts.length ? '' : 'is-flat'}" points="${line}"/>
-        ${pts.map(p => `<circle class="vol-pt" cx="${(p.t * state.pxPerSecond).toFixed(1)}" cy="${volY(p.v, H).toFixed(1)}" r="5" data-t="${p.t}"><title>${esc(info.label)} : ${esc(String(info.fmt(info.denorm(p.v))))}</title></circle>`).join('')}`;
-}
-// Pastille « réglage affiché » (menu : tout ce qui peut s'automatiser), collée à gauche de la zone visible
-function autoChip(o) {
-    const { pid, info } = autoCurrent(o);
-    return `<button class="auto-chip" data-owner="${esc(autoOwnerKey(o))}" data-mode="${autoModeOf(o)}" data-tooltip="Réglage dessiné sur cette piste et mode d'écriture : clique pour changer. En touchant un réglage (fader, envoi, plugin) en mode A, sa courbe s'affiche ici toute seule ; pendant la lecture, ton geste s'écrit (Touch)"><b>${esc((AUTO_MODES.find(m => m[0] === autoModeOf(o)) || AUTO_MODES[1])[1])}</b> ${esc(info.label)}${autoPts(o, pid, false).length ? ' ●' : ''} ▾</button>`;
-}
-function renderVolumeCurve(t, i, widthPx) {
-    return `<svg class="vol-curve" data-i="${i}" width="${widthPx}" height="${trackH(t)}">${volCurveInner(t, widthPx)}</svg>${autoChip(t)}`;
-}
-function renderBusCurve(bus, widthPx) {
-    return `<svg class="vol-curve" data-bus="${esc(bus.id)}" width="${widthPx}" height="${ownerH(bus)}">${volCurveInner(bus, widthPx)}</svg>${autoChip(bus)}`;
-}
-// Liste de ce qui s'automatise sur une piste ou un groupe
-function autoParamGroups(o) {
-    const groups = [['Réglages de base', ['volume', 'pan']]];
-    if (!o.premaster && !o.locked) {
-        const sd = projectSends().map(x => 'send:' + x.id).concat(Object.keys(o.busSends || {}).filter(id => busById(id)).map(id => 'busSend:' + id));
-        if (sd.length) groups.push(['Envois', sd]);
-        (o.effects || []).filter(n => n !== 'eq' && n !== 'limit' && n !== 'master').forEach(n => {
-            const ids = fxNumericDefs(n).map(d => `fx:${n}:${d.key}`);
-            if (ids.length) groups.push([FX_NAMES[n] || n, ids]);
-        });
-    }
-    return groups;
-}
-function openAutoParamMenu(anchor, o) {
-    closeAllMenus();
-    const r = anchor.getBoundingClientRect();
-    const menu = document.createElement('div');
-    menu.className = 'track-ctx-menu';
-    menu.style.cssText = `position:fixed;left:${Math.max(8, Math.min(r.left, window.innerWidth - 250))}px;top:${Math.max(8, Math.min(r.bottom + 2, window.innerHeight - 380))}px;z-index:300;min-width:230px;max-height:70vh;overflow:auto`;
-    const cur = autoCurrent(o).pid;
-    const mh = document.createElement('div'); mh.className = 'ctx-head'; mh.textContent = 'Mode d\'écriture'; menu.appendChild(mh);
-    AUTO_MODES.forEach(([m, name, tip]) => {
-        const it = document.createElement('div'); it.className = 'ctx-item';
-        it.textContent = (autoModeOf(o) === m ? '✓ ' : '   ') + name + ' — ' + tip;
-        it.addEventListener('mousedown', (ev) => { ev.stopPropagation(); closeAllMenus(); if (m === 'touch') delete o.autoMode; else o.autoMode = m; saveProject(); renderTimelineTracks(); flash(`Mode ${name} : ${tip}`); });
-        menu.appendChild(it);
-    });
-    autoParamGroups(o).forEach(([title, ids]) => {
-        const h = document.createElement('div'); h.className = 'ctx-head'; h.textContent = title; menu.appendChild(h);
-        ids.forEach(pid => {
-            const info = autoInfo(o, pid); if (!info) return;
-            const it = document.createElement('div'); it.className = 'ctx-item';
-            const has = autoPts(o, pid, false).length > 0;
-            it.textContent = (pid === cur ? '✓ ' : '   ') + info.label.replace(/^.*? · /, '') + (has ? '  ●' : '');
-            it.addEventListener('mousedown', (ev) => { ev.stopPropagation(); closeAllMenus(); o.autoParam = pid; saveProject(); renderTimelineTracks(); });
-            menu.appendChild(it);
-        });
-    });
-    document.body.appendChild(menu);
-    setTimeout(() => document.addEventListener('mousedown', closeAllMenus, { once: true }), 10);
-}
-// Autosélection (comme Logic) : en mode A, toucher un réglage affiche sa courbe sur la piste
-let _autoRaf = 0;
-function autoSelectParam(o, pid) {
-    if (!state.automationMode || !o || !autoInfo(o, pid) || (o.autoParam || 'volume') === pid) return;
-    o.autoParam = pid; saveProject();
-    cancelAnimationFrame(_autoRaf); _autoRaf = requestAnimationFrame(() => renderTimelineTracks());
-}
-function autoTargetOf(el) {
-    const fxp = el.closest('.fx-panel.plug-win');
-    if (fxp) { const c = el.closest('.fx-slider, .fx-knob, .fx-val'); return c && c.dataset.key && fxp._plugT ? { o: fxp._plugT, pid: `fx:${fxp.dataset.fx}:${c.dataset.key}` } : null; }
-    let o = null;
-    const strip = el.closest('.insp-strip, .strip[data-kind]');
-    if (strip) {
-        const insp = strip.classList.contains('insp-strip');
-        if (strip.dataset.kind === 'track') o = state.project.tracks[insp ? state.selectedTrack : +strip.dataset.i];
-        else if (strip.dataset.kind === 'bus') o = insp ? busById(strip.dataset.id) : (state.project.buses || [])[+strip.dataset.i];
-        if (!o) return null;
-        const row = el.closest('.send-bar-row, .strip-send-row');
-        if (row) return row.dataset.send ? { o, pid: 'send:' + row.dataset.send } : row.dataset.bsend ? { o, pid: 'busSend:' + row.dataset.bsend } : null;
-        if (el.closest('.insp-pan, .strip-pan')) return { o, pid: 'pan' };
-        if (el.closest('.fader, .strip-fader-wrap')) return { o, pid: 'volume' };
-        return null;
-    }
-    const tv = el.closest('.t-vol, .t-knob');
-    if (tv) { o = state.project.tracks[+tv.dataset.i]; return o ? { o, pid: tv.classList.contains('t-knob') ? 'pan' : 'volume' } : null; }
-    return null;
-}
-['mousedown', 'wheel'].forEach(ev => document.addEventListener(ev, (e) => {
-    if (!state.automationMode || !e.target.closest) return;
-    const tg = autoTargetOf(e.target);
-    if (!tg) return;
-    const info = autoInfo(tg.o, tg.pid), k = autoOwnerKey(tg.o) + '|' + tg.pid;
-    if (info && !_autoW.has(k)) _autoPre.set(k, { norm: info.norm(info.cur()), vol: tg.o.volume ?? 100 });
-    autoSelectParam(tg.o, tg.pid);
-}, { capture: true, passive: true }));
-// === Écriture d'automation pendant la lecture (modes de Logic) ===
-// Read : la courbe est lue, on n'écrit rien · Touch (défaut) : on écrit tant qu'on tient le réglage, au relâchement on retrouve la courbe
-// Latch : on continue d'écrire la dernière valeur jusqu'à l'arrêt · Write : comme Latch, et la courbe est effacée depuis le départ de la lecture
-const AUTO_MODES = [['read', 'Read', 'lit la courbe sans la changer'], ['touch', 'Touch', 'écrit tant que tu tiens le réglage, puis revient à la courbe'], ['latch', 'Latch', 'écrit jusqu\'à l\'arrêt de la lecture'], ['write', 'Write', 'réécrit tout depuis le départ de la lecture']];
-function autoModeOf(o) { return o.autoMode || 'touch'; }
-const _autoW = new Map();
-const _autoPre = new Map();   // valeur de chaque réglage au moment où on le touche   // réglage en cours d'écriture → { o, pid, snap, start, lastT, lastV, base, held }
-let _autoPlayFrom = 0, _autoTick = 0, _autoDrawRaf = 0;
-function curveAt(pts, t, dflt) {
-    if (!pts.length) return dflt;
-    if (t <= pts[0].t) return pts[0].v;
-    for (let i = 1; i < pts.length; i++) if (t <= pts[i].t) { const a = pts[i - 1], b = pts[i]; return b.t === a.t ? b.v : a.v + (b.v - a.v) * (t - a.t) / (b.t - a.t); }
-    return pts[pts.length - 1].v;
-}
-function autoRedrawSoon() { cancelAnimationFrame(_autoDrawRaf); _autoDrawRaf = requestAnimationFrame(() => { if (state.automationMode) renderTimelineTracks(); }); }
-// Ajoute la valeur v à l'instant t en effaçant ce qui était écrit depuis le dernier point
-function autoPutPoint(w, t, v) {
-    const pts = autoPts(w.o, w.pid);
-    const from = w.lastT ?? w.start, tr = Math.round(t * 1000) / 1000;
-    for (let i = pts.length - 1; i >= 0; i--) if (pts[i].t > from + 1e-6 && pts[i].t <= tr) pts.splice(i, 1);
-    pts.push({ t: tr, v: Math.round(v * 1000) / 1000 });
-    pts.sort((a, b) => a.t - b.t);
-    w.lastT = tr; w.lastV = v;
-}
-function autoWriteSample(o, pid) {
-    if (!state.automationMode || !state.playing || state.recording || !o) return;
-    const mode = autoModeOf(o); if (mode === 'read') return;
-    const info = autoInfo(o, pid); if (!info) return;
-    const now = PulseAudio.getPlaybackPosition();
-    const k = autoOwnerKey(o) + '|' + pid;
-    let w = _autoW.get(k);
-    if (!w) {
-        pushUndo();
-        const pts = autoPts(o, pid);
-        const snap = pts.slice().sort((a, b) => a.t - b.t);
-        const pre = _autoPre.get(k);   // la valeur d'AVANT le geste (le réglage a déjà bougé quand on arrive ici)
-        const flat = pre ? pre.norm : autoStatic(o, pid, info);
-        w = { o, pid, snap, flat, start: mode === 'write' ? _autoPlayFrom : now, base: pid === 'volume' ? (pre ? pre.vol : (o.volume ?? 100)) : null, held: true };
-        _autoW.set(k, w);
-        // Point de départ : la valeur que la courbe avait juste avant (rien ne change avant ce moment)
-        const t0 = Math.max(0, w.start - 0.01);
-        const a = { t: Math.round(t0 * 1000) / 1000, v: curveAt(snap, t0, flat) };
-        if (mode === 'write') { for (let i = pts.length - 1; i >= 0; i--) if (pts[i].t >= t0 && pts[i].t <= now) pts.splice(i, 1); }
-        pts.push(a); pts.sort((x, y) => x.t - y.t);
-        o.autoParam = pid;
-        if (!_autoTick) _autoTick = setInterval(autoLatchTick, 60);
-    }
-    w.held = true;
-    const v = pid === 'volume' ? Math.max(0, Math.min(1, (o.volume ?? 100) / Math.max(1, w.base))) : info.norm(info.cur());
-    if (w.lastT !== undefined && now - w.lastT < 0.04 && Math.abs(v - w.lastV) < 0.002) return;
-    autoPutPoint(w, now, v);
-    autoRedrawSoon();
-}
-// Latch / Write : la dernière valeur continue de s'écrire même sans toucher
-function autoLatchTick() {
-    if (!state.playing || !_autoW.size) { clearInterval(_autoTick); _autoTick = 0; return; }
-    const now = PulseAudio.getPlaybackPosition();
-    _autoW.forEach(w => { if (!w.held && autoModeOf(w.o) !== 'touch' && now - (w.lastT ?? 0) > 0.05) autoPutPoint(w, now, w.lastV); });
-}
-// Relâchement : Touch rend la main à la courbe d'avant (et le fader revient à sa place)
-function autoRelease() {
-    if (!_autoW.size) return;
-    const now = state.playing ? PulseAudio.getPlaybackPosition() : null;
-    let done = false;
-    _autoW.forEach((w, k) => {
-        w.held = false;
-        if (autoModeOf(w.o) !== 'touch') return;
-        if (now !== null) { const t = now + 0.03; autoPutPoint(w, t, curveAt(w.snap, t, w.flat)); }
-        autoEndWriter(w); _autoW.delete(k); done = true;
-    });
-    if (done) { saveProject(); autoRedrawSoon(); }
-}
-function autoEndWriter(w) {
-    if (w.pid === 'volume' && w.base !== null) {   // le volume écrit est dans la courbe : le fader reprend son niveau de départ
-        w.o.volume = w.base;
-        const ti = state.project.tracks.indexOf(w.o);
-        if (ti >= 0) { PulseAudio.updateTrackVolume(ti, w.base); syncInspectorVolume(ti); }
-        else if (PulseAudio.updateBusVolume) PulseAudio.updateBusVolume(w.o.id, w.o.muted ? 0 : w.base);
-    }
-}
-// Arrêt de la lecture : Latch / Write posent la dernière valeur à l'endroit de l'arrêt
-function autoStopAll(pos) {
-    if (!_autoW.size) return;
-    _autoW.forEach(w => { if (pos !== null && w.lastV !== undefined) autoPutPoint(w, pos, w.lastV); autoEndWriter(w); });
-    _autoW.clear(); clearInterval(_autoTick); _autoTick = 0;
-    saveProject(); setTimeout(() => { if (state.automationMode) renderTimelineTracks(); }, 0);
-}
-document.addEventListener('input', (e) => {
-    if (!state.automationMode || !state.playing || !e.target.closest) return;
-    const tg = autoTargetOf(e.target);
-    if (tg) autoWriteSample(tg.o, tg.pid);
-});
-document.addEventListener('mouseup', () => autoRelease(), true);
-let _autoWheelT = 0;
-document.addEventListener('wheel', () => { if (_autoW.size) { clearTimeout(_autoWheelT); _autoWheelT = setTimeout(autoRelease, 350); } }, true);
-if (window.PulseAudio && !PulseAudio._autoWrapped) {
-    const _play = PulseAudio.play, _stop = PulseAudio.stopAll;
-    PulseAudio.play = function (project, from) { if (!_autoW.size) _autoPlayFrom = from || 0; return _play.apply(this, arguments); };
-    PulseAudio.stopAll = function () { let pos = null; try { pos = PulseAudio.getPlaybackPosition(); } catch {} autoStopAll(pos); return _stop.apply(this, arguments); };
-    PulseAudio._autoWrapped = true;
-}
-
-// Comme Logic : pendant la lecture, le fader, le gauche/droite et les envois de la tranche suivent leur courbe (affichage seulement)
-function autoFollowTick() {
-    if (!state.playing) return;
-    const now = PulseAudio.getPlaybackPosition();
-    document.querySelectorAll('#inspector .insp-strip[data-kind="track"], #inspector .insp-strip[data-kind="bus"]').forEach(strip => {
-        const o = strip.dataset.kind === 'track' ? state.project.tracks[state.selectedTrack] : busById(strip.dataset.id);
-        if (!o || !o.automation) return;
-        const key = autoOwnerKey(o) + '|';
-        const val = (pid) => { if (_autoW.has(key + pid)) return null; const pts = autoPts(o, pid, false); return pts.length ? curveAt(pts.slice().sort((a, b) => a.t - b.t), now, 0) : null; };
-        const vv = val('volume');
-        const f = strip.querySelector('.insp-fader');
-        if (vv !== null && f && document.activeElement !== f) {
-            const vol = (o.volume ?? 100) * vv;
-            f.value = volToPos(vol);
-            const d = strip.querySelector('.strip-db'); if (d) d.textContent = `${volumeToDb(vol)} dB`;
-        }
-        const pv = val('pan'), pan = strip.querySelector('.insp-pan-input');
-        if (pv !== null && pan && document.activeElement !== pan) pan.value = Math.round(-100 + 200 * pv);
-        strip.querySelectorAll('.send-bar-row').forEach(row => {
-            const sv = val(row.dataset.send ? 'send:' + row.dataset.send : 'busSend:' + row.dataset.bsend);
-            if (sv === null || row.classList.contains('turning')) return;
-            const lv = Math.round(sv * 100);
-            row.style.setProperty('--lvl', lv + '%'); const e = row.querySelector('.sb-val'); if (e) e.textContent = lv;
-            row.classList.toggle('on', lv > 0);
-        });
-    });
-}
-setInterval(autoFollowTick, 50);
-
-function bindVolumeCurves() {
-    document.querySelectorAll('.auto-chip').forEach(chip => {
-        const o = autoOwnerFromKey(chip.dataset.owner); if (!o) return;
-        chip.addEventListener('mousedown', (e) => { e.stopPropagation(); });
-        chip.addEventListener('click', (e) => { e.stopPropagation(); openAutoParamMenu(chip, o); });
-    });
-    document.querySelectorAll('.vol-curve').forEach(svg => {
-        const track = svg.dataset.bus
-            ? (state.project.buses || []).find(b => b.id === svg.dataset.bus)
-            : state.project.tracks[parseInt(svg.dataset.i)];
-        if (!track) return;
-        const width = parseFloat(svg.getAttribute('width'));
-        const redraw = () => { svg.innerHTML = volCurveInner(track, width); };
-        const curPts = () => autoPts(track, autoCurrent(track).pid);
-        const round = (v) => autoCurrent(track).pid === 'volume' ? Math.round(v * 100) / 100 : Math.round(v * 1000) / 1000;
-        svg.addEventListener('dblclick', (e) => {
-            e.stopPropagation();
-            // Le point le plus proche du clic (le dessin est refait entre les deux clics, on ne peut pas se fier à la cible)
-            const rect = svg.getBoundingClientRect();
-            const x = e.clientX - rect.left, y = e.clientY - rect.top;
-            const pts = curPts();
-            let k = -1, best = 12;
-            pts.forEach((p, n) => { const d = Math.hypot(p.t * state.pxPerSecond - x, volY(p.v, ownerH(track)) - y); if (d < best) { best = d; k = n; } });
-            if (k < 0) return;
-            pushUndo();
-            pts.splice(k, 1);
-            redraw(); saveProject(); refreshPlaybackSoon();
-        });
-        svg.addEventListener('mousedown', (e) => {
-            if (e.button !== 0) return;
-            e.stopPropagation(); e.preventDefault();
-            const rect = svg.getBoundingClientRect();
-            const pos = (ev) => ({ t: Math.max(0, (ev.clientX - rect.left) / state.pxPerSecond), v: volFromY(ev.clientY - rect.top, ownerH(track)) });
-            const cur = autoCurrent(track);
-            const pts = curPts();
-            // Point existant sous la souris ? (recherche par distance, plus fiable que la cible du clic)
-            let pt = null, best = 9;
-            const mx = e.clientX - rect.left, my = e.clientY - rect.top;
-            pts.forEach(p => { const d = Math.hypot(p.t * state.pxPerSecond - mx, volY(p.v, ownerH(track)) - my); if (d < best) { best = d; pt = p; } });
-            // On ne touche au dessin que s'il y a un vrai changement : sinon le double-clic (suppression) ne passerait pas
-            let changed = false;
-            if (!pt) {
-                pushUndo();
-                const at = pos(e);
-                // Premier point posé : on ancre aussi la valeur actuelle au tout début, sinon toute la piste changerait
-                if (!pts.length && at.t > 0.05) pts.push({ t: 0, v: autoStatic(track, cur.pid, cur.info) });
-                pt = { t: at.t, v: round(at.v) };
-                pts.push(pt);
-                changed = true;
-                redraw();
-            }
-            const onMove = (ev) => {
-                if (!changed) { pushUndo(); changed = true; }
-                const at = pos(ev);
-                pt.t = at.t; pt.v = round(at.v);
-                redraw();
-            };
-            const onUp = () => {
-                document.removeEventListener('mousemove', onMove);
-                document.removeEventListener('mouseup', onUp);
-                if (!changed) return;
-                pts.sort((a, b) => a.t - b.t);
-                redraw(); saveProject(); refreshPlaybackSoon();
-            };
-            document.addEventListener('mousemove', onMove);
-            document.addEventListener('mouseup', onUp);
-        });
-    });
-}
+// L'automation (courbes, menu de réglage, modes d'écriture, suivi pendant la lecture) est dans automation.js
 
 function closeAutomationLane() {
     document.querySelectorAll('.automation-lane.visible').forEach(l => l.classList.remove('visible'));
@@ -7963,7 +7899,7 @@ function duplicateTrack(idx) {
         armed: false
     };
     // Copie profonde : régler la copie ne doit jamais toucher l'original
-    ['effectParams', 'sends', 'busSends', 'sound', 'automation', 'autotune'].forEach(k => {
+    ['effectParams', 'sends', 'busSends', 'preSends', 'sound', 'automation', 'autotune'].forEach(k => {
         if (src[k] && typeof src[k] === 'object') copy[k] = JSON.parse(JSON.stringify(src[k]));
     });
     if (src.effects) copy.effects = [...src.effects];
@@ -8628,6 +8564,95 @@ function openTrackContextMenu(x, y, idx, t) {
     setTimeout(() => document.addEventListener('mousedown', close), 50);
 }
 
+// === Effet sur une région (planche A : pastilles) ===
+// clip.fx = { name, effects: [...], effectParams: {...} } : passe avant les effets de la piste, l'écho continue après la fin
+function clipHasFx(c) { return !!(c && c.fx && (c.fx.effects || []).length); }
+const CLIP_FX_QUICK = [
+    ['Écho 1/8 P-Pong', 'delay', () => ({ ...FX_PRESETS.delay[0].params, _preset: FX_PRESETS.delay[0].name })],
+    ['Écho 1/4', 'delay', () => ({ ...FX_PRESETS.delay[2].params, _preset: FX_PRESETS.delay[2].name })],
+    ['Pitch −', 'pitch', () => ({ ...FX_PRESETS.pitch[0].params, _preset: FX_PRESETS.pitch[0].name })],
+    ['Pitch +', 'pitch', () => ({ ...FX_PRESETS.pitch[1].params, _preset: FX_PRESETS.pitch[1].name })],
+    ['Phone', 'filter', () => ({ ...FX_PRESETS.filter[0].params, _preset: FX_PRESETS.filter[0].name })]
+];
+function clipFxHtml(c, widthPx) {
+    if (!clipHasFx(c)) return '';
+    const names = c.fx.effects;
+    // Région minuscule : un petit logo seul, qui ouvre la liste
+    if (widthPx < 34 + names.length * 56) return `<div class="clip-fx-pills"><span class="clip-fx-logo" data-tooltip="Effets sur cette région : ${esc(names.map(n => FX_NAMES[n] || n).join(', '))} (clic pour les voir)">✦${names.length > 1 ? names.length : ''}</span></div>`;
+    return `<div class="clip-fx-pills">${names.map(n => `<span class="clip-fx-pill" data-fx="${n}" data-tooltip="Clic : régler cet effet · × : le retirer de la région">${esc((c.fx.labels || {})[n] || FX_NAMES[n] || n)}<i data-del="1">×</i></span>`).join('')}</div>`;
+}
+// Une région coupée ou copiée garde ses effets : chacune doit avoir les siens (sinon régler l'une change l'autre)
+function ownClipFx(clip) {
+    if (!clip.fx) return clip.fx;
+    const shared = state.project.tracks.some(t => (t.clips || []).some(o => o !== clip && o.fx === clip.fx));
+    if (shared) clip.fx = JSON.parse(JSON.stringify(clip.fx));
+    return clip.fx;
+}
+function addClipFx(trackIdx, clipIdx, fxName, params, label) {
+    const clip = state.project.tracks[trackIdx]?.clips[clipIdx]; if (!clip || clip.midi) return;
+    pushUndo();
+    clip.fx = ownClipFx(clip) || { effects: [], effectParams: {} };
+    clip.fx.name = `Région « ${clip.name || 'Clip'} »`;
+    if (!clip.fx.effects.includes(fxName)) clip.fx.effects.push(fxName);
+    clip.fx.effectParams = clip.fx.effectParams || {};
+    clip.fx.effectParams[fxName] = params ? params : (clip.fx.effectParams[fxName] || (FX_START[fxName] ? JSON.parse(JSON.stringify(FX_START[fxName])) : {}));
+    if (label) (clip.fx.labels = clip.fx.labels || {})[fxName] = label; else if (clip.fx.labels) delete clip.fx.labels[fxName];
+    renderTimelineTracks(); saveProject(); refreshPlaybackSoon();
+    flash(`${label || FX_NAMES[fxName] || fxName} posé sur la région (seulement ce passage) — ⌘Z pour annuler`);
+}
+function removeClipFx(clip, fxName) {
+    if (!clipHasFx(clip)) return;
+    pushUndo();
+    ownClipFx(clip);
+    const w = findPlugWin(clip.fx, fxName); if (w) w.remove();
+    const names = fxName ? [fxName] : [...clip.fx.effects];
+    names.forEach(n => { const w2 = findPlugWin(clip.fx, n); if (w2) w2.remove(); });
+    clip.fx.effects = clip.fx.effects.filter(n => !names.includes(n));
+    names.forEach(n => { delete clip.fx.effectParams[n]; if (clip.fx.labels) delete clip.fx.labels[n]; });
+    if (!clip.fx.effects.length) delete clip.fx;
+    renderTimelineTracks(); saveProject(); refreshPlaybackSoon();
+    flash(fxName ? `${FX_NAMES[fxName] || fxName} retiré de la région` : 'Effets de la région retirés');
+}
+function openClipFx(clip, fxName, anchor) {
+    ownClipFx(clip);
+    clip.fx.name = `Région « ${clip.name || 'Clip'} »`;
+    openEffectPanel(clip.fx, fxName, anchor);
+}
+function openClipFxMenu(x, y, trackIdx, clipIdx, anchor) {
+    closeAllMenus();
+    const clip = state.project.tracks[trackIdx]?.clips[clipIdx]; if (!clip) return;
+    const menu = document.createElement('div');
+    menu.className = 'track-ctx-menu';
+    menu.style.cssText = `position:fixed;left:${Math.min(x, window.innerWidth - 240)}px;top:${Math.min(y, window.innerHeight - 320)}px;z-index:300;min-width:220px`;
+    const head = (t) => { const h = document.createElement('div'); h.className = 'ctx-head'; h.textContent = t; menu.appendChild(h); };
+    const item = (label, run) => { const it = document.createElement('div'); it.className = 'ctx-item'; it.textContent = label; it.addEventListener('mousedown', (ev) => { ev.stopPropagation(); closeAllMenus(); run(); }); menu.appendChild(it); };
+    if (clipHasFx(clip)) {
+        head('Sur cette région');
+        clip.fx.effects.forEach(n => item(`Régler : ${(clip.fx.labels || {})[n] || FX_NAMES[n] || n}`, () => openClipFx(clip, n, anchor || document.body)));
+    }
+    head('Ajouter sur cette région');
+    CLIP_FX_QUICK.forEach(([label, fx, params]) => item(label, () => addClipFx(trackIdx, clipIdx, fx, params(), label)));
+    item('Autre effet…', () => {
+        clip.fx = ownClipFx(clip) || { effects: [], effectParams: {} };
+        clip.fx.name = `Région « ${clip.name || 'Clip'} »`;
+        const a = anchor || document.querySelector(`.timeline-track[data-i="${trackIdx}"] .clip[data-ci="${clipIdx}"]`) || document.body;
+        openAddEffectMenu(a, clip.fx, clip.fx);
+    });
+    if (clipHasFx(clip)) item('Retirer les effets de la région', () => removeClipFx(clip, null));
+    document.body.appendChild(menu);
+    setTimeout(() => document.addEventListener('mousedown', closeAllMenus, { once: true }), 10);
+}
+// Clic sur une pastille : régler l'effet ; × : le retirer ; logo d'une petite région : la liste
+document.addEventListener('mousedown', (e) => {
+    const el = e.target.closest && e.target.closest('.clip-fx-pill, .clip-fx-logo'); if (!el || e.button !== 0) return;
+    e.preventDefault(); e.stopPropagation();
+    const clipEl = el.closest('.clip'), row = el.closest('.timeline-track');
+    const ti = +row.dataset.i, ci = +clipEl.dataset.ci, clip = state.project.tracks[ti]?.clips[ci]; if (!clip) return;
+    if (el.classList.contains('clip-fx-logo')) { const r = el.getBoundingClientRect(); openClipFxMenu(r.left, r.bottom + 2, ti, ci, el); return; }
+    if (e.target.closest('[data-del]')) { removeClipFx(clip, el.dataset.fx); return; }
+    openClipFx(clip, el.dataset.fx, el);
+}, true);
+
 // --- Menu contextuel sur un clip ---
 function openClipContextMenu(x, y, trackIdx, clipIdx) {
     closeAllMenus();
@@ -8690,6 +8715,8 @@ function openClipContextMenu(x, y, trackIdx, clipIdx) {
             renderTimelineTracks(); saveProject();
         }},
         { label: 'Scinder ici', action: () => splitClipAt(trackIdx, clipIdx, state.playhead) },
+        clip.midi ? null : { label: clipHasFx(clip) ? '✦ Effets de la région…' : '✦ Effet sur cette région…', action: () => openClipFxMenu(x, y, trackIdx, clipIdx) },
+        clip.midi || !clipHasFx(clip) ? null : { label: 'Retirer les effets de la région', action: () => removeClipFx(clip, null) },
         { label: 'Caler le début sur la grille', action: () => quantizeClipsToGrid(clipsActedOn(trackIdx, clipIdx)) },
         { sep: true },
         { label: clip.muted ? 'Remettre le son du clip' : 'Couper le son du clip', action: () => {
@@ -9872,6 +9899,11 @@ function startClipDrag(startEvent, clipEl, trackIdx) {
                 const dstT = state.project.tracks[targetTrackIdx];
                 dstT.clips.push(working);
                 dstT.clips.sort((a, b) => a.start - b.start);
+            }
+            // Réglage « L'automation suit les régions » : les points sous la région partent avec elle
+            if (!duplicate && autoFollowRegions()) {
+                const len = ((working.loopEnd && working.loopEnd > working.start + working.duration) ? working.loopEnd - working.start : working.duration);
+                moveAutomationWithRegion(t, state.project.tracks[targetTrackIdx], start0, start0 + len, working.start - start0);
             }
             // Comme Logic : la région qu'on pose est prioritaire, elle recouvre (et coupe) ce qui était derrière
             const destTrack = state.project.tracks[targetTrackIdx];

@@ -2545,23 +2545,59 @@ body.resizing-col, body.resizing-col * { cursor: col-resize !important; user-sel
 .viz-note b { color: var(--text-1, #fff); }
 
 /* === EQ libre === */
-.eq-panel { width: 460px; }
-.eq-graph { padding: 10px 20px 0; }
-.eq-svg { display: block; background: var(--bg-0, #0F0A1A); border-radius: 10px; touch-action: none; }
-.eq-pt { stroke: #fff; stroke-width: 1.5; cursor: grab; }
-.eq-pt.sel { stroke-width: 2.5; }
-.eq-pt.off { opacity: .35; }
-.eq-hint { font-size: 11px; color: var(--text-3, #888); padding: 6px 20px 0; }
-.eq-detail { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 10px 20px; font-size: 12px; }
-.eq-detail label { display: flex; align-items: center; gap: 5px; color: var(--text-2, #aaa); }
-.eq-dot { width: 12px; height: 12px; border-radius: 50%; flex: none; }
-.eq-type, .eq-num { background: var(--bg-0, #0F0A1A); color: var(--text-1, #fff); border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; font: inherit; }
-.eq-num { width: 58px; text-align: right; }
-.eq-num:disabled { opacity: .4; }
-.eq-detail button, .eq-add { background: var(--bg-3, #2a1f3d); color: var(--text-1, #fff); border: 1px solid var(--border); border-radius: 6px; padding: 3px 9px; font: inherit; cursor: pointer; }
-.eq-detail button:hover, .eq-add:hover { border-color: var(--violet-2, #A855F7); }
-.eq-empty { color: var(--text-3, #888); }
-.eq-panel .fx-panel-footer { display: flex; justify-content: space-between; gap: 8px; }
+/* EQ « pro » : grand écran, analyseur derrière, bulle sur le point choisi */
+.eq-panel { width: 800px; max-width: calc(100vw - 16px); }
+.eq-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 12px; background: #120c1c; border-bottom: 1px solid #2a1f3a; font-size: 11.5px; }
+.eq-bar button, .eq-bar select { background: #241a33; color: #d9cfee; border: 1px solid #3a2c50; border-radius: 6px; padding: 4px 9px; font: inherit; cursor: pointer; }
+.eq-bar button.on { background: #3b2a58; color: #fff; border-color: var(--violet-2, #A855F7); }
+.eq-sp { flex: 1; }
+.eq-range { display: inline-flex; align-items: center; border: 1px solid #3a2c50; border-radius: 6px; overflow: hidden; }
+.eq-range span { padding: 4px 8px; background: #241a33; color: #cbbfe3; cursor: pointer; }
+.eq-range span.on { background: #7C3AED; color: #fff; }
+.eq-range i { font-style: normal; padding: 0 7px; color: #9A8CB8; }
+.eq-out { color: #9A8CB8; } .eq-out b { color: #fff; }
+.eq-graph { position: relative; padding: 0; background: radial-gradient(ellipse at 50% 0%, #1f1533 0%, #0d0915 75%); overflow: hidden; }
+.eq-svghost { position: relative; z-index: 1; }
+.eq-svg { display: block; background: transparent; touch-action: none; }
+.eq-panel .eq-svg { width: 100%; height: auto; }
+.eq-svg .viz-grid { stroke: rgba(255,255,255,.06); }
+.eq-svg .viz-zero { stroke: rgba(255,255,255,.18); }
+.eq-svg .viz-txt { fill: #6f6390; font-size: 10.5px; }
+.eq-line { fill: none; stroke: #fff; stroke-width: 2.2; filter: drop-shadow(0 0 5px #A855F7); }
+.eq-pt { stroke: #0b0712; stroke-width: 2; cursor: grab; }
+.eq-pt.sel { stroke: #fff; stroke-width: 1.5; }
+.eq-pt.off { opacity: .5; }
+.eq-num-pt { font-size: 10px; font-weight: 700; fill: #0b0712; pointer-events: none; }
+.eq-empty-txt { fill: #9A8CB8; font-size: 13px; }
+.eq-solo-txt { fill: #FBBF24; font-size: 12px; }
+.eq-hint { font-size: 11px; color: var(--text-3, #888); padding: 6px 12px 8px; background: #120c1c; }
+.eq-bub { position: absolute; z-index: 3; width: 272px; background: rgba(18,12,28,.95); border: 1px solid #3a2c50; border-radius: 10px; padding: 7px 9px; font-size: 11px; box-shadow: 0 10px 30px rgba(0,0,0,.6); }
+.eq-types { display: flex; gap: 3px; }
+.eq-types span { padding: 3px 4px; border-radius: 5px; background: #241a33; color: #9A8CB8; cursor: pointer; display: grid; place-items: center; border: 1px solid transparent; }
+.eq-types span:hover { color: #fff; }
+.eq-types span.on { background: #2c1f45; color: #fff; border-color: var(--violet-2, #A855F7); }
+.eq-types svg { display: block; }
+.eq-vals { display: flex; gap: 8px; margin: 6px 0; }
+.eq-vals label { display: flex; flex-direction: column; gap: 1px; }
+.eq-vals small { color: #9A8CB8; font-size: 9.5px; text-transform: uppercase; letter-spacing: .05em; }
+.eq-bub .eq-num { width: 70px; background: #0d0915; color: #fff; border: 1px solid #3a2c50; border-radius: 5px; padding: 2px 5px; font: 600 13px -apple-system, system-ui, sans-serif; text-align: left; }
+.eq-bub select.eq-num { width: 92px; font-size: 11.5px; }
+.eq-bub .eq-num:disabled { opacity: .35; }
+.eq-bub-foot { display: flex; align-items: center; justify-content: space-between; }
+.eq-tname { color: #9A8CB8; display: flex; align-items: center; gap: 5px; }
+.eq-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.eq-ic { display: flex; gap: 4px; }
+.eq-ic button { width: 24px; height: 22px; padding: 0; border-radius: 5px; background: #241a33; border: 1px solid #3a2c50; color: #cbbfe3; cursor: pointer; font-size: 11px; }
+.eq-ic button.on { background: #7C3AED; border-color: var(--violet-2, #A855F7); color: #fff; }
+.eq-ic button:disabled { opacity: .35; cursor: default; }
+.eq-ic button.dyn { background: #b45309; border-color: #FBBF24; }
+.eq-dynrow { display: flex; align-items: center; gap: 4px; white-space: nowrap; margin: 0 0 6px; padding: 4px 6px; border-radius: 6px; background: #2a1a10; color: #FBBF24; font-size: 10.5px; }
+.eq-dynrow button { width: 18px; height: 18px; padding: 0; border-radius: 4px; background: #3a2410; color: #FBBF24; border: 0; cursor: pointer; }
+.eq-bub .eq-dynrow .eq-num { width: 40px; font-size: 11px; color: #FBBF24; }
+.eq-dyn-lim { fill: none; stroke: #FBBF24; stroke-width: 1.2; stroke-dasharray: 4 4; opacity: .7; }
+.eq-dyn-bar { stroke: #FBBF24; stroke-width: 3; stroke-linecap: round; opacity: .5; }
+.eq-dyn-end { fill: #FBBF24; }
+.eq-dyn-ring { fill: none; stroke: #FBBF24; stroke-width: 2; opacity: .85; pointer-events: none; }
 
 /* === Arrondir le fondu : poignée au milieu de la courbe === */
 .fade-curve-handle {
@@ -2752,7 +2788,7 @@ body.midi-open .workspace { padding-bottom: var(--midi-h, 340px); }
 
 /* Spectre de la piste derrière la courbe de l'EQ */
 .eq-graph { position: relative; }
-.eq-spec { position: absolute; left: 20px; top: 10px; pointer-events: none; border-radius: 10px; }
+.eq-spec { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 0; }
 .eq-preset { max-width: 130px; }
 .fx-panel-footer button { white-space: nowrap; }
 
@@ -3344,3 +3380,46 @@ body.fx-drag-on, body.fx-drag-on * { cursor: grabbing !important; user-select: n
 .auto-chip b { font-weight: 700; margin-right: 3px; opacity: .85; }
 .auto-chip[data-mode="read"] { border-color: rgba(52, 211, 153, .6); color: #34D399; }
 .auto-chip[data-mode="latch"], .auto-chip[data-mode="write"] { border-color: rgba(248, 113, 113, .65); color: #F87171; }
+.send-bar-row .sb-pre { font-size: 8.5px; font-weight: 700; letter-spacing: .06em; padding: 0 3px; border-radius: 3px; background: rgba(251, 191, 36, .2); color: #FBBF24; }
+
+/* === Effet sur une région (planche A) : contour violet + pastilles en haut à droite === */
+.clip.has-fx { box-shadow: inset 0 0 0 1.5px var(--violet-2, #A855F7); }
+.clip-fx-pills { position: absolute; top: 3px; right: 4px; z-index: 4; display: flex; gap: 3px; pointer-events: none; max-width: calc(100% - 8px); overflow: hidden; }
+.clip-fx-pill, .clip-fx-logo {
+  pointer-events: auto; display: inline-flex; align-items: center; gap: 3px; height: 15px; padding: 0 5px; border-radius: 8px; font-size: 9.5px; line-height: 15px; white-space: nowrap;
+  background: color-mix(in srgb, var(--violet-2, #A855F7) 75%, #120a1f); color: #fff; cursor: pointer; box-shadow: 0 1px 3px rgba(0, 0, 0, .4);
+}
+.clip-fx-pill:hover, .clip-fx-logo:hover { background: var(--violet-2, #A855F7); }
+.clip-fx-pill i { font-style: normal; opacity: .7; padding-left: 1px; }
+.clip-fx-pill i:hover { opacity: 1; color: #FECACA; }
+.vol-pt.is-sel { fill: #FBBF24; stroke: #fff; }
+.vol-sel-box { fill: rgba(251, 191, 36, .12); stroke: #FBBF24; stroke-dasharray: 4 3; pointer-events: none; }
+/* pastille d'automation dans l'en-tête de piste (mode A) : elle ne cache plus le début des courbes */
+.track-item .t-auto { margin-top: 3px; }
+.track-item .t-auto .auto-chip { position: static; display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+body.automation-mode .track-item .t-vol, body.automation-mode .track-item .vu-mini { display: none; }
+body.automation-mode .track-item .t-auto { margin-top: 2px; position: relative; z-index: 2; }
+body.automation-mode .track-item .t-auto .auto-chip { max-width: 150px; height: 18px; line-height: 16px; font-size: 10.5px; }
+
+/* Écho et Reverb : écran au-dessus des boutons */
+.fx-viz-wide { width: 100%; padding: 8px 10px 0; box-sizing: border-box; }
+.fx-viz-wide .viz-svg { display: block; width: 100%; height: auto; background: linear-gradient(#0d0915, #140d22); border-radius: 8px; border: 1px solid rgba(168,85,247,.2); }
+.fx-viz-wide .viz-grid { stroke: rgba(255,255,255,.07); } .fx-viz-wide .viz-bar { stroke: rgba(255,255,255,.18); }
+.fx-viz-wide .viz-zero { stroke: rgba(255,255,255,.12); }
+.fx-viz-wide .viz-txt { fill: #8a7cab; font-size: 10px; }
+.dl-voice { fill: #fff; opacity: .85; }
+.dl-rep { fill: #A855F7; filter: drop-shadow(0 0 4px #A855F7); }
+.dl-duck { fill: #0b0712; opacity: .6; }
+.fx-viz-wide .dl-duck-txt { fill: #FBBF24; }
+.rv-pre { fill: rgba(255,255,255,.05); }
+.rv-er { fill: #C084FC; }
+.rv-tail { fill: url(#rvg); stroke: #A855F7; stroke-width: 1.3; }
+.rv-ref { fill: none; stroke: rgba(255,255,255,.45); stroke-width: 1; stroke-dasharray: 4 4; }
+.fx-panel.fx-pro.fx-wideface { width: 480px; }
+.fx-pro.fx-wideface .fx-panel-body.fx-knobs { grid-template-columns: repeat(4, 1fr); }
+.fx-pro.fx-wideface .fx-viz-wide .viz-txt { font-size: 9px; }
+.fx-pro.fx-wideface .fx-row.fx-wide { grid-column: 1 / -1; flex-direction: row; justify-content: center; gap: 10px; margin: 4px 0 6px; }
+.fx-pro.fx-wideface .fx-row.fx-wide .fx-label { order: -1; margin: 0; max-width: none; }
+.fx-pro.fx-wideface .fx-row.fx-wide .fx-val { display: none; }
+.eq-cut { fill: rgba(6, 3, 12, .62); stroke: none; pointer-events: none; }
+.eq-range-in { width: 30px; border: 0; border-left: 1px solid #3a2c50; background: #0d0915; color: #fff; text-align: center; font: inherit; padding: 4px 2px; }

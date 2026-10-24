@@ -57,6 +57,8 @@ pub struct Track {
     pub sends: std::collections::HashMap<String, f64>,
     /// Envois vers un groupe (identifiant du groupe → 0-100), comme un Aux de Logic
     pub bus_sends: std::collections::HashMap<String, f64>,
+    /// Envois pris avant le fader (« send:<id> » ou « busSend:<id> » → true), comme le Pre de Logic
+    pub pre_sends: std::collections::HashMap<String, bool>,
     pub clips: Vec<Clip>,
     /// Effets actifs : "eq", "sat", "deess", "comp", "reverb"
     pub effects: Vec<String>,
@@ -183,6 +185,11 @@ pub struct DelayParams {
     pub pp: Option<f64>,
     /// Voix d'origine en pourcentage (100 par défaut ; 0 = seulement l'écho, pour une piste d'effet ponctuel)
     pub dry: Option<f64>,
+    /// Coupe-bas sur ce qui entre dans l'écho (Hz, 0 = rien) et coupe-haut des répétitions (Hz, 4000 par défaut)
+    pub hpf: Option<f64>,
+    pub lpf: Option<f64>,
+    /// Ducking (0-100 %) : l'écho se pousse quand la voix joue
+    pub duck: Option<f64>,
 }
 
 /// `wet` en pourcentage (0-100), `size` de 1.2 (petite pièce) à 3.2 (grande salle).
@@ -193,6 +200,11 @@ pub struct ReverbParams {
     pub size: Option<f64>,
     /// Déclin de 0,5 à 5 (2,5 = neutre) : queue plus courte ou plus longue
     pub decay: Option<f64>,
+    /// Pré-délai (ms), grave / aigu retirés de ce qui entre (Hz, 0 = rien), ducking (0-100 %)
+    pub pre: Option<f64>,
+    pub low: Option<f64>,
+    pub high: Option<f64>,
+    pub duck: Option<f64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -227,6 +239,8 @@ pub struct CompParams {
 pub struct EqParams {
     /// EQ libre : si présent, remplace les quatre bandes fixes ci-dessous.
     pub bands: Option<Vec<EqBand>>,
+    /// Gain de sortie de l'EQ libre (dB), réglé par l'Auto gain
+    pub out: Option<f64>,
     pub hpf: Option<f64>,
     pub mid_gain: Option<f64>,
     pub presence: Option<f64>,
@@ -234,7 +248,8 @@ pub struct EqParams {
     pub lpf: Option<f64>,
 }
 
-/// Une bande de l'EQ libre : "bell", "lowshelf", "highshelf", "hpf" ou "lpf". `q` est linéaire.
+/// Une bande de l'EQ libre : "bell", "lowshelf", "highshelf", "hpf", "lpf", "notch" ou "tilt". `q` est linéaire.
+/// `slope` : pente des coupe-bas / coupe-haut en dB/oct (12 par défaut, 24, 36, 48).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct EqBand {
@@ -244,9 +259,15 @@ pub struct EqBand {
     pub gain: f64,
     pub q: f64,
     pub on: Option<bool>,
+    pub slope: Option<f64>,
+    /// Point dynamique : jusqu'où le gain bouge (dB, négatif = creuse quand ça dépasse) ; 0 / absent = statique
+    #[serde(rename = "dyn")]
+    pub dyn_range: Option<f64>,
+    /// Seuil du point dynamique (dB, niveau dans la zone du point)
+    pub thr: Option<f64>,
 }
 impl Default for EqBand {
-    fn default() -> Self { Self { kind: "bell".into(), freq: 1000.0, gain: 0.0, q: 1.0, on: None } }
+    fn default() -> Self { Self { kind: "bell".into(), freq: 1000.0, gain: 0.0, q: 1.0, on: None, slope: None, dyn_range: None, thr: None } }
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -327,6 +348,16 @@ pub struct Clip {
     pub gain: Option<f64>,
     pub muted: bool,
     pub recording: bool,
+    /// Effets posés sur la région seule (passent avant les effets de la piste)
+    pub fx: Option<ClipFx>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ClipFx {
+    pub effects: Vec<String>,
+    pub effect_params: EffectParams,
+    pub fx_order: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -349,6 +380,8 @@ pub struct Bus {
     pub sends: std::collections::HashMap<String, f64>,
     /// Envois vers un autre groupe (identifiant → 0-100)
     pub bus_sends: std::collections::HashMap<String, f64>,
+    /// Envois pris avant le fader (même forme que sur une piste)
+    pub pre_sends: std::collections::HashMap<String, bool>,
 }
 
 impl Bus {
