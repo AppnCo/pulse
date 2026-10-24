@@ -1,3 +1,5 @@
+// ARCHIVÉ le 25/10/2026 : les retours fermés (Reverb / Écho communs) n'existent plus dans l'interface, tout passe par des bus.
+// Les anciens projets sont convertis à l'ouverture (voir bus-envoi.mjs). Gardé pour mémoire, ne fait plus partie de la série.
 // Envois : reverb et écho communs, 100 % effet, dosés par piste, à part des effets de la piste
 const SHOTS = process.env.SHOTS || '';
 export default async ({ ev, nav, send, shot, sleep }) => {

@@ -10,7 +10,7 @@ export default async (c) => {
   check('projet Studio ouvert', await ev(`state.project.templateId`) === 'studio');
   check('pistes visibles : Prod, REC, Back Auto-Tune, Amb Auto-Tune', await ev(`state.project.tracks.map(t=>t.name).join()`) === 'Prod,REC,Back Auto-Tune,Amb Auto-Tune');
   check('REC passe par Vocal 1 → All Vocal → Mix Bus 1', await ev(`(()=>{ const b=id=>state.project.buses.find(x=>x.id===id); return state.project.tracks[1].output==='vocal1' && b('vocal1').output==='allvocal' && b('allvocal').output==='mixbus1' && b('mixbus1').output==='mixbus2'; })()`));
-  check('7 retours d’effets', await ev(`projectSends().length`) === 7);
+  check('aucun retour ni bus d’envoi imposé (Ridwane les fera lui-même)', await ev(`projectSends().length + (state.project.buses||[]).filter(b=>b.isAux).length`) === 0);
   check('bouton ✦ sur Vocal 1', await ev(`!!document.querySelector('.group-header[data-bus="vocal1"] .g-spots')`));
   await instru(ev, 6, 1, 0); await sleep(400);
   // Del 1/4 sur 2 s → 3 s : copie, la prise reste entière

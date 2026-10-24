@@ -1650,6 +1650,12 @@ function migrateProject() {
     const mf = document.querySelector('.mixer-master .fader');
     if (mf) { mf.value = volToPos(mv); const d = document.querySelector('.mixer-master .strip-db'); if (d) d.textContent = `${volumeToDb(mv)} dB`; }
     applyShowAll();
+    // Comme Logic : il n'y a que des bus. Les anciens retours Reverb / Écho deviennent des bus d'envoi, au même son.
+    if (Array.isArray(state.project.sends) && state.project.sends.length) {
+        [...state.project.sends].forEach(sd => sendToBusRaw(sd.id));
+        changed = true;
+        try { renderAll(); } catch {}
+    }
     // Un modèle décrit le son voulu (« Voix lead » sur le groupe…) : on le traduit en vrais effets à la première ouverture
     [...state.project.tracks, ...(state.project.buses || [])].forEach(x => {
         if (x.sound && x.effects === undefined) { applySound(x); changed = true; }
@@ -1760,7 +1766,7 @@ function slotListsHtml(kind, x) {
             </div>
         </div>
         ${(kind === 'track' || (kind === 'bus' && !x.premaster && !x.locked)) ? `<div class="strip-sends">
-            <div class="strip-sends-title">Envois<button class="slot-plus" data-plus="send" data-tooltip="Ajouter un envoi : nouvelle reverb, nouvel écho ou vers un groupe">+</button></div>
+            <div class="strip-sends-title">Envois<button class="slot-plus" data-plus="send" data-tooltip="Ajouter un envoi : vers un nouveau bus ou un bus existant">+</button></div>
             <div class="insp-slots insp-sends-box" data-add="send">
             ${sends.map(sd => `
             <label class="strip-send-row send-bar-row ${(x.sends || {})[sd.id] > 0 ? 'on' : ''}" data-send="${esc(sd.id)}" style="--lvl:${(x.sends || {})[sd.id] || 0}%" data-tooltip="Glisser pour envoyer plus · double-clic = écrire le chiffre · ⌘ + clic = remettre à 0 · Maj = réglage fin · clic droit = avant / après le fader">
@@ -1996,10 +2002,7 @@ function openSendTargetMenu(anchor, kind, x) {
     menu.style.cssText = `position:fixed;left:${Math.max(8, Math.min(r.left, window.innerWidth - 230))}px;top:${Math.max(8, Math.min(r.bottom + 2, window.innerHeight - 320))}px;z-index:300;min-width:210px;max-height:60vh;overflow:auto`;
     // Comme Logic : un envoi part vers un bus, et ce bus a ses propres effets (on y met ce qu'on veut)
     const items = [
-        { head: 'Nouveau bus d\'envoi' },
-        { label: 'Bus vide (je choisis les effets)', run: () => createSendBus(kind, x, 'empty') },
-        { label: 'Bus Reverb', run: () => createSendBus(kind, x, 'reverb') },
-        { label: 'Bus Écho', run: () => createSendBus(kind, x, 'delay') },
+        { label: 'Nouveau bus', run: () => createSendBus(kind, x, 'empty') },
         { head: 'Vers un bus existant' }
     ];
     const buses = (state.project.buses || []).filter(b => !b.premaster && b.id !== 'master' && !(kind === 'bus' && busFeeds(busById(b.id), x.id)) && !(x.busSends || {})[b.id]);
@@ -2010,7 +2013,7 @@ function openSendTargetMenu(anchor, kind, x) {
         saveProject(); refreshPlaybackSoon(); refreshStrips();
         flash(`Envoi vers « ${b.name} » ajouté à 50 : double-clic sur sa barre pour écrire le chiffre`);
     } }));
-    if (!buses.length) items.push({ head: '(aucun autre groupe disponible)' });
+    if (!buses.length) items.pop();
     items.forEach(it => {
         const el = document.createElement('div');
         if (it.head) { el.className = 'ctx-head'; el.textContent = it.head; }
@@ -2057,10 +2060,21 @@ function openSendBus(id, withMenu) {
 }
 // Ancien retour (Reverb / Écho fermés) → vrai bus d'envoi avec le même effet, les mêmes doses et le même son
 function convertSendToBus(sid) {
-    const sd = projectSends().find(s => s.id === sid); if (!sd) return;
+    if (!projectSends().find(s => s.id === sid)) return;
     pushUndo();
+    const b = sendToBusRaw(sid);
+    document.querySelectorAll('.fx-panel').forEach(p => p.remove());
+    afterGroupChange(`« ${b.name} » est maintenant un bus d'envoi : ajoute-lui les effets que tu veux — ⌘Z pour annuler`);
+    openSendBus(b.id, false);
+}
+// Fait le travail sans annulation ni message (utilisé aussi à l'ouverture d'un ancien projet)
+function sendToBusRaw(sid) {
+    const sd = projectSends().find(s => s.id === sid); if (!sd) return null;
     state.project.buses = state.project.buses || [];
-    const id = 'aux_' + Date.now().toString(36);
+    // le bus garde l'identifiant de l'ancien retour (s'il est libre) : doses et courbes s'y retrouvent
+    const taken = (v) => v === 'master' || state.project.buses.some(b => b.id === v);
+    let id = taken(sd.id) ? 'aux_' + Date.now().toString(36) : sd.id, k = 1;
+    while (taken(id)) id = 'aux_' + Date.now().toString(36) + '_' + (k++);
     const isDelay = sd.type === 'delay';
     const b = { id, name: sendBusName(sd.name || (isDelay ? 'Écho' : 'Reverb')), isGroup: true, isAux: true, output: 'master', color: '#7C3AED', volume: sd.volume ?? 100, muted: !!sd.muted,
         effects: [isDelay ? 'delay' : 'reverb'],
@@ -2075,9 +2089,7 @@ function convertSendToBus(sid) {
         if (o.automation && o.automation['send:' + sid]) { o.automation['busSend:' + id] = o.automation['send:' + sid]; delete o.automation['send:' + sid]; }
     });
     state.project.sends = projectSends().filter(s => s.id !== sid);
-    document.querySelectorAll('.fx-panel').forEach(p => p.remove());
-    afterGroupChange(`« ${b.name} » est maintenant un bus d'envoi : ajoute-lui les effets que tu veux — ⌘Z pour annuler`);
-    openSendBus(id, false);
+    return b;
 }
 
 // Copier / coller le réglage d'un effet d'une piste (ou d'un bus) à l'autre, comme dans Logic
@@ -2643,7 +2655,7 @@ function renderMixer() {
                 </div>
                 <div class="strip-output">→ MASTER</div>
             </div>`).join('')}
-        <button class="strip-add-send" data-tooltip="Ajouter un bus (effets au choix) ou un envoi commun (reverb, écho)">+<span>Bus</span></button>`;
+        <button class="strip-add-send" data-tooltip="Ajouter un bus vide : tu y mets les effets que tu veux">+<span>Bus</span></button>`;
 
     strips.innerHTML = trackStrips + busStrips + sendStrips;
     renderInspector();
@@ -6318,6 +6330,124 @@ function reverbVizSvg(p) {
     g += `<text x="${W - 4}" y="12" class="viz-txt" text-anchor="end">queue ≈ ${rt.toFixed(1).replace('.', ',')} s${pre > 0 ? ` · démarre après ${Math.round(pre * 1000)} ms` : ''}</text>`;
     return `<svg class="viz-svg viz-rev" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><defs><linearGradient id="rvg" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#A855F7" stop-opacity=".8"/><stop offset="1" stop-color="#A855F7" stop-opacity=".08"/></linearGradient></defs>${g}</svg>`;
 }
+// EQ de la reverb (comme l'EQ de sortie des reverbs pro) : il ne colore que l'effet, la voix d'origine n'est pas touchée.
+// Double-clic = poser un point (tout à gauche = coupe-bas, tout à droite = coupe-haut), tirer, molette = largeur,
+// double-clic sur un point = le retirer, clic droit = sa forme.
+const RVEQ = { W: 420, H: 120, DB: 18, MAX: 8 };
+const rvFx = (f) => Math.log(f / 20) / Math.log(1000) * RVEQ.W;
+const rvXf = (x) => 20 * Math.pow(1000, Math.max(0, Math.min(1, x / RVEQ.W)));
+const rvDy = (d) => RVEQ.H / 2 - Math.max(-RVEQ.DB, Math.min(RVEQ.DB, d)) / RVEQ.DB * (RVEQ.H / 2 - 10);
+const rvYd = (y) => (RVEQ.H / 2 - y) / (RVEQ.H / 2 - 10) * RVEQ.DB;
+const rvFmtF = (f) => f >= 1000 ? (f / 1000).toFixed(f >= 10000 ? 1 : 2).replace(/\.?0+$/, '').replace('.', ',') + ' kHz' : Math.round(f) + ' Hz';
+function reverbEqSvg(bands, sel) {
+    const { W, H } = RVEQ;
+    let g = '';
+    [50, 100, 200, 500, 1000, 2000, 5000, 10000].forEach(f => { g += `<line x1="${rvFx(f).toFixed(1)}" x2="${rvFx(f).toFixed(1)}" y1="0" y2="${H}" class="viz-grid"/>`; });
+    [[100, '100'], [1000, '1k'], [10000, '10k']].forEach(([f, l]) => { g += `<text x="${(rvFx(f) + 3).toFixed(1)}" y="${H - 4}" class="viz-txt">${l}</text>`; });
+    [-12, -6, 6, 12].forEach(d => { g += `<line x1="0" x2="${W}" y1="${rvDy(d).toFixed(1)}" y2="${rvDy(d).toFixed(1)}" class="viz-grid"/><text x="4" y="${(rvDy(d) - 2).toFixed(1)}" class="viz-txt">${d > 0 ? '+' : ''}${d}</text>`; });
+    g += `<line x1="0" x2="${W}" y1="${H / 2}" y2="${H / 2}" class="viz-zero"/>`;
+    const on = bands.filter(b => b.on !== false), tot = (f) => on.reduce((a, b) => a + eqBandDb(b, f), 0);
+    let d = '';
+    for (let x = 0; x <= W; x += 2) d += `${x ? 'L' : 'M'}${x},${rvDy(tot(rvXf(x))).toFixed(1)}`;
+    g += `<path d="${d}L${W},${H / 2}L0,${H / 2}Z" class="rveq-fill"/><path d="${d}" class="rveq-line"/>`;
+    bands.forEach((b, i) => {
+        const x = rvFx(Math.max(20, Math.min(20000, b.freq))), y = EQ_FLAT(b.type) ? rvDy(tot(b.freq)) : rvDy(b.gain || 0);
+        g += `<g class="rveq-pt ${i === sel ? 'sel' : ''} ${b.on === false ? 'off' : ''}" data-i="${i}"><circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="7"/><text x="${x.toFixed(1)}" y="${(y + 3.5).toFixed(1)}" text-anchor="middle">${i + 1}</text></g>`;
+    });
+    if (!bands.length) g += `<text x="${W / 2}" y="${H / 2 - 8}" text-anchor="middle" class="viz-txt rveq-empty">double-clic pour poser un point · tout à gauche = coupe-bas · tout à droite = coupe-haut</text>`;
+    return `<svg class="viz-svg rveq-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${g}</svg>`;
+}
+function bindReverbEq(panel, t) {
+    const host = panel.querySelector('.rv-eq-host'), read = panel.querySelector('.rv-eq-read');
+    if (!host) return;
+    let sel = -1, undone = false;
+    const bands = () => (((t.effectParams || {}).reverb || {}).eq || []).map(b => ({ ...b }));
+    const draw = () => {
+        const arr = bands(); if (sel >= arr.length) sel = arr.length - 1;
+        host.innerHTML = reverbEqSvg(arr, sel);
+        readOut();
+    };
+    const readOut = () => {
+        const arr = bands(), b = arr[sel];
+        read.textContent = b ? `${sel + 1} · ${EQ_TYPES[b.type] || b.type} · ${rvFmtF(b.freq)}${EQ_FLAT(b.type) ? '' : ` · ${(b.gain > 0 ? '+' : '') + (b.gain || 0).toFixed(1).replace('.', ',')} dB`}${b.type === 'hpf' || b.type === 'lpf' ? ` · ${b.slope || 12} dB/oct` : ` · Q ${(b.q || 1).toFixed(2).replace('.', ',')}`}${b.on === false ? ' · éteint' : ''}`
+            : (arr.length ? 'clique un point pour le régler' : '');
+    };
+    const save = (arr) => {
+        if (!undone) { pushUndo(); undone = true; setTimeout(() => { undone = false; }, 1500); }
+        t.effectParams = t.effectParams || {};
+        const rp = t.effectParams.reverb = t.effectParams.reverb || {};
+        if (arr.length) rp.eq = arr; else delete rp.eq;
+        delete rp._preset;
+        (t.proKeep = t.proKeep || {}).reverb = true;
+        t.effects = t.effects || [];
+        if (!t.effects.includes('reverb')) t.effects.push('reverb');
+        refreshPlaybackSoon(); saveProject(); draw();
+    };
+    const at = (e) => { const svg = host.querySelector('svg'), r = svg.getBoundingClientRect(); return [(e.clientX - r.left) * RVEQ.W / r.width, (e.clientY - r.top) * RVEQ.H / r.height]; };
+    const ptOf = (e) => { const g = e.target.closest && e.target.closest('.rveq-pt'); return g ? +g.dataset.i : -1; };
+    host.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        const i = ptOf(e); if (i < 0) return;
+        e.preventDefault(); sel = i;
+        // pas de nouveau dessin ici : il casserait le double-clic (qui retire le point)
+        host.querySelectorAll('.rveq-pt').forEach(g => g.classList.toggle('sel', +g.dataset.i === i));
+        const [x0, y0] = at(e), b0 = bands()[i];
+        let moved = false;
+        const move = (ev) => {
+            const [x, y] = at(ev);
+            if (!moved && Math.hypot(x - x0, y - y0) < 2) return;
+            moved = true;
+            const arr = bands(), b = arr[i]; if (!b) return;
+            b.freq = Math.round(Math.max(20, Math.min(20000, rvXf(rvFx(b0.freq) + (x - x0)))));
+            if (!EQ_FLAT(b.type)) b.gain = Math.round(Math.max(-RVEQ.DB, Math.min(RVEQ.DB, (b0.gain || 0) + rvYd(y) - rvYd(y0))) * 10) / 10;
+            save(arr);
+        };
+        const up = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); undone = false; if (!moved) readOut(); };
+        document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+    });
+    host.addEventListener('dblclick', (e) => {
+        e.preventDefault();
+        const i = ptOf(e), arr = bands();
+        if (i >= 0) { arr.splice(i, 1); sel = -1; save(arr); return; }
+        if (arr.length >= RVEQ.MAX) { flash(`${RVEQ.MAX} points au plus dans l'EQ de la reverb`); return; }
+        const [x, y] = at(e);
+        const b = x < RVEQ.W * 0.06 ? { type: 'hpf', freq: 120, gain: 0, q: 0.7071, slope: 24 }
+            : x > RVEQ.W * 0.94 ? { type: 'lpf', freq: 9000, gain: 0, q: 0.7071, slope: 24 }
+            : { type: 'bell', freq: Math.round(rvXf(x)), gain: Math.round(Math.max(-RVEQ.DB, Math.min(RVEQ.DB, rvYd(y))) * 10) / 10, q: 1 };
+        arr.push(b); sel = arr.length - 1; save(arr);
+    });
+    host.addEventListener('wheel', (e) => {
+        const i = ptOf(e) >= 0 ? ptOf(e) : sel, arr = bands(), b = arr[i]; if (!b) return;
+        e.preventDefault();
+        b.q = Math.round(Math.max(0.1, Math.min(18, (b.q || 1) * (e.deltaY < 0 ? 1.08 : 1 / 1.08))) * 1000) / 1000;
+        sel = i; save(arr);
+    }, { passive: false });
+    host.addEventListener('contextmenu', (e) => {
+        const i = ptOf(e); if (i < 0) return;
+        e.preventDefault(); e.stopPropagation(); closeAllMenus(); sel = i; draw();
+        const menu = document.createElement('div');
+        menu.className = 'track-ctx-menu';
+        menu.style.cssText = `position:fixed;left:${Math.min(e.clientX, window.innerWidth - 200)}px;top:${Math.min(e.clientY, window.innerHeight - 300)}px;z-index:400;min-width:180px`;
+        const b = bands()[i];
+        const item = (label, run) => { const it = document.createElement('div'); it.className = 'ctx-item'; it.textContent = label; it.addEventListener('mousedown', (ev) => { ev.stopPropagation(); closeAllMenus(); const arr = bands(); run(arr[i]); save(arr); }); menu.appendChild(it); };
+        ['bell', 'lowshelf', 'highshelf', 'hpf', 'lpf', 'notch'].forEach(k => item((b.type === k ? '✓ ' : '   ') + EQ_TYPES[k], (x) => {
+            x.type = k;
+            if (k === 'hpf' || k === 'lpf') { x.gain = 0; x.q = 0.7071; x.slope = x.slope || 24; } else delete x.slope;
+            if (k === 'lowshelf' || k === 'highshelf') x.q = 0.7;
+        }));
+        if (b.type === 'hpf' || b.type === 'lpf') { const sep = document.createElement('div'); sep.className = 'ctx-sep'; menu.appendChild(sep); [12, 24, 48].forEach(sl => item(((b.slope || 12) === sl ? '✓ ' : '   ') + `Pente ${sl} dB/oct`, (x) => { x.slope = sl; })); }
+        const sep2 = document.createElement('div'); sep2.className = 'ctx-sep'; menu.appendChild(sep2);
+        item(b.on === false ? 'Rallumer ce point' : 'Éteindre ce point', (x) => { if (x.on === false) delete x.on; else x.on = false; });
+        const del = document.createElement('div'); del.className = 'ctx-item'; del.textContent = 'Retirer ce point';
+        del.addEventListener('mousedown', (ev) => { ev.stopPropagation(); closeAllMenus(); const arr = bands(); arr.splice(i, 1); sel = -1; save(arr); });
+        menu.appendChild(del);
+        document.body.appendChild(menu);
+        setTimeout(() => document.addEventListener('mousedown', closeAllMenus, { once: true }), 10);
+    });
+    panel.querySelector('.rv-eq-clear').addEventListener('click', () => { sel = -1; save([]); });
+    draw();
+}
+
 // Vue « analogique » du compresseur : un vumètre de réduction (0 dB à droite, 20 dB à gauche)
 // rev = échelle façon console de bus : 0 à gauche, 20 à droite, aiguille dont on ne voit que la pointe
 function compNeedleDeg(g, rev) { const k = Math.max(0, Math.min(20, g)) / 20 * 90; return rev ? -45 + k : 45 - k; }
@@ -6996,7 +7126,19 @@ const FX_PRESETS = {
         { name: 'Phone', params: { hpf: 500, lpf: 3000, slope: 24 } },
         { name: 'Radio', params: { hpf: 300, lpf: 5000, slope: 12 } }
     ],
+    // Reverb : des types de salles classiques (comme dans toutes les reverbs), avec leur EQ de queue
     reverb: [
+        { group: 'Petites salles', name: 'Ambiance', params: { wet: 15, size: 1.2, decay: 1.2, pre: 0, bright: 55, eq: [{ type: 'hpf', freq: 250, gain: 0, q: 0.7071, slope: 12 }] } },
+        { group: 'Petites salles', name: 'Petite pièce', params: { wet: 18, size: 1.3, decay: 1.8, pre: 5, bright: 42, eq: [{ type: 'hpf', freq: 200, gain: 0, q: 0.7071, slope: 12 }, { type: 'highshelf', freq: 8000, gain: -3, q: 0.7 }] } },
+        { group: 'Petites salles', name: 'Studio', params: { wet: 20, size: 1.6, decay: 2.2, pre: 10, bright: 50, eq: [{ type: 'hpf', freq: 180, gain: 0, q: 0.7071, slope: 12 }, { type: 'bell', freq: 400, gain: -3, q: 1 }] } },
+        { group: 'Petites salles', name: 'Chambre', params: { wet: 20, size: 2.0, decay: 2.5, pre: 15, bright: 55, width: 110, eq: [{ type: 'hpf', freq: 160, gain: 0, q: 0.7071, slope: 12 }] } },
+        { group: 'Plaques', name: 'Plaque', params: { wet: 20, size: 2.2, decay: 2.8, pre: 0, bright: 80, width: 120, eq: [{ type: 'hpf', freq: 300, gain: 0, q: 0.7071, slope: 24 }, { type: 'highshelf', freq: 6000, gain: 2, q: 0.7 }] } },
+        { group: 'Plaques', name: 'Plaque voix', params: { wet: 18, size: 1.8, decay: 2.4, pre: 20, bright: 70, duck: 30, eq: [{ type: 'hpf', freq: 350, gain: 0, q: 0.7071, slope: 24 }, { type: 'bell', freq: 2500, gain: -3, q: 1.2 }, { type: 'lpf', freq: 10000, gain: 0, q: 0.7071, slope: 12 }] } },
+        { group: 'Grandes salles', name: 'Salle', params: { wet: 22, size: 2.8, decay: 3.2, pre: 20, bright: 50, width: 120, eq: [{ type: 'hpf', freq: 150, gain: 0, q: 0.7071, slope: 12 }] } },
+        { group: 'Grandes salles', name: 'Grande salle', params: { wet: 22, size: 3.2, decay: 3.8, pre: 30, bright: 45, width: 130, eq: [{ type: 'hpf', freq: 140, gain: 0, q: 0.7071, slope: 12 }, { type: 'highshelf', freq: 9000, gain: -2, q: 0.7 }] } },
+        { group: 'Grandes salles', name: 'Cathédrale', params: { wet: 25, size: 3.2, decay: 5, pre: 40, bright: 35, width: 140, eq: [{ type: 'hpf', freq: 120, gain: 0, q: 0.7071, slope: 12 }, { type: 'lowshelf', freq: 300, gain: -3, q: 0.7 }] } },
+        { group: 'Effets', name: 'Sombre et lointaine', params: { wet: 30, size: 3.0, decay: 4, pre: 60, bright: 10, width: 130, eq: [{ type: 'hpf', freq: 200, gain: 0, q: 0.7071, slope: 24 }, { type: 'lpf', freq: 4000, gain: 0, q: 0.7071, slope: 24 }] } },
+        { group: 'Effets', name: 'Queue qui se pousse (ducking)', params: { wet: 28, size: 2.8, decay: 3.4, pre: 25, bright: 55, duck: 60, eq: [{ type: 'hpf', freq: 250, gain: 0, q: 0.7071, slope: 24 }] } },
         { name: 'Rev Room', params: { size: 1.4, wet: 18 } },
         { name: 'Rev Long', params: { size: 3.2, wet: 22 } }
     ],
@@ -7481,7 +7623,9 @@ const FX_PANEL_DEFS = {
         { key: 'pre',   label: 'Pré-délai',  unit: ' ms', min: 0, max: 250, def: 0, step: 1, tip: 'Le temps avant que la reverb démarre : la voix reste devant' },
         { key: 'duck',  label: 'Ducking',    unit: '%',  min: 0,   max: 100, def: 0, step: 1, tip: 'La reverb se pousse pendant que la voix chante et ressort dans les trous' },
         { key: 'low',   label: 'Grave',      unit: ' Hz', min: 20, max: 1000, def: 20, step: 5, log: true, adv: true, tip: 'Retire les graves de la reverb (elle ne boue plus)' },
-        { key: 'high',  label: 'Aigu',       unit: ' Hz', min: 1500, max: 20000, def: 20000, step: 100, log: true, adv: true, tip: 'Retire les aigus de la reverb (plus douce, moins de sifflantes)' }
+        { key: 'high',  label: 'Aigu',       unit: ' Hz', min: 1500, max: 20000, def: 20000, step: 100, log: true, adv: true, tip: 'Retire les aigus de la reverb (plus douce, moins de sifflantes)' },
+        { key: 'bright', label: 'Brillance', unit: '',   min: 0,   max: 100, def: 50, step: 1, tip: 'Couleur de la queue : 0 = sombre et feutrée (pièce avec des rideaux), 100 = claire et brillante (pierre, plaque)' },
+        { key: 'width', label: 'Largeur',    unit: '%',  min: 0,   max: 150, def: 100, step: 1, adv: true, tip: 'Largeur de la reverb : 0 = mono (au centre), 100 = normal, 150 = plus large que les enceintes' }
     ],
     crush: [
         { key: 'bits', label: 'Finesse du son', unit: ' bits', min: 4, max: 16, def: 8, step: 1 },
@@ -7606,7 +7750,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
         <div class="fx-presets-bar">
             <select class="fx-preset" data-tooltip="Un point de départ réglé à la sauce Red Records : tu peux ensuite tout retoucher">
                 <option value="">Préréglages…</option>
-                ${(FX_PRESETS[fxName] || []).length ? `<optgroup label="Red Records">${FX_PRESETS[fxName].map((p, i) => `<option value="f${i}" ${params._preset === p.name ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</optgroup>` : ''}
+                ${[...new Set((FX_PRESETS[fxName] || []).map(p => p.group || 'Red Records'))].map(gname => `<optgroup label="${esc(gname)}">${(FX_PRESETS[fxName] || []).map((p, i) => (p.group || 'Red Records') !== gname ? '' : `<option value="f${i}" ${params._preset === p.name ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</optgroup>`).join('')}
                 ${(userFxPresets()[fxName] || []).length ? `<optgroup label="Les miens">${userFxPresets()[fxName].map((p, i) => `<option value="u${i}" ${params._preset === p.name ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</optgroup>` : ''}
                 <option value="__save">＋ Enregistrer le réglage actuel…</option>
             </select>
@@ -7614,6 +7758,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
         </div>
         <div class="fx-face">
         ${fxName === 'comp' || fxName === 'delay' || fxName === 'reverb' ? `<div class="fx-viz ${fxName === 'comp' ? '' : 'fx-viz-wide'}"></div>` : ''}
+        ${fxName === 'reverb' ? `<div class="rv-eq"><div class="rv-eq-head"><b>EQ de la reverb</b><span class="rv-eq-read"></span><button class="rv-eq-clear" data-tooltip="Retirer tous les points de l'EQ de la reverb">Effacer</button></div><div class="rv-eq-host"></div></div>` : ''}
         <div class="fx-main">
         <div class="fx-panel-body fx-knobs">
             ${defs.map(d => {
@@ -7657,7 +7802,9 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
         const pr = v[0] === 'f' ? (FX_PRESETS[fxName] || [])[+v.slice(1)] : v[0] === 'u' ? (userFxPresets()[fxName] || [])[+v.slice(1)] : null;
         if (!pr) return;
         pushUndo();
-        t.effectParams[fxName] = { ...pr.params, _preset: pr.name };
+        const keepOut = (t.effectParams[fxName] || {}).out;
+        t.effectParams[fxName] = JSON.parse(JSON.stringify({ ...pr.params, _preset: pr.name }));
+        if (keepOut !== undefined) t.effectParams[fxName].out = keepOut;   // niveau de sortie d'un ancien retour devenu bus
         t.effects = t.effects || [];
         if (!t.effects.includes(fxName)) t.effects.push(fxName);   // choisir un préréglage, c'est vouloir l'effet
         refreshPlaybackSoon(); saveProject();
@@ -7783,6 +7930,8 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
         };
         requestAnimationFrame(tick);
     }
+
+    if (fxName === 'reverb') bindReverbEq(panel, t);
 
     // Events
     panel.querySelector('.fx-panel-close').addEventListener('click', () => panel.remove());
@@ -8000,7 +8149,9 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
     requestAnimationFrame(meterTick);
     panel.querySelector('.fx-reset').addEventListener('click', () => {
         pushUndo();
+        const keepOut = (t.effectParams[fxName] || {}).out;
         delete t.effectParams[fxName];
+        if (keepOut !== undefined) t.effectParams[fxName] = { out: keepOut };
         if (t.proKeep) delete t.proKeep[fxName];
         refreshPlaybackSoon();
         saveProject();
@@ -8527,7 +8678,7 @@ function bindMixerEvents() {
         const menu = document.createElement('div');
         menu.className = 'track-ctx-menu';
         menu.style.cssText = `position:fixed;left:${Math.min(r.left, window.innerWidth - 190)}px;top:${Math.max(8, r.top + r.height / 2 - 40)}px;z-index:300;`;
-        menu.innerHTML = '<div class="ctx-item" data-type="bus">Nouveau bus (effets au choix)</div><div class="ctx-sep"></div><div class="ctx-item" data-type="reverb">Ajouter une reverb commune</div><div class="ctx-item" data-type="delay">Ajouter un écho commun</div>';
+        menu.innerHTML = '<div class="ctx-item" data-type="bus">Nouveau bus</div>';
         menu.querySelectorAll('.ctx-item').forEach(it => it.addEventListener('mousedown', (ev) => { ev.stopPropagation(); closeAllMenus(); if (it.dataset.type === 'bus') createBus({ withTracks: [] }); else addSend(it.dataset.type); }));
         document.body.appendChild(menu);
         setTimeout(() => document.addEventListener('mousedown', closeAllMenus, { once: true }), 10);

@@ -19,8 +19,6 @@ export default async ({ ev, nav, send, shot, sleep }) => {
   await ev(`toggleMixer()`); await sleep(500); await ev(`document.querySelector('.mixer-strips .strip-sound').click()`); await sleep(300);
   await R('panneau Son → envois de base', `const p=document.querySelector('.sound-panel'); const sl=p.querySelector('[data-key="echo"]'); sl.value=40; sl.dispatchEvent(new Event('input')); const sp=document.querySelector('.sound-panel [data-key="space"]'); sp.value=25; sp.dispatchEvent(new Event('input'));
     const t=state.project.tracks[0]; const mix=[...document.querySelectorAll('.mixer-strips .strip[data-kind=track] .insp-send')].map(x=>x.value).join('/');
-    return ok2(t.sends.del14===40&&t.sends.revlong===25&&!t.effects.includes('delay')&&!t.effects.includes('reverb')&&mix==='25/40')+'envois='+JSON.stringify(t.sends)+' | effets de la piste='+JSON.stringify(t.effects)+' | curseurs du mixer='+mix+' | puces de temps cachées='+document.querySelector('.sound-panel .echo-time').hidden;`.replace('ok2(','((c)=>c?"PASS ":"FAIL ")('));
-  await R('mixer → panneau Son', `const sl=document.querySelector('.mixer-strips .strip[data-kind=track] [data-send=del14] .insp-send'); sl.value=10; sl.dispatchEvent(new Event('input')); document.querySelector('.mixer-strips .strip-sound').click(); await new Promise(r=>setTimeout(r,200));
-    return 'écho affiché dans Son='+document.querySelector('.sound-panel [data-key="echo"]').value`);
+    return ok2(projectSends().length===0&&t.effects.includes('delay')&&t.effects.includes('reverb'))+'(plus de retours communs : le Réglage pose ses effets en insert) envois='+JSON.stringify(t.sends)+' | effets de la piste='+JSON.stringify(t.effects)+' | curseurs du mixer='+mix+' | puces de temps cachées='+document.querySelector('.sound-panel .echo-time').hidden;`.replace('ok2(','((c)=>c?"PASS ":"FAIL ")('));
   if (SHOTS) await shot(SHOTS + '/shot-echo.jpg');
 };

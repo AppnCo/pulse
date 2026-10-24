@@ -713,6 +713,10 @@ pub struct Reverb {
     out: f64,
     fb: f64,
     damp: f64,
+    /// Largeur de la queue (1 = normal)
+    width: f64,
+    /// EQ de la reverb (sur l'effet seulement), un jeu de filtres par côté
+    eq: [Vec<Biquad>; 2],
     comb: [Vec<Line>; 2],
     ap: [Vec<Line>; 2],
     /// Pré-délai (vide = aucun)
@@ -727,12 +731,18 @@ impl Reverb {
         self.wet = n.wet;
         self.out = n.out;
         self.fb = n.fb;
+        self.damp = n.damp;
+        self.width = n.width;
+        if n.eq[0].len() == self.eq[0].len() {
+            for ch in 0..2 { for (a, b) in self.eq[ch].iter_mut().zip(n.eq[ch].iter()) { a.retune(*b); } }
+        } else { self.eq = n.eq; }
     }
     pub fn new(p: &ReverbParams, sr: f64) -> Self {
         const COMB: [usize; 8] = [1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617];
         const AP: [usize; 4] = [556, 441, 341, 225];
         let lines = |t: &[usize], spread: usize| t.iter().map(|n| Line::new(n + spread, sr)).collect::<Vec<_>>();
         let pre = ((p.pre.unwrap_or(0.0) / 1000.0).clamp(0.0, 0.5) * sr).round() as usize;
+        let eq: Vec<Biquad> = p.eq.as_deref().unwrap_or(&[]).iter().filter(|b| b.on != Some(false)).flat_map(|b| eq_sections(b, sr)).collect();
         Self {
             duck: Ducker::new(p.duck, sr),
             kl: p.low.filter(|l| *l > 20.0).map_or(0.0, |l| (-2.0 * PI * l / sr).exp()),
@@ -742,7 +752,9 @@ impl Reverb {
             wet: (p.wet.unwrap_or(18.0) / 100.0).clamp(0.0, 1.0),
             out: 10f64.powf(p.out.unwrap_or(0.0) / 20.0),
             fb: (0.72 + 0.2 * ((p.size.unwrap_or(1.8) - 1.2) / 2.0).clamp(0.0, 1.0) + (p.decay.unwrap_or(2.5) - 2.5) * 0.025).clamp(0.5, 0.97),
-            damp: 0.35,
+            damp: p.bright.map_or(0.35, |b| (0.35 + (50.0 - b) / 50.0 * 0.3).clamp(0.02, 0.7)),
+            width: p.width.map_or(1.0, |w| w.clamp(0.0, 150.0) / 100.0),
+            eq: [eq.clone(), eq],
             comb: [lines(&COMB, 0), lines(&COMB, 23)],
             ap: [lines(&AP, 0), lines(&AP, 23)],
             pre: vec![0.0; pre],
@@ -763,6 +775,7 @@ impl Reverb {
             input = std::mem::replace(&mut self.pre[self.pi], input);
             self.pi = (self.pi + 1) % self.pre.len();
         }
+        let mut w2 = [0.0; 2];
         for ch in 0..2 {
             let mut acc = 0.0;
             for f in &mut self.comb[ch] {
@@ -778,8 +791,15 @@ impl Reverb {
                 f.i = (f.i + 1) % f.buf.len();
                 acc = y - acc;
             }
-            x[ch] = if ch == 0 { xl } else { xr } * dry + acc * wet * dg;
+            for b in &mut self.eq[ch] { acc = b.tick(acc); }
+            w2[ch] = acc;
         }
+        if self.width != 1.0 {
+            let (m, s) = ((w2[0] + w2[1]) * 0.5, (w2[0] - w2[1]) * 0.5 * self.width);
+            w2 = [m + s, m - s];
+        }
+        x[0] = xl * dry + w2[0] * wet * dg;
+        x[1] = xr * dry + w2[1] * wet * dg;
     }
 }
 

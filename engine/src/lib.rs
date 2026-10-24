@@ -166,6 +166,35 @@ mod tests {
         near(rms(&l, 1.5, 2.5), 0.005723);
     }
 
+    /// Reverb avec EQ intégré (sur l'effet seulement), brillance et largeur : mêmes chiffres que tests/scenarios/reverb-eq.mjs (Chrome).
+    #[test]
+    fn reverb_eq_comme_le_navigateur() {
+        let sr = SR as usize;
+        let mut media = Media::new();
+        let mut burst = vec![0.0f32; sr];
+        for (i, v) in burst.iter_mut().take(4800).enumerate() {
+            *v = (0.5 * (2.0 * std::f64::consts::PI * 440.0 * i as f64 / SR as f64).sin()) as f32;
+        }
+        media.insert("clap".into(), Source { channels: vec![burst], sample_rate: SR });
+        let rms = |x: &[f32], a: f64, z: f64| {
+            let (a, z) = ((a * SR as f64).round() as usize, (z * SR as f64).round() as usize);
+            (x[a..z].iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / (z - a) as f64).sqrt()
+        };
+        let run = |rp: &str| {
+            let json = format!(r#"{{"tracks":[{{"volume":100,"clips":[{{"id":"clap","start":0,"duration":1}}],"effects":["reverb"],"effectParams":{{"reverb":{rp}}}}}]}}"#);
+            let p: Project = serde_json::from_str(&json).unwrap();
+            render(&p, &media, &RenderOptions { only_track: Some(0), ..opts() })
+        };
+        let near = |v: f64, want: f64| assert!((v - want).abs() < want * 0.01 + 2e-5, "{v} au lieu de {want}");
+        let (l, r) = run(r#"{"wet":60,"size":2.4,"bright":80,"width":130,"eq":[{"type":"hpf","freq":300,"gain":0,"q":0.7071,"slope":24},{"type":"bell","freq":3000,"gain":-6,"q":1},{"type":"highshelf","freq":8000,"gain":4,"q":0.7},{"type":"bell","freq":500,"gain":9,"q":1,"on":false}]}"#);
+        near(rms(&l, 0.0, 0.1), 0.095269);
+        near(rms(&l, 0.3, 0.9), 0.049152);
+        near(rms(&r, 0.3, 0.9), 0.089921);
+        near(rms(&l, 1.5, 2.5), 0.000104);
+        let (l, r) = run(r#"{"wet":60,"size":2.4,"width":0}"#);
+        assert!((rms(&l, 0.3, 0.9) - 0.052947).abs() < 0.0005 && (rms(&r, 0.3, 0.9) - 0.052947).abs() < 0.0005, "largeur 0 = mono");
+    }
+
     /// Deux pistes dans un groupe « Grande salle » (compresseur + reverb), lui-même dans un groupe sans effet.
     /// Valeurs mesurées dans Chrome sur l'export complet.
     #[test]

@@ -31,14 +31,16 @@ export default async ({ ev, nav, send, sleep, shot }) => {
   // croix : retire le compresseur
   await ev(`${S}.querySelector('.insp-fx-row[data-fx="comp"] .insp-del').click()`); await sleep(300);
   await R('croix', `return JSON.stringify(state.project.tracks[0].effects)+' | table='+[...${S}.querySelectorAll('.insp-fx-row')].map(r=>r.dataset.fx).join(',')`);
-  // « + » des envois : vers le groupe… (Back n'a pas de groupe à part Vocal = sa sortie, on prend Lead → nouvelle reverb)
+  // l'ancien retour « Reverb » du projet est devenu un bus d'envoi à l'ouverture
+  await R('retour converti', `const b=state.project.buses.find(b=>b.isAux); return 'retours='+projectSends().length+' bus='+(b&&b.name)+' effets='+JSON.stringify(b&&b.effects)+' dose Lead='+(state.project.tracks[0].busSends||{})[b&&b.id]`);
+  // « + » des envois : seulement « Nouveau bus » et les bus existants
   await ev(`${S}.querySelector('.slot-plus[data-plus="send"]').click()`); await sleep(200);
-  await R('menu envois', `return [...document.querySelectorAll('.track-ctx-menu .ctx-item')].map(e=>e.textContent).join(' / ')`);
-  await ev(`[...document.querySelectorAll('.track-ctx-menu .ctx-item')].find(e=>e.textContent==='Nouvel écho').dispatchEvent(new MouseEvent('mousedown',{bubbles:true}))`); await sleep(400);
-  await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
-  await R('envois après', `return projectSends().map(s=>s.name).join(',')+' | table='+${S}.querySelectorAll('.send-bar-row').length`);
+  await R('menu envois', `return [...document.querySelectorAll('.track-ctx-menu .ctx-item,.track-ctx-menu .ctx-head')].map(e=>e.textContent).join(' / ')`);
+  await ev(`[...document.querySelectorAll('.track-ctx-menu .ctx-item')].find(e=>e.textContent==='Nouveau bus').dispatchEvent(new MouseEvent('mousedown',{bubbles:true}))`); await sleep(400);
+  await ev(`document.querySelectorAll('.fx-panel,.fx-add-menu').forEach(p=>p.remove())`);
+  await R('envois après', `return state.project.buses.filter(b=>b.isAux).map(b=>b.name+':'+JSON.stringify(b.effects)).join(',')+' | table='+${S}.querySelectorAll('.send-bar-row').length`);
   // envoi réglé dans la table → enregistré
-  await R('dose envoi', `const sl=${S}.querySelector('[data-send="rv1"] .insp-send'); sl.value=55; sl.dispatchEvent(new Event('input',{bubbles:true})); sl.dispatchEvent(new Event('change',{bubbles:true})); await new Promise(r=>setTimeout(r,100)); return state.project.tracks[0].sends.rv1+' | Back intact='+JSON.stringify(state.project.tracks[1].sends||{})`);
+  await R('dose envoi', `const b=state.project.buses.find(b=>b.isAux); const sl=${S}.querySelector('[data-bsend="'+b.id+'"] .insp-send'); sl.value=55; sl.dispatchEvent(new Event('input',{bubbles:true})); sl.dispatchEvent(new Event('change',{bubbles:true})); await new Promise(r=>setTimeout(r,100)); return state.project.tracks[0].busSends[b.id]+' | Back intact='+JSON.stringify(state.project.tracks[1].busSends||{})`);
   // ⌘Z ramène le compresseur
   if (process.env.SHOTS) await shot(process.env.SHOTS + '/mixeur-inserts.jpg');
 };

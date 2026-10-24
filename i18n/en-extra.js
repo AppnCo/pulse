@@ -349,3 +349,17 @@ patterns.push(P('Ouvrir le bus « § » (ses effets)', 'Open the "$1" bus (its e
   P('« § » est maintenant un bus d\'envoi : ajoute-lui les effets que tu veux — ⌘Z pour annuler', '"$1" is now a send bus: add any effects you want — ⌘Z to undo'),
   P('Gate : style §', 'Gate: $1 style'));
 module.exports = { exact, patterns };
+// 25/10 (suite) : plus de retours imposés, Reverb avec EQ intégré et préréglages par type de salle
+Object.assign(exact, {
+  'Ajouter un envoi : vers un nouveau bus ou un bus existant': 'Add a send: to a new bus or an existing bus', 'Nouveau bus': 'New bus',
+  'Ajouter un bus vide : tu y mets les effets que tu veux': 'Add an empty bus: put any effects you want on it',
+  'EQ de la reverb': 'Reverb EQ', 'Effacer': 'Clear', 'Retirer tous les points de l\'EQ de la reverb': 'Remove all points from the reverb EQ',
+  'clique un point pour le régler': 'click a point to adjust it', 'Brillance': 'Brightness', 'Largeur': 'Width',
+  'Couleur de la queue : 0 = sombre et feutrée (pièce avec des rideaux), 100 = claire et brillante (pierre, plaque)': 'Colour of the tail: 0 = dark and soft (room with curtains), 100 = bright and shiny (stone, plate)',
+  'Largeur de la reverb : 0 = mono (au centre), 100 = normal, 150 = plus large que les enceintes': 'Reverb width: 0 = mono (centre), 100 = normal, 150 = wider than the speakers',
+  'double-clic pour poser un point · tout à gauche = coupe-bas · tout à droite = coupe-haut': 'double-click to add a point · far left = low cut · far right = high cut',
+  'Rallumer ce point': 'Turn this point back on', 'Éteindre ce point': 'Turn this point off', 'Retirer ce point': 'Remove this point',
+  'Petites salles': 'Small rooms', 'Plaques': 'Plates', 'Grandes salles': 'Large halls', 'Effets': 'Effects',
+  'Petite pièce': 'Small room', 'Chambre': 'Chamber', 'Plaque': 'Plate', 'Plaque voix': 'Vocal plate',
+  'Salle': 'Hall', 'Grande salle': 'Large hall', 'Cathédrale': 'Cathedral', 'Sombre et lointaine': 'Dark and distant', 'Queue qui se pousse (ducking)': 'Tail that steps aside (ducking)' });
+patterns.push(P('§ points au plus dans l\'EQ de la reverb', '$1 points at most in the reverb EQ'), P('Pente § dB/oct', 'Slope $1 dB/oct'));

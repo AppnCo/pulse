@@ -9,7 +9,7 @@ export default async (c) => {
   // clic sur une case d'envoi vide : le menu propose reverb, écho et le groupe
   await ev(`document.querySelector('#inspector .insp-strip:first-child .insp-sends-box .insp-slot-empty').click()`); await sleep(150);
   const menu = await ev(`[...document.querySelectorAll('.track-ctx-menu .ctx-item')].map(e=>e.textContent).join('|')`);
-  check('menu d’envoi : bus vide, bus reverb, bus écho, groupe', /Bus vide/.test(menu) && /Bus Reverb/.test(menu) && /Bus Écho/.test(menu) && /Parallèle/.test(menu), menu);
+  check('menu d’envoi : nouveau bus (vide) et bus existants, sans reverb / écho imposés', /Nouveau bus/.test(menu) && /Parallèle/.test(menu) && !/Bus Reverb|Bus Écho/.test(menu), menu);
   await ev(`[...document.querySelectorAll('.track-ctx-menu .ctx-item')].find(e=>e.textContent==='Parallèle').dispatchEvent(new MouseEvent('mousedown',{bubbles:true}))`); await sleep(200);
   check('envoi vers le groupe créé (50)', await ev(`(state.project.tracks[0].busSends||{}).g1`) === 50);
   // ⌘ + clic = 0

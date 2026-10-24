@@ -3493,3 +3493,23 @@ body.automation-mode .track-item .t-auto .auto-chip { max-width: 150px; height: 
 .gate-rv { display: flex; justify-content: space-between; width: 170px; font-size: 11px; color: #fff; font-weight: 600; margin-top: 6px; }
 .gate-panel .gate-sty { flex: none; margin-left: auto; }
 .gate-io { fill: rgba(11,7,18,.62); }
+
+/* Reverb : EQ intégré (sur l'effet seulement) */
+.rv-eq { padding: 6px 10px 0; }
+.rv-eq-head { display: flex; align-items: center; gap: 8px; font-size: 11px; color: #a99bc4; margin-bottom: 4px; }
+.rv-eq-head b { color: #e9e2f7; font-weight: 600; letter-spacing: .02em; }
+.rv-eq-read { flex: 1; text-align: right; font-variant-numeric: tabular-nums; color: #C084FC; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.rv-eq-clear { background: #1a1228; border: 1px solid #3a2c50; color: #a99bc4; border-radius: 6px; font-size: 10.5px; padding: 2px 8px; cursor: pointer; }
+.rv-eq-clear:hover { color: #fff; border-color: #A855F7; }
+.rv-eq-host .viz-svg { display: block; width: 100%; height: auto; background: linear-gradient(#0d0915, #140d22); border-radius: 8px; border: 1px solid rgba(168,85,247,.2); cursor: crosshair; user-select: none; }
+.rv-eq-host .viz-grid { stroke: rgba(255,255,255,.07); }
+.rv-eq-host .viz-zero { stroke: rgba(255,255,255,.16); }
+.rv-eq-host .viz-txt { fill: #8a7cab; font-size: 9px; }
+.rveq-fill { fill: rgba(168,85,247,.16); }
+.rveq-line { fill: none; stroke: #C084FC; stroke-width: 1.8; filter: drop-shadow(0 0 3px rgba(168,85,247,.6)); }
+.rveq-pt { cursor: grab; }
+.rveq-pt circle { fill: #2a1840; stroke: #C084FC; stroke-width: 1.5; }
+.rveq-pt text { fill: #fff; font-size: 8.5px; font-weight: 700; pointer-events: none; }
+.rveq-pt.sel circle { fill: #A855F7; stroke: #fff; filter: drop-shadow(0 0 5px #A855F7); }
+.rveq-pt.off circle { fill: #1a1228; stroke: #5b4d75; }
+.rveq-pt.off text { fill: #6f6390; }

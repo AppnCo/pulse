@@ -12,7 +12,6 @@ Bitcrusher
 Chorus
 Clic pour régler · clic maintenu et glisser pour changer l'ordre · clic droit pour copier ou supprimer
 De-esser
-Del 1/4
 E / Z
 Flanger
 Gate
@@ -25,7 +24,6 @@ Pick up where you left off
 PulseTune
 Rap Studio
 Recent projects
-Rev Long
 Reverb
 Simple Beat
 Simple setup: 1 vocal + 1 instrumental. Perfect for a quick first track.

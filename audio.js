@@ -558,7 +558,14 @@ window.PulseAudio = (function() {
                 const size = p.size ?? 1.8;
                 // Déclin (0,5 à 5, 2,5 = neutre) : allonge ou raccourcit la queue. Même calcul que engine/src/fx.rs (Reverb::new)
                 this.fb = Math.max(0.5, Math.min(0.97, 0.72 + 0.2 * Math.max(0, Math.min(1, (size - 1.2) / 2)) + ((p.decay ?? 2.5) - 2.5) * 0.025));
-                this.damp = 0.35;
+                // Brillance (0 sombre … 100 brillant, 50 = neutre) : à quel point la queue perd ses aigus. Même calcul que fx.rs
+                this.damp = p.bright !== undefined && p.bright !== null ? Math.max(0.02, Math.min(0.7, 0.35 + (50 - p.bright) / 50 * 0.3)) : 0.35;
+                // Largeur de la queue (0 = mono, 100 = normal, 150 = plus large)
+                this.w = p.width !== undefined && p.width !== null ? Math.max(0, Math.min(150, p.width)) / 100 : 1;
+                // EQ de la reverb : il ne touche que l'effet, pas la voix d'origine (mêmes filtres que l'EQ)
+                this.eq = (Array.isArray(p.eq) ? p.eq : []).filter(b => b && b.on !== false).flatMap(b => eqBandCoefs({ ...b, freq: Math.max(20, Math.min(20000, b.freq || 1000)) }, sampleRate));
+                this.eqs = [this.eq.map(() => [0, 0, 0, 0]), this.eq.map(() => [0, 0, 0, 0])];
+                this.acc = [0, 0];
                 const k = sampleRate / 44100, len = (n) => Math.max(1, Math.round(n * k));
                 const mk = (n) => ({ buf: new Float64Array(len(n)), i: 0, store: 0 });
                 const COMB = [1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617], AP = [556, 441, 341, 225];
@@ -588,6 +595,7 @@ window.PulseAudio = (function() {
                     if (this.kl) { this.zl = x + (this.zl - x) * this.kl; x = x - this.zl; }
                     if (this.kh) { this.zh = x + (this.zh - x) * this.kh; x = this.zh; }
                     if (this.pre) { const d = this.pre[this.pi]; this.pre[this.pi] = x; x = d; if (++this.pi >= this.pre.length) this.pi = 0; }
+                    const w2 = this.acc;
                     for (let ch = 0; ch < 2; ch++) {
                         let acc = 0;
                         const cs = this.comb[ch];
@@ -605,8 +613,12 @@ window.PulseAudio = (function() {
                             if (++f.i >= f.buf.length) f.i = 0;
                             acc = y - acc;
                         }
-                        out[ch][i] = (ch ? xr : xl) * dry + acc * wet * dg;
+                        if (this.eq.length) { const st = this.eqs[ch]; for (let e = 0; e < this.eq.length; e++) acc = biqRun(this.eq[e], st[e], acc); }
+                        w2[ch] = acc;
                     }
+                    if (this.w !== 1) { const m = (w2[0] + w2[1]) * 0.5, sd = (w2[0] - w2[1]) * 0.5 * this.w; w2[0] = m + sd; w2[1] = m - sd; }
+                    out[0][i] = xl * dry + w2[0] * wet * dg;
+                    out[1][i] = xr * dry + w2[1] * wet * dg;
                 }
                 return true;
             }
@@ -2139,7 +2151,7 @@ window.PulseAudio = (function() {
                 const rp = params.reverb || {};
                 connect(new AudioWorkletNode(actx, 'pulse-reverb', {
                     numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCountMode: 'max',
-                    processorOptions: { wet: rp.wet !== undefined ? rp.wet / 100 : 0.18, size: rp.size, decay: rp.decay, pre: (rp.pre || 0) / 1000, low: rp.low || 0, high: rp.high || 0, duck: rp.duck || 0, out: rp.out || 0, ...autoOpts('reverb', { wet: (x) => x / 100 }) }
+                    processorOptions: { wet: rp.wet !== undefined ? rp.wet / 100 : 0.18, size: rp.size, decay: rp.decay, pre: (rp.pre || 0) / 1000, low: rp.low || 0, high: rp.high || 0, duck: rp.duck || 0, out: rp.out || 0, bright: rp.bright, width: rp.width, eq: rp.eq, ...autoOpts('reverb', { wet: (x) => x / 100 }) }
                 }));
             } else if (enabled.includes('reverb')) {
                 const rp = params.reverb || {};

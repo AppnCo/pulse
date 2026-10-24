@@ -219,6 +219,12 @@ pub struct ReverbParams {
     pub duck: Option<f64>,
     /// Sortie de l'effet (dB, 0 = normal) : un bus d'envoi Reverb la met à -9,5 dB pour sonner comme un retour
     pub out: Option<f64>,
+    /// Brillance de la queue (0 sombre … 100 brillant, 50 = neutre)
+    pub bright: Option<f64>,
+    /// Largeur de la queue (0 mono, 100 normal, 150 plus large)
+    pub width: Option<f64>,
+    /// EQ de la reverb : il ne touche que l'effet
+    pub eq: Option<Vec<EqBand>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
