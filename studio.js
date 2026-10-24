@@ -6347,9 +6347,18 @@ function reverbEqSvg(bands, sel) {
     [-12, -6, 6, 12].forEach(d => { g += `<line x1="0" x2="${W}" y1="${rvDy(d).toFixed(1)}" y2="${rvDy(d).toFixed(1)}" class="viz-grid"/><text x="4" y="${(rvDy(d) - 2).toFixed(1)}" class="viz-txt">${d > 0 ? '+' : ''}${d}</text>`; });
     g += `<line x1="0" x2="${W}" y1="${H / 2}" y2="${H / 2}" class="viz-zero"/>`;
     const on = bands.filter(b => b.on !== false), tot = (f) => on.reduce((a, b) => a + eqBandDb(b, f), 0);
-    let d = '';
-    for (let x = 0; x <= W; x += 2) d += `${x ? 'L' : 'M'}${x},${rvDy(tot(rvXf(x))).toFixed(1)}`;
-    g += `<path d="${d}L${W},${H / 2}L0,${H / 2}Z" class="rveq-fill"/><path d="${d}" class="rveq-line"/>`;
+    // Comme le grand EQ : la courbe s'arrête net quand elle sort par le bas (coupe-bas / coupe-haut), sans trait plat collé en bas,
+    // et ce qu'elle retire est assombri jusqu'au bord de l'écran
+    let line = '', pen = false, shade = '', boost = '';
+    for (let x = 0; x <= W; x += 2) {
+        const v = tot(rvXf(x));
+        const yl = H / 2 - Math.min(RVEQ.DB, v) / RVEQ.DB * (H / 2 - 10);   // sans butée en bas : la courbe sort par le bord
+        if (yl > H + 4) { if (pen) line += `L${x},${H + 4}`; pen = false; }
+        else { line += `${pen ? 'L' : (x ? `M${x - 2},${H + 4}L` : 'M')}${x},${yl.toFixed(1)}`; pen = true; }
+        shade += `${x ? 'L' : 'M'}${x},${(v < -RVEQ.DB ? H : rvDy(Math.min(0, v))).toFixed(1)}`;
+        boost += `${x ? 'L' : 'M'}${x},${rvDy(Math.max(0, v)).toFixed(1)}`;
+    }
+    g += `<path d="${shade}L${W},${H / 2}L0,${H / 2}Z" class="eq-cut"/><path d="${boost}L${W},${H / 2}L0,${H / 2}Z" class="rveq-fill"/><path d="${line}" class="rveq-line"/>`;
     bands.forEach((b, i) => {
         const x = rvFx(Math.max(20, Math.min(20000, b.freq))), y = EQ_FLAT(b.type) ? rvDy(tot(b.freq)) : rvDy(b.gain || 0);
         g += `<g class="rveq-pt ${i === sel ? 'sel' : ''} ${b.on === false ? 'off' : ''}" data-i="${i}"><circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="7"/><text x="${x.toFixed(1)}" y="${(y + 3.5).toFixed(1)}" text-anchor="middle">${i + 1}</text></g>`;
