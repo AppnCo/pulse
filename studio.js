@@ -797,6 +797,7 @@ function renderTracksPanel() {
             t.armed ? 'is-armed' : '',
             t.hidden ? 'is-hidden-track' : '',
             t.locked ? 'is-locked-track' : '',
+            t.notes ? 'has-notes' : '',
             t.muted ? 'is-muted' : '',
             t.solo ? 'is-solo' : '',
             trackGroup(t) ? 'in-group' : '',
@@ -9729,6 +9730,65 @@ function toggleTrackHidden(t) {
     renderAll(); saveProject();
     flash(t.hidden ? 'Piste masquée (elle joue toujours) — clic droit dans le vide > Afficher les pistes masquées' : 'Piste affichée');
 }
+// Délai de piste (ms) : petit panneau, on tape la valeur (+ = plus tard, − = plus tôt) ; 0 = retiré
+function openTrackDelayPanel(t, x, y) {
+    closeTransientPanels();
+    const panel = document.createElement('div');
+    panel.className = 'fx-panel warp-panel track-delay-panel';
+    panel.innerHTML = `
+        <div class="fx-panel-header"><span>Délai de piste — ${esc(t.name || '')}</span><button class="fx-panel-close">×</button></div>
+        <div class="fx-panel-body">
+            <p class="warp-txt">Décale le son de toute la piste, sans bouger les régions. <b>+</b> = plus tard, <b>−</b> = plus tôt (pour recaler une piste en retard).</p>
+            <div class="fx-row"><label class="fx-label">Délai</label><input type="text" class="set-num td-ms" value="${String(t.delayMs || 0).replace('.', ',')}" inputmode="decimal"> <span>ms</span></div>
+        </div>
+        <div class="fx-panel-footer"><button class="td-zero">Remettre à 0</button><button class="td-ok">Appliquer</button></div>`;
+    document.body.appendChild(panel);
+    panel.style.left = Math.min(x, window.innerWidth - 300) + 'px';
+    panel.style.top = Math.max(8, Math.min(y, window.innerHeight - 220)) + 'px';
+    const inp = panel.querySelector('.td-ms');
+    const apply = (v) => {
+        if (!Number.isFinite(v) || Math.abs(v) > 500) { flash('Délai entre −500 et +500 ms'); return; }
+        panel.remove();
+        pushUndo();
+        v = Math.round(v * 10) / 10;
+        if (v) t.delayMs = v; else delete t.delayMs;
+        renderAll(); saveProject(); refreshPlaybackSoon();
+        flash(v ? `Délai de « ${t.name} » : ${v > 0 ? '+' : ''}${String(v).replace('.', ',')} ms` : `Délai de « ${t.name} » retiré`);
+    };
+    inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') apply(parseFloat(String(inp.value).replace(',', '.').replace('−', '-'))); if (e.key === 'Escape') panel.remove(); });
+    panel.querySelector('.td-ok').addEventListener('click', () => apply(parseFloat(String(inp.value).replace(',', '.').replace('−', '-'))));
+    panel.querySelector('.td-zero').addEventListener('click', () => apply(0));
+    panel.querySelector('.fx-panel-close').addEventListener('click', () => panel.remove());
+    setTimeout(() => { inp.focus(); inp.select(); }, 30);
+}
+// Notes de piste (comme le bloc-notes de piste de Logic) : texte libre, gardé avec le projet ; un 📝 s'affiche sur la piste
+function openTrackNotesPanel(t, x, y) {
+    closeTransientPanels();
+    const panel = document.createElement('div');
+    panel.className = 'fx-panel warp-panel track-notes-panel';
+    panel.innerHTML = `
+        <div class="fx-panel-header"><span>Notes — ${esc(t.name || '')}</span><button class="fx-panel-close">×</button></div>
+        <div class="fx-panel-body"><textarea class="tn-txt" rows="6" placeholder="Ce que tu veux retenir sur cette piste (réglages, idées, à refaire…)"></textarea></div>
+        <div class="fx-panel-footer"><button class="tn-ok">Enregistrer</button></div>`;
+    document.body.appendChild(panel);
+    panel.style.left = Math.min(x, window.innerWidth - 320) + 'px';
+    panel.style.top = Math.max(8, Math.min(y, window.innerHeight - 280)) + 'px';
+    const ta = panel.querySelector('.tn-txt');
+    ta.value = t.notes || '';
+    const save = () => {
+        const v = ta.value.replace(/\s+$/, '');
+        panel.remove();
+        if (v === (t.notes || '')) return;
+        pushUndo();
+        if (v) t.notes = v; else delete t.notes;
+        renderTracksPanel(); bindTrackEvents(); saveProject();
+        flash(v ? 'Notes de la piste enregistrées' : 'Notes de la piste effacées');
+    };
+    ta.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape') panel.remove(); if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) save(); });
+    panel.querySelector('.tn-ok').addEventListener('click', save);
+    panel.querySelector('.fx-panel-close').addEventListener('click', () => panel.remove());
+    setTimeout(() => ta.focus(), 30);
+}
 function showHiddenTracks() {
     const n = state.project.tracks.filter(t => t.hidden).length;
     if (!n) return;
@@ -9776,7 +9836,9 @@ function openTrackContextMenu(x, y, idx, t) {
         ]},
         { label: 'Réglages', children: [
             { label: t.locked ? 'Déverrouiller la piste' : 'Verrouiller la piste', action: () => toggleTrackLocked(t) },
-            { label: t.hidden ? 'Afficher la piste' : 'Masquer la piste', action: () => toggleTrackHidden(t) }
+            { label: t.hidden ? 'Afficher la piste' : 'Masquer la piste', action: () => toggleTrackHidden(t) },
+            { label: t.notes ? 'Notes de la piste (modifier)…' : 'Notes de la piste…', action: () => openTrackNotesPanel(t, x, y) },
+            { label: t.delayMs ? `Délai de piste : ${t.delayMs > 0 ? '+' : ''}${String(t.delayMs).replace('.', ',')} ms…` : 'Délai de piste…', action: () => openTrackDelayPanel(t, x, y) }
         ]},
         { label: 'Changer la couleur', submenu: COLORS.map(c => ({ color: c, action: () => { pushUndo(); t.color = c; renderAll(); saveProject(); } })) }
     ].filter(Boolean);
@@ -9910,8 +9972,9 @@ async function joinSelectedClips(trackIdx, clipIdx, opts = {}) {
     const t = state.project.tracks[trackIdx];
     const cs = (opts.single ? [t.clips[clipIdx]] : clipsActedOn(trackIdx, clipIdx)).filter(c => c && t.clips.includes(c));
     if (cs.length < (opts.single ? 1 : 2)) { flash('Choisis au moins deux régions de la même piste (Shift + clic, ou ⌘A) puis Joindre'); return; }
-    if (cs.some(c => c.midi)) { flash('Cette fonction marche sur les régions audio (pas encore sur les notes)'); return; }
     if (cs.some(c => clipIsLocked(c))) return;
+    if (cs.every(c => c.midi) && !opts.single) return joinMidiClips(t, cs);
+    if (cs.some(c => c.midi)) { flash(opts.single ? 'Une région de notes est déjà « réelle » : rien à convertir' : 'Joindre : choisis soit des régions audio, soit des régions de notes (pas les deux)'); return; }
     flash(opts.single ? 'Conversion en cours…' : 'Jonction en cours…');
     try {
         const t0 = Math.min(...cs.map(c => c.start)), t1 = Math.max(...cs.map(clipEndOf));
@@ -9940,6 +10003,35 @@ async function joinSelectedClips(trackIdx, clipIdx, opts = {}) {
         console.error(err);
         flash('La jonction n\'a pas marché — rien n\'a été modifié');
     }
+}
+// Joindre des régions de notes : une seule région qui contient toutes les notes à leur place (répétitions et coupes comprises)
+async function joinMidiClips(t, cs) {
+    if (new Set(cs.map(c => c.midi.inst)).size > 1) { flash('Ces régions jouent des instruments différents : impossible de les joindre'); return; }
+    const bpm = state.project.bpm, spb = 60 / bpm;
+    const t0 = Math.min(...cs.map(c => c.start)), t1 = Math.max(...cs.map(clipEndOf));
+    const notes = [];
+    cs.forEach(c => {
+        const off = c.offset || 0, end = clipEndOf(c);
+        for (let base = c.start; base < end - 1e-6; base += c.duration) {
+            c.midi.notes.forEach(n => {
+                const rel = n.s * spb - off;   // place de la note dans ce tour de la région
+                if (rel < -1e-6 || rel >= c.duration - 1e-6) return;
+                const abs = base + rel; if (abs >= end - 1e-6) return;
+                const d = Math.min(n.d * spb, end - abs, c.duration - rel);
+                notes.push({ ...n, s: Math.round((abs - t0) / spb * 1e6) / 1e6, d: Math.max(0.01, Math.round(d / spb * 1e6) / 1e6) });
+            });
+        }
+    });
+    notes.sort((a, b) => a.s - b.s || a.p - b.p);
+    pushUndo();
+    const clip = { start: t0, duration: t1 - t0, offset: 0, name: (cs[0].name || t.name) + ' (joint)', color: cs[0].color };
+    await bakeMidiClip(clip, { inst: cs[0].midi.inst, beats: (t1 - t0) / spb, notes }, bpm);
+    t.clips = t.clips.filter(c => !cs.includes(c));
+    t.clips.push(clip);
+    t.clips.sort((a, b) => a.start - b.start);
+    state.selectedClip = null; state.selectedClips.clear();
+    renderAll(); saveProject(); refreshPlaybackSoon();
+    flash(`✓ ${cs.length} régions jointes en une seule — ⌘Z pour revenir en arrière`);
 }
 // Décaler les régions choisies de quelques millisecondes (recaler finement une prise)
 function nudgeClipsMs(clips, ms) {

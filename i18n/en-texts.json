@@ -1064,6 +1064,20 @@
   "Afficher la piste": "Show the track",
   "Inverser la phase (Ø)": "Invert the phase (Ø)",
   "Phase : remettre normale (Ø)": "Phase: back to normal (Ø)",
+  "Délai de piste…": "Track delay…",
+  "Notes de la piste…": "Track notes…",
+  "Notes de la piste (modifier)…": "Track notes (edit)…",
+  "Notes de la piste enregistrées": "Track notes saved",
+  "Notes de la piste effacées": "Track notes cleared",
+  "Enregistrer": "Save",
+  "Remettre à 0": "Reset to 0",
+  "Appliquer": "Apply",
+  "Délai": "Delay",
+  "Délai entre −500 et +500 ms": "Delay between −500 and +500 ms",
+  "Ce que tu veux retenir sur cette piste (réglages, idées, à refaire…)": "What you want to remember about this track (settings, ideas, to redo…)",
+  "Ces régions jouent des instruments différents : impossible de les joindre": "These regions play different instruments: they can't be joined",
+  "Une région de notes est déjà « réelle » : rien à convertir": "A notes region is already “real”: nothing to convert",
+  "Joindre : choisis soit des régions audio, soit des régions de notes (pas les deux)": "Join: choose either audio regions or notes regions (not both)",
   "Ce clip est silencieux — il n'y a rien à normaliser": "This clip is silent — there is nothing to normalize",
   "Cette fonction marche sur les régions audio (pas encore sur les notes)": "This works on audio regions (not on notes yet)",
   "Choisis au moins deux régions de la même piste (Shift + clic, ou ⌘A) puis Joindre": "Choose at least two regions on the same track (Shift + click, or ⌘A), then Join",
@@ -1541,6 +1555,26 @@
   [
    "Import impossible : (.+)",
    "Import failed: $1"
+  ],
+  [
+   "Délai de piste : (.+?) ms…",
+   "Track delay: $1 ms…"
+  ],
+  [
+   "Délai de « (.+?) » : (.+?) ms",
+   "Delay of “$1”: $2 ms"
+  ],
+  [
+   "Délai de « (.+?) » retiré",
+   "Delay of “$1” removed"
+  ],
+  [
+   "Délai de piste — (.+?)",
+   "Track delay — $1"
+  ],
+  [
+   "Notes — (.+?)",
+   "Notes — $1"
   ],
   [
    "Région décalée de (.+?) ms",

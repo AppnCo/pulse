@@ -3599,3 +3599,5 @@ body.automation-mode .track-item .t-auto .auto-chip { max-width: 150px; height: 
 .is-hidden-track { display: none !important; }
 .track-item.is-locked-track { position: relative; }
 .track-item.is-locked-track::after { content: '🔒'; position: absolute; right: 6px; top: 3px; font-size: 11px; opacity: .75; pointer-events: none; }
+.track-item.has-notes .track-name::after { content: ' 📝'; font-size: 10px; opacity: .7; }
+.track-notes-panel .tn-txt { width: 100%; box-sizing: border-box; background: var(--bg-1, #120b1f); color: var(--text-1, #eee); border: 1px solid rgba(255,255,255,.12); border-radius: 8px; padding: 8px; font: 13px/1.4 inherit; resize: vertical; }

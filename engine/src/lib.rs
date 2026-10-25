@@ -773,6 +773,22 @@ mod tests {
         assert!((c + 13.47).abs() < 0.05, "gain 0 : rien ne bouge (−13,47) : {c}");
     }
 
+    /// Délai de piste : le son est décalé, pas les régions — mêmes chiffres que tests/scenarios/delai-piste.mjs.
+    #[test]
+    fn delai_de_piste() {
+        let sr = SR as usize;
+        let pic = |delay: f64| {
+            let p: Project = serde_json::from_str(&format!(r#"{{"bpm":120,"tracks":[{{"volume":100,"delayMs":{delay},"clips":[{{"id":"clic","start":1,"duration":1}}]}}]}}"#)).unwrap();
+            let mut buf = vec![0.0f32; sr]; buf[100] = 0.8;
+            let media = Media::from([("clic".to_owned(), Source { sample_rate: SR, channels: vec![buf] })]);
+            let (l, _) = render(&p, &media, &RenderOptions { sample_rate: SR, only_track: Some(0), ..Default::default() });
+            l.iter().enumerate().fold((0, 0.0f32), |(k, m), (i, v)| if v.abs() > m { (i, v.abs()) } else { (k, m) }).0
+        };
+        let v = [pic(0.0), pic(10.0), pic(-10.0)];
+        println!("délai de piste : {v:?}");
+        assert_eq!(v, [48100, 48580, 47620], "navigateur : 48 100 / 48 580 / 47 620");
+    }
+
     /// Limiteur : styles Transparent / Doux / Franc — mêmes chiffres que tests/scenarios/limiteur-styles.mjs.
     #[test]
     fn limiteur_styles() {

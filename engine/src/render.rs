@@ -115,7 +115,24 @@ fn aux_sends(project: &Project, sends: &HashMap<String, f64>, auto: &crate::mode
         .collect()
 }
 
+/// Délai de piste : copie du projet où les régions des pistes à délai sont décalées (même calcul que withTrackDelays dans audio.js)
+fn with_track_delays(project: &Project) -> Option<Project> {
+    if !project.tracks.iter().any(|t| t.delay_ms.unwrap_or(0.0) != 0.0) { return None; }
+    let mut p = project.clone();
+    for t in &mut p.tracks {
+        let d = t.delay_ms.unwrap_or(0.0) / 1000.0;
+        if d == 0.0 { continue; }
+        for c in &mut t.clips {
+            c.start += d;
+            if let Some(le) = c.loop_end.as_mut() { *le += d; }
+        }
+    }
+    Some(p)
+}
+
 pub fn render(project: &Project, media: &Media, opts: &RenderOptions) -> (Vec<f32>, Vec<f32>) {
+    let shifted = with_track_delays(project);
+    let project = shifted.as_ref().unwrap_or(project);
     let sr = opts.sample_rate as f64;
     let (from, to) = opts.range.unwrap_or((0.0, project.end()));
     // Queue : comme le navigateur, on laisse mourir les échos (4 s) ou la reverb (2,5 s) quand on rend tout le projet

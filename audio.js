@@ -1696,7 +1696,17 @@ window.PulseAudio = (function() {
         return (clip.loopEnd && clip.loopEnd > natural) ? clip.loopEnd : natural;
     }
 
+    // Délai de piste (`track.delayMs`, + = plus tard, − = plus tôt, comme le réglage « Délai » de Logic) : le son de la piste est décalé,
+    // pas ses régions à l'écran ni son automation. Même calcul dans render.rs (with_track_delays).
+    function withTrackDelays(project) {
+        if (!project || !(project.tracks || []).some(t => t.delayMs)) return project;
+        return { ...project, tracks: project.tracks.map(t => {
+            const d = (t.delayMs || 0) / 1000; if (!d) return t;
+            return { ...t, clips: (t.clips || []).map(c => ({ ...c, start: c.start + d, ...(c.loopEnd ? { loopEnd: c.loopEnd + d } : {}) })) };
+        }) };
+    }
     function projectEndSec(project, onlyTrack = null) {
+        project = withTrackDelays(project);
         let end = 0;
         project.tracks.forEach((t, i) => {
             if (onlyTrack !== null && i !== onlyTrack) return;
@@ -1712,6 +1722,7 @@ window.PulseAudio = (function() {
     //   fromTime = position projet de départ, t0 = temps contexte correspondant
     //   live     = garde les pistes mutées dans le graphe (gain 0) pour mute/solo à chaud + VU-mètres
     function buildGraph(actx, project, dest, opts) {
+        project = withTrackDelays(project);
         const { fromTime = 0, t0 = 0, endTime = Infinity, onlyTrack = null, live = false } = opts;
         const sources = [];
 

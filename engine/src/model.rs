@@ -44,6 +44,8 @@ pub struct Send {
 #[serde(rename_all = "camelCase", default)]
 pub struct Track {
     pub name: String,
+    /// Délai de piste en ms (+ = plus tard, − = plus tôt) : décale le son, pas l'automation (comme audio.js)
+    pub delay_ms: Option<f64>,
     pub volume: Option<f64>, // 0–100, défaut 100 (0 dB)
     pub pan: Option<f64>,    // -100 … 100
     /// Piste forcée en mono (les deux côtés mélangés avant les effets), comme le bouton Mono / Stéréo de Logic
