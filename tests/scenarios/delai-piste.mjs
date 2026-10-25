@@ -8,7 +8,7 @@ export default async ({ ev, nav, send, sleep, check }) => {
     const ctx=await PulseAudio.init(); const sr=48000;
     const b=ctx.createBuffer(1,sr,sr); b.getChannelData(0)[100]=0.8; PulseAudio.registerBuffer('clic',b);   // un clic 100 échantillons après le début
     const at=async(delayMs)=>{ const p={buses:[],sends:[],tracks:[{volume:100,delayMs,clips:[{id:'clic',start:1,duration:1}]}]};
-      const x=(await ctx.decodeAudioData(await (await PulseAudio.exportTrackWav(p,0)).arrayBuffer())).getChannelData(0);
+      const x=(await new OfflineAudioContext(1,1,48000).decodeAudioData(await (await PulseAudio.exportTrackWav(p,0)).arrayBuffer())).getChannelData(0);
       let k=0; for(let i=0;i<x.length;i++) if(Math.abs(x[i])>Math.abs(x[k])) k=i; return k; };
     const t=state.project.tracks[0]; t.clips=[{id:'clic',start:1,duration:1,offset:0,name:'c'}]; renderAll();
     openTrackContextMenu(300,200,0,t); await new Promise(r=>setTimeout(r,100));

@@ -3569,13 +3569,16 @@ async function maybeStartBgCapture() {
     if (!state.playing) finalizeCapture();
 }
 
+// Enregistrement en boucle (Réglages, allumé par défaut) : avec une boucle allumée, la prise continue à chaque tour
+function loopRecOn() { try { return localStorage.getItem('pulse_loop_rec') !== '0'; } catch { return true; } }
 function punchIn(inSec, zoneEnd = null) {
     const cap = state._cap;
     const t = state.project.tracks[cap.trackIdx];
     const livingClip = { id: cap.id, name: '●REC', start: inSec, duration: 0.05, recording: true };
     t.clips = t.clips || [];
     t.clips.push(livingClip);
-    cap.regions.push({ clip: livingClip, in: inSec, out: null });
+    const lin = PulseAudio.getRecLinearPosition ? PulseAudio.getRecLinearPosition() - (state.playing ? PulseAudio.getPlaybackPosition() : inSec) + inSec : inSec;
+    cap.regions.push({ clip: livingClip, in: inSec, inLin: lin, out: null });
     state._livingClip = { trackIdx: cap.trackIdx, clip: livingClip };
     state.recording = true;
     document.getElementById('btnRec').classList.add('active');
@@ -3598,7 +3601,12 @@ function closeOpenRegion() {
     let out = state.playing ? PulseAudio.getPlaybackPosition() : state.playhead;
     if (state._punch) out = Math.min(out, state._punch.end);
     region.out = out;
-    lc.duration = Math.max(0.01, out - region.in);
+    if (PulseAudio.getRecWraps && state.loop) {
+        const outLin = PulseAudio.getRecLinearPosition();
+        const wraps = PulseAudio.getRecWraps().filter(w => w > region.inLin + 1e-3 && w < outLin - 1e-3);
+        if (wraps.length) { region.outLin = outLin; region.wraps = wraps; region.loop = { a: Math.min(state.loop.start, state.loop.end), b: Math.max(state.loop.start, state.loop.end) }; }
+    }
+    lc.duration = Math.max(0.01, out - (region.wraps ? lc.start : region.in));
     lc.pending = true;
     const owner = state.project.tracks.find(tr => (tr.clips || []).includes(lc));
     lc.name = (owner && owner.name) || 'Voix';
@@ -3759,6 +3767,34 @@ async function _finalizeCapture() {
     let aside = 0;
     for (const r of regions) {
         const clip = r.clip;
+        if (r.wraps && r.wraps.length) {
+            // Prise en boucle : un morceau par tour, sur le temps continu de la capture. Le dernier tour passe devant, les autres sont rangés derrière (A, B, C…)
+            const segs = []; let x0 = r.inLin;
+            r.wraps.forEach(w => { segs.push([x0, w]); x0 = w; });
+            segs.push([x0, r.outLin]);
+            const passes = segs.map(([u, v], j) => {
+                const s0 = Math.max(u, capStart), s1 = Math.min(v, capEnd);
+                return { start: j ? r.loop.a + (s0 - u) : r.in + (s0 - r.inLin), dur: s1 - s0, off: s0 - capStart };
+            }).filter(p => p.dur >= 0.05);
+            if (!passes.length) { t.clips = t.clips.filter(c => c !== clip); continue; }
+            ensureTakeNumbers(t, clip);
+            const nums = passes.map(() => ++t.takeSeq);
+            // devant : le dernier tour COMPLET (si on a arrêté au milieu d'un tour, ce bout reste rangé derrière avec sa lettre)
+            const L = r.loop.b - r.loop.a, isFull = (p) => p.dur >= 0.9 * L;
+            let fi = passes.length - 1;
+            if (!isFull(passes[fi])) { for (let k = fi - 1; k >= 0; k--) if (isFull(passes[k])) { fi = k; break; } }
+            const last = passes[fi];
+            Object.assign(clip, { start: last.start, offset: last.off, duration: last.dur, peaks, take: nums[fi], name: t.name || 'Voix' });
+            delete clip.recording; delete clip.pending;
+            if (recMode() === 'takes') {
+                const n = setAsideRange(t, r.loop.a, r.loop.b, clip, true);
+                if (n > 0) { clip.fadeIn = TAKE_XFADE; clip.fadeOut = TAKE_XFADE; aside += n; }
+            }
+            t.takes = t.takes || [];
+            passes.forEach((p, k) => { if (k === fi) return; t.takes.push({ id: cap.id, name: t.name || 'Voix', start: p.start, duration: p.dur, offset: p.off, peaks, take: nums[k] }); aside++; });
+            done.push(clip);
+            continue;
+        }
         const a = Math.max(r.in, capStart), b = Math.min(r.out, capEnd);
         if (b - a < 0.05) { t.clips = t.clips.filter(c => c !== clip); continue; }
         clip.start = a;
@@ -3835,21 +3871,27 @@ function tick() {
     // Loop region : si on dépasse end, on revient à start
     // Guard !state.recording : on ne coupe pas un enregistrement en cours
     // le moteur prépare lui-même le tour suivant (boucle sans trou) ; s'il n'a pas pu (boucle trop courte, changée au dernier moment), on saute avec un fondu
-    if (PulseAudio.setLoop) PulseAudio.setLoop(state.looping && state.loop && !state.recording && !state._cap ? state.loop : null);
-    if (state.looping && state.loop && !state.recording) {
+    // pendant une prise : enregistrement en boucle (chaque tour devient une prise A, B, C… à l'arrêt) ; écoute seule avec capture de fond : comme avant
+    const loopRec = state.recording && loopRecOn();
+    if (PulseAudio.setLoop) PulseAudio.setLoop(state.looping && state.loop && (state.recording ? loopRec : !state._cap) ? state.loop : null);
+    if (state.looping && state.loop && (!state.recording || loopRec)) {
         const loopEnd = Math.max(state.loop.start, state.loop.end);
         const loopStart = Math.min(state.loop.start, state.loop.end);
         if (state.playhead >= loopEnd) {
             const engineLoops = PulseAudio.loopScheduled && PulseAudio.loopScheduled();
+            if (state.recording && !engineLoops) { /* boucle trop courte pour tourner pendant la prise : on continue tout droit */ }
+            else {
             state.playhead = loopStart;
             state.startTime = performance.now() - loopStart * 1000;
-            if (state._cap) finalizeCapture();
+            if (state.recording && state._livingClip) { state._livingClip.clip.start = loopStart; renderTimelineTracks(); }   // le clip rouge repart du début de boucle
+            if (state._cap && !state.recording) finalizeCapture();
             if (!engineLoops) PulseAudio.play(state.project, loopStart, { smooth: true, jump: true });   // le tour de boucle se fond (plus de coupure nette) ; hors lecture, play() coupe comme avant
             if (state.metronome) PulseAudio.startMetronome(state.project.bpm, loopStart);
             updatePlayhead();
             updateChrono();
             requestAnimationFrame(tick);
             return;
+            }
         }
     } else if (!state.recording && !(state._cap && state._cap.regions.length)) {
         // Comme Logic : la lecture ne s'arrête plus toute seule à la fin des régions (on garde un blanc pour poser une idée) ; c'est Espace qui arrête.

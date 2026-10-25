@@ -9,7 +9,7 @@ export default async ({ ev, nav, send, sleep }) => {
     const ctx=await PulseAudio.init(); const sr=48000; const b=ctx.createBuffer(1,sr*4,sr),d=b.getChannelData(0);
     for(let i=0;i<d.length;i++)d[i]=0.7*Math.sin(2*Math.PI*300*i/sr); PulseAudio.registerBuffer('ap',b);
     const seg=async(tr)=>{ const p={buses:[],sends:[],tracks:[{volume:100,clips:[{id:'ap',start:0,duration:4}],...tr}]};
-      const x=(await ctx.decodeAudioData(await (await PulseAudio.exportTrackWav(p,0)).arrayBuffer())).getChannelData(0);
+      const x=(await new OfflineAudioContext(1,1,48000).decodeAudioData(await (await PulseAudio.exportTrackWav(p,0)).arrayBuffer())).getChannelData(0);
       const r=(a,z)=>{let s=0; for(let i=a*sr;i<z*sr;i++)s+=x[i]*x[i]; return 20*Math.log10(Math.sqrt(s/((z-a)*sr))+1e-9);}; return [r(0.3,1.2), r(2.8,3.7)]; };
     const res={};
     res.comp=await seg({effects:['comp'],effectParams:{comp:{threshold:-20,ratio:8,makeup:0}},automation:{'fx:comp:threshold':{points:${ramp}}}});

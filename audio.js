@@ -43,6 +43,8 @@ window.PulseAudio = (function() {
     const fading = [];      // anciens montages en train de s'éteindre
     // Boucle sans trou : le tour suivant est monté ~250 ms avant la fin de boucle et démarre pile à la fin (fondu de 4 ms)
     let loopCfg = null, loopTimer = null, loopSwapTimer = null, loopNext = null, lastPlayProject = null;
+    // Enregistrement en boucle : instants des tours (temps « linéaire » de la capture) et piste à taire à chaque tour
+    let recWraps = [], recMute = null;
     let playbackStartCtxTime = 0;
     let playbackStartProjectTime = 0;
     let isPlaying = false;
@@ -1381,6 +1383,7 @@ window.PulseAudio = (function() {
         recorderStartSec = projectStartSec;
         recorderStartTs = ctx.currentTime;
         recAlign = isPlaying ? { c: playbackStartCtxTime, p: playbackStartProjectTime } : null;
+        recWraps = []; recMute = null;
 
         let usePcm = true;
         try { await ensureWorklet(); } catch (err) { console.warn('Worklet KO, fallback MediaRecorder', err); usePcm = false; }
@@ -2049,7 +2052,8 @@ window.PulseAudio = (function() {
     }
     function armLoop() {
         clearTimeout(loopTimer); loopTimer = null;
-        if (!loopCfg || !isPlaying || nativeOn || recNode || recorder || !lastPlayProject || loopNext) return;
+        // pendant une prise, la boucle continue (enregistrement en boucle) si la capture est calée sur la lecture
+        if (!loopCfg || !isPlaying || nativeOn || ((recNode || recorder) && !recAlign) || !lastPlayProject || loopNext) return;
         const { a, b } = loopCfg, pos = getPlaybackPosition();
         if (b - a < 0.25 || pos >= b - 0.15) return;   // trop court ou trop tard : la page fait le saut elle-même (avec fondu)
         const tEnd = ctx.currentTime + (b - pos);
@@ -2060,6 +2064,8 @@ window.PulseAudio = (function() {
             const XF = 0.004, pass = buildPass(lastPlayProject, a, tEnd);
             pass.out.gain.setValueAtTime(0, 0); pass.out.gain.setValueAtTime(0, tEnd); pass.out.gain.linearRampToValueAtTime(1, tEnd + XF);
             if (activeOut) { activeOut.gain.setValueAtTime(1, tEnd); activeOut.gain.linearRampToValueAtTime(0, tEnd + XF); }
+            // prise en boucle : l'ancienne prise de la piste enregistrée reste muette à chaque tour
+            if (recMute && (recNode || recorder)) { const n = liveNodes.get(recMute.idx); if (n) { n.gainNode.gain.cancelScheduledValues(0); n.gainNode.gain.setValueAtTime(0, 0); } }
             loopNext = { ...pass, c: tEnd, p: a };
             loopSwapTimer = setTimeout(() => {
                 loopSwapTimer = null;
@@ -2068,6 +2074,7 @@ window.PulseAudio = (function() {
                 old.tear = () => { tearPass(old); const k = fading.indexOf(old); if (k >= 0) fading.splice(k, 1); };
                 fading.push(old); old.timer = setTimeout(old.tear, 60);
                 activeSources = loopNext.src; activeGraph = loopNext.graph; activeOut = loopNext.out;
+                if ((recNode || recorder) && recAlign) recWraps.push(recAlign.p + (loopNext.c - recAlign.c));
                 playbackStartCtxTime = loopNext.c; playbackStartProjectTime = loopNext.p;
                 loopNext = null;
                 armLoop();
@@ -2083,6 +2090,9 @@ window.PulseAudio = (function() {
         armLoop();
     }
     // Vrai quand le prochain tour de boucle est déjà prévu par le moteur : la page ne doit pas relancer la lecture elle-même
+    function getRecWraps() { return recWraps.slice(); }
+    // Position sur le temps continu de la capture (ne revient pas en arrière à chaque tour de boucle)
+    function getRecLinearPosition() { return recAlign && ctx ? recAlign.p + (ctx.currentTime - recAlign.c) : getPlaybackPosition(); }
     function loopScheduled() { return !!(loopCfg && isPlaying && !nativeOn && (loopTimer || loopNext || loopSwapTimer)); }
 
     // opts.smooth : relance pour un changement d'effet pendant la lecture → fondu enchaîné de 20 ms entre l'ancien et le nouveau montage,
@@ -2663,6 +2673,7 @@ window.PulseAudio = (function() {
     // Coupe la lecture d'une piste entre deux positions du projet (ancienne prise muette pendant qu'on la refait).
     // toProj = null → reste coupée jusqu'au prochain refreshAudibility().
     function muteTrackBetween(trackIdx, fromProj, toProj = null) {
+        if (toProj === null && (recNode || recorder)) recMute = { idx: trackIdx };
         const n = liveNodes.get(trackIdx);
         if (!n || !isPlaying) return;
         const at = (p) => playbackStartCtxTime + (p - playbackStartProjectTime);
@@ -2887,7 +2898,7 @@ window.PulseAudio = (function() {
         getTrackAnalyser, getTrackMeters, trackChannelCount, getMasterAnalyser, getTrackSpectrum, getBusSpectrum, getCompReduction, setMasterVolume,
         setMetronome, setMetronomeBpm, setCountIn, isCountInEnabled,
         startMetronome, stopMetronome, playCountIn, stopCountIn, isCountingIn,
-        exportWav, exportTrackWav, audioBufferToWav, computeNormalizeGain, setLoop, loopScheduled,
+        exportWav, exportTrackWav, audioBufferToWav, computeNormalizeGain, setLoop, loopScheduled, getRecWraps, getRecLinearPosition,
         getContext: () => ctx
     };
 })();

@@ -9,7 +9,7 @@ export default async ({ ev, nav, send, sleep }) => {
     for(let i=0;i<d.length;i++)d[i]=0.3*Math.sin(2*Math.PI*300*i/sr); PulseAudio.registerBuffer('gp',b);
     const p={bpm:120,sends:[],buses:[{id:'g',name:'G',output:'master',volume:100,pan:0,automation:{pan:{points:[{t:0,v:0},{t:2,v:0},{t:2.5,v:1}]}}}],
       tracks:[{volume:100,output:'g',clips:[{id:'gp',start:0,duration:4}]}]};
-    const buf=await ctx.decodeAudioData(await (await PulseAudio.exportWav(p)).arrayBuffer());
+    const buf=await new OfflineAudioContext(1,1,48000).decodeAudioData(await (await PulseAudio.exportWav(p)).arrayBuffer());
     const L=buf.getChannelData(0), R=buf.getChannelData(1);
     const rms=(x,a,z)=>{let s=0; for(let i=a*sr;i<z*sr;i++)s+=x[i]*x[i]; return Math.sqrt(s/((z-a)*sr));};
     return JSON.stringify({debutL:rms(L,0.3,1.5),debutR:rms(R,0.3,1.5),finL:rms(L,2.8,3.7),finR:rms(R,2.8,3.7)});
