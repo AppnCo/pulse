@@ -3833,14 +3833,17 @@ function tick() {
 
     // Loop region : si on dépasse end, on revient à start
     // Guard !state.recording : on ne coupe pas un enregistrement en cours
+    // le moteur prépare lui-même le tour suivant (boucle sans trou) ; s'il n'a pas pu (boucle trop courte, changée au dernier moment), on saute avec un fondu
+    if (PulseAudio.setLoop) PulseAudio.setLoop(state.looping && state.loop && !state.recording && !state._cap ? state.loop : null);
     if (state.looping && state.loop && !state.recording) {
         const loopEnd = Math.max(state.loop.start, state.loop.end);
         const loopStart = Math.min(state.loop.start, state.loop.end);
         if (state.playhead >= loopEnd) {
+            const engineLoops = PulseAudio.loopScheduled && PulseAudio.loopScheduled();
             state.playhead = loopStart;
             state.startTime = performance.now() - loopStart * 1000;
             if (state._cap) finalizeCapture();
-            PulseAudio.play(state.project, loopStart, { smooth: true, jump: true });   // le tour de boucle se fond (plus de coupure nette) ; hors lecture, play() coupe comme avant
+            if (!engineLoops) PulseAudio.play(state.project, loopStart, { smooth: true, jump: true });   // le tour de boucle se fond (plus de coupure nette) ; hors lecture, play() coupe comme avant
             if (state.metronome) PulseAudio.startMetronome(state.project.bpm, loopStart);
             updatePlayhead();
             updateChrono();

@@ -41,6 +41,8 @@ window.PulseAudio = (function() {
     let activeGraph = [];   // tous les noeuds de la lecture en cours, débranchés à l'arrêt
     let activeOut = null;   // sortie (gain) du montage en cours, pour le fondu enchaîné quand on change un effet
     const fading = [];      // anciens montages en train de s'éteindre
+    // Boucle sans trou : le tour suivant est monté ~250 ms avant la fin de boucle et démarre pile à la fin (fondu de 4 ms)
+    let loopCfg = null, loopTimer = null, loopSwapTimer = null, loopNext = null, lastPlayProject = null;
     let playbackStartCtxTime = 0;
     let playbackStartProjectTime = 0;
     let isPlaying = false;
@@ -2008,6 +2010,70 @@ window.PulseAudio = (function() {
         }, 250);
     }
 
+    // Monte un passage de lecture complet (sources + effets) dans sa propre sortie, départ à t0 (temps du contexte)
+    function buildPass(project, fromTime, t0) {
+        const out = ctx.createGain(); out.connect(masterGain);
+        const made = new Set(), protoConnect = AudioNode.prototype.connect;
+        AudioNode.prototype.connect = function (...a) { made.add(this); return protoConnect.apply(this, a); };
+        let src;
+        try { src = buildGraph(ctx, project, out, { fromTime, t0, live: true }); }
+        finally { AudioNode.prototype.connect = protoConnect; }
+        made.delete(masterGain); made.delete(out);
+        return { src, graph: [...made], out };
+    }
+    function tearPass(o) {
+        o.src.forEach(x => { try { x.stop(); } catch {} });
+        o.graph.forEach(n => { try { n.disconnect(); } catch {} });
+        try { o.out.disconnect(); } catch {}
+    }
+    // Annule un tour de boucle déjà monté (boucle changée, saut, arrêt) : le passage en cours reprend son volume
+    function cancelLoopNext() {
+        clearTimeout(loopTimer); loopTimer = null;
+        clearTimeout(loopSwapTimer); loopSwapTimer = null;
+        if (loopNext) {
+            tearPass(loopNext);
+            if (activeOut) { activeOut.gain.cancelScheduledValues(loopNext.c - 1e-4); activeOut.gain.setValueAtTime(1, Math.max(ctx.currentTime, loopNext.c - 1e-4)); }
+            loopNext = null;
+        }
+    }
+    function armLoop() {
+        clearTimeout(loopTimer); loopTimer = null;
+        if (!loopCfg || !isPlaying || nativeOn || recNode || recorder || !lastPlayProject || loopNext) return;
+        const { a, b } = loopCfg, pos = getPlaybackPosition();
+        if (b - a < 0.25 || pos >= b - 0.15) return;   // trop court ou trop tard : la page fait le saut elle-même (avec fondu)
+        const tEnd = ctx.currentTime + (b - pos);
+        loopTimer = setTimeout(() => {
+            loopTimer = null;
+            if (!isPlaying || !loopCfg || loopCfg.a !== a || loopCfg.b !== b || loopNext) return;
+            if (tEnd - ctx.currentTime < 0.03) return;
+            const XF = 0.004, pass = buildPass(lastPlayProject, a, tEnd);
+            pass.out.gain.setValueAtTime(0, 0); pass.out.gain.setValueAtTime(0, tEnd); pass.out.gain.linearRampToValueAtTime(1, tEnd + XF);
+            if (activeOut) { activeOut.gain.setValueAtTime(1, tEnd); activeOut.gain.linearRampToValueAtTime(0, tEnd + XF); }
+            loopNext = { ...pass, c: tEnd, p: a };
+            loopSwapTimer = setTimeout(() => {
+                loopSwapTimer = null;
+                if (!loopNext) return;
+                const old = { src: activeSources, graph: activeGraph, out: activeOut };
+                old.tear = () => { tearPass(old); const k = fading.indexOf(old); if (k >= 0) fading.splice(k, 1); };
+                fading.push(old); old.timer = setTimeout(old.tear, 60);
+                activeSources = loopNext.src; activeGraph = loopNext.graph; activeOut = loopNext.out;
+                playbackStartCtxTime = loopNext.c; playbackStartProjectTime = loopNext.p;
+                loopNext = null;
+                armLoop();
+            }, Math.max(0, (tEnd - ctx.currentTime) * 1000 + 20));
+        }, Math.max(0, (b - pos - 0.25) * 1000));
+    }
+    // La page indique la boucle à chaque image (null = pas de boucle) ; on ne remonte le tour suivant que si elle change
+    function setLoop(l) {
+        const n = l ? { a: Math.min(l.start, l.end), b: Math.max(l.start, l.end) } : null;
+        if ((!n && !loopCfg) || (n && loopCfg && Math.abs(n.a - loopCfg.a) < 1e-6 && Math.abs(n.b - loopCfg.b) < 1e-6)) return;
+        loopCfg = n;
+        cancelLoopNext();
+        armLoop();
+    }
+    // Vrai quand le prochain tour de boucle est déjà prévu par le moteur : la page ne doit pas relancer la lecture elle-même
+    function loopScheduled() { return !!(loopCfg && isPlaying && !nativeOn && (loopTimer || loopNext || loopSwapTimer)); }
+
     // opts.smooth : relance pour un changement d'effet pendant la lecture → fondu enchaîné de 20 ms entre l'ancien et le nouveau montage,
     // même position, sans coupure (avant : le son s'arrêtait net, 50 ms de silence + un « clac » à chaque plugin ajouté)
     async function play(project, fromTime, opts = {}) {
@@ -2030,6 +2096,7 @@ window.PulseAudio = (function() {
             return;
         }
         await resumeIfNeeded();
+        cancelLoopNext();
         const smooth = !!(opts.smooth && isPlaying && activeOut && !(recNode || recorder));
         let old = null;
         const lead = smooth && !opts.jump ? 0.06 : 0.05;   // petit lookahead
@@ -2044,20 +2111,12 @@ window.PulseAudio = (function() {
 
         playbackStartCtxTime = ctx.currentTime + lead;
         playbackStartProjectTime = fromTime;
-        const gOut = ctx.createGain(); gOut.connect(masterGain);   // sortie de CE montage : c'est elle qu'on fond
-        // On note chaque noeud créé pour pouvoir TOUT débrancher à l'arrêt (sinon les anciens effets et analyseurs
-        // continuent de tourner dans le vide : à chaque ajout de plugin le son devenait plus lent et craquait)
-        const made = new Set(), protoConnect = AudioNode.prototype.connect;
-        AudioNode.prototype.connect = function (...a) { made.add(this); return protoConnect.apply(this, a); };
-        try {
-            activeSources = buildGraph(ctx, project, gOut, {
-                fromTime, t0: playbackStartCtxTime, live: true
-            });
-        } finally { AudioNode.prototype.connect = protoConnect; }
-        made.delete(masterGain); made.delete(gOut);
-        activeGraph = [...made];
-        activeOut = gOut;
+        // Chaque montage a sa propre sortie (c'est elle qu'on fond) ; on note chaque noeud créé pour pouvoir TOUT débrancher à l'arrêt
+        // (sinon les anciens effets et analyseurs continuent de tourner dans le vide : le son devenait plus lent et craquait)
+        const pass = buildPass(project, fromTime, playbackStartCtxTime), gOut = pass.out;
+        activeSources = pass.src; activeGraph = pass.graph; activeOut = gOut;
         isPlaying = true;
+        lastPlayProject = project;
         if (smooth) {
             const t0 = playbackStartCtxTime, XF = opts.jump ? 0.008 : 0.02, now = ctx.currentTime;
             gOut.gain.setValueAtTime(0, 0); gOut.gain.setValueAtTime(0, t0); gOut.gain.linearRampToValueAtTime(1, t0 + XF);
@@ -2070,10 +2129,12 @@ window.PulseAudio = (function() {
         }
         // Capture lancée juste avant la lecture : on la cale sur CE départ (et on n'y touche plus ensuite)
         if ((recNode || recorder) && !recAlign) recAlign = { c: playbackStartCtxTime, p: playbackStartProjectTime };
+        armLoop();
     }
 
     function stopAll() {
         if (nativeOn) { nativeOn = false; clearTimeout(nativeTimer); try { nativeBackend && nativeBackend.stop(); } catch {} }
+        if (loopNext || loopTimer || loopSwapTimer) { clearTimeout(loopTimer); clearTimeout(loopSwapTimer); loopTimer = loopSwapTimer = null; if (loopNext) { tearPass(loopNext); loopNext = null; } }
         fading.slice().forEach(o => { clearTimeout(o.timer); o.tear(); });   // un fondu en cours est coupé tout de suite à l'arrêt
         activeSources.forEach(s => {
             try { s.stop(); } catch {}
@@ -2088,6 +2149,7 @@ window.PulseAudio = (function() {
     function getPlaybackPosition() {
         if (nativeOn) return nativeFrom + (performance.now() - nativeWall) / 1000;
         if (!ctx) return 0;
+        if (loopNext && ctx.currentTime >= loopNext.c) return loopNext.p + (ctx.currentTime - loopNext.c);
         return playbackStartProjectTime + (ctx.currentTime - playbackStartCtxTime);
     }
 
@@ -2814,7 +2876,7 @@ window.PulseAudio = (function() {
         getTrackAnalyser, getTrackMeters, trackChannelCount, getMasterAnalyser, getTrackSpectrum, getBusSpectrum, getCompReduction, setMasterVolume,
         setMetronome, setMetronomeBpm, setCountIn, isCountInEnabled,
         startMetronome, stopMetronome, playCountIn, stopCountIn, isCountingIn,
-        exportWav, exportTrackWav, audioBufferToWav, computeNormalizeGain,
+        exportWav, exportTrackWav, audioBufferToWav, computeNormalizeGain, setLoop, loopScheduled,
         getContext: () => ctx
     };
 })();
