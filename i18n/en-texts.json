@@ -1039,6 +1039,38 @@
   "Réduction max": "Max reduction",
   "ENTRÉE": "INPUT",
   "Bientôt : plusieurs façons de réagir aux gros pics": "Coming soon: several ways to react to big peaks",
+  "Propre : ne se remarque pas (le réglage d'avant)": "Clean: you don't notice it (the previous setting)",
+  "Doux : la réduction arrive et repart en douceur, moins de pompage sur les basses": "Smooth: the reduction comes and goes gently, less pumping on the bass",
+  "Franc : attrape les pics au plus près, ça claque et c'est plus fort (un peu de couleur)": "Tight: catches the peaks as close as possible, punchy and louder (a bit of colour)",
+  "Édition": "Edit",
+  "Son": "Sound",
+  "Fondus": "Fades",
+  "Scinder ici": "Split here",
+  "Joindre les régions choisies": "Join the chosen regions",
+  "Répéter une fois de plus  (⌘R)": "Repeat once more  (⌘R)",
+  "Couper  (⌘X)": "Cut  (⌘X)",
+  "Copier  (⌘C)": "Copy  (⌘C)",
+  "Coller au curseur  (⌘V)": "Paste at the cursor  (⌘V)",
+  "Décaler de −10 ms": "Shift by −10 ms",
+  "Décaler de +10 ms": "Shift by +10 ms",
+  "Décaler de −1 ms": "Shift by −1 ms",
+  "Décaler de +1 ms": "Shift by +1 ms",
+  "Caler la boucle sur cette région  (U)": "Set the loop to this region  (U)",
+  "Verrouiller la région": "Lock the region",
+  "Déverrouiller la région": "Unlock the region",
+  "Verrouiller la piste": "Lock the track",
+  "Déverrouiller la piste": "Unlock the track",
+  "Masquer la piste": "Hide the track",
+  "Afficher la piste": "Show the track",
+  "Inverser la phase (Ø)": "Invert the phase (Ø)",
+  "Phase : remettre normale (Ø)": "Phase: back to normal (Ø)",
+  "Hauteur et vitesse": "Pitch and speed",
+  "Remettre la hauteur d'origine": "Back to the original pitch",
+  "Convertir en nouvelle prise (effets, fondus, répétitions compris)": "Convert to a new take (effects, fades and repeats included)",
+  "Boucler jusqu'à la région suivante": "Loop until the next region",
+  "Normaliser à −1 dB": "Normalize to −1 dB",
+  "Normaliser à −3 dB": "Normalize to −3 dB",
+  "Normaliser à −6 dB": "Normalize to −6 dB",
   "Pic réel : les crêtes entre les échantillons comptent aussi (calcul ×4). Ce que demandent Spotify et YouTube": "True peak: peaks between samples count too (4× calculation). What Spotify and YouTube require",
   "Lance la lecture : le son défile ici, et tu vois chaque pic que le limiteur retire": "Press play: the sound scrolls here and you see every peak the limiter removes",
   "Ducking": "Ducking",
@@ -1480,6 +1512,34 @@
   [
    "Import impossible : (.+)",
    "Import failed: $1"
+  ],
+  [
+   "Transposer de (.+?) demi-tons",
+   "Transpose by $1 semitones"
+  ],
+  [
+   "Transposer de (.+?) demi-ton",
+   "Transpose by $1 semitone"
+  ],
+  [
+   "Vitesse × (.+?) \\(deux fois plus lent\\)",
+   "Speed × $1 (twice as slow)"
+  ],
+  [
+   "Vitesse × (.+?) \\(deux fois plus vite\\)",
+   "Speed × $1 (twice as fast)"
+  ],
+  [
+   "Vitesse × (.+?)",
+   "Speed × $1"
+  ],
+  [
+   "Fondu d'entrée (.+?)",
+   "Fade in $1"
+  ],
+  [
+   "Fondu de sortie (.+?)",
+   "Fade out $1"
   ],
   [
    "Prise (.+?) — clique pour la remettre devant",

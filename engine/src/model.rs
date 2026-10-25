@@ -244,6 +244,8 @@ pub struct LimitParams {
     pub release: Option<f64>,
     pub lookahead: Option<f64>,
     pub tp: Option<f64>,
+    /// Style : 0 Transparent, 1 Doux, 2 Franc
+    pub style: Option<f64>,
 }
 
 /// Écho. `wet` et `feedback` en pourcentage ; le temps est soit `ms`, soit `beats` (nombre de temps, suit le tempo).

@@ -10,7 +10,7 @@ export default async (c) => {
   console.log('Mix Bus 1 à zéro, avant :', await ev(`(async()=>{${rms} return await m()})()`), '(attendu 0 : le son doit passer par Mix Bus 1)');
   const p = await pos(ev, '.track-item[data-i="1"]');
   await Ms.rclick(p.x, p.y); await sleep(150);
-  const it = JSON.parse(await ev(`JSON.stringify([...document.querySelectorAll('.track-ctx-menu .ctx-item')].filter(e=>/Sortir du groupe/.test(e.textContent)).map(e=>{const r=e.getBoundingClientRect(); return {x:r.left+r.width/2,y:r.top+r.height/2,t:e.textContent}}))`));
+  const it = JSON.parse(await ev(`JSON.stringify((()=>{const g=[...document.querySelectorAll('.track-ctx-menu .ctx-has-sub')].find(e=>/^\\s*Groupe/.test(e.textContent)); if(g) g.dispatchEvent(new MouseEvent('mouseenter',{bubbles:true})); return 0})() ? [] : [...document.querySelectorAll('.track-ctx-menu .ctx-item')].filter(e=>/Sortir du groupe/.test(e.textContent)).map(e=>{const r=e.getBoundingClientRect(); return {x:r.left+r.width/2,y:r.top+r.height/2,t:e.textContent}}))`));
   console.log('entrée:', JSON.stringify(it));
   await Ms.click(it[0].x, it[0].y); await sleep(400);
   console.log('groupes:', await ev(`JSON.stringify(state.project.buses.map(b=>b.id+'→'+b.output))`));

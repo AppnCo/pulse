@@ -773,6 +773,32 @@ mod tests {
         assert!((c + 13.47).abs() < 0.05, "gain 0 : rien ne bouge (−13,47) : {c}");
     }
 
+    /// Limiteur : styles Transparent / Doux / Franc — mêmes chiffres que tests/scenarios/limiteur-styles.mjs.
+    #[test]
+    fn limiteur_styles() {
+        let sr = SR as usize;
+        let run = |json: &str| {
+            let t: Track = serde_json::from_str(&format!(r#"{{"effects":["limit"],"effectParams":{{"limit":{json}}}}}"#)).unwrap();
+            let mut l: Vec<f32> = (0..sr).map(|i| ((if i < sr / 4 { 0.9 } else { 0.05 }) * (2.0 * std::f64::consts::PI * 100.0 * i as f64 / SR as f64).sin()) as f32).collect();
+            let mut r = l.clone();
+            crate::fx::Chain::for_track(&t, SR as f64, 120.0).process(&mut l, &mut r, false);
+            let rms = |a: f64, z: f64| {
+                let (i0, i1) = ((a * SR as f64).round() as usize, (z * SR as f64).round() as usize);
+                20.0 * ((l[i0..i1].iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / (i1 - i0) as f64).sqrt() + 1e-9).log10()
+            };
+            let pk = l.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+            [rms(0.05, 0.25), rms(0.26, 0.30), rms(0.40, 0.50), pk as f64]
+        };
+        let base = r#""gain":6,"ceiling":-3,"release":120"#;
+        let got = [run(&format!("{{{base}}}")), run(&format!("{{{base},\"style\":1}}")), run(&format!("{{{base},\"style\":2}}"))];
+        println!("limiteur styles : {got:.2?}");
+        let want = [[-6.01, -30.79, -25.09, 0.708], [-6.01, -31.12, -30.58, 0.708], [-6.01, -29.54, -23.30, 0.708]];
+        for (g, w) in got.iter().zip(want.iter()) {
+            for k in 0..3 { assert!((g[k] - w[k]).abs() < 0.1, "limiteur style : {g:?} (navigateur {w:?})"); }
+            assert!((g[3] - w[3]).abs() < 0.005, "crête : {g:?} (navigateur {w:?})");
+        }
+    }
+
     /// Gate : ratio (expandeur), genou, attaque, maintien, filtre du déclencheur — mêmes chiffres que tests/scenarios/gate-reglages.mjs.
     #[test]
     fn gate_reglages() {

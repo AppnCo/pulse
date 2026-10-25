@@ -39,6 +39,8 @@ window.PulseAudio = (function() {
     // Lecture
     let activeSources = [];
     let activeGraph = [];   // tous les noeuds de la lecture en cours, débranchés à l'arrêt
+    let activeOut = null;   // sortie (gain) du montage en cours, pour le fondu enchaîné quand on change un effet
+    const fading = [];      // anciens montages en train de s'éteindre
     let playbackStartCtxTime = 0;
     let playbackStartProjectTime = 0;
     let isPlaying = false;
@@ -932,9 +934,12 @@ window.PulseAudio = (function() {
                 const look = Math.max(0.1, Math.min(10, p.lookahead ?? 1.5)) / 1000;
                 this.L = Math.max(1, Math.round(look * sampleRate)) + (this.tp ? 8 : 0);   // le pic réel arrive ~8 échantillons plus tard
                 this.buf = [new Float32Array(this.L), new Float32Array(this.L)];
-                this.i = 0; this.env = 0; this.gain = 1;
-                this.att = 1 - Math.exp(-4 / Math.max(1, this.L - (this.tp ? 8 : 0)));
-                this.rel = 1 - Math.exp(-1 / (Math.max(1, Math.min(2000, p.release ?? 120)) / 1000 * sampleRate));
+                this.i = 0; this.env = 0; this.gain = 1; this.gain1 = 1;
+                // Style : 0 Transparent (comme avant) · 1 Doux (réduction lissée en deux étages, relâchement ×2,2) · 2 Franc (attaque serrée, relâchement ×0,45)
+                this.sty = p.style === 1 ? 1 : p.style === 2 ? 2 : 0;
+                this.rm = [1, 2.2, 0.45][this.sty];
+                this.att = 1 - Math.exp(-[4, 8, 10][this.sty] / Math.max(1, this.L - (this.tp ? 8 : 0)));
+                this.rel = 1 - Math.exp(-1 / (Math.max(1, Math.min(2000, p.release ?? 120)) * this.rm / 1000 * sampleRate));
                 this.hist = [new Float64Array(16), new Float64Array(16)];
                 this.live = !!p.live; this.cnt = 0; this.mIn = 0; this.mOut = 0; this.mGr = 1;
             }
@@ -958,7 +963,10 @@ window.PulseAudio = (function() {
                     if (pk > this.mIn) this.mIn = pk;
                     this.env = pk > this.env ? pk : this.env + (pk - this.env) * this.rel;
                     const target = this.env > this.thr ? this.thr / this.env : 1;
-                    this.gain += (target - this.gain) * (target < this.gain ? this.att : this.rel);
+                    if (this.sty === 1) {   // Doux : deux étages en série, la réduction arrive et repart sans à-coup
+                        this.gain1 += (target - this.gain1) * (target < this.gain1 ? this.att : this.rel);
+                        this.gain += (this.gain1 - this.gain) * (this.gain1 < this.gain ? this.att : this.rel);
+                    } else this.gain += (target - this.gain) * (target < this.gain ? this.att : this.rel);
                     if (this.gain < this.mGr) this.mGr = this.gain;
                     for (let ch = 0; ch < nc; ch++) {
                         let y = out[ch][i] * this.gain;
@@ -972,7 +980,7 @@ window.PulseAudio = (function() {
                 return true;
             }
         }
-        registerProcessor('pulse-limiter', pulseAuto(PulseLimiter, (s, v) => { if (v.gain !== undefined) s.g = Math.pow(10, v.gain / 20); if (v.ceiling !== undefined) s.thr = Math.min(1, Math.pow(10, v.ceiling / 20)); if (v.release !== undefined) s.rel = 1 - Math.exp(-1 / (Math.max(1, Math.min(2000, v.release)) / 1000 * sampleRate)); }));
+        registerProcessor('pulse-limiter', pulseAuto(PulseLimiter, (s, v) => { if (v.gain !== undefined) s.g = Math.pow(10, v.gain / 20); if (v.ceiling !== undefined) s.thr = Math.min(1, Math.pow(10, v.ceiling / 20)); if (v.release !== undefined) s.rel = 1 - Math.exp(-1 / (Math.max(1, Math.min(2000, v.release)) * s.rm / 1000 * sampleRate)); }));
 
         // Écho (delay) : le son revient après un temps choisi, de moins en moins fort et de plus en plus sourd.
         class PulseDelay extends AudioWorkletProcessor {
@@ -2000,7 +2008,9 @@ window.PulseAudio = (function() {
         }, 250);
     }
 
-    async function play(project, fromTime) {
+    // opts.smooth : relance pour un changement d'effet pendant la lecture → fondu enchaîné de 20 ms entre l'ancien et le nouveau montage,
+    // même position, sans coupure (avant : le son s'arrêtait net, 50 ms de silence + un « clac » à chaque plugin ajouté)
+    async function play(project, fromTime, opts = {}) {
         if (nativeBackend && !(recNode || recorder)) {
             stopAll();
             clearLiveNodes();
@@ -2020,35 +2030,55 @@ window.PulseAudio = (function() {
             return;
         }
         await resumeIfNeeded();
-        stopAll();
+        const smooth = !!(opts.smooth && isPlaying && activeOut && !(recNode || recorder));
+        let old = null;
+        const lead = smooth ? 0.06 : 0.05;   // petit lookahead
+        if (smooth) {
+            // la nouvelle lecture démarre là où le son SERA dans 60 ms ; l'ancienne continue jusqu'au fondu
+            fromTime = getPlaybackPosition() + lead;
+            old = { src: activeSources, graph: activeGraph, out: activeOut };
+            activeSources = []; activeGraph = []; activeOut = null;
+        } else stopAll();
         clearLiveNodes();
 
-        playbackStartCtxTime = ctx.currentTime + 0.05; // petit lookahead
+        playbackStartCtxTime = ctx.currentTime + lead;
         playbackStartProjectTime = fromTime;
+        const gOut = ctx.createGain(); gOut.connect(masterGain);   // sortie de CE montage : c'est elle qu'on fond
         // On note chaque noeud créé pour pouvoir TOUT débrancher à l'arrêt (sinon les anciens effets et analyseurs
         // continuent de tourner dans le vide : à chaque ajout de plugin le son devenait plus lent et craquait)
         const made = new Set(), protoConnect = AudioNode.prototype.connect;
         AudioNode.prototype.connect = function (...a) { made.add(this); return protoConnect.apply(this, a); };
         try {
-            activeSources = buildGraph(ctx, project, masterGain, {
+            activeSources = buildGraph(ctx, project, gOut, {
                 fromTime, t0: playbackStartCtxTime, live: true
             });
         } finally { AudioNode.prototype.connect = protoConnect; }
-        made.delete(masterGain);
+        made.delete(masterGain); made.delete(gOut);
         activeGraph = [...made];
+        activeOut = gOut;
         isPlaying = true;
+        if (smooth) {
+            const t0 = playbackStartCtxTime, XF = 0.02;
+            gOut.gain.setValueAtTime(0, 0); gOut.gain.setValueAtTime(0, t0); gOut.gain.linearRampToValueAtTime(1, t0 + XF);
+            old.out.gain.cancelScheduledValues(0); old.out.gain.setValueAtTime(1, t0); old.out.gain.linearRampToValueAtTime(0, t0 + XF);
+            const tear = () => { old.src.forEach(x => { try { x.stop(); } catch {} }); old.graph.forEach(n => { try { n.disconnect(); } catch {} }); try { old.out.disconnect(); } catch {} const k = fading.indexOf(old); if (k >= 0) fading.splice(k, 1); };
+            old.tear = tear; fading.push(old);
+            old.timer = setTimeout(tear, (lead + XF + 0.06) * 1000);
+        }
         // Capture lancée juste avant la lecture : on la cale sur CE départ (et on n'y touche plus ensuite)
         if ((recNode || recorder) && !recAlign) recAlign = { c: playbackStartCtxTime, p: playbackStartProjectTime };
     }
 
     function stopAll() {
         if (nativeOn) { nativeOn = false; clearTimeout(nativeTimer); try { nativeBackend && nativeBackend.stop(); } catch {} }
+        fading.slice().forEach(o => { clearTimeout(o.timer); o.tear(); });   // un fondu en cours est coupé tout de suite à l'arrêt
         activeSources.forEach(s => {
             try { s.stop(); } catch {}
         });
         activeSources = [];
         activeGraph.forEach(n => { try { n.disconnect(); } catch {} });
         activeGraph = [];
+        if (activeOut) { try { activeOut.disconnect(); } catch {} activeOut = null; }
         isPlaying = false;
     }
 
@@ -2423,7 +2453,7 @@ window.PulseAudio = (function() {
                 const lp = params.limit || {}, live = !!params.grKey && !(typeof OfflineAudioContext !== 'undefined' && actx instanceof OfflineAudioContext);
                 const node = new AudioWorkletNode(actx, 'pulse-limiter', {
                     numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCount: 2, channelCountMode: 'explicit',
-                    processorOptions: { ceiling: dbToLin(lp.ceiling ?? ceiling), gain: lp.gain || 0, release: lp.release, lookahead: lp.lookahead, tp: !!lp.tp, live, ...autoAll('limit') }
+                    processorOptions: { ceiling: dbToLin(lp.ceiling ?? ceiling), gain: lp.gain || 0, release: lp.release, lookahead: lp.lookahead, tp: !!lp.tp, style: lp.style || 0, live, ...autoAll('limit') }
                 });
                 if (live) { const key = params.grKey; node.port.onmessage = (e) => limLive.set(key, { ...e.data, ts: performance.now() }); }
                 connect(node);

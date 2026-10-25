@@ -1589,7 +1589,7 @@ impl Chain {
                 ("deess", "range") => if let Some(d) = &mut self.deess2 { d.range = v.clamp(0.0, 30.0); },
                 ("limit", k) => if let Some(l) = &mut self.limit {
                     match k { "ceiling" => l.thr = 10f64.powf(v / 20.0).min(1.0), "gain" => l.g = 10f64.powf(v / 20.0),
-                        "release" => l.rel = 1.0 - (-1.0 / (v.clamp(1.0, 2000.0) / 1000.0 * self.sr)).exp(), _ => {} }
+                        "release" => l.rel = 1.0 - (-1.0 / (v.clamp(1.0, 2000.0) * l.rm / 1000.0 * self.sr)).exp(), _ => {} }
                 },
                 ("deess", "amount") => if let Some(d) = &mut self.deess { let a = v.clamp(0.0, 100.0); d.max_red = a * 0.24; d.slope = a / 100.0 * 3.0; },
                 ("gate", k) => if let Some(g) = &mut self.gate {
@@ -1856,6 +1856,10 @@ pub struct Limiter {
     i: usize,
     env: f64,
     gain: f64,
+    /// Doux : premier étage de lissage de la réduction ; style (0 / 1 / 2) et facteur de relâchement
+    gain1: f64,
+    sty: u8,
+    rm: f64,
     att: f64,
     rel: f64,
 }
@@ -1870,6 +1874,10 @@ impl Limiter {
         let look = (p.lookahead.unwrap_or(1.5).clamp(0.1, 10.0)) / 1000.0;
         let base = ((look * sr).round() as usize).max(1);
         let l = base + if tp { 8 } else { 0 };
+        // Style : 0 Transparent · 1 Doux (deux étages, relâchement ×2,2) · 2 Franc (attaque serrée, relâchement ×0,45) — comme le worklet
+        let sty = match p.style.unwrap_or(0.0).round() as i64 { 1 => 1u8, 2 => 2u8, _ => 0u8 };
+        let rm = [1.0, 2.2, 0.45][sty as usize];
+        let an = [4.0, 8.0, 10.0][sty as usize];
         Self {
             thr: 10f64.powf(p.ceiling.unwrap_or(ceiling_db) / 20.0).min(1.0),
             g: 10f64.powf(p.gain.unwrap_or(0.0) / 20.0),
@@ -1880,8 +1888,11 @@ impl Limiter {
             i: 0,
             env: 0.0,
             gain: 1.0,
-            att: 1.0 - (-4.0 / base as f64).exp(),
-            rel: 1.0 - (-1.0 / (p.release.unwrap_or(120.0).clamp(1.0, 2000.0) / 1000.0 * sr)).exp(),
+            gain1: 1.0,
+            sty,
+            rm,
+            att: 1.0 - (-an / base as f64).exp(),
+            rel: 1.0 - (-1.0 / (p.release.unwrap_or(120.0).clamp(1.0, 2000.0) * rm / 1000.0 * sr)).exp(),
         }
     }
     pub fn tick(&mut self, x: &mut [f64; 2]) {
@@ -1907,7 +1918,13 @@ impl Limiter {
         self.i = (self.i + 1) % self.buf[0].len();
         self.env = if pk > self.env { pk } else { self.env + (pk - self.env) * self.rel };
         let target = if self.env > self.thr { self.thr / self.env } else { 1.0 };
-        self.gain += (target - self.gain) * if target < self.gain { self.att } else { self.rel };
+        if self.sty == 1 {
+            // Doux : deux étages en série, la réduction arrive et repart sans à-coup
+            self.gain1 += (target - self.gain1) * if target < self.gain1 { self.att } else { self.rel };
+            self.gain += (self.gain1 - self.gain) * if self.gain1 < self.gain { self.att } else { self.rel };
+        } else {
+            self.gain += (target - self.gain) * if target < self.gain { self.att } else { self.rel };
+        }
         x[0] = (d[0] * self.gain).clamp(-self.thr, self.thr);
         x[1] = (d[1] * self.gain).clamp(-self.thr, self.thr);
     }

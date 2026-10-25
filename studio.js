@@ -795,6 +795,8 @@ function renderTracksPanel() {
             t.isCapture ? 'is-capture' : '',
             isInstruTrack(t) ? 'is-instru' : '',
             t.armed ? 'is-armed' : '',
+            t.hidden ? 'is-hidden-track' : '',
+            t.locked ? 'is-locked-track' : '',
             t.muted ? 'is-muted' : '',
             t.solo ? 'is-solo' : '',
             trackGroup(t) ? 'in-group' : '',
@@ -866,7 +868,7 @@ function renderTimelineTracks() {
         const showRecHint = i === recTargetIdx && clips.length === 0 && !needsDropzone;
 
         return `${groupsStartingAt(i).map(g => renderGroupTimelineRow(g, timelineWidthPx)).join('')}
-        <div class="timeline-track ${isPendDel(t) ? 'pend-del' : ''} ${isInstru ? 'is-instru' : ''} ${isTrackFolded(t) ? 'is-group-collapsed' : ''}" data-i="${i}" style="width: ${timelineWidthPx}px${t.height ? `; --track-h: ${t.height}px` : ''}">
+        <div class="timeline-track ${isPendDel(t) ? 'pend-del' : ''} ${t.hidden ? 'is-hidden-track' : ''} ${t.locked ? 'is-locked-track' : ''} ${isInstru ? 'is-instru' : ''} ${isTrackFolded(t) ? 'is-group-collapsed' : ''}" data-i="${i}" style="width: ${timelineWidthPx}px${t.height ? `; --track-h: ${t.height}px` : ''}">
             ${clips.map((c, ci) => renderClip(t, c, ci)).join('')}
             ${needsDropzone ? renderInstruDropzone(i) : ''}
             ${showRecHint ? '<div class="track-empty-hint"><span class="rec-dot"></span>Appuie sur <kbd>R</kbd> pour t\'enregistrer ici</div>' : ''}
@@ -3527,6 +3529,7 @@ async function toggleRec() {
 // state._cap = { id, trackIdx, regions: [{ clip, in, out }] }
 // Une seule piste prête à enregistrer à la fois : armer celle-ci désarme les autres (y compris la piste Rec du modèle)
 function armTrackExclusive(idx) {
+    if (state.project.tracks[idx] && state.project.tracks[idx].locked) { flash('🔒 Piste verrouillée : déverrouille-la pour enregistrer dessus'); return; }
     state.project.tracks.forEach((t, k) => { t.armed = (k === idx); });
 }
 function recTargetIdx() {
@@ -4065,6 +4068,9 @@ function trimAtPlayhead(side) {
     if (!t) return;
     const ph = cutPointSec();
     const clips = t.clips || [];
+    // un verrou (piste ou région touchée par la coupe) arrête tout : rien ne se coupe par accident
+    const hit = clips.find(c => !c.recording && c.locked && (side === 'left' ? c.start < ph : clipEndOf(c) > ph));
+    if (t.locked || hit) { clipIsLocked(hit || clips[0] || {}); if (t.locked) flash('🔒 Piste verrouillée : rien n\'a été coupé'); return; }
     let touched = 0;
 
     const snap = JSON.stringify(state.project);   // « Annuler » n'est enregistré que si quelque chose a vraiment été coupé
@@ -6248,7 +6254,7 @@ function refreshPlaybackSoon() {
     clearTimeout(_fxRefreshTimer);
     _fxRefreshTimer = setTimeout(() => {
         if (!state.playing || state.recording) return;
-        PulseAudio.play(state.project, PulseAudio.getPlaybackPosition());
+        PulseAudio.play(state.project, PulseAudio.getPlaybackPosition(), { smooth: true });
     }, 120);
 }
 
@@ -7339,7 +7345,7 @@ function openLimiterPanel(trackIdx, anchorEl) {
         <div class="lim-face">
             <svg class="lim-svg" viewBox="0 0 ${W} ${H}"></svg>
             <div class="lim-fp">
-                <div class="lim-col"><span class="lim-t">Style</span><span class="lim-seg" data-tooltip="Bientôt : plusieurs façons de réagir aux gros pics"><span class="on">Transparent</span><span class="off">Doux</span><span class="off">Franc</span></span></div>
+                <div class="lim-col"><span class="lim-t">Style</span><span class="lim-seg lim-sty"><span data-sty="0" data-tooltip="Propre : ne se remarque pas (le réglage d'avant)">Transparent</span><span data-sty="1" data-tooltip="Doux : la réduction arrive et repart en douceur, moins de pompage sur les basses">Doux</span><span data-sty="2" data-tooltip="Franc : attrape les pics au plus près, ça claque et c'est plus fort (un peu de couleur)">Franc</span></span></div>
                 <div class="lim-sep"></div>
             </div>
         </div>
@@ -7358,6 +7364,7 @@ function openLimiterPanel(trackIdx, anchorEl) {
     const drawStatic = () => {
         panel.querySelector('.lim-c').textContent = f1(ceil0()) + ' dB';
         panel.querySelector('.lim-tp').classList.toggle('on', !!P().tp);
+        panel.querySelectorAll('.lim-sty span').forEach(el => el.classList.toggle('on', +el.dataset.sty === (P().style || 0)));
         kCeil.set(ceil0());
         draw();
     };
@@ -7418,6 +7425,11 @@ function openLimiterPanel(trackIdx, anchorEl) {
     });
     svg.addEventListener('dblclick', (e) => { if (e.target.closest('.lim-gain')) { P().gain = 0; commit(); draw(); } });
     panel.querySelector('.lim-tp').addEventListener('click', () => { P().tp = P().tp ? 0 : 1; commit(); drawStatic(); });
+    panel.querySelectorAll('.lim-sty span').forEach(el => el.addEventListener('click', () => {
+        const v = +el.dataset.sty; if (v) P().style = v; else delete P().style;
+        commit(); drawStatic();
+        flash('Limiteur : style ' + el.textContent);
+    }));
     panel.querySelector('.fx-panel-close').addEventListener('click', () => panel.remove());
     panel.querySelector('.fx-bypass').addEventListener('change', (e) => {
         pushUndo(); t.effects = t.effects || [];
@@ -9613,6 +9625,7 @@ function openTimelineEmptyContextMenu(x, y, trackIdx, atSec) {
         { label: 'Couper à gauche du curseur (D)', action: () => { state.playhead = atSec; updatePlayhead(); trimLeft(); }},
         { label: 'Couper à droite du curseur (F)', action: () => { state.playhead = atSec; updatePlayhead(); trimRight(); }},
         { sep: true },
+        state.project.tracks.some(t => t.hidden) ? { label: 'Afficher les pistes masquées (' + state.project.tracks.filter(t => t.hidden).length + ')', action: () => showHiddenTracks() } : null,
         { label: 'Ajouter une piste audio', action: () => _doAddTrack('audio') },
         { label: 'Ajouter une piste instrument (piano roll)', action: () => _doAddTrack('keys') },
         { label: 'Ajouter une piste batterie (séquenceur)', action: () => _doAddTrack('drums') }
@@ -9683,6 +9696,45 @@ function closeAllMenus() {
     document.querySelectorAll('.track-ctx-menu').forEach(m => m.remove());
 }
 
+// --- Réglages de piste (menu clic droit) : phase, verrou, masquer ---
+// Inverser la phase (Ø) : passe par l'effet Utilitaire (réglage « Inverser la phase »), donc même son à l'export et dans Rust
+function toggleTrackPhase(t) {
+    pushUndo();
+    t.effects = t.effects || []; t.effectParams = t.effectParams || {};
+    const on = !(t.effectParams.util && t.effectParams.util.invert);
+    if (on) {
+        if (!t.effects.includes('util')) t.effects.push('util');
+        t.effectParams.util = { gain: 0, mono: 0, ...(t.effectParams.util || {}), invert: 1 };
+    } else {
+        const u = t.effectParams.util || {};
+        u.invert = 0;
+        if (!u.gain && !u.mono) { t.effects = t.effects.filter(n => n !== 'util'); delete t.effectParams.util; }   // plus rien à faire : on retire l'effet
+    }
+    renderAll(); saveProject(); refreshPlaybackSoon();
+    flash(on ? 'Phase inversée (Ø) sur « ' + t.name + ' »' : 'Phase remise normale sur « ' + t.name + ' »');
+}
+// Verrouiller la piste : ses régions ne bougent plus, on ne peut plus y enregistrer
+function toggleTrackLocked(t) {
+    pushUndo();
+    if (t.locked) delete t.locked; else { t.locked = true; t.armed = false; }
+    renderTracksPanel(); bindTrackEvents(); renderTimelineTracks(); saveProject();
+    flash(t.locked ? '🔒 Piste verrouillée : plus de déplacement ni d\'enregistrement par accident' : 'Piste déverrouillée');
+}
+// Masquer la piste : elle disparaît de l'écran mais continue de jouer (comme dans Logic)
+function toggleTrackHidden(t) {
+    pushUndo();
+    if (t.hidden) delete t.hidden; else t.hidden = true;
+    renderAll(); saveProject();
+    flash(t.hidden ? 'Piste masquée (elle joue toujours) — clic droit dans le vide > Afficher les pistes masquées' : 'Piste affichée');
+}
+function showHiddenTracks() {
+    const n = state.project.tracks.filter(t => t.hidden).length;
+    if (!n) return;
+    pushUndo(); state.project.tracks.forEach(t => { delete t.hidden; });
+    renderAll(); saveProject();
+    flash(n > 1 ? n + ' pistes affichées' : 'Piste affichée');
+}
+
 // --- Menu contextuel sur une piste ---
 function openTrackContextMenu(x, y, idx, t) {
     closeAllMenus();
@@ -9703,24 +9755,33 @@ function openTrackContextMenu(x, y, idx, t) {
             renderTracksPanel(); bindTrackEvents(); saveProject();
         }},
         { sep: true },
+        { label: 'Groupe', children: [
         ...(state.project.buses || []).filter(b => isVisibleGroup(b) && b.id !== t.output)
             .map(b => ({ label: `Ranger dans le groupe « ${b.name} »`, action: () => moveTrackToGroup(state.project.tracks.indexOf(t), b.id) })),
         (t.takes || []).length ? { label: 'Supprimer les prises mises de côté', action: () => clearTrackTakes(state.project.tracks.indexOf(t)) } : null,
         { label: 'Nouveau groupe avec cette piste', action: () => createGroupWithTrack(state.project.tracks.indexOf(t)) },
-        trackGroup(t) ? { label: `Sortir du groupe « ${trackGroup(t).name} »`, action: () => removeTrackFromGroup(state.project.tracks.indexOf(t)) } : null,
-        { sep: true },
-        (t.clips || []).filter(c => !c.recording).length > 1
+        trackGroup(t) ? { label: `Sortir du groupe « ${trackGroup(t).name} »`, action: () => removeTrackFromGroup(state.project.tracks.indexOf(t)) } : null
+        ]},
+        { label: 'Son', children: [
+            (t.clips || []).filter(c => !c.recording).length > 1
             ? { label: 'Fusionner tous les clips de la piste en un seul', action: () => bounceTrack(idx) }
             : null,
-        { label: 'Son de la piste (Voix lead, Doublage, Back…)', action: () => { const el = document.querySelector(`.track-item[data-i="${state.project.tracks.indexOf(t)}"]`); if (el) openSoundPanel(state.project.tracks.indexOf(t), el); } },
+            { label: 'Son de la piste (Voix lead, Doublage, Back…)', action: () => { const el = document.querySelector(`.track-item[data-i="${state.project.tracks.indexOf(t)}"]`); if (el) openSoundPanel(state.project.tracks.indexOf(t), el); } },
         (t.type === 'audio' || !t.type) && !t.isCapture && !isInstruTrack(t)
             ? { label: t.autotune && t.autotune.on ? 'Auto-Tune de la piste (modifier ou retirer)…' : 'Auto-Tune de la piste…', action: () => { const ti = state.project.tracks.indexOf(t); const el = document.querySelector(`.track-item[data-i="${ti}"]`); const r = el ? el.getBoundingClientRect() : { right: 300, top: 120 }; openTunePanel(ti, -1, r.right + 8, r.top, true); } }
             : null,
+            { label: (t.effectParams && t.effectParams.util && t.effectParams.util.invert) ? 'Phase : remettre normale (Ø)' : 'Inverser la phase (Ø)', action: () => toggleTrackPhase(t) }
+        ]},
+        { label: 'Réglages', children: [
+            { label: t.locked ? 'Déverrouiller la piste' : 'Verrouiller la piste', action: () => toggleTrackLocked(t) },
+            { label: t.hidden ? 'Afficher la piste' : 'Masquer la piste', action: () => toggleTrackHidden(t) }
+        ]},
         { label: 'Changer la couleur', submenu: COLORS.map(c => ({ color: c, action: () => { pushUndo(); t.color = c; renderAll(); saveProject(); } })) }
     ].filter(Boolean);
 
     items.forEach(item => {
         if (item.sep) { const d = document.createElement('div'); d.className = 'ctx-sep'; menu.appendChild(d); return; }
+        if (item.children) { ctxAddSubmenu(menu, item); return; }
         if (item.submenu) {
             const div = document.createElement('div');
             div.className = 'ctx-item ctx-colors';
@@ -9843,12 +9904,13 @@ document.addEventListener('mousedown', (e) => {
 // --- Joindre / décaler / verrouiller des régions (menu Édition) ---
 const clipEndOf = (c) => (c.loopEnd && c.loopEnd > c.start + c.duration) ? c.loopEnd : c.start + c.duration;
 // Joindre : les régions audio choisies sur la même piste deviennent UNE région (rendu à l'identique, effets de région compris)
-async function joinSelectedClips(trackIdx, clipIdx) {
+async function joinSelectedClips(trackIdx, clipIdx, opts = {}) {
     const t = state.project.tracks[trackIdx];
-    const cs = clipsActedOn(trackIdx, clipIdx).filter(c => t.clips.includes(c));
-    if (cs.length < 2) { flash('Choisis au moins deux régions de la même piste (Shift + clic, ou ⌘A) puis Joindre'); return; }
-    if (cs.some(c => c.midi)) { flash('Joindre marche sur les régions audio (pas encore sur les notes)'); return; }
-    flash('Jonction en cours…');
+    const cs = (opts.single ? [t.clips[clipIdx]] : clipsActedOn(trackIdx, clipIdx)).filter(c => c && t.clips.includes(c));
+    if (cs.length < (opts.single ? 1 : 2)) { flash('Choisis au moins deux régions de la même piste (Shift + clic, ou ⌘A) puis Joindre'); return; }
+    if (cs.some(c => c.midi)) { flash('Cette fonction marche sur les régions audio (pas encore sur les notes)'); return; }
+    if (cs.some(c => clipIsLocked(c))) return;
+    flash(opts.single ? 'Conversion en cours…' : 'Jonction en cours…');
     try {
         const t0 = Math.min(...cs.map(c => c.start)), t1 = Math.max(...cs.map(clipEndOf));
         const solo = { ...t, clips: JSON.parse(JSON.stringify(cs)), volume: 100, pan: 0, effects: undefined, effectParams: undefined,
@@ -9867,11 +9929,11 @@ async function joinSelectedClips(trackIdx, clipIdx) {
         if (window.PulsePersist) await PulsePersist.saveBlob(newId, blob, { kind: 'join' });
         pushUndo();
         t.clips = t.clips.filter(c => !cs.includes(c));
-        t.clips.push({ id: newId, name: cs[0].name ? `${cs[0].name} (joint)` : `${t.name} (joint)`, start: t0, duration: out.duration, peaks: makePeaks(out) });
+        t.clips.push({ id: newId, name: (cs[0].name || t.name) + (opts.single ? ' (converti)' : ' (joint)'), start: t0, duration: out.duration, peaks: makePeaks(out) });
         t.clips.sort((x, y) => x.start - y.start);
         state.selectedClip = null; state.selectedClips.clear();
         renderAll(); saveProject(); refreshPlaybackSoon();
-        flash(`✓ ${cs.length} régions jointes en une seule — ⌘Z pour revenir en arrière`);
+        flash(opts.single ? '✓ Région convertie en son réel (effets, fondus et répétitions compris) — ⌘Z pour revenir en arrière' : `✓ ${cs.length} régions jointes en une seule — ⌘Z pour revenir en arrière`);
     } catch (err) {
         console.error(err);
         flash('La jonction n\'a pas marché — rien n\'a été modifié');
@@ -9879,8 +9941,9 @@ async function joinSelectedClips(trackIdx, clipIdx) {
 }
 // Décaler les régions choisies de quelques millisecondes (recaler finement une prise)
 function nudgeClipsMs(clips, ms) {
-    clips = (clips || []).filter(c => c && !c.recording && !c.locked);
-    if (!clips.length) { flash('Région verrouillée : déverrouille-la d\'abord'); return; }
+    const trackLocked = (c) => state.project.tracks.some(t => t.locked && (t.clips || []).includes(c));
+    clips = (clips || []).filter(c => c && !c.recording && !c.locked && !trackLocked(c));
+    if (!clips.length) { flash('🔒 Région ou piste verrouillée : déverrouille-la d\'abord'); return; }
     pushUndo();
     clips.forEach(c => { const d = Math.max(-c.start, ms / 1000); c.start += d; if (c.loopEnd) c.loopEnd += d; });
     renderTimelineTracks(); saveProject(); refreshPlaybackSoon();
@@ -9895,6 +9958,8 @@ function toggleClipsLocked(clips) {
     flash(lock ? '🔒 Région verrouillée : elle ne bouge plus ni ne se coupe par accident' : 'Région déverrouillée');
 }
 function clipIsLocked(clip) {
+    const tr = clip && state.project.tracks.find(x => (x.clips || []).includes(clip));
+    if (tr && tr.locked) { flash('🔒 Piste verrouillée (clic droit sur la piste > Réglages > Déverrouiller)'); return true; }
     if (clip && clip.locked) { flash('🔒 Région verrouillée (clic droit > Réglages > Déverrouiller)'); return true; }
     return false;
 }
@@ -9932,6 +9997,79 @@ function ctxAddSubmenu(menu, item) {
     row.addEventListener('click', open);
     row.addEventListener('mouseleave', () => { timer = setTimeout(closePanel, 250); });
     menu.appendChild(row);
+}
+
+// --- Hauteur, vitesse, niveau, fondus, boucle d'une région (menu clic droit) ---
+// Transposer : passe par l'effet Pitch de la région (même son à l'export et dans Rust). Plage ±12 demi-tons.
+function transposeClips(trackIdx, clipIdx, semi) {
+    const cs = clipsActedOn(trackIdx, clipIdx).filter(c => !c.midi && !c.recording);
+    if (!cs.length) { flash('Transposer marche sur les régions audio (pour des notes : le piano roll)'); return; }
+    if (cs.some(c => clipIsLocked(c))) return;
+    pushUndo();
+    cs.forEach(c => {
+        c.fx = ownClipFx(c) || (semi ? { effects: [], effectParams: {} } : c.fx);
+        if (!semi) {
+            if (c.fx && c.fx.effects.includes('pitch')) {
+                c.fx.effects = c.fx.effects.filter(n => n !== 'pitch'); delete c.fx.effectParams.pitch; if (c.fx.labels) delete c.fx.labels.pitch;
+                if (!c.fx.effects.length) delete c.fx;
+            }
+            return;
+        }
+        c.fx.name = `Région « ${c.name || 'Clip'} »`;
+        if (!c.fx.effects.includes('pitch')) c.fx.effects.push('pitch');
+        c.fx.effectParams = c.fx.effectParams || {};
+        c.fx.effectParams.pitch = { semi, mix: 100 };
+        (c.fx.labels = c.fx.labels || {}).pitch = (semi > 0 ? '+' : '') + semi + ' dt';
+    });
+    renderTimelineTracks(); saveProject(); refreshPlaybackSoon();
+    flash(semi ? `Région transposée de ${semi > 0 ? '+' : ''}${semi} demi-ton${Math.abs(semi) > 1 ? 's' : ''} (la voix change aussi de timbre) — ⌘Z pour annuler` : 'Hauteur d\'origine remise');
+}
+// Vitesse : même mécanique que le Warp (la durée change, pas la hauteur). ×2 = deux fois plus vite
+async function speedClip(trackIdx, clipIdx, f) {
+    const clip = state.project.tracks[trackIdx]?.clips[clipIdx];
+    if (!clip || clip.midi || clip.recording) { flash('La vitesse marche sur une région audio'); return; }
+    if (clipIsLocked(clip)) return;
+    const P = state.project.bpm;
+    await applyWarp(clip, P / f, P);
+}
+// Normaliser à un niveau choisi (crête de la région)
+function normalizeClipTo(trackIdx, clipIdx, db) {
+    const clip = state.project.tracks[trackIdx]?.clips[clipIdx];
+    if (!clip || clip.midi) return;
+    if (clipIsLocked(clip)) return;
+    if (!clip.id) { flash('Le son de ce clip n\'est pas encore chargé — attends une seconde et réessaie'); return; }
+    const gain = PulseAudio.computeNormalizeGain(clip.id, db);
+    if (gain === null) { flash('Ce clip est silencieux — il n\'y a rien à normaliser'); return; }
+    pushUndo();
+    clip.gain = Math.round(gain * 1000) / 1000;
+    renderTimelineTracks(); saveProject(); refreshPlaybackSoon();
+    flash(`✓ Région normalisée : crête à ${String(db).replace('.', ',')} dB — ⌘Z pour revenir en arrière`);
+}
+// Fondu d'entrée / de sortie à une durée donnée (en secondes), au plus la moitié de la région
+function setClipFade(trackIdx, clipIdx, which, sec) {
+    const cs = clipsActedOn(trackIdx, clipIdx).filter(c => !c.recording);
+    if (cs.some(c => clipIsLocked(c))) return;
+    pushUndo();
+    cs.forEach(c => {
+        const v = Math.min(sec, c.duration / 2);
+        if (which === 'in') { if (v > 0) c.fadeIn = v; else { delete c.fadeIn; delete c.fadeInCurve; } }
+        else { if (v > 0) c.fadeOut = v; else { delete c.fadeOut; delete c.fadeOutCurve; } }
+    });
+    renderTimelineTracks(); saveProject(); refreshPlaybackSoon();
+    flash(sec > 0 ? `Fondu ${which === 'in' ? 'd\'entrée' : 'de sortie'} : ${sec >= 1 ? sec + ' s' : Math.round(sec * 1000) + ' ms'}` : `Fondu ${which === 'in' ? 'd\'entrée' : 'de sortie'} retiré`);
+}
+// Boucle (case « Loop » de Logic) : la région se répète jusqu'à la région suivante de la piste (sinon 8 fois)
+function loopClipUntilNext(trackIdx, clipIdx) {
+    const t = state.project.tracks[trackIdx], clip = t && t.clips[clipIdx];
+    if (!clip || clip.recording || !clip.duration) return;
+    if (clipIsLocked(clip)) return;
+    const next = t.clips.filter(o => o !== clip && !o.recording && o.start >= clip.start + clip.duration - 1e-6).sort((a, b) => a.start - b.start)[0];
+    const end = next ? next.start : clip.start + clip.duration * 8;
+    if (end <= clip.start + clip.duration + 0.05) { flash('Pas de place pour répéter : la région suivante est collée'); return; }
+    pushUndo();
+    clip.loopEnd = end;
+    renderTimelineTracks(); saveProject(); refreshPlaybackSoon();
+    flash(next ? 'Région bouclée jusqu\'à la suivante' : 'Région répétée 8 fois (tire la poignée en bas à droite pour ajuster)');
 }
 
 // --- Menu contextuel sur un clip ---
@@ -10001,6 +10139,8 @@ function openClipContextMenu(x, y, trackIdx, clipIdx) {
                 renderTimelineTracks(); saveProject();
             }},
             { label: 'Joindre les régions choisies', action: () => joinSelectedClips(trackIdx, clipIdx) },
+            clip.midi ? null : { label: 'Convertir en nouvelle prise (effets, fondus, répétitions compris)', action: () => joinSelectedClips(trackIdx, clipIdx, { single: true }) },
+            clip.loopEnd ? null : { label: 'Boucler jusqu\'à la région suivante', action: () => loopClipUntilNext(trackIdx, clipIdx) },
             { label: 'Répéter une fois de plus  (⌘R)', action: () => { state.selectedClip = { trackIdx, clipIdx }; repeatSelectedClip(); } },
             clip.loopEnd ? { label: 'Supprimer la répétition', action: () => { pushUndo(); delete clip.loopEnd; renderTimelineTracks(); saveProject(); } } : null,
             { sep: true },
@@ -10026,13 +10166,26 @@ function openClipContextMenu(x, y, trackIdx, clipIdx) {
                 renderTimelineTracks(); saveProject();
                 flash('✓ Clip monté au volume maximum — ⌘Z pour revenir en arrière');
             }},
+            clip.midi ? null : { label: 'Normaliser à −1 dB', action: () => normalizeClipTo(trackIdx, clipIdx, -1) },
+            clip.midi ? null : { label: 'Normaliser à −3 dB', action: () => normalizeClipTo(trackIdx, clipIdx, -3) },
+            clip.midi ? null : { label: 'Normaliser à −6 dB', action: () => normalizeClipTo(trackIdx, clipIdx, -6) },
             { label: 'Remettre le volume d\'origine', action: () => {
                 pushUndo(); delete clip.gain; renderTimelineTracks(); saveProject(); flash('Volume du clip remis comme à l\'origine');
             }},
             clip.midi ? null : { label: clip.rev ? '⏪ Remettre à l\'endroit' : '⏪ Inverser le son (à l\'envers)', action: () => toggleReverse(clip) },
             clip.midi ? null : { label: clip.warp ? '⏱ Warp (modifier ou retirer)…' : '⏱ Caler sur le tempo du projet…', action: () => openWarpPanel(trackIdx, clipIdx, x, y) }
         ]},
-        fadeItems.length ? { label: 'Fondus', children: fadeItems } : null,
+        clip.midi ? null : { label: 'Hauteur et vitesse', children: [
+            ...[-12, -7, -5, -2, -1, 1, 2, 5, 7, 12].map(v => ({ label: `Transposer de ${v > 0 ? '+' : ''}${v} demi-ton${Math.abs(v) > 1 ? 's' : ''}`, action: () => transposeClips(trackIdx, clipIdx, v) })),
+            { label: 'Remettre la hauteur d\'origine', action: () => transposeClips(trackIdx, clipIdx, 0) },
+            { sep: true },
+            ...[[0.5, '× 0,5 (deux fois plus lent)'], [0.75, '× 0,75'], [0.9, '× 0,9'], [1.1, '× 1,1'], [1.25, '× 1,25'], [1.5, '× 1,5'], [2, '× 2 (deux fois plus vite)']].map(([f, l]) => ({ label: 'Vitesse ' + l, action: () => speedClip(trackIdx, clipIdx, f) }))
+        ]},
+        { label: 'Fondus', children: [
+            ...fadeItems, ...(fadeItems.length ? [{ sep: true }] : []),
+            ...[0.01, 0.05, 0.25, 1].map(v => ({ label: `Fondu d'entrée ${v >= 1 ? v + ' s' : Math.round(v * 1000) + ' ms'}`, action: () => setClipFade(trackIdx, clipIdx, 'in', v) })),
+            ...[0.01, 0.05, 0.25, 1].map(v => ({ label: `Fondu de sortie ${v >= 1 ? v + ' s' : Math.round(v * 1000) + ' ms'}`, action: () => setClipFade(trackIdx, clipIdx, 'out', v) }))
+        ]},
         clip.midi ? null : { label: 'Effets', children: [
             { label: clipHasFx(clip) ? '✦ Effets de la région…' : '✦ Effet sur cette région…', action: () => openClipFxMenu(x, y, trackIdx, clipIdx) },
             clipHasFx(clip) ? { label: 'Retirer les effets de la région', action: () => removeClipFx(clip, null) } : null
@@ -11289,6 +11442,10 @@ function startClipRename(trackIdx, clipIdx) {
 // === Supprimer le clip sélectionné ===
 function deleteSelectedClip() {
     if (state.recording) { flash('Une prise est en cours : arrête-la (Espace) avant de supprimer'); return; }
+    {   // région ou piste verrouillée : on ne supprime pas par accident
+        const ks = state.selectedClips.size ? [...state.selectedClips] : (state.selectedClip ? [`${state.selectedClip.trackIdx}:${state.selectedClip.clipIdx}`] : []);
+        if (ks.some(k => { const [ti, ci] = k.split(':').map(Number); const c = state.project.tracks[ti] && state.project.tracks[ti].clips[ci]; return c && clipIsLocked(c); })) return;
+    }
     // Multi-sélection : supprimer tous les clips sélectionnés
     if (state.selectedClips.size > 0) {
         pushUndo();

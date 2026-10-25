@@ -3593,3 +3593,9 @@ body.automation-mode .track-item .t-auto .auto-chip { max-width: 150px; height: 
 .ms-fp > .pk { width: 66px; } .ms-fp > .pk svg { width: 46px; height: 46px; } .ms-fp > .pk.big svg { width: 58px; height: 58px; }
 .ms-fp .ms-tk .pk { width: 52px; } .ms-fp .ms-tk .pk svg { width: 34px; height: 34px; }
 .ms-fp .ms-stys { gap: 3px; } .ms-fp .ms-sty { padding: 2px 6px 2px 3px; font-size: 10.5px; }
+.lim-sty span { cursor: pointer; } .lim-sty span:hover:not(.on) { background: rgba(255,255,255,.08); }
+
+/* Piste masquée (elle joue toujours) / piste verrouillée (petit cadenas) */
+.is-hidden-track { display: none !important; }
+.track-item.is-locked-track { position: relative; }
+.track-item.is-locked-track::after { content: '🔒'; position: absolute; right: 6px; top: 3px; font-size: 11px; opacity: .75; pointer-events: none; }
