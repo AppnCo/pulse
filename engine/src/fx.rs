@@ -113,27 +113,38 @@ fn msat_trim(sty: &str, k: f64) -> f64 {
 struct MsBand {
     ks: [Vec<Biquad>; 2], tone: [Vec<Biquad>; 2], sty: String, k: f64, trim: f64, dynamics: f64, env: f64, att: f64, rel: f64,
     fbk: f64, bp: [Biquad; 2], last: [f64; 2], hold: u64, hc: u64, hv: [f64; 2], mix: f64, lvl: f64, solo: bool,
+    idx: usize, va: usize, mute: bool, tg: [f64; 4], t_all: bool, n: usize, lo: f64, hi: f64, is_base: bool,
 }
-pub struct MultiSat { free: Vec<MsBand>, base: Option<MsBand>, any_solo: bool, gmix: f64, gout: f64, h: [f64; 64], xin: [[f64; 16]; 2], xs: [[f64; 64]; 2], pos: [usize; 2] }
+pub struct MultiSat { free: Vec<MsBand>, base: Option<MsBand>, any_solo: bool, gmix: f64, gout: f64, ag: bool, sr4: f64, h: [f64; 64], xin: [[f64; 16]; 2], xs: [[f64; 64]; 2], pos: [usize; 2] }
 impl MultiSat {
-    pub fn new(p: &crate::model::MsatParams, sr: f64) -> Option<Self> {
-        let sr4 = sr * 4.0;
+    /// Filtres d'une bande libre + filtre de la résonance (même calcul que mkKs dans pulse-msat)
+    fn make_ks(lo0: f64, hi0: f64, n: usize, sr4: f64) -> (Vec<Biquad>, Biquad) {
         let biq = |hp: bool, f: f64| {
             let w = 2.0 * PI * f / sr4;
             let (c, al) = (w.cos(), w.sin() / (2.0 * std::f64::consts::FRAC_1_SQRT_2));
             if hp { Biquad::new((1.0 + c) / 2.0, -(1.0 + c), (1.0 + c) / 2.0, 1.0 + al, -2.0 * c, 1.0 - al) }
             else { Biquad::new((1.0 - c) / 2.0, 1.0 - c, (1.0 - c) / 2.0, 1.0 + al, -2.0 * c, 1.0 - al) }
         };
+        let lo = lo0.clamp(20.0, 20000.0);
+        let hi = hi0.min(20000.0).max(lo * 1.05);
+        let mut ks = Vec::new();
+        if lo > 20.5 { for _ in 0..n { ks.push(biq(true, lo)); } }
+        if hi < 19999.0 { for _ in 0..n { ks.push(biq(false, hi)); } }
+        let fc = (lo * hi).sqrt();
+        let w = 2.0 * PI * fc / sr4; let al = w.sin() / 4.0;
+        (ks, Biquad::new(al, 0.0, -al, 1.0 + al, -2.0 * w.cos(), 1.0 - al))
+    }
+    pub fn new(p: &crate::model::MsatParams, sr: f64) -> Option<Self> {
+        let sr4 = sr * 4.0;
         let bpf = |f: f64| { let w = 2.0 * PI * f / sr4; let al = w.sin() / 4.0; Biquad::new(al, 0.0, -al, 1.0 + al, -2.0 * w.cos(), 1.0 - al) };
         let co = |ms: f64| 1.0 - (-1.0 / (ms / 1000.0 * sr4)).exp();
         let ag = p.ag != Some(false);
-        let mk = |b: &crate::model::MsatBand, is_base: bool| {
+        let mk = |b: &crate::model::MsatBand, is_base: bool, idx: usize| {
             let lo = if is_base { 20.0 } else { b.lo.unwrap_or(20.0).clamp(20.0, 20000.0) };
             let hi = if is_base { 20000.0 } else { b.hi.unwrap_or(20000.0).min(20000.0).max(lo * 1.05) };
             let sl = b.slope.unwrap_or(24.0);
             let n = if sl >= 48.0 { 4 } else if sl >= 24.0 { 2 } else { 1 };
-            let mut ks = Vec::new();
-            if !is_base { if lo > 20.5 { for _ in 0..n { ks.push(biq(true, lo)); } } if hi < 19999.0 { for _ in 0..n { ks.push(biq(false, hi)); } } }
+            let ks = if is_base { Vec::new() } else { Self::make_ks(b.lo.unwrap_or(20.0), b.hi.unwrap_or(20000.0), n, sr4).0 };
             let sty = b.sty.clone().unwrap_or_else(|| "bande".into());
             let va = (b.va.unwrap_or(1.0).round() as usize).min(2);
             let heat = b.heat.unwrap_or(30.0).clamp(0.0, 100.0);
@@ -150,15 +161,59 @@ impl MultiSat {
                 mix: b.mix.unwrap_or(100.0).clamp(0.0, 100.0) / 100.0,
                 lvl: if b.mute.unwrap_or(false) { 0.0 } else { 10f64.powf(b.out.unwrap_or(0.0).clamp(-60.0, 24.0) / 20.0) },
                 solo: b.solo.unwrap_or(false), sty,
+                idx, va, mute: b.mute.unwrap_or(false), tg: [b.lo2.unwrap_or(0.0), b.md.unwrap_or(0.0), b.hi2.unwrap_or(0.0), b.pr.unwrap_or(0.0)], t_all: false, n, lo: b.lo.unwrap_or(20.0), hi: b.hi.unwrap_or(20000.0), is_base,
             }
         };
-        let all: Vec<&crate::model::MsatBand> = p.bands.iter().filter(|b| b.on != Some(false)).collect();
+        let all: Vec<(usize, &crate::model::MsatBand)> = p.bands.iter().enumerate().filter(|(_, b)| b.on != Some(false)).collect();
         if all.is_empty() { return None; }
-        let free: Vec<MsBand> = all.iter().filter(|b| b.base != Some(true)).take(6).map(|b| mk(b, false)).collect();
-        let base = all.iter().find(|b| b.base == Some(true)).map(|b| mk(b, true));
+        let free: Vec<MsBand> = all.iter().filter(|(_, b)| b.base != Some(true)).take(6).map(|(i, b)| mk(b, false, *i)).collect();
+        let base = all.iter().find(|(_, b)| b.base == Some(true)).map(|(i, b)| mk(b, true, *i));
         let any_solo = free.iter().any(|b| b.solo) || base.as_ref().is_some_and(|b| b.solo);
         Some(Self { free, base, any_solo, gmix: p.mix.unwrap_or(100.0).clamp(0.0, 100.0) / 100.0, gout: 10f64.powf(p.out.unwrap_or(0.0).clamp(-24.0, 24.0) / 20.0),
-            h: sat_fir(), xin: [[0.0; 16]; 2], xs: [[0.0; 64]; 2], pos: [0; 2] })
+            ag, sr4, h: sat_fir(), xin: [[0.0; 16]; 2], xs: [[0.0; 64]; 2], pos: [0; 2] })
+    }
+    /// Automation (mêmes règles que le worklet pulse-msat) : « mix » / « out » = tout l'effet, « b1-heat » = bande n° 1
+    fn set(&mut self, key: &str, v: f64) {
+        match key {
+            "mix" => { self.gmix = v.clamp(0.0, 100.0) / 100.0; return; }
+            "out" => { self.gout = 10f64.powf(v.clamp(-24.0, 24.0) / 20.0); return; }
+            _ => {}
+        }
+        let Some((idx, f)) = key.strip_prefix('b').and_then(|r| r.split_once('-')) else { return };
+        let Ok(idx) = idx.parse::<usize>() else { return };
+        let (ag, sr4) = (self.ag, self.sr4);
+        let b = match self.free.iter_mut().find(|b| b.idx == idx) { Some(b) => b, None => match self.base.as_mut() { Some(b) if b.idx == idx => b, _ => return } };
+        match f {
+            "heat" => {
+                let h = v.clamp(0.0, 100.0);
+                b.k = (1.0 + h / 100.0 * 7.0) * MSAT_VK[b.va];
+                b.trim = if ag { msat_trim(&b.sty, b.k) } else { 1.0 };
+                if b.sty == "lofi" && b.va == 1 { b.hold = 4 * (1 + (h / 100.0 * 15.0).floor() as u64); }
+            }
+            "dyn" => b.dynamics = v.clamp(-50.0, 50.0),
+            "fb" => b.fbk = v.clamp(0.0, 100.0) / 100.0 * 0.6,
+            "mix" => b.mix = v.clamp(0.0, 100.0) / 100.0,
+            "out" => b.lvl = if b.mute { 0.0 } else { 10f64.powf(v.clamp(-60.0, 24.0) / 20.0) },
+            "lo" | "hi" => {
+                if b.is_base || (f == "lo" && b.lo == v) || (f == "hi" && b.hi == v) { return; }
+                if f == "lo" { b.lo = v } else { b.hi = v }
+                let (ks, bp) = Self::make_ks(b.lo, b.hi, b.n, sr4);
+                b.ks = retune_all(&b.ks, ks);
+                for ch in 0..2 { b.bp[ch].retune(bp.clone()); }
+            }
+            "lo2" | "md" | "hi2" | "pr" => {
+                let ti = ["lo2", "md", "hi2", "pr"].iter().position(|x| *x == f).unwrap();
+                if b.tg[ti] == v && b.t_all { return; }
+                // ton automatisé : les 4 filtres restent en place (à 0 dB ils ne changent rien)
+                b.tg[ti] = v;
+                let tone: Vec<Biquad> = [("lowshelf", 150.0, b.tg[0], 0.7071), ("bell", 1000.0, b.tg[1], 0.7), ("highshelf", 6000.0, b.tg[2], 0.7071), ("bell", 3500.0, b.tg[3], 1.2)].iter()
+                    .flat_map(|t| eq_sections(&EqBand { kind: t.0.into(), freq: t.1, gain: t.2, q: t.3, ..Default::default() }, sr4)).collect();
+                if tone.len() != b.tone[0].len() { b.tone = [tone.clone(), tone]; }
+                else { for ch in 0..2 { for (j, t) in tone.iter().enumerate() { b.tone[ch][j].retune(t.clone()); } } }
+                b.t_all = true;
+            }
+            _ => {}
+        }
     }
     fn band(b: &mut MsBand, v: &mut [f64; 2], nc: usize) {
         let mut pk = 0.0f64;
@@ -220,29 +275,53 @@ impl MultiSat {
 }
 
 /// Multibande à bandes libres : même calcul que le worklet `pulse-mband` de audio.js.
-struct MbBand { ks: [Vec<Biquad>; 2], env: f64, att: f64, rel: f64, thr: f64, range: f64, out: f64, solo: bool, mute: bool }
-pub struct MultiBand { bands: Vec<MbBand>, any_solo: bool }
+struct MbBand { ks: [Vec<Biquad>; 2], env: f64, att: f64, rel: f64, thr: f64, range: f64, out: f64, solo: bool, mute: bool, idx: usize, lo: f64, hi: f64 }
+/// Nouveaux filtres pour une bande : même nombre = on garde leur mémoire, sinon on repart de zéro (comme le navigateur)
+fn retune_all(old: &[Vec<Biquad>; 2], new: Vec<Biquad>) -> [Vec<Biquad>; 2] {
+    if old[0].len() != new.len() { return [new.clone(), new]; }
+    let mut o = old.clone();
+    for ch in 0..2 { for (j, b) in new.iter().enumerate() { o[ch][j].retune(b.clone()); } }
+    o
+}
+pub struct MultiBand { bands: Vec<MbBand>, any_solo: bool, sr: f64 }
 impl MultiBand {
-    pub fn new(p: &crate::model::MbandParams, sr: f64) -> Option<Self> {
+    /// Filtres d'une bande (refaits quand ses limites sont automatisées), même calcul que mkKs dans pulse-mband
+    fn make_ks(lo0: f64, hi0: f64, sr: f64) -> Vec<Biquad> {
         let biq = |hp: bool, f: f64| {
             let w = 2.0 * PI * f / sr;
             let (c, al) = (w.cos(), w.sin() / (2.0 * std::f64::consts::FRAC_1_SQRT_2));
             if hp { Biquad::new((1.0 + c) / 2.0, -(1.0 + c), (1.0 + c) / 2.0, 1.0 + al, -2.0 * c, 1.0 - al) }
             else { Biquad::new((1.0 - c) / 2.0, 1.0 - c, (1.0 - c) / 2.0, 1.0 + al, -2.0 * c, 1.0 - al) }
         };
+        let lo = lo0.clamp(20.0, 20000.0);
+        let hi = hi0.min(20000.0).min(sr * 0.45).max(lo * 1.05);
+        let mut ks = Vec::new();
+        if lo > 20.5 { ks.push(biq(true, lo)); ks.push(biq(true, lo)); }
+        if hi < 19999.0 { ks.push(biq(false, hi)); ks.push(biq(false, hi)); }
+        ks
+    }
+    pub fn new(p: &crate::model::MbandParams, sr: f64) -> Option<Self> {
         let co = |ms: f64| 1.0 - (-1.0 / (ms.max(0.05) / 1000.0 * sr)).exp();
-        let bands: Vec<MbBand> = p.bands.iter().filter(|b| b.on != Some(false)).take(6).map(|b| {
-            let lo = b.lo.unwrap_or(20.0).clamp(20.0, 20000.0);
-            let hi = b.hi.unwrap_or(20000.0).min(20000.0).min(sr * 0.45).max(lo * 1.05);
-            let mut ks = Vec::new();
-            if lo > 20.5 { ks.push(biq(true, lo)); ks.push(biq(true, lo)); }
-            if hi < 19999.0 { ks.push(biq(false, hi)); ks.push(biq(false, hi)); }
-            MbBand { ks: [ks.clone(), ks], env: 0.0, att: co(b.att.unwrap_or(10.0)), rel: co(b.rel.unwrap_or(120.0)), thr: b.thr.unwrap_or(-30.0),
-                range: b.range.unwrap_or(-6.0).clamp(-24.0, 24.0), out: b.out.unwrap_or(0.0).clamp(-24.0, 24.0), solo: b.solo.unwrap_or(false), mute: b.mute.unwrap_or(false) }
+        let bands: Vec<MbBand> = p.bands.iter().enumerate().filter(|(_, b)| b.on != Some(false)).take(6).map(|(idx, b)| {
+            let ks = Self::make_ks(b.lo.unwrap_or(20.0), b.hi.unwrap_or(20000.0), sr);
+            MbBand { lo: b.lo.unwrap_or(20.0), hi: b.hi.unwrap_or(20000.0), ks: [ks.clone(), ks], env: 0.0, att: co(b.att.unwrap_or(10.0)), rel: co(b.rel.unwrap_or(120.0)), thr: b.thr.unwrap_or(-30.0),
+                range: b.range.unwrap_or(-6.0).clamp(-24.0, 24.0), out: b.out.unwrap_or(0.0).clamp(-24.0, 24.0), solo: b.solo.unwrap_or(false), mute: b.mute.unwrap_or(false), idx }
         }).collect();
         if bands.is_empty() { return None; }
         let any_solo = bands.iter().any(|b| b.solo);
-        Some(Self { bands, any_solo })
+        Some(Self { bands, any_solo, sr })
+    }
+    /// Automation d'un réglage de bande (mêmes règles que le worklet pulse-mband)
+    fn set(&mut self, idx: usize, field: &str, v: f64) {
+        let sr = self.sr;
+        let co = |ms: f64| 1.0 - (-1.0 / (ms.max(0.05) / 1000.0 * sr)).exp();
+        let Some(b) = self.bands.iter_mut().find(|b| b.idx == idx) else { return };
+        if (field == "lo" && b.lo != v) || (field == "hi" && b.hi != v) {
+            if field == "lo" { b.lo = v } else { b.hi = v }
+            b.ks = retune_all(&b.ks, Self::make_ks(b.lo, b.hi, sr));
+            return;
+        }
+        match field { "thr" => b.thr = v, "range" => b.range = v.clamp(-24.0, 24.0), "out" => b.out = v.clamp(-24.0, 24.0), "att" => b.att = co(v), "rel" => b.rel = co(v), _ => {} }
     }
     fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
         let (x0, x1) = (x[0], if nc > 1 { x[1] } else { 0.0 });
@@ -1177,6 +1256,27 @@ fn auto_range(fx: &str, key: &str) -> Option<(f64, f64, bool)> {
         ("filter", "hpf") => (20.0, 1000.0, true),
         ("filter", "lpf") => (1000.0, 20_000.0, true),
         ("deess", "amount") => (0.0, 100.0, false),
+        ("deess", "thr") => (-60.0, 0.0, false),
+        ("gate", "ratio") => (1.0, 100.0, true),
+        ("gate", "knee") => (0.0, 24.0, false),
+        ("gate", "attack") => (0.1, 50.0, true),
+        ("gate", "hold") => (0.0, 500.0, false),
+        ("msat", "mix") => (0.0, 100.0, false),
+        ("msat", "out") => (-12.0, 12.0, false),
+        ("mband", k) | ("msat", k) if k.ends_with("-lo") || k.ends_with("-hi") => (20.0, 20000.0, true),
+        ("mband", k) if k.ends_with("-thr") => (-60.0, 0.0, false),
+        ("mband", k) if k.ends_with("-range") => (-24.0, 24.0, false),
+        ("mband", k) if k.ends_with("-att") => (0.5, 200.0, true),
+        ("mband", k) if k.ends_with("-rel") => (20.0, 1000.0, true),
+        ("mband", k) if k.ends_with("-out") => (-12.0, 12.0, false),
+        ("msat", k) if k.ends_with("-heat") || k.ends_with("-fb") || k.ends_with("-mix") => (0.0, 100.0, false),
+        ("msat", k) if k.ends_with("-dyn") => (-50.0, 50.0, false),
+        ("msat", k) if k.ends_with("-out") => (-24.0, 12.0, false),
+        ("msat", k) if k.ends_with("-lo2") || k.ends_with("-md") || k.ends_with("-hi2") || k.ends_with("-pr") => (-12.0, 12.0, false),
+        ("deess", "range") => (0.0, 24.0, false),
+        ("limit", "ceiling") => (-12.0, 0.0, false),
+        ("limit", "gain") => (0.0, 24.0, false),
+        ("limit", "release") => (5.0, 2000.0, true),
         ("gate", "threshold") => (-70.0, -20.0, false),
         ("gate", "release") => (20.0, 500.0, false),
         ("gate", "reduction") => (6.0, 80.0, false),
@@ -1481,11 +1581,23 @@ impl Chain {
                 ("reverb", "wet") => if let Some(r) = &mut self.reverb { r.wet = (v / 100.0).clamp(0.0, 1.0); },
                 ("util", "gain") => if let Some(u) = &mut self.util { let sign = if u.g < 0.0 { -1.0 } else { 1.0 }; u.g = 10f64.powf(v / 20.0) * sign; },
                 ("width", "width") => if let Some(w) = &mut self.width { w.width = v / 100.0; },
+                ("deess", "thr") => if let Some(d) = &mut self.deess2 { d.thr = v; },
+                ("mband", k) => if let Some(m) = &mut self.mband {
+                    if let Some((i, f)) = k.strip_prefix('b').and_then(|r| r.split_once('-')) { if let Ok(i) = i.parse::<usize>() { m.set(i, f, v); } }
+                },
+                ("msat", k) => if let Some(m) = &mut self.msat { m.set(k, v); },
+                ("deess", "range") => if let Some(d) = &mut self.deess2 { d.range = v.clamp(0.0, 30.0); },
+                ("limit", k) => if let Some(l) = &mut self.limit {
+                    match k { "ceiling" => l.thr = 10f64.powf(v / 20.0).min(1.0), "gain" => l.g = 10f64.powf(v / 20.0),
+                        "release" => l.rel = 1.0 - (-1.0 / (v.clamp(1.0, 2000.0) / 1000.0 * self.sr)).exp(), _ => {} }
+                },
                 ("deess", "amount") => if let Some(d) = &mut self.deess { let a = v.clamp(0.0, 100.0); d.max_red = a * 0.24; d.slope = a / 100.0 * 3.0; },
                 ("gate", k) => if let Some(g) = &mut self.gate {
                     let sr = self.sr;
                     match k { "threshold" => { g.thr = 10f64.powf(v / 20.0); g.thr_db = v; } "reduction" => { g.floor = 10f64.powf(-v / 20.0); g.range = v; }
-                        "release" => g.g_rel = 1.0 - (-1.0 / ((v / 1000.0).max(0.005) * sr)).exp(), _ => {} }
+                        "release" => g.g_rel = 1.0 - (-1.0 / ((v / 1000.0).max(0.005) * sr)).exp(),
+                        "ratio" => g.ratio = if v >= 99.0 { 0.0 } else { v.max(1.0) }, "knee" => g.knee = v.max(0.0),
+                        "attack" => g.g_att = 1.0 - (-1.0 / ((v / 1000.0).max(0.0001) * sr)).exp(), "hold" => g.hold = (v.max(0.0) / 1000.0 * sr).round() as usize, _ => {} }
                 },
                 ("crush", k) => if let Some(c) = &mut self.crush {
                     match k { "bits" => c.q = 2f64.powf(v - 1.0), "down" => c.down = (v.round() as usize).max(1), "mix" => c.mix = v / 100.0, _ => {} }

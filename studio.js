@@ -7237,6 +7237,11 @@ function findPlugWin(t, fxName) { return plugWins().find(p => p._plugT === t && 
 function makePlugWindow(panel, t, fxName, trackIdx) {
     panel.classList.add('plug-win');
     panel._plugT = t; panel.dataset.fx = fxName;
+    if (!panel._autoShow) {
+        const pk = (k) => panel.querySelector(`.pk[data-key="${k}"]`);
+        panel._autoShow = (k, v) => { const e = pk(k); if (e && e._pkShow) e._pkShow(v); };
+        panel._autoRestore = (k) => { const e = pk(k); if (e && e._pkRestore) e._pkRestore(); };
+    }
     plugFront(panel);
     panel.addEventListener('mousedown', () => { if (!isFrontPlug(panel)) plugFront(panel); }, true);
     const head = panel.querySelector('.fx-panel-header');
@@ -7264,8 +7269,9 @@ function makePlugWindow(panel, t, fxName, trackIdx) {
 
 // === Limiteur (style « écran plein + panneau flottant », planche docs-planche-limiteur-gate-deesser-multibande.html) ===
 // Petit bouton rotatif plat à bague lumineuse, partagé par les nouvelles façades
-function proKnob(host, { label, min, max, val, fmt, onChange, onEnd, log, color = '#A855F7', big }) {
+function proKnob(host, { label, min, max, val, fmt, onChange, onEnd, log, color = '#A855F7', big, key }) {
     const el = document.createElement('div'); el.className = 'pk' + (big ? ' big' : ''); host.appendChild(el);
+    if (key) el.dataset.key = key;   // automation (mode A) : toucher le bouton affiche sa courbe sur la piste
     const fr = () => log ? Math.log(val / min) / Math.log(max / min) : (val - min) / (max - min);
     const draw = () => {
         const p = Math.max(0, Math.min(1, fr())), a = -135 + p * 270, rad = (d) => (d - 90) * Math.PI / 180, P = (d, R) => [32 + R * Math.cos(rad(d)), 32 + R * Math.sin(rad(d))];
@@ -7278,7 +7284,7 @@ function proKnob(host, { label, min, max, val, fmt, onChange, onEnd, log, color 
     let y0 = null, f0 = 0;
     el.addEventListener('mousedown', (e) => {
         e.preventDefault(); e.stopPropagation(); y0 = e.clientY; f0 = fr();
-        const mv = (ev) => { const f = Math.max(0, Math.min(1, f0 + (y0 - ev.clientY) / (ev.shiftKey ? 600 : 150))); val = log ? min * Math.pow(max / min, f) : min + f * (max - min); draw(); onChange && onChange(val); };
+        const mv = (ev) => { const f = Math.max(0, Math.min(1, f0 + (y0 - ev.clientY) / (ev.shiftKey ? 600 : 150))); val = log ? min * Math.pow(max / min, f) : min + f * (max - min); draw(); onChange && onChange(val); if (key) el.dispatchEvent(new Event('input', { bubbles: true })); };
         const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); onEnd && onEnd(val); };
         document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
     });
@@ -7293,6 +7299,10 @@ function proKnob(host, { label, min, max, val, fmt, onChange, onEnd, log, color 
         inp.addEventListener('blur', () => done(true));
     });
     draw();
+    // pendant la lecture, le bouton suit la courbe (affichage seulement), puis revient au réglage
+    let held = null;
+    el._pkShow = (v) => { if (held === null) held = val; const k = val; val = v; draw(); val = k; };
+    el._pkRestore = () => { if (held !== null) { held = null; draw(); } };
     return { set(v) { val = v; draw(); }, el };
 }
 
@@ -7339,9 +7349,9 @@ function openLimiterPanel(trackIdx, anchorEl) {
         </div>`;
     document.body.appendChild(panel);
     const svg = panel.querySelector('.lim-svg'), fp = panel.querySelector('.lim-fp');
-    const kCeil = proKnob(fp, { label: 'Plafond', min: -12, max: 0, val: ceil0(), color: '#F87171', fmt: (v) => f1(v) + ' dB', onChange: (v) => { P().ceiling = Math.round(v * 10) / 10; drawStatic(); }, onEnd: () => commit() });
+    const kCeil = proKnob(fp, { key: 'ceiling', label: 'Plafond', min: -12, max: 0, val: ceil0(), color: '#F87171', fmt: (v) => f1(v) + ' dB', onChange: (v) => { P().ceiling = Math.round(v * 10) / 10; drawStatic(); }, onEnd: () => commit() });
     proKnob(fp, { label: 'Anticipation', min: 0.1, max: 10, val: P().lookahead ?? 1.5, log: true, fmt: (v) => v.toFixed(1).replace('.', ',') + ' ms', onChange: (v) => { P().lookahead = Math.round(v * 10) / 10; }, onEnd: () => commit() });
-    proKnob(fp, { label: 'Relâchement', min: 5, max: 2000, val: P().release ?? 120, log: true, fmt: (v) => Math.round(v) + ' ms', onChange: (v) => { P().release = Math.round(v); }, onEnd: () => commit() });
+    proKnob(fp, { key: 'release', label: 'Relâchement', min: 5, max: 2000, val: P().release ?? 120, log: true, fmt: (v) => Math.round(v) + ' ms', onChange: (v) => { P().release = Math.round(v); }, onEnd: () => commit() });
     // historique (lecture en cours) : crête d'entrée, de sortie et réduction
     const hin = [], hout = [], hgr = [];
     let gainDrag = false;
@@ -7402,7 +7412,7 @@ function openLimiterPanel(trackIdx, anchorEl) {
         if (!e.target.closest('.lim-gain')) return;
         e.preventDefault(); gainDrag = true;
         const r = svg.getBoundingClientRect(), k = W / r.width;
-        const mv = (ev) => { const y = (ev.clientY - r.top) * k; P().gain = Math.round(Math.max(0, Math.min(24, (B - 120 - y) / (B - T - 170) * 24)) * 10) / 10; draw(); };
+        const mv = (ev) => { const y = (ev.clientY - r.top) * k; P().gain = Math.round(Math.max(0, Math.min(24, (B - 120 - y) / (B - T - 170) * 24)) * 10) / 10; autoTouch(t, 'fx:limit:gain'); draw(); };
         const up = () => { gainDrag = false; document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); commit(); };
         document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
     });
@@ -7477,14 +7487,14 @@ function openGatePanel(trackIdx, anchorEl) {
     document.body.appendChild(panel);
     const svg = panel.querySelector('.gate-svg'), fp = panel.querySelector('.gate-fp');
     const sep = () => { const d = document.createElement('div'); d.className = 'lim-sep'; fp.appendChild(d); };
-    const kThr = proKnob(fp, { label: 'Seuil', min: -70, max: -20, val: P().threshold ?? -45, color: '#FBBF24', fmt: (v) => Math.round(v) + ' dB', onChange: (v) => { P().threshold = Math.round(v); draw(); }, onEnd: commit });
-    const kRat = proKnob(fp, { label: 'Ratio', min: 1, max: 100, val: ratioOf(), log: true, fmt: (v) => v >= 99 ? '∞ : 1' : v.toFixed(1).replace('.', ',') + ' : 1', onChange: (v) => { P().ratio = v >= 99 ? 0 : Math.round(v * 10) / 10; draw(); }, onEnd: commit });
-    const kRng = proKnob(fp, { label: 'Coupure', min: 6, max: 80, val: P().reduction ?? 40, fmt: (v) => Math.round(v) + ' dB', onChange: (v) => { P().reduction = Math.round(v); draw(); }, onEnd: commit });
-    const kKnee = proKnob(fp, { label: 'Genou', min: 0, max: 24, val: P().knee || 0, fmt: (v) => Math.round(v) + ' dB', onChange: (v) => { P().knee = Math.round(v); draw(); }, onEnd: commit });
+    const kThr = proKnob(fp, { key: 'threshold', label: 'Seuil', min: -70, max: -20, val: P().threshold ?? -45, color: '#FBBF24', fmt: (v) => Math.round(v) + ' dB', onChange: (v) => { P().threshold = Math.round(v); draw(); }, onEnd: commit });
+    const kRat = proKnob(fp, { key: 'ratio', label: 'Ratio', min: 1, max: 100, val: ratioOf(), log: true, fmt: (v) => v >= 99 ? '∞ : 1' : v.toFixed(1).replace('.', ',') + ' : 1', onChange: (v) => { P().ratio = v >= 99 ? 0 : Math.round(v * 10) / 10; draw(); }, onEnd: commit });
+    const kRng = proKnob(fp, { key: 'reduction', label: 'Coupure', min: 6, max: 80, val: P().reduction ?? 40, fmt: (v) => Math.round(v) + ' dB', onChange: (v) => { P().reduction = Math.round(v); draw(); }, onEnd: commit });
+    const kKnee = proKnob(fp, { key: 'knee', label: 'Genou', min: 0, max: 24, val: P().knee || 0, fmt: (v) => Math.round(v) + ' dB', onChange: (v) => { P().knee = Math.round(v); draw(); }, onEnd: commit });
     sep();
-    const kAtt = proKnob(fp, { label: 'Attaque', min: 0.1, max: 50, val: P().attack ?? 2, log: true, fmt: (v) => v.toFixed(1).replace('.', ',') + ' ms', onChange: (v) => { P().attack = Math.round(v * 10) / 10; }, onEnd: commit });
-    const kHold = proKnob(fp, { label: 'Maintien', min: 0, max: 500, val: P().hold ?? 50, fmt: (v) => Math.round(v) + ' ms', onChange: (v) => { P().hold = Math.round(v); }, onEnd: commit });
-    const kRel = proKnob(fp, { label: 'Retour', min: 20, max: 500, val: P().release ?? 150, fmt: (v) => Math.round(v) + ' ms', onChange: (v) => { P().release = Math.round(v); }, onEnd: commit });
+    const kAtt = proKnob(fp, { key: 'attack', label: 'Attaque', min: 0.1, max: 50, val: P().attack ?? 2, log: true, fmt: (v) => v.toFixed(1).replace('.', ',') + ' ms', onChange: (v) => { P().attack = Math.round(v * 10) / 10; }, onEnd: commit });
+    const kHold = proKnob(fp, { key: 'hold', label: 'Maintien', min: 0, max: 500, val: P().hold ?? 50, fmt: (v) => Math.round(v) + ' ms', onChange: (v) => { P().hold = Math.round(v); }, onEnd: commit });
+    const kRel = proKnob(fp, { key: 'release', label: 'Retour', min: 20, max: 500, val: P().release ?? 150, fmt: (v) => Math.round(v) + ' ms', onChange: (v) => { P().release = Math.round(v); }, onEnd: commit });
     sep();
     // Déclencheur : ce que le gate écoute (coupe-bas / coupe-haut). Deux poignées, ou la zone entière qu'on fait glisser
     const rg = document.createElement('div'); rg.className = 'lim-col gate-rgc';
@@ -7586,7 +7596,7 @@ function openGatePanel(trackIdx, anchorEl) {
         if (!e.target.closest('.gate-thrh')) return;
         e.preventDefault();
         const r = svg.getBoundingClientRect(), k = W / r.width;
-        const mv = (ev) => { const y = (ev.clientY - r.top) * k; P().threshold = Math.round(Math.max(-70, Math.min(-20, (mid - y) / (mid - T - 4) * 70 - 70))); kThr.set(P().threshold); draw(); };
+        const mv = (ev) => { const y = (ev.clientY - r.top) * k; P().threshold = Math.round(Math.max(-70, Math.min(-20, (mid - y) / (mid - T - 4) * 70 - 70))); kThr.set(P().threshold); autoTouch(t, 'fx:gate:threshold'); draw(); };
         const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); commit(); };
         document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
     });
@@ -7598,7 +7608,7 @@ function openGatePanel(trackIdx, anchorEl) {
     }));
     // écoute du déclencheur : seulement le temps de la fenêtre (jamais à l'export)
     panel.querySelector('.gate-listen').addEventListener('click', () => { if (P().listen) delete P().listen; else P().listen = true; refreshPlaybackSoon(); draw(); });
-    const stopListen = () => { if (P().listen) { delete P().listen; refreshPlaybackSoon(); } };
+    const stopListen = () => { if (P() && P().listen) { delete P().listen; refreshPlaybackSoon(); } };
     panel.querySelector('.fx-panel-close').addEventListener('click', () => { stopListen(); panel.remove(); });
     new MutationObserver((_, o) => { if (!panel.isConnected) { stopListen(); o.disconnect(); } }).observe(document.body, { childList: true });
     panel.querySelector('.fx-bypass').addEventListener('change', (e) => {
@@ -7661,8 +7671,8 @@ function openDeessPanel(trackIdx, anchorEl) {
     document.body.appendChild(panel);
     const svg = panel.querySelector('.ds-svg'), fp = panel.querySelector('.ds-fp');
     const sep = () => { const d = document.createElement('div'); d.className = 'lim-sep'; fp.appendChild(d); };
-    const kThr = proKnob(fp, { label: 'Seuil', min: -60, max: 0, val: V('thr'), big: true, color: '#FBBF24', fmt: (v) => Math.round(v) + ' dB', onChange: (v) => { P().thr = Math.round(v); draw(); }, onEnd: commit });
-    const kRng = proKnob(fp, { label: 'Plage', min: 0, max: 24, val: V('range'), big: true, color: '#FBBF24', fmt: (v) => Math.round(v) + ' dB', onChange: (v) => { if (old()) P().thr = V('thr'); P().range = Math.round(v); draw(); }, onEnd: commit });
+    const kThr = proKnob(fp, { key: 'thr', label: 'Seuil', min: -60, max: 0, val: V('thr'), big: true, color: '#FBBF24', fmt: (v) => Math.round(v) + ' dB', onChange: (v) => { P().thr = Math.round(v); draw(); }, onEnd: commit });
+    const kRng = proKnob(fp, { key: 'range', label: 'Plage', min: 0, max: 24, val: V('range'), big: true, color: '#FBBF24', fmt: (v) => Math.round(v) + ' dB', onChange: (v) => { if (old()) P().thr = V('thr'); P().range = Math.round(v); draw(); }, onEnd: commit });
     // anneau fin autour du Seuil : le niveau des « s » en direct (vert sous le seuil, orange au-dessus)
     kThr.el.style.position = 'relative';
     kThr.el.insertAdjacentHTML('beforeend', '<svg class="ds-lvl" viewBox="0 0 64 64"><path class="ds-lvl-a" fill="none" stroke-width="2" stroke-linecap="round"/></svg>');
@@ -7764,7 +7774,7 @@ function openDeessPanel(trackIdx, anchorEl) {
         if (!e.target.closest('.ds-thrh')) return;
         e.preventDefault();
         const r = svg.getBoundingClientRect(), k = W / r.width, rel = !!P().rel;
-        const mv = (ev) => { const y = (ev.clientY - r.top) * k; P().thr = Math.round(Math.max(-60, Math.min(0, (mid - y) / (mid - T - 4) * 60 - 60 + (rel ? 6 : 0)))); kThr.set(P().thr); draw(); };
+        const mv = (ev) => { const y = (ev.clientY - r.top) * k; P().thr = Math.round(Math.max(-60, Math.min(0, (mid - y) / (mid - T - 4) * 60 - 60 + (rel ? 6 : 0)))); kThr.set(P().thr); autoTouch(t, 'fx:deess:thr'); draw(); };
         const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); commit(); };
         document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
     });
@@ -7774,7 +7784,7 @@ function openDeessPanel(trackIdx, anchorEl) {
     }));
     seg('.ds-md', 'wide'); seg('.ds-rel', 'rel');
     panel.querySelector('.ds-listen').addEventListener('click', () => { if (old()) commit(); if (P().listen) delete P().listen; else P().listen = true; refreshPlaybackSoon(); draw(); });
-    const stopListen = () => { if (P().listen) { delete P().listen; refreshPlaybackSoon(); } };
+    const stopListen = () => { if (P() && P().listen) { delete P().listen; refreshPlaybackSoon(); } };
     panel.querySelector('.fx-panel-close').addEventListener('click', () => { stopListen(); panel.remove(); });
     new MutationObserver((_, o) => { if (!panel.isConnected) { stopListen(); o.disconnect(); } }).observe(document.body, { childList: true });
     panel.querySelector('.fx-bypass').addEventListener('change', (e) => {
@@ -7893,7 +7903,7 @@ function openMbandPanel(trackIdx, anchorEl) {
         c0.querySelector('.mb-mu').addEventListener('click', () => { step(() => { b.mute = !b.mute; if (b.mute) delete b.solo; if (!b.mute) delete b.mute; }); buildFp(); draw(); });
         c0.querySelector('.mb-del').addEventListener('click', () => { step(() => { BS().splice(sel, 1); sel = Math.min(sel, BS().length - 1); }); buildFp(); draw(); });
         const sp = document.createElement('div'); sp.className = 'lim-sep'; fp.appendChild(sp);
-        const k = (key, o) => { knobs[key] = proKnob(fp, { color: c, onEnd: commit, ...o, onChange: (v) => { arm(); b[key] = o.round(v); draw(); } }); };
+        const k = (key, o) => { knobs[key] = proKnob(fp, { color: c, onEnd: commit, key: `b${sel}-${key}`, ...o, onChange: (v) => { arm(); b[key] = o.round(v); draw(); } }); };
         k('thr', { label: 'Seuil', min: -60, max: 0, val: b.thr ?? -30, big: true, fmt: (v) => Math.round(v) + ' dB', round: (v) => Math.round(v) });
         k('range', { label: 'Plage', min: -24, max: 24, val: b.range ?? -6, fmt: db1, round: (v) => Math.round(v * 2) / 2 });
         k('att', { label: 'Attaque', min: 0.5, max: 200, val: b.att ?? 10, log: true, fmt: (v) => v.toFixed(1).replace('.', ',') + ' ms', round: (v) => Math.round(v * 10) / 10 });
@@ -7913,14 +7923,16 @@ function openMbandPanel(trackIdx, anchorEl) {
         let moved = false;
         const mv = (ev) => {
             const [x, y] = at(ev); if (!moved && Math.hypot(x - x0, y - y0) < 2) return; if (!moved) arm(); moved = true;
-            if (tri && tri.dataset.k === 'lo') b.lo = Math.round(Math.max(F0, Math.min(b.hi / 1.25, F(x))));
-            else if (tri) b.hi = Math.round(Math.min(F1, Math.max(b.lo * 1.25, F(x))));
+            if (tri && tri.dataset.k === 'lo') { b.lo = Math.round(Math.max(F0, Math.min(b.hi / 1.25, F(x)))); autoTouch(t, `fx:mband:b${sel}-lo`); }
+            else if (tri) { b.hi = Math.round(Math.min(F1, Math.max(b.lo * 1.25, F(x)))); autoTouch(t, `fx:mband:b${sel}-hi`); }
             else {
                 const k = F(X(Math.sqrt(lo0 * hi0)) + (x - x0)) / Math.sqrt(lo0 * hi0); let lo = lo0 * k, hi = hi0 * k;
                 if (lo < F0) { hi *= F0 / lo; lo = F0; } if (hi > F1) { lo *= F1 / hi; hi = F1; }
                 b.lo = Math.round(lo); b.hi = Math.round(hi);
+                if (x !== x0) { autoTouch(t, `fx:mband:b${sel}-lo`); autoTouch(t, `fx:mband:b${sel}-hi`); }
                 b.thr = Math.round(Math.max(-60, Math.min(0, th0 + (y0 - y) / 2.2)));
                 if (knobs.thr) knobs.thr.set(b.thr);
+                autoTouch(t, `fx:mband:b${sel}-thr`);
             }
             draw();
         };
@@ -8018,8 +8030,8 @@ function openMsatPanel(trackIdx, anchorEl) {
     const svg = panel.querySelector('.ms-svg'), fp = panel.querySelector('.ms-fp');
     // Mélange et Sortie de tout l'effet, dans le bandeau
     const glob = panel.querySelector('.ms-glob');
-    const gk1 = proKnob(glob, { label: 'Mélange', min: 0, max: 100, val: P().mix ?? 100, fmt: (v) => Math.round(v) + ' %', onChange: (v) => { arm(); P().mix = Math.round(v); }, onEnd: finish });
-    const gk2 = proKnob(glob, { label: 'Sortie', min: -12, max: 12, val: P().out || 0, fmt: (v) => (v > 0 ? '+' : '') + v.toFixed(1).replace('.', ',') + ' dB', onChange: (v) => { arm(); P().out = Math.round(v * 2) / 2; }, onEnd: finish });
+    const gk1 = proKnob(glob, { key: 'mix', label: 'Mélange', min: 0, max: 100, val: P().mix ?? 100, fmt: (v) => Math.round(v) + ' %', onChange: (v) => { arm(); P().mix = Math.round(v); }, onEnd: finish });
+    const gk2 = proKnob(glob, { key: 'out', label: 'Sortie', min: -12, max: 12, val: P().out || 0, fmt: (v) => (v > 0 ? '+' : '') + v.toFixed(1).replace('.', ',') + ' dB', onChange: (v) => { arm(); P().out = Math.round(v * 2) / 2; }, onEnd: finish });
     let bins = null;
     const draw = () => {
         const bands = BS(), bs = base(), bi = bands.indexOf(bs);
@@ -8080,7 +8092,7 @@ function openMsatPanel(trackIdx, anchorEl) {
         c0.querySelector('.mb-del').addEventListener('click', () => { step(() => { BS().splice(sel, 1); sel = Math.max(0, Math.min(sel, BS().length - 1)); }); buildFp(); draw(); });
         const sep = () => { const d = document.createElement('div'); d.className = 'lim-sep'; fp.appendChild(d); }; sep();
         const pm = (v) => (v > 0 ? '+' : '') + Math.round(v);
-        const k = (host, key, o) => proKnob(host, { color: c, onEnd: finish, ...o, onChange: (v) => { arm(); b[key] = o.round ? o.round(v) : Math.round(v); draw(); } });
+        const k = (host, key, o) => proKnob(host, { color: c, onEnd: finish, key: `b${sel}-${key}`, ...o, onChange: (v) => { arm(); b[key] = o.round ? o.round(v) : Math.round(v); draw(); } });
         kHeat = k(fp, 'heat', { label: 'Chaleur', min: 0, max: 100, val: b.heat ?? 30, big: true, fmt: (v) => Math.round(v) + ' %' });
         k(fp, 'dyn', { label: 'Dynamique', min: -50, max: 50, val: b.dyn || 0, fmt: (v) => { v = Math.round(v); return v > 0 ? 'tasse ' + v : v < 0 ? 'aère ' + (-v) : '0'; } });
         k(fp, 'fb', { label: 'Résonance', min: 0, max: 100, val: b.fb || 0, fmt: (v) => Math.round(v) + ' %' });
@@ -8120,16 +8132,17 @@ function openMsatPanel(trackIdx, anchorEl) {
         let moved = false; undoArmed = false;
         const mv = (ev) => {
             const [x, y] = at(ev); if (!moved && Math.hypot(x - x0, y - y0) < 2) return; if (!moved) arm(); moved = true;
-            if (tri && tri.dataset.k === 'lo') b.lo = Math.round(Math.max(near(b, 0), Math.min(b.hi / 1.25, F(x))));
-            else if (tri) b.hi = Math.round(Math.min(near(b, 1), Math.max(b.lo * 1.25, F(x))));
+            if (tri && tri.dataset.k === 'lo') { b.lo = Math.round(Math.max(near(b, 0), Math.min(b.hi / 1.25, F(x)))); autoTouch(t, `fx:msat:b${sel}-lo`); }
+            else if (tri) { b.hi = Math.round(Math.min(near(b, 1), Math.max(b.lo * 1.25, F(x)))); autoTouch(t, `fx:msat:b${sel}-hi`); }
             else {
                 if (!b.base) {
                     const k = F(X(Math.sqrt(lo0 * hi0)) + (x - x0)) / Math.sqrt(lo0 * hi0); let lo = lo0 * k, hi = hi0 * k; const L = near(b, 0), R = near(b, 1);
                     if (lo < L) { hi *= L / lo; lo = L; } if (hi > R) { lo *= R / hi; hi = R; }
-                    if (lo >= L - 0.5 && hi <= R + 0.5) { b.lo = Math.round(lo); b.hi = Math.round(hi); }
+                    if (lo >= L - 0.5 && hi <= R + 0.5) { b.lo = Math.round(lo); b.hi = Math.round(hi); if (x !== x0) { autoTouch(t, `fx:msat:b${sel}-lo`); autoTouch(t, `fx:msat:b${sel}-hi`); } }
                 }
                 b.heat = Math.round(Math.max(0, Math.min(100, h0 + (y0 - y) / (B - T - 90) * 100)));
                 if (kHeat) kHeat.set(b.heat);
+                autoTouch(t, `fx:msat:b${sel}-heat`);
             }
             draw();
         };

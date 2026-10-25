@@ -62,10 +62,13 @@ window.PulseAudio = (function() {
                     super(o);
                     const p = (o && o.processorOptions) || {};
                     this._ap = p; this._au = p.auto && Object.keys(p.auto).length ? p.auto : null;
+                    // réglages en fréquence / temps : la courbe avance en octaves entre deux points (comme le moteur d'export)
+                    if (this._au) for (const k of (p.autoLog || [])) if (this._au[k]) this._au[k] = this._au[k].map(q => ({ t: q.t, v: Math.log(Math.max(q.v, 1e-9)) }));
+                    this._al = p.autoLog || [];
                     this._at0 = p.autoT0 || 0; this._af = p.autoFrom || 0;
                 }
                 process(i, o) {
-                    if (this._au) { const t = currentTime - this._at0 + this._af, v = {}; for (const k in this._au) v[k] = pulseAutoAt(this._au[k], t); apply(this, v); }
+                    if (this._au) { const t = currentTime - this._at0 + this._af, v = {}; for (const k in this._au) { const x = pulseAutoAt(this._au[k], t); v[k] = this._al.includes(k) ? Math.exp(x) : x; } apply(this, v); }
                     return super.process(i, o);
                 }
             };
@@ -182,7 +185,7 @@ window.PulseAudio = (function() {
                 return true;
             }
         }
-        registerProcessor('pulse-deesser2', PulseDeesser2);
+        registerProcessor('pulse-deesser2', pulseAuto(PulseDeesser2, (s, v) => { if (v.thr !== undefined) s.thr = v.thr; if (v.range !== undefined) s.range = Math.max(0, Math.min(30, v.range)); }));
         // Saturation multibande : même calcul que MultiSat dans engine/src/fx.rs. Tout se fait à 4 fois la cadence
         // (même filtre que pulse-sat), donc bandes, son non traité et mélange restent alignés.
         // Bandes libres (elles prennent leur zone) + bande de départ (« base ») qui reçoit le reste du son.
@@ -206,11 +209,13 @@ window.PulseAudio = (function() {
                     return hp ? [(1 + c) / 2 / a0, -(1 + c) / a0, (1 + c) / 2 / a0, -2 * c / a0, (1 - al) / a0] : [(1 - c) / 2 / a0, (1 - c) / a0, (1 - c) / 2 / a0, -2 * c / a0, (1 - al) / a0]; };
                 const bpf = (f) => { const w = 2 * Math.PI * f / sr4, al = Math.sin(w) / 4, a0 = 1 + al; return [al / a0, 0, -al / a0, -2 * Math.cos(w) / a0, (1 - al) / a0]; };
                 const co = (ms) => 1 - Math.exp(-1 / (ms / 1000 * sr4));
-                const all = (Array.isArray(p.bands) ? p.bands : []).filter(b => b && b.on !== false);
+                const all = (Array.isArray(p.bands) ? p.bands : []).map((b, i) => b && { ...b, _i: i }).filter(b => b && b.on !== false);
+                this.ag = p.ag !== false; this.sr4 = sr4;
+                this.mkKs = (lo0, hi0, n) => { const lo = Math.max(20, Math.min(20000, lo0 || 20)), hi = Math.max(lo * 1.05, Math.min(20000, hi0 || 20000)), ks = [];
+                    if (lo > 20.5) for (let i = 0; i < n; i++) ks.push(biq(true, lo)); if (hi < 19999) for (let i = 0; i < n; i++) ks.push(biq(false, hi)); return { ks, bp: bpf(Math.sqrt(lo * hi)) }; };
                 const mk = (b, isBase) => {
                     const lo = isBase ? 20 : Math.max(20, Math.min(20000, b.lo || 20)), hi = isBase ? 20000 : Math.max(lo * 1.05, Math.min(20000, b.hi || 20000));
-                    const n = (b.slope || 24) >= 48 ? 4 : (b.slope || 24) >= 24 ? 2 : 1, ks = [];
-                    if (!isBase) { if (lo > 20.5) for (let i = 0; i < n; i++) ks.push(biq(true, lo)); if (hi < 19999) for (let i = 0; i < n; i++) ks.push(biq(false, hi)); }
+                    const n = (b.slope || 24) >= 48 ? 4 : (b.slope || 24) >= 24 ? 2 : 1, ks = isBase ? [] : this.mkKs(b.lo, b.hi, n).ks;
                     const sty = b.sty || 'bande', va = Math.max(0, Math.min(2, b.va ?? 1)), k = (1 + Math.max(0, Math.min(100, b.heat ?? 30)) / 100 * 7) * MSAT_VK[va];
                     const tone = [['lowshelf', 150, b.lo2, 0.7071], ['bell', 1000, b.md, 0.7], ['highshelf', 6000, b.hi2, 0.7071], ['bell', 3500, b.pr, 1.2]]
                         .filter(t => t[2]).flatMap(t => eqBandCoefs({ type: t[0], freq: t[1], gain: t[2], q: t[3] }, sr4));
@@ -219,7 +224,8 @@ window.PulseAudio = (function() {
                         dyn: Math.max(-50, Math.min(50, b.dyn || 0)), env: 0, att: co(5), rel: co(80),
                         fbk: Math.max(0, Math.min(100, b.fb || 0)) / 100 * 0.6, bp: bpf(isBase ? 1000 : Math.sqrt(lo * hi)), fs: [[0, 0, 0, 0], [0, 0, 0, 0]], last: [0, 0],
                         hold: sty === 'lofi' && va === 1 ? 4 * (1 + Math.floor(Math.max(0, Math.min(100, b.heat ?? 30)) / 100 * 15)) : 0, hc: 0, hv: [0, 0],
-                        mix: Math.max(0, Math.min(100, b.mix ?? 100)) / 100, lvl: b.mute ? 0 : Math.pow(10, Math.max(-60, Math.min(24, b.out || 0)) / 20), solo: !!b.solo };
+                        mix: Math.max(0, Math.min(100, b.mix ?? 100)) / 100, lvl: b.mute ? 0 : Math.pow(10, Math.max(-60, Math.min(24, b.out || 0)) / 20), solo: !!b.solo,
+                        i: b._i, va, mute: !!b.mute, tg: [b.lo2 || 0, b.md || 0, b.hi2 || 0, b.pr || 0], n, lo: b.lo || 20, hi: b.hi || 20000, isBase };
                 };
                 const bb = all.find(b => b.base);
                 this.free = all.filter(b => !b.base).slice(0, 6).map(b => mk(b, false));
@@ -277,7 +283,36 @@ window.PulseAudio = (function() {
                 return true;
             }
         }
-        registerProcessor('pulse-msat', PulseMsat);
+        // Automation : « mix » / « out » = tout l'effet, « b1-heat » = la chaleur de la bande n° 1 (sa place dans la liste du panneau)
+        const MSAT_TONE = ['lo2', 'md', 'hi2', 'pr'];
+        registerProcessor('pulse-msat', pulseAuto(PulseMsat, (s, v) => {
+            for (const k in v) {
+                const x = v[k];
+                if (k === 'mix') { s.gmix = Math.max(0, Math.min(100, x)) / 100; continue; }
+                if (k === 'out') { s.gout = Math.pow(10, Math.max(-24, Math.min(24, x)) / 20); continue; }
+                const dash = k.indexOf('-'), m = k[0] === 'b' && dash > 1 ? [k, k.slice(1, dash), k.slice(dash + 1)] : null; if (!m) continue;   // découpage à la main : les \\d se perdent dans cette chaîne
+                const b = s.free.find(y => y.i === +m[1]) || (s.base && s.base.i === +m[1] ? s.base : null); if (!b) continue;
+                const f = m[2], ti = MSAT_TONE.indexOf(f);
+                if (f === 'heat') { const h = Math.max(0, Math.min(100, x)); b.k = (1 + h / 100 * 7) * MSAT_VK[b.va]; b.trim = s.ag ? msatTrim(b.sty, b.k) : 1; if (b.sty === 'lofi' && b.va === 1) b.hold = 4 * (1 + Math.floor(h / 100 * 15)); }
+                else if (f === 'dyn') b.dyn = Math.max(-50, Math.min(50, x));
+                else if (f === 'fb') b.fbk = Math.max(0, Math.min(100, x)) / 100 * 0.6;
+                else if (f === 'mix') b.mix = Math.max(0, Math.min(100, x)) / 100;
+                else if (f === 'out') b.lvl = b.mute ? 0 : Math.pow(10, Math.max(-60, Math.min(24, x)) / 20);
+                else if ((f === 'lo' || f === 'hi') && !b.isBase && b[f] !== x) {
+                    b[f] = x; const r = s.mkKs(b.lo, b.hi, b.n);
+                    if (r.ks.length !== b.ks.length) b.st = [r.ks.map(() => [0, 0, 0, 0]), r.ks.map(() => [0, 0, 0, 0])];
+                    b.ks = r.ks; b.bp = r.bp;
+                }
+                else if (ti >= 0 && (b.tg[ti] !== x || !b.tAll)) {
+                    // ton automatisé : les 4 filtres restent en place (à 0 dB ils ne changent rien)
+                    b.tg[ti] = x;
+                    const tone = [['lowshelf', 150, b.tg[0], 0.7071], ['bell', 1000, b.tg[1], 0.7], ['highshelf', 6000, b.tg[2], 0.7071], ['bell', 3500, b.tg[3], 1.2]]
+                        .flatMap(t => eqBandCoefs({ type: t[0], freq: t[1], gain: t[2], q: t[3] }, s.sr4));
+                    if (tone.length !== b.tone.length) b.ts = [tone.map(() => [0, 0, 0, 0]), tone.map(() => [0, 0, 0, 0])];
+                    b.tone = tone; b.tAll = true;
+                }
+            }
+        }));
         // Multibande à bandes libres : même calcul que MultiBand dans engine/src/fx.rs.
         // Chaque bande isole sa zone (Linkwitz-Riley 24 dB/oct : deux filtres 2e ordre de chaque côté) et la monte ou la baisse
         // selon son niveau : gain = plage × (dépassement du seuil / 12 dB, entre 0 et 1), plus sa sortie. Sortie = son + Σ bande × (gain − 1) :
@@ -289,11 +324,14 @@ window.PulseAudio = (function() {
                 const biq = (hp, f) => { const w = 2 * Math.PI * f / sampleRate, c = Math.cos(w), al = Math.sin(w) / (2 * Math.SQRT1_2), a0 = 1 + al;
                     return hp ? [(1 + c) / 2 / a0, -(1 + c) / a0, (1 + c) / 2 / a0, -2 * c / a0, (1 - al) / a0] : [(1 - c) / 2 / a0, (1 - c) / a0, (1 - c) / 2 / a0, -2 * c / a0, (1 - al) / a0]; };
                 const co = (ms) => 1 - Math.exp(-1 / (Math.max(0.05, ms) / 1000 * sampleRate));
-                this.bands = (Array.isArray(p.bands) ? p.bands : []).filter(b => b && b.on !== false).slice(0, 6).map(b => {
-                    const lo = Math.max(20, Math.min(20000, b.lo || 20)), hi = Math.max(lo * 1.05, Math.min(20000, sampleRate * 0.45, b.hi || 20000));
-                    const ks = []; if (lo > 20.5) ks.push(biq(true, lo), biq(true, lo)); if (hi < 19999) ks.push(biq(false, hi), biq(false, hi));
+                this.co = co;
+                // filtres d'une bande (refaits quand ses limites sont automatisées)
+                this.mkKs = (lo0, hi0) => { const lo = Math.max(20, Math.min(20000, lo0 || 20)), hi = Math.max(lo * 1.05, Math.min(20000, sampleRate * 0.45, hi0 || 20000));
+                    const ks = []; if (lo > 20.5) ks.push(biq(true, lo), biq(true, lo)); if (hi < 19999) ks.push(biq(false, hi), biq(false, hi)); return ks; };
+                this.bands = (Array.isArray(p.bands) ? p.bands : []).map((b, i) => b && { ...b, _i: i }).filter(b => b && b.on !== false).slice(0, 6).map(b => {
+                    const ks = this.mkKs(b.lo, b.hi);
                     return { ks, st: [ks.map(() => [0, 0, 0, 0]), ks.map(() => [0, 0, 0, 0])], env: 0, att: co(b.att ?? 10), rel: co(b.rel ?? 120),
-                        thr: b.thr ?? -30, range: Math.max(-24, Math.min(24, b.range ?? -6)), out: Math.max(-24, Math.min(24, b.out || 0)), solo: !!b.solo, mute: !!b.mute, mg: 0 };
+                        thr: b.thr ?? -30, range: Math.max(-24, Math.min(24, b.range ?? -6)), out: Math.max(-24, Math.min(24, b.out || 0)), solo: !!b.solo, mute: !!b.mute, mg: 0, i: b._i, lo: b.lo || 20, hi: b.hi || 20000 };
                 });
                 this.anySolo = this.bands.some(b => b.solo);
                 this.live = !!p.live; this.cnt = 0;
@@ -330,7 +368,13 @@ window.PulseAudio = (function() {
                 return true;
             }
         }
-        registerProcessor('pulse-mband', PulseMband);
+        // Automation : « b2-thr » = le seuil de la bande n° 2 (sa place dans la liste du panneau)
+        registerProcessor('pulse-mband', pulseAuto(PulseMband, (s, v) => {
+            for (const k in v) { const dash = k.indexOf('-'), m = k[0] === 'b' && dash > 1 ? [k, k.slice(1, dash), k.slice(dash + 1)] : null; if (!m) continue; const b = s.bands.find(x => x.i === +m[1]); if (!b) continue; const x = v[k];
+                if (m[2] === 'thr') b.thr = x; else if (m[2] === 'range') b.range = Math.max(-24, Math.min(24, x)); else if (m[2] === 'out') b.out = Math.max(-24, Math.min(24, x));
+                else if (m[2] === 'att') b.att = s.co(x); else if (m[2] === 'rel') b.rel = s.co(x);
+                else if ((m[2] === 'lo' || m[2] === 'hi') && b[m[2]] !== x) { b[m[2]] = x; const ks = s.mkKs(b.lo, b.hi); if (ks.length !== b.ks.length) b.st = [ks.map(() => [0, 0, 0, 0]), ks.map(() => [0, 0, 0, 0])]; b.ks = ks; } }
+        }));
         // Saturation suréchantillonnée ×4 : même calcul que Saturator dans engine/src/fx.rs
         // (filtre de 64 coefficients, Blackman, coupure 0,1125 de la cadence ×4 ; parasites −22 dB → −99 dB)
         const satFir = (() => {
@@ -532,7 +576,9 @@ window.PulseAudio = (function() {
                 return true;
             }
         }
-        registerProcessor('pulse-gate', pulseAuto(PulseGate, (s, v) => { if (v.threshold !== undefined) { s.thr = Math.pow(10, v.threshold / 20); s.thrDb = v.threshold; } if (v.reduction !== undefined) { s.floor = Math.pow(10, -v.reduction / 20); s.range = v.reduction; } if (v.release !== undefined) s.gRel = 1 - Math.exp(-1 / (Math.max(0.005, v.release / 1000) * sampleRate)); }));
+        registerProcessor('pulse-gate', pulseAuto(PulseGate, (s, v) => { if (v.threshold !== undefined) { s.thr = Math.pow(10, v.threshold / 20); s.thrDb = v.threshold; } if (v.reduction !== undefined) { s.floor = Math.pow(10, -v.reduction / 20); s.range = v.reduction; } if (v.release !== undefined) s.gRel = 1 - Math.exp(-1 / (Math.max(0.005, v.release / 1000) * sampleRate));
+            if (v.ratio !== undefined) s.ratio = v.ratio >= 99 ? 0 : Math.max(1, v.ratio); if (v.knee !== undefined) s.knee = Math.max(0, v.knee);
+            if (v.attack !== undefined) s.gAtt = 1 - Math.exp(-1 / (Math.max(0.0001, v.attack / 1000) * sampleRate)); if (v.hold !== undefined) s.hold = Math.round(Math.max(0, v.hold) / 1000 * sampleRate); }));
 
         // Effets de mouvement : chorus, flanger, phaser, trémolo, doubleur de voix, slapback.
         // Mêmes calculs que ModFx dans engine/src/fx.rs (une ligne à retard par canal, un LFO commun décalé d'un canal à l'autre).
@@ -926,7 +972,7 @@ window.PulseAudio = (function() {
                 return true;
             }
         }
-        registerProcessor('pulse-limiter', PulseLimiter);
+        registerProcessor('pulse-limiter', pulseAuto(PulseLimiter, (s, v) => { if (v.gain !== undefined) s.g = Math.pow(10, v.gain / 20); if (v.ceiling !== undefined) s.thr = Math.min(1, Math.pow(10, v.ceiling / 20)); if (v.release !== undefined) s.rel = 1 - Math.exp(-1 / (Math.max(1, Math.min(2000, v.release)) / 1000 * sampleRate)); }));
 
         // Écho (delay) : le son revient après un temps choisi, de moins en moins fort et de plus en plus sourd.
         class PulseDelay extends AudioWorkletProcessor {
@@ -1519,16 +1565,27 @@ window.PulseAudio = (function() {
     // Plages des réglages d'effet automatisables ({ 'fx:comp:threshold': { min, max, log } }), données par l'interface
     let autoRanges = {};
     function setAutoRanges(m) { autoRanges = m || {}; }
+    // Réglages de chaque bande du Multibande et de la Saturation multibande (mêmes plages que les boutons, et que auto_range dans fx.rs)
+    const BAND_AUTO_RANGES = {
+        mband: { lo: [20, 20000, 1], hi: [20, 20000, 1], thr: [-60, 0], range: [-24, 24], att: [0.5, 200, 1], rel: [20, 1000, 1], out: [-12, 12] },
+        msat: { lo: [20, 20000, 1], hi: [20, 20000, 1], heat: [0, 100], dyn: [-50, 50], fb: [0, 100], mix: [0, 100], out: [-24, 12], lo2: [-12, 12], md: [-12, 12], hi2: [-12, 12], pr: [-12, 12] }
+    };
+    function autoRangeOf(pid) {
+        const eqm = /^fx:eq:b\d+-(freq|gain)$/.exec(pid), bm = /^fx:(mband|msat):b\d+-(\w+)$/.exec(pid), br = bm && (BAND_AUTO_RANGES[bm[1]] || {})[bm[2]];
+        return autoRanges[pid] || (eqm ? (eqm[1] === 'freq' ? { min: 20, max: 20000, log: true } : { min: -18, max: 18 }) : br ? { min: br[0], max: br[1], log: !!br[2] } : null);
+    }
     function autoReal(pid, v) {
-        const eqm = /^fx:eq:b\d+-(freq|gain)$/.exec(pid);
-        const r = autoRanges[pid] || (eqm ? (eqm[1] === 'freq' ? { min: 20, max: 20000, log: true } : { min: -18, max: 18 }) : null);
+        const eqm = /^fx:eq:b\d+-(freq|gain)$/.exec(pid), bm = /^fx:(mband|msat):b\d+-(\w+)$/.exec(pid), br = bm && (BAND_AUTO_RANGES[bm[1]] || {})[bm[2]];
+        const r = autoRanges[pid] || (eqm ? (eqm[1] === 'freq' ? { min: 20, max: 20000, log: true } : { min: -18, max: 18 }) : br ? { min: br[0], max: br[1], log: !!br[2] } : null);
         if (!r) return null; return r.log && r.min > 0 ? r.min * Math.pow(r.max / r.min, v) : r.min + v * (r.max - r.min); }
     // Automation d'un réglage quelconque : points { t, v } avec v entre 0 et 1 (position dans la plage du réglage)
     function autoCurvePts(owner, pid) {
         const pts = owner && owner.automation && owner.automation[pid] && owner.automation[pid].points;
         return Array.isArray(pts) && pts.length ? pts.slice().sort((p, q) => p.t - q.t) : [];
     }
-    function pulseAutoAtMain(pts, t) { return volumeAt(pts, t); }
+    // Courbe en fréquence / temps (pts.log) : entre deux points on avance en octaves, comme le moteur d'export
+    function pulseAutoAtMain(pts, t) { return pts.log ? Math.exp(volumeAt(pts.map(p => ({ t: p.t, v: Math.log(Math.max(p.v, 1e-9)) })), t)) : volumeAt(pts, t); }
+    function autoRamp(param, pts, v, at) { if (pts.log && v > 0) param.exponentialRampToValueAtTime(v, at); else param.linearRampToValueAtTime(v, at); }
     // Filtres d'une bande d'EQ (mêmes calculs que eq_sections dans engine/src/fx.rs)
     // hpf / lpf : pente 12 (1 filtre, q = résonance), 24, 36 ou 48 dB/oct (Butterworth, la résonance va sur le dernier)
     // EQ « calé sur l'analogique » (filtres matched, M. Vicanek 2016) : la courbe suit celle d'un EQ analogique jusqu'à 20 kHz,
@@ -2126,14 +2183,16 @@ window.PulseAudio = (function() {
         const curveOf = (fx, key, conv = (x) => x) => {
             const pid = `fx:${fx}:${key}`, pts = autoCurvePts({ automation: params.auto }, pid);
             if (!pts.length || autoReal(pid, 0) === null) return null;
-            return pts.map(p => ({ t: p.t, v: conv(autoReal(pid, p.v)) }));
+            const out = pts.map(p => ({ t: p.t, v: conv(autoReal(pid, p.v)) }));
+            const r = autoRangeOf(pid); if (r && r.log && r.min > 0) out.log = true;
+            return out;
         };
         const autoAll = (fx) => autoOpts(fx, Object.fromEntries(Object.keys(params.auto || {}).filter(k => k.startsWith(`fx:${fx}:`)).map(k => [k.split(':')[2], null])));
         const hasAuto = (fx) => Object.keys(params.auto || {}).some(k => k.startsWith(`fx:${fx}:`) && autoCurvePts({ automation: params.auto }, k).length);
         const autoOpts = (fx, map) => {
             const auto = {};
             for (const [key, conv] of Object.entries(map)) { const c = curveOf(fx, key, conv || undefined); if (c) auto[key] = c; }
-            return Object.keys(auto).length ? { auto, autoT0: autoAt.t0, autoFrom: autoAt.from } : {};
+            return Object.keys(auto).length ? { auto, autoLog: Object.keys(auto).filter(k => auto[k].log), autoT0: autoAt.t0, autoFrom: autoAt.from } : {};
         };
 
         // Chaque effet est un bloc ; on les branche dans l'ordre demandé (ordre habituel si rien n'est précisé)
@@ -2150,7 +2209,7 @@ window.PulseAudio = (function() {
             const add = (type, freq) => qs.forEach((q) => {
                 const f = actx.createBiquadFilter(); f.type = type; f.frequency.value = freq; f.Q.value = qdb(q); connect(f);
                 const c = curveOf('filter', type === 'highpass' ? 'hpf' : 'lpf');
-                if (c) { f.frequency.setValueAtTime(pulseAutoAtMain(c, autoAt.from), autoAt.t0); c.forEach(p => { if (p.t > autoAt.from) f.frequency.linearRampToValueAtTime(p.v, autoAt.t0 + (p.t - autoAt.from)); }); }
+                if (c) { f.frequency.setValueAtTime(pulseAutoAtMain(c, autoAt.from), autoAt.t0); c.forEach(p => { if (p.t > autoAt.from) autoRamp(f.frequency, c, p.v, autoAt.t0 + (p.t - autoAt.from)); }); }
             });
             if (curveOf('filter', 'hpf') && hpf <= 20) add('highpass', 20);
             if (curveOf('filter', 'lpf') && lpf >= 20000) add('lowpass', 20000);
@@ -2195,7 +2254,7 @@ window.PulseAudio = (function() {
             const sched = (param, key, k = 1) => {
                 const c = curveOf('eq', key); if (!c) return;
                 param.setValueAtTime(pulseAutoAtMain(c, autoAt.from) * k, autoAt.t0);
-                c.forEach(pt => { if (pt.t > autoAt.from) param.linearRampToValueAtTime(pt.v * k, autoAt.t0 + (pt.t - autoAt.from)); });
+                c.forEach(pt => { if (pt.t > autoAt.from) autoRamp(param, c, pt.v * k, autoAt.t0 + (pt.t - autoAt.from)); });
             };
             const isOffline = typeof OfflineAudioContext !== 'undefined' && actx instanceof OfflineAudioContext;
             const bandsEq = (Array.isArray(ep.bands) ? ep.bands : legacyEqBands(ep)).slice(0, 24);
@@ -2273,7 +2332,7 @@ window.PulseAudio = (function() {
             if (enabled.includes('deess') && dp.thr !== undefined && fxReady.has(actx)) {
                 const live = !!params.grKey && !(typeof OfflineAudioContext !== 'undefined' && actx instanceof OfflineAudioContext);
                 const node = new AudioWorkletNode(actx, 'pulse-deesser2', { numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max',
-                    processorOptions: { thr: dp.thr, range: dp.range, lo: dp.lo, hi: dp.hi, wide: !!dp.wide, rel: !!dp.rel, listen: live && !!dp.listen, live } });
+                    processorOptions: { thr: dp.thr, range: dp.range, lo: dp.lo, hi: dp.hi, wide: !!dp.wide, rel: !!dp.rel, listen: live && !!dp.listen, live, ...autoAll('deess') } });
                 if (live) { const key = params.grKey; node.port.onmessage = (e) => deessLive.set(key, { ...e.data, ts: performance.now() }); }
                 connect(node);
                 return;
@@ -2292,7 +2351,7 @@ window.PulseAudio = (function() {
         B.msat = () => {
             const sp = params.msat || {}, bands = (sp.bands || []).filter(b => b && b.on !== false);
             if (!enabled.includes('msat') || !bands.length || !fxReady.has(actx)) return;
-            connect(new AudioWorkletNode(actx, 'pulse-msat', { numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max', processorOptions: { bands, mix: sp.mix, out: sp.out, ag: sp.ag } }));
+            connect(new AudioWorkletNode(actx, 'pulse-msat', { numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max', processorOptions: { bands: sp.bands, mix: sp.mix, out: sp.out, ag: sp.ag, ...autoAll('msat') } }));
         };
 
         // Multibande (bandes libres)
@@ -2300,7 +2359,7 @@ window.PulseAudio = (function() {
             const mp = params.mband || {}, bands = (mp.bands || []).filter(b => b && b.on !== false);
             if (!enabled.includes('mband') || !bands.length || !fxReady.has(actx)) return;
             const live = !!params.grKey && !(typeof OfflineAudioContext !== 'undefined' && actx instanceof OfflineAudioContext);
-            const node = new AudioWorkletNode(actx, 'pulse-mband', { numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max', processorOptions: { bands, live } });
+            const node = new AudioWorkletNode(actx, 'pulse-mband', { numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max', processorOptions: { bands: mp.bands, live, ...autoAll('mband') } });
             if (live) { const key = params.grKey; node.port.onmessage = (e) => mbandLive.set(key, { ...e.data, ts: performance.now() }); }
             connect(node);
         };
@@ -2364,7 +2423,7 @@ window.PulseAudio = (function() {
                 const lp = params.limit || {}, live = !!params.grKey && !(typeof OfflineAudioContext !== 'undefined' && actx instanceof OfflineAudioContext);
                 const node = new AudioWorkletNode(actx, 'pulse-limiter', {
                     numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCount: 2, channelCountMode: 'explicit',
-                    processorOptions: { ceiling: dbToLin(lp.ceiling ?? ceiling), gain: lp.gain || 0, release: lp.release, lookahead: lp.lookahead, tp: !!lp.tp, live }
+                    processorOptions: { ceiling: dbToLin(lp.ceiling ?? ceiling), gain: lp.gain || 0, release: lp.release, lookahead: lp.lookahead, tp: !!lp.tp, live, ...autoAll('limit') }
                 });
                 if (live) { const key = params.grKey; node.port.onmessage = (e) => limLive.set(key, { ...e.data, ts: performance.now() }); }
                 connect(node);

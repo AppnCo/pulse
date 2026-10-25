@@ -225,6 +225,53 @@ mod tests {
     }
 
     /// Nouveau De-esser (seuil, plage, zone) : mêmes chiffres que tests/scenarios/deess-parite.mjs (Chrome).
+    /// Automation des nouvelles façades (De-esser, Limiteur) : mêmes chiffres que tests/scenarios/auto-faces-parite.mjs (Chrome).
+    #[test]
+    fn automation_des_facades_comme_le_navigateur() {
+        let sr = SR as usize;
+        let mut media = Media::new();
+        let mut v = vec![0.0f32; 2 * sr];
+        let mut r: u64 = 7;
+        for (i, x) in v.iter_mut().enumerate() {
+            let t = i as f64 / SR as f64;
+            r = (r * 16807) % 2147483647;
+            *x = (0.6 * (2.0 * std::f64::consts::PI * 300.0 * t).sin() + 0.25 * (r as f64 / 1073741823.5 - 1.0)) as f32;
+        }
+        media.insert("vs".into(), Source { channels: vec![v], sample_rate: SR });
+        let rms = |x: &[f32], a: f64, z: f64| {
+            let (a, z) = ((a * SR as f64).round() as usize, (z * SR as f64).round() as usize);
+            (x[a..z].iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / (z - a) as f64).sqrt()
+        };
+        let run = |fx: &str, fp: &str, auto: &str| {
+            let json = format!(r#"{{"tracks":[{{"volume":100,"clips":[{{"id":"vs","start":0,"duration":2}}],"effects":["{fx}"],"effectParams":{{"{fx}":{fp}}},"automation":{auto}}}]}}"#);
+            let p: Project = serde_json::from_str(&json).unwrap();
+            render(&p, &media, &RenderOptions { only_track: Some(0), ..opts() }).0
+        };
+        let near = |v: f64, want: f64| assert!((v - want).abs() < want * 0.01 + 2e-5, "{v} au lieu de {want}");
+        let up = r#"{"points":[{"t":0,"v":0},{"t":1,"v":0},{"t":1.01,"v":1}]}"#;
+        let l = run("deess", r#"{"thr":-40,"range":12}"#, &format!(r#"{{"fx:deess:range":{up}}}"#));
+        near(rms(&l, 0.2, 0.8), 0.316891); near(rms(&l, 1.2, 1.8), 0.301667);
+        let l = run("deess", r#"{"thr":-40,"range":12}"#, r#"{"fx:deess:thr":{"points":[{"t":0,"v":1},{"t":1,"v":1},{"t":1.01,"v":0}]}}"#);
+        near(rms(&l, 0.2, 0.8), 0.316891); near(rms(&l, 1.2, 1.8), 0.30316);
+        let l = run("limit", r#"{"ceiling":-1,"release":120}"#, r#"{"fx:limit:ceiling":{"points":[{"t":0,"v":1},{"t":1,"v":1},{"t":1.01,"v":0.5}]}}"#);
+        near(rms(&l, 0.2, 0.8), 0.448215); near(rms(&l, 1.2, 1.8), 0.266919);
+        let l = run("limit", r#"{"ceiling":-6,"release":120}"#, &format!(r#"{{"fx:limit:release":{up}}}"#));
+        near(rms(&l, 0.2, 0.8), 0.282765); near(rms(&l, 1.2, 1.8), 0.265037);
+        let l = run("limit", r#"{"ceiling":-3}"#, &format!(r#"{{"fx:limit:gain":{up}}}"#));
+        near(rms(&l, 0.2, 0.8), 0.377228); near(rms(&l, 1.2, 1.8), 0.377038);
+        let lim = r#"{"points":[{"t":0,"v":0.3},{"t":2,"v":0.6}]}"#;
+        let l = run("mband", r#"{"bands":[{"lo":200,"hi":2000,"thr":-40,"range":-12}]}"#, &format!(r#"{{"fx:mband:b0-lo":{lim},"fx:mband:b0-hi":{up}}}"#));
+        near(rms(&l, 0.2, 0.8), 0.29141); near(rms(&l, 1.2, 1.8), 0.303305);
+        let l = run("msat", r#"{"bands":[{"base":true,"sty":"bande","va":1,"heat":10},{"lo":200,"hi":2000,"sty":"ampli","va":1,"heat":60,"fb":30}]}"#, &format!(r#"{{"fx:msat:b1-lo":{lim},"fx:msat:b1-hi":{up}}}"#));
+        near(rms(&l, 0.2, 0.8), 0.281544); near(rms(&l, 1.2, 1.8), 0.278487);
+        let l = run("gate", r#"{"threshold":-20,"reduction":40,"ratio":2,"release":150}"#, r#"{"fx:gate:ratio":{"points":[{"t":0,"v":0},{"t":1,"v":0},{"t":1.01,"v":0.6}]},"fx:gate:knee":{"points":[{"t":0,"v":0},{"t":1,"v":0},{"t":1.01,"v":1}]},"fx:gate:attack":{"points":[{"t":0,"v":0},{"t":1,"v":0},{"t":1.01,"v":1}]},"fx:gate:hold":{"points":[{"t":0,"v":0},{"t":1,"v":0},{"t":1.01,"v":1}]}}"#);
+        near(rms(&l, 0.2, 0.8), 0.316891); near(rms(&l, 1.2, 1.8), 0.317399);
+        let l = run("mband", r#"{"bands":[{"lo":20,"hi":400,"thr":-40,"range":-12},{"lo":400,"hi":20000,"thr":-40,"range":-6}]}"#, r#"{"fx:mband:b0-range":{"points":[{"t":0,"v":0.5},{"t":1,"v":0.5},{"t":1.01,"v":0}]},"fx:mband:b1-out":{"points":[{"t":0,"v":0},{"t":1,"v":0},{"t":1.01,"v":1}]},"fx:mband:b0-att":{"points":[{"t":0,"v":0},{"t":1,"v":0},{"t":1.01,"v":1}]},"fx:mband:b1-thr":{"points":[{"t":0,"v":0},{"t":1,"v":0},{"t":1.01,"v":1}]}}"#);
+        near(rms(&l, 0.2, 0.8), 0.349343); near(rms(&l, 1.2, 1.8), 0.493388);
+        let l = run("msat", r#"{"bands":[{"base":true,"sty":"bande","va":1,"heat":30},{"lo":200,"hi":2000,"sty":"lampe","va":1,"heat":20}],"mix":100}"#, r#"{"fx:msat:b1-heat":{"points":[{"t":0,"v":0},{"t":1,"v":0},{"t":1.01,"v":1}]},"fx:msat:b0-hi2":{"points":[{"t":0,"v":0},{"t":1,"v":0},{"t":1.01,"v":1}]},"fx:msat:b1-out":{"points":[{"t":0,"v":0.6667},{"t":1,"v":0.6667},{"t":1.01,"v":0.3}]},"fx:msat:mix":{"points":[{"t":0,"v":1},{"t":1.5,"v":0.4}]},"fx:msat:b0-dyn":{"points":[{"t":0,"v":0},{"t":1,"v":0},{"t":1.01,"v":1}]}}"#);
+        near(rms(&l, 0.2, 0.8), 0.202777); near(rms(&l, 1.2, 1.8), 0.204685);
+    }
+
     #[test]
     fn deesser_v2_comme_le_navigateur() {
         let sr = SR as usize;

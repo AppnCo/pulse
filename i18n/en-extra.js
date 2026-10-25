@@ -310,7 +310,7 @@ Object.assign(exact, { 'Courbe': 'Curve', 'Copier la courbe affichée': 'Copy th
   'Solo : n\'écouter que la zone de ce point': 'Solo: listen only to this point\'s range',
   'Point dynamique : arrive bientôt': 'Dynamic point: coming soon', 'Retirer ce point': 'Remove this point',
   'Double-clic sur la courbe pour poser un point': 'Double-click the curve to add a point',
-  'Limiteur': 'Limiter', 'Plafond': 'Ceiling', 'Anticipation': 'Lookahead', 'Relâchement': 'Release', 'Style': 'Style', 'Transparent': 'Transparent', 'Doux': 'Soft', 'Franc': 'Hard',
+  'Limiteur': 'Limiter', 'Plafond': 'Ceiling', 'Gain d\'entrée': 'Input gain', 'Anticipation': 'Lookahead', 'Relâchement': 'Release', 'Style': 'Style', 'Transparent': 'Transparent', 'Doux': 'Soft', 'Franc': 'Hard',
   'Pic réel': 'True peak', 'Réduction max': 'Max reduction', 'Sortie': 'Output', 'ENTRÉE': 'INPUT',
   'Bientôt : plusieurs façons de réagir aux gros pics': 'Coming soon: several ways to react to big peaks',
   'Pic réel : les crêtes entre les échantillons comptent aussi (calcul ×4). Ce que demandent Spotify et YouTube': 'True peak: peaks between samples count too (4× calculation). What Spotify and YouTube require',

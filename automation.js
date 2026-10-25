@@ -16,7 +16,7 @@ function autoOwnerKey(o) { const i = state.project.tracks.indexOf(o); return i >
 function autoOwnerFromKey(k) { return k[0] === 't' ? state.project.tracks[+k.slice(1)] : busById(k.slice(1)); }
 // Réglages d'effet que le moteur sait suivre pendant la lecture (les autres viendront effet par effet)
 const AUTO_FX = { comp: ['threshold', 'ratio', 'mix', 'attack', 'release', 'knee', 'makeup'], delay: ['wet', 'feedback', 'dry'], reverb: ['wet'], filter: ['hpf', 'lpf'],
-    deess: ['amount'], gate: ['threshold', 'release', 'reduction'], crush: ['bits', 'down', 'mix'], util: ['gain'], width: ['width'], pitch: ['semi', 'mix'],
+    deess: ['amount', 'thr', 'range'], limit: ['ceiling', 'release', 'gain'], msat: ['mix', 'out'], gate: ['threshold', 'release', 'reduction', 'ratio', 'knee', 'attack', 'hold'], crush: ['bits', 'down', 'mix'], util: ['gain'], width: ['width'], pitch: ['semi', 'mix'],
     tremolo: ['rate', 'depth'], phaser: ['rate', 'depth', 'feedback', 'mix'], flanger: ['rate', 'depth', 'feedback', 'mix'], chorus: ['rate', 'depth', 'mix'],
     doubler: ['width', 'mix'], slapback: ['time', 'feedback', 'mix'] };
 // EQ libre : fréquence et gain de chaque bande (repérées par leur place dans la liste)
@@ -28,10 +28,30 @@ function eqAutoDefs(o) {
         ...(EQ_GAIN_TYPES.includes(b.type) ? [{ key: `b${i}-gain`, label: `Bande ${i + 1} (${EQ_TYPES[b.type] || b.type}) · gain`, unit: ' dB', min: -18, max: 18, def: b.gain || 0, band: i, field: 'gain' }] : [])
     ]);
 }
-function fxNumericDefs(name, o) { if (name === 'eq') return eqAutoDefs(o); return (FX_PANEL_DEFS[name] || []).filter(d => !d.choices && !d.toggle && d.min !== undefined && (AUTO_FX[name] || []).includes(d.key)); }
+// Réglages des nouvelles façades (boutons ronds) qui n'ont pas de ligne dans FX_PANEL_DEFS
+const AUTO_EXTRA_DEFS = {
+    deess: [{ key: 'thr', label: 'Seuil', unit: ' dB', min: -60, max: 0, def: -26 }, { key: 'range', label: 'Plage', unit: ' dB', min: 0, max: 24, def: 10 }],
+    gate: [{ key: 'ratio', label: 'Ratio', unit: ' : 1', min: 1, max: 100, def: 100, log: true }, { key: 'knee', label: 'Genou', unit: ' dB', min: 0, max: 24, def: 0 },
+        { key: 'attack', label: 'Attaque', unit: ' ms', min: 0.1, max: 50, def: 2, log: true }, { key: 'hold', label: 'Maintien', unit: ' ms', min: 0, max: 500, def: 50 }],
+    msat: [{ key: 'mix', label: 'Mélange', unit: ' %', min: 0, max: 100, def: 100 }, { key: 'out', label: 'Sortie', unit: ' dB', min: -12, max: 12, def: 0 }],
+    limit: [{ key: 'gain', label: 'Gain d\'entrée', unit: ' dB', min: 0, max: 24, def: 0 }, { key: 'ceiling', label: 'Plafond', unit: ' dB', min: -12, max: 0, def: -0.3 }, { key: 'release', label: 'Relâchement', unit: ' ms', min: 5, max: 2000, def: 120, log: true }]
+};
+function fxAllDefs(name) { return [...(FX_PANEL_DEFS[name] || []), ...(AUTO_EXTRA_DEFS[name] || [])]; }
+// Multibande / Saturation multibande : les réglages de chaque bande (repérées par leur place dans la liste, comme l'EQ)
+const BAND_AUTO_DEFS = {
+    mband: [['lo', 'Limite basse', ' Hz', 20, 20000, 20, 1], ['hi', 'Limite haute', ' Hz', 20, 20000, 20000, 1], ['thr', 'Seuil', ' dB', -60, 0, -30], ['range', 'Plage', ' dB', -24, 24, -6], ['att', 'Attaque', ' ms', 0.5, 200, 10, 1], ['rel', 'Relâchement', ' ms', 20, 1000, 120, 1], ['out', 'Sortie', ' dB', -12, 12, 0]],
+    msat: [['lo', 'Limite basse', ' Hz', 20, 20000, 20, 1], ['hi', 'Limite haute', ' Hz', 20, 20000, 20000, 1], ['heat', 'Chaleur', ' %', 0, 100, 30], ['dyn', 'Dynamique', '', -50, 50, 0], ['fb', 'Résonance', ' %', 0, 100, 0], ['mix', 'Mélange', ' %', 0, 100, 100], ['out', 'Niveau', ' dB', -24, 12, 0],
+        ['lo2', 'Grave', ' dB', -12, 12, 0], ['md', 'Médium', ' dB', -12, 12, 0], ['hi2', 'Aigu', ' dB', -12, 12, 0], ['pr', 'Présence', ' dB', -12, 12, 0]]
+};
+function bandAutoDefs(name, o) {
+    const bands = (((o && o.effectParams) || {})[name] || {}).bands || [];
+    return bands.flatMap((b, i) => !b ? [] : BAND_AUTO_DEFS[name].filter(([f]) => !(b.base && (f === 'lo' || f === 'hi'))).map(([f, l, unit, min, max, def, log]) => ({
+        key: `b${i}-${f}`, label: `${b.base ? 'Tout le son' : 'Bande ' + (i + 1)} · ${l}`, unit, min, max, def, log: !!log, band: i, field: f })));
+}
+function fxNumericDefs(name, o) { if (name === 'eq') return eqAutoDefs(o); if (BAND_AUTO_DEFS[name]) return [...bandAutoDefs(name, o), ...(AUTO_EXTRA_DEFS[name] || [])]; return fxAllDefs(name).filter(d => !d.choices && !d.toggle && d.min !== undefined && (AUTO_FX[name] || []).includes(d.key)); }
 // Le moteur audio reçoit les plages de ces réglages (les courbes sont rangées entre 0 et 1)
 if (window.PulseAudio && PulseAudio.setAutoRanges) PulseAudio.setAutoRanges(Object.fromEntries(Object.entries(AUTO_FX).flatMap(([fx, keys]) =>
-    keys.map(k => (FX_PANEL_DEFS[fx] || []).find(d => d.key === k)).filter(Boolean).map(d => [`fx:${fx}:${d.key}`, { min: d.min, max: d.max, log: !!(d.log && d.min > 0) }]))));
+    keys.map(k => fxAllDefs(fx).find(d => d.key === k)).filter(Boolean).map(d => [`fx:${fx}:${d.key}`, { min: d.min, max: d.max, log: !!(d.log && d.min > 0) }]))));
 function autoInfo(o, pid) {
     if (pid === 'volume') return { label: 'Volume', cur: () => 1, norm: v => v, denorm: v => v, fmt: v => Math.round(v * 100) + ' %' };
     const lin = (label, min, max, cur, fmt) => ({ label, cur, norm: v => Math.max(0, Math.min(1, (v - min) / (max - min))), denorm: n => min + n * (max - min), fmt });
@@ -43,7 +63,8 @@ function autoInfo(o, pid) {
         const d = fxNumericDefs(a, o).find(x => x.key === b); if (!d) return null;
         const cur = a === 'eq'
             ? () => { const bd = eqBandsOf((o.effectParams || {}).eq || {})[d.band]; return bd && bd[d.field] !== undefined ? bd[d.field] : d.def; }
-            : () => { const v = (o.effectParams || {})[a] ? o.effectParams[a][b] : undefined; return v !== undefined ? v : d.def; };
+            : d.band !== undefined ? () => { const bd = ((((o.effectParams || {})[a]) || {}).bands || [])[d.band]; return bd && bd[d.field] !== undefined ? bd[d.field] : d.def; }
+            : () => { const v = (o.effectParams || {})[a] ? o.effectParams[a][b] : undefined; if (a === 'gate' && b === 'ratio' && !(v > 0)) return 100; return v !== undefined ? v : d.def; };   // gate : ratio 0 = franc = ∞
         const label = (FX_NAMES[a] || a) + ' · ' + d.label;
         if (d.log && d.min > 0) return { label, cur, norm: v => Math.max(0, Math.min(1, Math.log(Math.max(v, d.min) / d.min) / Math.log(d.max / d.min))), denorm: n => d.min * Math.pow(d.max / d.min, n), fmt: v => Math.round(v * 10) / 10 + (d.unit || '') };
         return { ...lin(label, d.min, d.max, cur, v => Math.round(v * 10) / 10 + (d.unit || '')) };
@@ -167,11 +188,13 @@ function autoSelectParam(o, pid) {
     o.autoParam = pid; saveProject();
     cancelAnimationFrame(_autoRaf); _autoRaf = requestAnimationFrame(() => { renderTimelineTracks(); refreshAutoChips(); });
 }
+// Un geste sur l'écran d'un plugin (rond, poignée) : comme toucher le bouton du même réglage
+function autoTouch(o, pid) { if (!state.automationMode) return; autoSelectParam(o, pid); autoWriteSample(o, pid); }
 function autoTargetOf(el) {
     const fxp = el.closest('.fx-panel.plug-win');
     if (fxp) {
         const o = fxp._plugT, isOwner = o && (state.project.tracks.includes(o) || (state.project.buses || []).includes(o));   // pas les effets d'une région
-        const c = el.closest('.fx-slider, .fx-knob, .fx-val'); return c && c.dataset.key && isOwner ? { o, pid: `fx:${fxp.dataset.fx}:${c.dataset.key}` } : null;
+        const c = el.closest('.fx-slider, .fx-knob, .fx-val, .pk[data-key]'); return c && c.dataset.key && isOwner ? { o, pid: `fx:${fxp.dataset.fx}:${c.dataset.key}` } : null;
     }
     let o = null;
     const strip = el.closest('.insp-strip, .strip[data-kind]');
