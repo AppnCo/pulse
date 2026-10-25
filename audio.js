@@ -2032,10 +2032,11 @@ window.PulseAudio = (function() {
         await resumeIfNeeded();
         const smooth = !!(opts.smooth && isPlaying && activeOut && !(recNode || recorder));
         let old = null;
-        const lead = smooth ? 0.06 : 0.05;   // petit lookahead
+        const lead = smooth && !opts.jump ? 0.06 : 0.05;   // petit lookahead
         if (smooth) {
-            // la nouvelle lecture démarre là où le son SERA dans 60 ms ; l'ancienne continue jusqu'au fondu
-            fromTime = getPlaybackPosition() + lead;
+            // changement d'effet : la nouvelle lecture démarre là où le son SERA dans 60 ms ; saut (clic dans la règle, tour de boucle,
+            // opts.jump) : elle démarre à la position demandée ; dans les deux cas l'ancienne continue jusqu'au fondu
+            if (!opts.jump) fromTime = getPlaybackPosition() + lead;
             old = { src: activeSources, graph: activeGraph, out: activeOut };
             activeSources = []; activeGraph = []; activeOut = null;
         } else stopAll();
@@ -2058,9 +2059,11 @@ window.PulseAudio = (function() {
         activeOut = gOut;
         isPlaying = true;
         if (smooth) {
-            const t0 = playbackStartCtxTime, XF = 0.02;
+            const t0 = playbackStartCtxTime, XF = opts.jump ? 0.008 : 0.02, now = ctx.currentTime;
             gOut.gain.setValueAtTime(0, 0); gOut.gain.setValueAtTime(0, t0); gOut.gain.linearRampToValueAtTime(1, t0 + XF);
-            old.out.gain.cancelScheduledValues(0); old.out.gain.setValueAtTime(1, t0); old.out.gain.linearRampToValueAtTime(0, t0 + XF);
+            // changement d'effet : les deux montages jouent la même chose, on les enchaîne au moment du départ ; saut : l'ancien s'éteint tout de suite
+            const offAt = opts.jump ? now : t0;
+            old.out.gain.cancelScheduledValues(0); old.out.gain.setValueAtTime(1, offAt); old.out.gain.linearRampToValueAtTime(0, offAt + XF);
             const tear = () => { old.src.forEach(x => { try { x.stop(); } catch {} }); old.graph.forEach(n => { try { n.disconnect(); } catch {} }); try { old.out.disconnect(); } catch {} const k = fading.indexOf(old); if (k >= 0) fading.splice(k, 1); };
             old.tear = tear; fading.push(old);
             old.timer = setTimeout(tear, (lead + XF + 0.06) * 1000);

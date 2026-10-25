@@ -3840,8 +3840,7 @@ function tick() {
             state.playhead = loopStart;
             state.startTime = performance.now() - loopStart * 1000;
             if (state._cap) finalizeCapture();
-            PulseAudio.stopAll();
-            PulseAudio.play(state.project, loopStart);
+            PulseAudio.play(state.project, loopStart, { smooth: true, jump: true });   // le tour de boucle se fond (plus de coupure nette) ; hors lecture, play() coupe comme avant
             if (state.metronome) PulseAudio.startMetronome(state.project.bpm, loopStart);
             updatePlayhead();
             updateChrono();
@@ -3986,7 +3985,7 @@ function seekPlayhead(sec) {
         _seekTimer = setTimeout(async () => {
             if (state.playing && !state.recording) {
                 state.startTime = performance.now() - state.playhead * 1000;
-                await PulseAudio.play(state.project, state.playhead);
+                await PulseAudio.play(state.project, state.playhead, { smooth: true, jump: true });   // fondu de 20 ms : pas de « clac » au saut
                 state.startTime = performance.now() - state.playhead * 1000;
             }
             state._seekPending = false;
