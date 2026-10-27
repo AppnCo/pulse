@@ -214,7 +214,7 @@ pub fn render(project: &Project, media: &Media, opts: &RenderOptions) -> (Vec<f3
         let force_mono = track.mono.unwrap_or(false);
         // Effets d'une région (avant ceux de la piste) : une chaîne par région qui en a
         let mut clip_fx: Vec<Option<crate::fx::Chain>> = clips.iter().map(|(c, _)| c.fx.as_ref().filter(|f| !f.effects.is_empty())
-            .map(|f| crate::fx::Chain::new(&f.effects, &f.effect_params, sr, project.bpm, project.ceiling()).with_order(&f.fx_order))).collect();
+            .map(|f| crate::fx::Chain::new(&f.effects, &f.effect_params, sr, project.bpm_at(c.start), project.ceiling()).with_order(&f.fx_order))).collect();
         let stereo = !force_mono && (clips.iter().any(|(_, s)| s.channels.len() > 1) || clip_fx.iter().flatten().any(|c| c.outputs_stereo()));
         let mut tl = vec![0.0f32; frames];
         let mut tr = if stereo { vec![0.0f32; frames] } else { Vec::new() };
@@ -267,7 +267,7 @@ pub fn render(project: &Project, media: &Media, opts: &RenderOptions) -> (Vec<f3
         }
 
         // 2. Effets de la piste
-        let mut chain = crate::fx::Chain::for_track(track, sr, project.bpm).with_auto(&track.automation, from);
+        let mut chain = crate::fx::Chain::for_track(track, sr, project.bpm).with_auto(&track.automation, from).with_tempo(project.tempo_segments(), from);
         let mono_in = !stereo;
         let stereo = stereo || chain.outputs_stereo();   // écho ping-pong aussi : une piste mono en ressort stéréo (comme le navigateur)
         if stereo && tr.is_empty() {
@@ -357,7 +357,7 @@ pub fn render(project: &Project, media: &Media, opts: &RenderOptions) -> (Vec<f3
     for i in order {
         let Some((mut bl, mut br)) = bus_in[i].take() else { continue };
         let bus = &project.buses[i];
-        crate::fx::Chain::new(&bus.effects, &bus.effect_params, sr, project.bpm, project.ceiling()).with_order(&bus.fx_order).with_auto(&bus.automation, from).process(&mut bl, &mut br, false);
+        crate::fx::Chain::new(&bus.effects, &bus.effect_params, sr, project.bpm, project.ceiling()).with_order(&bus.fx_order).with_auto(&bus.automation, from).with_tempo(project.tempo_segments(), from).process(&mut bl, &mut br, false);
         let own = if bus.muted { 0.0 } else { bus.volume.unwrap_or(100.0) / 100.0 };
         let (up, dest) = project.route(bus.output.as_deref());
         let g = (own * up * if dest.is_some() { 1.0 } else { opts.master_volume }) as f32;

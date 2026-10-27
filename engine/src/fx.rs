@@ -870,9 +870,27 @@ pub struct Delay {
     pp: bool,
     /// EQ des répétitions (un jeu de filtres par côté)
     eq: [Vec<Biquad>; 2],
+    /// Écho calé sur le rythme : nombre de temps (None = temps en millisecondes, ne suit pas le tempo)
+    beats: Option<f64>,
+    sr: f64,
 }
 
 impl Delay {
+    /// Le tempo change (piste de tempo) : nouvelle longueur d'écho, les répétitions en cours sont gardées
+    /// (même recopie que `retune` ; même calcul que `setBpm` du worklet `pulse-delay`)
+    pub fn set_bpm(&mut self, bpm: f64) {
+        let Some(beats) = self.beats else { return };
+        let time = 60.0 / if bpm > 0.0 { bpm } else { 90.0 } * beats;
+        let new = ((time * self.sr).round() as usize).clamp(1, (4.0 * self.sr) as usize);
+        let old = self.buf[0].len();
+        if new == old { return; }
+        for ch in 0..2 {
+            let mut nb = vec![0.0; new];
+            for k in 0..old.min(new) { nb[(new - 1 - k) % new] = self.buf[ch][(self.i + old - 1 - k) % old]; }
+            self.buf[ch] = nb;
+        }
+        self.i = 0;
+    }
     /// Plugin : change les réglages en gardant les échos en cours (la mémoire est recopiée si le temps change)
     pub fn retune(&mut self, p: &DelayParams, sr: f64, bpm: f64) {
         let mut n = Self::new(p, sr, bpm);
@@ -912,6 +930,8 @@ impl Delay {
             k: (-2.0 * PI * p.lpf.filter(|l| *l > 0.0).map_or(4000.0, |l| l.min(20_000.0)) / sr).exp(),
             pp: p.pp.unwrap_or(0.0) >= 0.5,
             eq: [eq.clone(), eq],
+            beats: if p.ms.filter(|m| *m > 0.0).is_some() { None } else { Some(p.beats.filter(|b| *b > 0.0).unwrap_or(0.5)) },
+            sr,
         }
     }
     #[inline]
@@ -1219,6 +1239,9 @@ pub struct Chain {
     /// Automation des réglages d'effet (même liste de réglages que le navigateur, voir AUTO_FX dans studio.js)
     auto: Vec<AutoParam>,
     auto_from: f64,
+    /// Paliers de tempo `(seconde, bpm)` suivis par l'écho calé sur le rythme ; `tempo_i` = palier en cours
+    tempo: Vec<(f64, f64)>,
+    tempo_i: usize,
     sr: f64,
     comp_p: CompParams,
     /// Bandes de l'EQ libre et filtre de la chaîne pour chacune (None = bande ignorée)
@@ -1541,7 +1564,18 @@ impl Chain {
             .then(|| Pitch::new(&effect_params.pitch.clone().unwrap_or_default(), sr));
         let comp_p = effect_params.comp.clone().unwrap_or_default();
         Self { cut, filters, dyn_eq, sat, gate, crush, util, width, modfx, deess, deess2, mband, msat, comp, master, limit, delay, reverb, pitch, order: Stage::DEFAULT.to_vec(),
-            auto: Vec::new(), auto_from: 0.0, sr, comp_p, eq_bands, cut_kinds, names: effects.to_vec(), deess_freq: de.freq.unwrap_or(5500.0) }
+            auto: Vec::new(), auto_from: 0.0, tempo: Vec::new(), tempo_i: 0, sr, comp_p, eq_bands, cut_kinds, names: effects.to_vec(), deess_freq: de.freq.unwrap_or(5500.0) }
+    }
+    /// Tempo qui change en cours de morceau : l'écho calé sur le rythme (1/4, 1/8…) suit le tempo de l'endroit joué.
+    /// `from` = instant du premier échantillon traité (le même que pour `with_auto`).
+    pub fn with_tempo(mut self, segs: Vec<(f64, f64)>, from: f64) -> Self {
+        if segs.len() < 2 { return self; }
+        let i = segs.iter().rposition(|s| s.0 <= from + 1e-9).unwrap_or(0);
+        if let Some(d) = &mut self.delay { d.set_bpm(segs[i].1); }
+        self.tempo = segs;
+        self.tempo_i = i;
+        self.auto_from = from;
+        self
     }
     /// Branche les courbes d'automation des réglages d'effet (`from` = instant du premier échantillon traité)
     pub fn with_auto(mut self, automation: &Automation, from: f64) -> Self {
@@ -1661,6 +1695,11 @@ impl Chain {
         for n in 0..left.len() {
             if !self.auto.is_empty() && n % 128 == 0 {
                 self.apply_auto(self.auto_from + n as f64 / self.sr);
+            }
+            if self.tempo_i + 1 < self.tempo.len() && self.auto_from + n as f64 / self.sr >= self.tempo[self.tempo_i + 1].0 - 1e-9 {
+                self.tempo_i += 1;
+                let bpm = self.tempo[self.tempo_i].1;
+                if let Some(d) = &mut self.delay { d.set_bpm(bpm); }
             }
             let mut nc = if mono { 1 } else { 2 };
             let mut x = [left[n] as f64, if nc == 2 { right[n] as f64 } else { 0.0 }];

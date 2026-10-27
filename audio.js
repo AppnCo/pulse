@@ -1005,6 +1005,26 @@ window.PulseAudio = (function() {
                 // EQ de l'écho : il colore les répétitions qu'on entend, pas la voix d'origine (mêmes filtres que l'EQ, comme fx.rs)
                 this.eq = (Array.isArray(p.eq) ? p.eq : []).filter(b => b && b.on !== false).flatMap(b => eqBandCoefs({ ...b, freq: Math.max(20, Math.min(20000, b.freq || 1000)) }, sampleRate));
                 this.eqs = [this.eq.map(() => [0, 0, 0, 0]), this.eq.map(() => [0, 0, 0, 0])];
+                // Tempo qui change en cours de morceau : paliers [{ sec, bpm }] suivis par l'écho calé sur le rythme (comme Chain::with_tempo)
+                this.beats = p.beats > 0 ? p.beats : 0;
+                this.tempo = this.beats && Array.isArray(p.tempo) && p.tempo.length > 1 ? p.tempo : null;
+                if (this.tempo) {
+                    this.tT0 = p.tT0 || 0; this.tFrom = p.tFrom || 0;
+                    let k = 0; this.tempo.forEach((x, j) => { if (x.sec <= this.tFrom + 1e-9) k = j; }); this.ti = k;
+                }
+            }
+            // Nouvelle longueur d'écho, les répétitions en cours gardées (même recopie que Delay::set_bpm de fx.rs)
+            setBpm(bpm) {
+                const time = (60 / (bpm > 0 ? bpm : 90)) * this.beats;
+                const nw = Math.max(1, Math.min(Math.round(4 * sampleRate), Math.round(time * sampleRate)));
+                const old = this.D;
+                if (nw === old) return;
+                this.buf = this.buf.map(b => { const nb = new Float64Array(nw); for (let k = 0; k < Math.min(old, nw); k++) nb[(nw - 1 - k) % nw] = b[(this.i + old - 1 - k) % old]; return nb; });
+                this.D = nw; this.i = 0;
+            }
+            tempoStep(t) {
+                const tp = this.tempo;
+                if (this.ti + 1 < tp.length && t >= tp[this.ti + 1].sec - 1e-9) { this.ti++; this.setBpm(tp[this.ti].bpm); }
             }
             eqw(ch, v) { const ks = this.eq; if (!ks.length) return v; const st = this.eqs[ch] || (this.eqs[ch] = ks.map(() => [0, 0, 0, 0])); for (let e = 0; e < ks.length; e++) v = biqRun(ks[e], st[e], v); return v; }
             hp(ch, x) { if (!this.kh) return x; this.zh[ch] = x + (this.zh[ch] - x) * this.kh; return x - this.zh[ch]; }
@@ -1012,10 +1032,12 @@ window.PulseAudio = (function() {
                 const inp = inputs[0], out = outputs[0];
                 const n = out[0].length, nc = out.length, ni = inp ? inp.length : 0;
                 while (this.buf.length < Math.max(2, nc)) { this.buf.push(new Float64Array(this.D)); this.lp.push(0); }
+                const tb = this.tempo ? currentTime - this.tT0 + this.tFrom : 0;
                 if (this.pp && nc >= 2) {
                     // Même calcul que le moteur Rust (engine/src/fx.rs, Delay::tick)
-                    const bl = this.buf[0], br = this.buf[1];
                     for (let i = 0; i < n; i++) {
+                        if (this.tempo) this.tempoStep(tb + i / sampleRate);
+                        const bl = this.buf[0], br = this.buf[1];
                         const xl = ni > 0 ? inp[0][i] : 0, xr = ni > 1 ? inp[1][i] : xl;
                         const dl = bl[this.i], dr = br[this.i], g = this.wet * this.duck.gain(0.5 * (xl + xr));
                         this.lp[0] = dl + (this.lp[0] - dl) * this.k;
@@ -1029,6 +1051,7 @@ window.PulseAudio = (function() {
                     return true;
                 }
                 for (let i = 0; i < n; i++) {
+                    if (this.tempo) this.tempoStep(tb + i / sampleRate);
                     let m = 0; for (let ch = 0; ch < nc; ch++) m += ch < ni ? inp[ch][i] : 0;
                     const g = this.wet * this.duck.gain(m / nc);
                     for (let ch = 0; ch < nc; ch++) {
@@ -1064,6 +1087,12 @@ window.PulseAudio = (function() {
     const FX_CHAIN = ['pitch', 'filter', 'gate', 'eq', 'sat', 'msat', 'crush', 'deess', 'comp', 'mband', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'reverb']; // ordre habituel des effets
     const SEND_REVERB_TRIM = 1 / 3; // la reverb seule sort 3 fois trop fort par rapport au son direct : on la ramène à niveau
 
+    // Paliers de tempo [{ sec, bpm }] quand le tempo change en cours de morceau (sinon null) — Project::tempo_segments côté Rust
+    function tempoSecs(project) {
+        if (!project || !(project.tempos && project.tempos.length) || typeof window === 'undefined' || !window.PulseTempo) return null;
+        const segs = window.PulseTempo.tempoSegments(project);
+        return segs.length > 1 ? segs.map(x => ({ sec: x.sec, bpm: x.bpm })) : null;
+    }
     // Temps de l'écho en secondes : calé sur le rythme (beats = nombre de temps) ou donné en millisecondes
     function delaySeconds(dp, bpm) {
         if (dp.ms > 0) return dp.ms / 1000;
@@ -1749,7 +1778,7 @@ window.PulseAudio = (function() {
             const bus = (project.buses || []).find(b => b.id === id);
             if (!bus) return dest;
             // Effets communs du groupe (ex. une seule reverb pour toutes les voix) → volume du groupe → sortie
-            const fx = createEffectsChain(actx, bus.effects || [], { ...(bus.effectParams || {}), order: bus.fxOrder, grKey: 'b' + id, auto: bus.automation, autoAt: { t0, from: fromTime } }, project.bpm, project.ceilingDb ?? ceilingDb);
+            const fx = createEffectsChain(actx, bus.effects || [], { ...(bus.effectParams || {}), order: bus.fxOrder, grKey: 'b' + id, auto: bus.automation, autoAt: { t0, from: fromTime }, tempo: tempoSecs(project) }, project.bpm, project.ceilingDb ?? ceilingDb);
             // Un bus reçoit toujours du stéréo (après le gauche / droite des pistes) : sans ça, le navigateur peut le croire mono
             // quand une piste n'a pas encore commencé, et la reverb du bus baisserait de 3 dB
             fx.input.channelCount = 2; fx.input.channelCountMode = 'explicit'; fx.input.channelInterpretation = 'speakers';
@@ -1852,7 +1881,7 @@ window.PulseAudio = (function() {
             const trackGain = actx.createGain();
             trackGain.gain.value = audible ? vol : 0;
 
-            const fx = createEffectsChain(actx, track.effects || [], { ...(track.effectParams || {}), order: track.fxOrder, grKey: 't' + trackIdx, auto: track.automation, autoAt: { t0, from: fromTime } }, project.bpm);
+            const fx = createEffectsChain(actx, track.effects || [], { ...(track.effectParams || {}), order: track.fxOrder, grKey: 't' + trackIdx, auto: track.automation, autoAt: { t0, from: fromTime }, tempo: tempoSecs(project) }, project.bpm);
             fx.output.connect(trackGain);
             // Piste forcée en mono (bouton Mono / Stéréo) : les deux côtés se mélangent avant les effets
             let fxIn = fx.input;
@@ -2010,7 +2039,7 @@ window.PulseAudio = (function() {
                 source.connect(g);
                 // Effets posés sur la région seule : avant ceux de la piste ; l'écho / la reverb continuent après la fin de la région
                 if (clip.fx && (clip.fx.effects || []).length) {
-                    const cfx = createEffectsChain(actx, clip.fx.effects, { ...(clip.fx.effectParams || {}), order: clip.fx.fxOrder }, project.bpm, project.ceilingDb ?? ceilingDb);
+                    const cfx = createEffectsChain(actx, clip.fx.effects, { ...(clip.fx.effectParams || {}), order: clip.fx.fxOrder }, tempoSecs(project) ? window.PulseTempo.bpmAt(project, clip.start) : project.bpm, project.ceilingDb ?? ceilingDb);   // effet de région : tempo du début de la région
                     g.connect(cfx.input); cfx.output.connect(fxIn);
                 } else {
                     g.connect(fxIn);
@@ -2598,10 +2627,14 @@ window.PulseAudio = (function() {
         B.delay = () => {
             if (enabled.includes('delay') && fxReady.has(actx)) {
                 const dp = params.delay || {};
+                // tempo qui change : l'écho calé sur le rythme part au tempo de l'endroit où la lecture commence, puis suit
+                const tp = !(dp.ms > 0) && params.tempo && params.tempo.length > 1 ? params.tempo : null;
+                const bpm0 = tp ? tp.reduce((b, x) => x.sec <= autoAt.from + 1e-9 ? x.bpm : b, tp[0].bpm) : bpm;
                 connect(new AudioWorkletNode(actx, 'pulse-delay', {
                     numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max',
                     ...(dp.pp ? { outputChannelCount: [2] } : {}),
-                    processorOptions: { time: delaySeconds(dp, bpm), feedback: (dp.feedback ?? 35) / 100, wet: (dp.wet ?? 25) / 100, dry: (dp.dry ?? 100) / 100, pp: !!dp.pp,
+                    processorOptions: { ...(tp ? { tempo: tp, beats: dp.beats > 0 ? dp.beats : 0.5, tT0: autoAt.t0, tFrom: autoAt.from } : {}),
+                        time: delaySeconds(dp, bpm0), feedback: (dp.feedback ?? 35) / 100, wet: (dp.wet ?? 25) / 100, dry: (dp.dry ?? 100) / 100, pp: !!dp.pp,
                         hpf: dp.hpf || 0, lpf: dp.lpf || 0, duck: dp.duck || 0, eq: dp.eq,
                         ...autoOpts('delay', { feedback: (x) => x / 100, wet: (x) => x / 100, dry: (x) => x / 100 }) }
                 }));

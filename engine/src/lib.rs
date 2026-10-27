@@ -433,6 +433,45 @@ mod tests {
         near(rms(&l, 0.4), 0.06249);
     }
 
+    /// Tempo qui change en cours de morceau : l'écho 1/8 suit le tempo de l'endroit joué (comme Logic).
+    /// Mêmes valeurs que le navigateur (tests/scenarios/echo-tempo-variable.mjs).
+    #[test]
+    fn echo_suit_la_piste_de_tempo() {
+        let sr = SR as usize;
+        let mut media = Media::new();
+        let mut burst = vec![0.0f32; sr];
+        for (i, v) in burst.iter_mut().take(4800).enumerate() {
+            *v = (0.5 * (2.0 * std::f64::consts::PI * 440.0 * i as f64 / SR as f64).sin()) as f32;
+        }
+        media.insert("clap".into(), Source { channels: vec![burst], sample_rate: SR });
+        // 120 BPM, puis 60 BPM à partir du temps 4 (= 2 s) ; un coup à 0 s et un coup à 3 s
+        let json = r#"{"bpm":120,"tempos":[{"beat":4,"bpm":60}],"tracks":[{"volume":100,"clips":[{"id":"clap","start":0,"duration":1},{"id":"clap","start":3,"duration":1}],"effects":["delay"],"effectParams":{"delay":{"wet":25,"feedback":38,"beats":0.5}}}]}"#;
+        let p: Project = serde_json::from_str(json).unwrap();
+        assert_eq!(p.tempo_segments(), vec![(0.0, 120.0), (2.0, 60.0)]);
+        assert_eq!(p.bpm_at(2.5), 60.0);
+        let l = render(&p, &media, &RenderOptions { only_track: Some(0), ..opts() }).0;
+        let rms = |x: &[f32], a: f64| {
+            let (a, z) = ((a * SR as f64).round() as usize, ((a + 0.1) * SR as f64).round() as usize);
+            (x[a..z].iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / (z - a) as f64).sqrt()
+        };
+        let near = |v: f64, want: f64| assert!((v - want).abs() < want * 0.01 + 1e-5, "{v} au lieu de {want}");
+        // avant le changement : écho tous les 1/8 à 120 BPM (0,25 s)
+        near(rms(&l, 0.25), 0.06249);
+        near(rms(&l, 0.5), 0.02360);
+        // après : 1/8 à 60 BPM = 0,5 s
+        near(rms(&l, 3.25), 0.0);
+        near(rms(&l, 3.5), 0.06249);
+        near(rms(&l, 4.0), 0.02360);
+        // sans carte de tempo : rien ne change (écho à 0,25 s partout)
+        let fixe: Project = serde_json::from_str(&json.replace(r#""tempos":[{"beat":4,"bpm":60}],"#, "")).unwrap();
+        let l = render(&fixe, &media, &RenderOptions { only_track: Some(0), ..opts() }).0;
+        near(rms(&l, 3.25), 0.06249);
+        // écho en millisecondes : ne suit pas le tempo
+        let ms: Project = serde_json::from_str(&json.replace(r#""beats":0.5"#, r#""ms":250"#)).unwrap();
+        let l = render(&ms, &media, &RenderOptions { only_track: Some(0), ..opts() }).0;
+        near(rms(&l, 3.25), 0.06249);
+    }
+
     /// Envois de base (Rev Long, Del 1/4) : valeurs mesurées dans Chrome sur l'export complet à 120 BPM.
     #[test]
     fn envois_comme_le_navigateur() {

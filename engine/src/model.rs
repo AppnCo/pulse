@@ -14,11 +14,39 @@ pub struct Project {
     /// Plafond du limiteur de sécurité en dB (-0,3 par défaut)
     #[serde(rename = "ceilingDb")]
     pub ceiling_db: Option<f64>,
+    /// Changements de tempo en cours de morceau (paliers) : `beat` = noires depuis le début (tempo.js)
+    pub tempos: Vec<TempoChange>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct TempoChange {
+    pub beat: f64,
+    pub bpm: f64,
 }
 
 impl Project {
     pub fn ceiling(&self) -> f64 {
         self.ceiling_db.unwrap_or(-0.3).clamp(-6.0, 0.0)
+    }
+    /// Paliers de tempo `(seconde de début, bpm)`, le premier à 0 s — même calcul que `tempoSegments` de tempo.js
+    pub fn tempo_segments(&self) -> Vec<(f64, f64)> {
+        let clamp = |b: f64| if b.is_finite() && b != 0.0 { b.clamp(20.0, 400.0) } else { 120.0 };
+        let mut list: Vec<(f64, f64)> = self.tempos.iter().filter(|e| e.beat.is_finite() && e.beat >= 0.0).map(|e| (e.beat, clamp(e.bpm))).collect();
+        list.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        if list.is_empty() || list[0].0 > 1e-9 { list.insert(0, (0.0, clamp(self.bpm))); }
+        let mut segs: Vec<(f64, f64, f64)> = Vec::new();   // (beat, bpm, sec)
+        for (i, (beat, bpm)) in list.iter().enumerate() {
+            if i > 0 && beat - list[i - 1].0 < 1e-9 { if let Some(l) = segs.last_mut() { l.1 = *bpm; } continue; }
+            let sec = segs.last().map_or(0.0, |p| p.2 + (beat - p.0) * 60.0 / p.1);
+            segs.push((*beat, *bpm, sec));
+        }
+        segs.into_iter().map(|(_, b, s)| (s, b)).collect()
+    }
+    /// Tempo à l'instant `sec`
+    pub fn bpm_at(&self, sec: f64) -> f64 {
+        let segs = self.tempo_segments();
+        segs.iter().rev().find(|s| s.0 <= sec + 1e-9).map_or(segs[0].1, |s| s.1)
     }
 }
 
