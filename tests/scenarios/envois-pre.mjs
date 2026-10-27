@@ -8,7 +8,7 @@ export default async (c) => {
     const ctx=await PulseAudio.init(); const sr=48000; const b=ctx.createBuffer(1,sr*2,sr),d=b.getChannelData(0);
     for(let i=0;i<d.length;i++)d[i]=0.3*Math.sin(2*Math.PI*300*i/sr); PulseAudio.registerBuffer('pre',b);
     const p={bpm:120,sends:[],buses:[{id:'g',name:'G',output:'master',volume:100}],tracks:[{volume:0,busSends:{g:100},preSends:${pre ? "{'busSend:g':true}" : '{}'},clips:[{id:'pre',start:0,duration:2}]}]};
-    const x=(await ctx.decodeAudioData(await (await PulseAudio.exportWav(p)).arrayBuffer())).getChannelData(0);
+    const x=(await new OfflineAudioContext(1,1,48000).decodeAudioData(await (await PulseAudio.exportWav(p)).arrayBuffer())).getChannelData(0);
     let s=0; for(let i=sr*0.3;i<sr*1.5;i++)s+=x[i]*x[i]; return Math.sqrt(s/(sr*1.2)); })()`);
   const post = await lvl(false), pre = await lvl(true);
   check('Post : fader à zéro → l’envoi est muet', post < 1e-4, String(post));

@@ -6,7 +6,7 @@ export default async ({ ev, nav, send, sleep }) => {
   await nav('http://localhost:8765/studio.html');
   await ev(`(async()=>{ const ctx=await PulseAudio.init(); const md=ctx.createMediaStreamDestination(); const o=ctx.createOscillator(); o.frequency.value=220; const g=ctx.createGain(); g.gain.value=0.2; o.connect(g); g.connect(md); o.start(); navigator.mediaDevices.getUserMedia=async()=>md.stream; navigator.permissions.query=async()=>({state:'granted'}); PulseAudio.setCountIn(false); })()`);
   const R = async (label, code) => console.log(label + ':', await ev(`(async()=>{${code}})()`));
-  const peak = `const ctx=PulseAudio.getContext(); const b=await ctx.decodeAudioData(await (await PulseAudio.exportWav(state.project)).arrayBuffer()); let m=0; const d=b.getChannelData(0); for(let i=0;i<d.length;i++) m=Math.max(m,Math.abs(d[i]));`;
+  const peak = `const ctx=PulseAudio.getContext(); const b=await new OfflineAudioContext(1,1,48000).decodeAudioData(await (await PulseAudio.exportWav(state.project)).arrayBuffer()); let m=0; const d=b.getChannelData(0); for(let i=0;i<d.length;i++) m=Math.max(m,Math.abs(d[i]));`;
   await ev(`toggleRec()`); await sleep(1500); await ev(`togglePlay()`); await sleep(500);
   await R('prise faite', `return state.project.tracks[0].clips.length+' clip(s)'`);
   await R('crête sans EQ', `state.project.tracks[0].effects=[]; ${peak} return m.toFixed(4)`);

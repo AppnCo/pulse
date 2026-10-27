@@ -21,7 +21,7 @@ export default async (c) => {
   check('clic sur la pastille : réglages de l’effet', await ev(`!!document.querySelector('.fx-panel.plug-win[data-fx="pitch"]')`));
   // export : la 1re moitié est intacte, la 2e change
   const diff = await ev(`(async()=>{ const ctx=PulseAudio.getContext(); const sr=48000;
-    const go=async(p)=>(await ctx.decodeAudioData(await (await PulseAudio.exportTrackWav(p,0)).arrayBuffer())).getChannelData(0);
+    const go=async(p)=>(await new OfflineAudioContext(1,1,48000).decodeAudioData(await (await PulseAudio.exportTrackWav(p,0)).arrayBuffer())).getChannelData(0);
     const a=await go(state.project); const p2=JSON.parse(JSON.stringify(state.project)); p2.tracks[0].clips.forEach(c=>delete c.fx); const b=await go(p2);
     const d=(x,y)=>{let s=0; for(let i=Math.floor(x*sr);i<Math.floor(y*sr);i++) s+=Math.abs(a[i]-b[i]); return s/((y-x)*sr);};
     return JSON.stringify([d(0.5,2.5), d(3.5,5.5)]); })()`);

@@ -9,7 +9,7 @@ export default async ({ ev, nav, send, sleep }) => {
     const tone=(id,f)=>{const b=ctx.createBuffer(1,sr*2,sr),d=b.getChannelData(0); for(let i=0;i<d.length;i++)d[i]=0.25*Math.sin(2*Math.PI*f*i/sr); PulseAudio.registerBuffer(id,b);};
     tone('t440',440); tone('t1000',1000);
     const rms=async(id,fx)=>{const p={buses:[],tracks:[{volume:100,clips:[{id,start:0,duration:2}],effects:fx?[fx]:[],effectParams:{}}]};
-      const b=await ctx.decodeAudioData(await (await PulseAudio.exportTrackWav(p,0)).arrayBuffer()); const d=b.getChannelData(0); let s=0,n=0; for(let i=sr;i<sr*2;i++){s+=d[i]*d[i];n++;} return Math.sqrt(s/n);};
+      const b=await new OfflineAudioContext(1,1,48000).decodeAudioData(await (await PulseAudio.exportTrackWav(p,0)).arrayBuffer()); const d=b.getChannelData(0); let s=0,n=0; for(let i=sr;i<sr*2;i++){s+=d[i]*d[i];n++;} return Math.sqrt(s/n);};
     const db=async(f,fx)=>20*Math.log10(await rms('t'+f,fx)/await rms('t'+f,null));
     const REF={chorus:[-3.501,-2.838],flanger:[0.860,-3.512],phaser:[-2.256,-4.896],tremolo:[-2.264,-2.264],doubler:[-2.365,-3.127],slapback:[-4.868,0.291],crush:[-0.005,0.045],util:[0,0]};
     const o=[]; for(const [fx,[a,b]] of Object.entries(REF)){ const x=await db(440,fx), y=await db(1000,fx);

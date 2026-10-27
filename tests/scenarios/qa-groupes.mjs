@@ -11,7 +11,7 @@ export default async (c) => {
       { name: 'C', type: 'audio', color: '#34D399', volume: 100, output: 'g3', clips: [] },
       { name: 'D', type: 'audio', color: '#F472B6', volume: 100, output: 'master', clips: [], effectParams: { eq: { bands: [{ f: 1000, g: 3, q: 1, type: 'bell' }] } }, effects: ['eq'], sends: { revlong: 30 } }] });
   const R = async (label, code) => console.log(label + ':', await ev(`(async()=>{try{${code}}catch(e){return 'EXC '+e.stack}})()`));
-  const rms = `const ctx=PulseAudio.getContext(); const sr=48000; const m=async()=>{const x=(await ctx.decodeAudioData(await (await PulseAudio.exportWav(state.project)).arrayBuffer())).getChannelData(0); let s=0; for(let i=sr*0.3;i<sr*0.8;i++)s+=x[i]*x[i]; return +Math.sqrt(s/(sr*0.5)).toFixed(4);};`;
+  const rms = `const ctx=PulseAudio.getContext(); const sr=48000; const m=async()=>{const x=(await new OfflineAudioContext(1,1,48000).decodeAudioData(await (await PulseAudio.exportWav(state.project)).arrayBuffer())).getChannelData(0); let s=0; for(let i=sr*0.3;i<sr*0.8;i++)s+=x[i]*x[i]; return +Math.sqrt(s/(sr*0.5)).toFixed(4);};`;
   await R('prépare', `await PulseAudio.init(); const ctx=PulseAudio.getContext(); const sr=48000,b=ctx.createBuffer(1,sr,sr),d=b.getChannelData(0); for(let i=0;i<sr;i++)d[i]=0.2*Math.sin(2*Math.PI*300*i/sr); PulseAudio.registerBuffer('ton',b);
     state.project.tracks.forEach(t=>t.clips=[]); state.project.tracks[0].clips=[{id:'ton',start:0,duration:1}]; renderAll(); return 'ok'`);
   await R('A sous g1(50%) seul', `${rms} return await m()`);

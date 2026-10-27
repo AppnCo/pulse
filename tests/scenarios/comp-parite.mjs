@@ -9,7 +9,7 @@ export default async ({ ev, nav, send, sleep }) => {
     const ctx=await PulseAudio.init(); const sr=48000;
     const run=async(f,a,fx,sec=2)=>{ const id='c'+f+'_'+a; const b=ctx.createBuffer(2,sr*sec,sr); for(const c of [0,1]){const d=b.getChannelData(c); for(let i=0;i<d.length;i++) d[i]=a*Math.sin(2*Math.PI*f*i/sr);} PulseAudio.registerBuffer(id,b);
       const p={buses:[],sends:[],tracks:[{volume:100,clips:[{id,start:0,duration:sec}],...fx}]};
-      return (await ctx.decodeAudioData(await (await PulseAudio.exportTrackWav(p,0)).arrayBuffer())).getChannelData(0); };
+      return (await new OfflineAudioContext(1,1,48000).decodeAudioData(await (await PulseAudio.exportTrackWav(p,0)).arrayBuffer())).getChannelData(0); };
     const rms=(x,a,z)=>{let s=0; for(let i=Math.floor(a*sr);i<Math.floor(z*sr);i++) s+=x[i]*x[i]; return Math.sqrt(s/((z-a)*sr)); };
     const gain=async(f,a,fx)=>{ const y=await run(f,a,fx), x=await run(f,a,{}); return (20*Math.log10(rms(y,0.5,2)/rms(x,0.5,2))).toFixed(2); };
     const C=(o)=>({effects:['comp'],effectParams:{comp:o}});

@@ -28,8 +28,8 @@ export default async ({ ev, nav, send, sleep, check }) => {
     const fz=v.frozen||{}, fs=st.frozen||{};
     const bufM=PulseAudio.hasBuffer(fz.id), ids=PulsePersist.mediaIds(state.project);
     const blob=await PulsePersist.loadBlob(fz.id);
-    const cM=(await ctx.decodeAudioData(await blob.arrayBuffer())).numberOfChannels;
-    const cS=(await ctx.decodeAudioData(await (await PulsePersist.loadBlob(fs.id)).arrayBuffer())).numberOfChannels;
+    const cM=(await new OfflineAudioContext(1,1,48000).decodeAudioData(await blob.arrayBuffer())).numberOfChannels;
+    const cS=(await new OfflineAudioContext(1,1,48000).decodeAudioData(await (await PulsePersist.loadBlob(fs.id)).arrayBuffer())).numberOfChannels;
     // région figée : le déplacement est refusé
     const bloque=!!v.locked && clipIsLocked(v.clips[0]);
     // le fader reste actif sur une piste gelée

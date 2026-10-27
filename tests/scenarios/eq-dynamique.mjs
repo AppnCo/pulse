@@ -10,7 +10,7 @@ export default async ({ ev, nav, send, sleep, shot }) => {
     const mk=(id,f,a)=>{const b=ctx.createBuffer(1,sr*2,sr),d=b.getChannelData(0); for(let i=0;i<d.length;i++)d[i]=a*Math.sin(2*Math.PI*f*i/sr); PulseAudio.registerBuffer(id,b);};
     mk('fort',1000,0.5); mk('faible',1000,0.005); mk('loin',100,0.5);
     const lvl=async(id,fx)=>{ const p={buses:[],sends:[],tracks:[{volume:100,clips:[{id,start:0,duration:2}],...fx}]};
-      const x=(await ctx.decodeAudioData(await (await PulseAudio.exportTrackWav(p,0)).arrayBuffer())).getChannelData(0);
+      const x=(await new OfflineAudioContext(1,1,48000).decodeAudioData(await (await PulseAudio.exportTrackWav(p,0)).arrayBuffer())).getChannelData(0);
       let s=0; for(let i=sr;i<2*sr;i++) s+=x[i]*x[i]; return 20*Math.log10(Math.sqrt(s/sr)+1e-12); };
     const eq={effects:['eq'],effectParams:{eq:{bands:[{type:'bell',freq:1000,gain:0,q:1,dyn:-12,thr:-30}]}}};
     const out=[]; for(const id of ['fort','faible','loin']) out.push(id+' '+((await lvl(id,eq))-(await lvl(id,{}))).toFixed(2));

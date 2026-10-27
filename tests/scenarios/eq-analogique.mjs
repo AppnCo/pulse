@@ -9,7 +9,7 @@ export default async ({ ev, nav, send, sleep }) => {
     const ctx=await PulseAudio.init(); const sr=48000;
     const lvl=async(f,fx)=>{ const b=ctx.createBuffer(2,sr,sr); for(const c of [0,1]){const d=b.getChannelData(c); for(let i=0;i<sr;i++) d[i]=0.25*Math.sin(2*Math.PI*f*i/sr);} PulseAudio.registerBuffer('s'+f,b);
       const p={buses:[],sends:[],tracks:[{volume:100,clips:[{id:'s'+f,start:0,duration:1}],...fx}]};
-      const x=(await ctx.decodeAudioData(await (await PulseAudio.exportTrackWav(p,0)).arrayBuffer())).getChannelData(0);
+      const x=(await new OfflineAudioContext(1,1,48000).decodeAudioData(await (await PulseAudio.exportTrackWav(p,0)).arrayBuffer())).getChannelData(0);
       let s=0; for(let i=sr/2;i<sr;i++) s+=x[i]*x[i]; return 20*Math.log10(Math.sqrt(s/(sr/2))); };
     const ana=(f0,g,q,f)=>{const A=Math.pow(10,g/40),w=f/f0,re=1-w*w,n=w*A/q,d=w/(A*q); return 10*Math.log10((re*re+n*n)/(re*re+d*d));};
     const cases=[[12000,6,0.7,18000],[16000,6,0.7,8000],[8000,-6,0.7,12000],[1000,6,1,1500]];

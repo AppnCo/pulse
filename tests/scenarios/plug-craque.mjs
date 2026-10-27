@@ -14,7 +14,7 @@ export default async ({ ev, nav, send, sleep }) => {
       const p={buses:[],sends:[],tracks:[{volume:100,clips:[{id:'v',start:0,duration:3}],effects:[n],effectParams:{[n]:params}}]};
       try{
         const w=await PulseAudio.exportTrackWav(p,0); if(!w){out.push(n+': rien');continue;}
-        const x=(await ctx.decodeAudioData(await w.arrayBuffer())).getChannelData(0);
+        const x=(await new OfflineAudioContext(1,1,48000).decodeAudioData(await w.arrayBuffer())).getChannelData(0);
         let bad=0,pk=0,sum=0; for(let i=0;i<x.length;i++){ const v=x[i]; if(!isFinite(v)) bad++; else { pk=Math.max(pk,Math.abs(v)); sum+=v*v; } }
         const rms=Math.sqrt(sum/x.length);
         out.push(n+': crête '+pk.toFixed(2)+' rms '+rms.toFixed(3)+(bad?' NaN='+bad:'')+(pk>1.2?' ⚠ DÉMESURÉ':'')+(rms<0.001?' ⚠ SILENCE':''));

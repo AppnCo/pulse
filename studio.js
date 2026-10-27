@@ -5736,23 +5736,77 @@ async function importMidiFile(file, trackIdx, atSec) {
     } else pushUndo();
     const inst = t.midiInst || (t.type === 'drums' ? 'drums' : 'piano');
     let start = Math.max(0, snapToGrid(atSec || 0, 'bar'));
-    const bpm = bpmAtSec(start), spb = 60 / bpm;
-    const dur = r.beats * spb;
-    while (t.clips.some(c => !c.recording && c.start < start + dur - 1e-3 && c.start + c.duration > start + 1e-3)) {
-        const o = t.clips.find(c => !c.recording && c.start < start + dur - 1e-3 && c.start + c.duration > start + 1e-3);
-        start = o.start + o.duration;
+    // Projet encore vide (aucune région nulle part) : il prend le tempo et la signature du fichier, changements compris (comme Logic)
+    const empty = state.project.tracks.every(tr => !(tr.clips || []).some(c => !c.recording));
+    const fileChanges = (r.tempos || []).length + (r.signatures || []).length;
+    let adopted = false;
+    if (empty && (r.bpm || fileChanges || (r.beatsPerBar && r.beatsPerBar !== bpb()))) {
+        const startBar = barAtSec(start);
+        const p = state.project;
+        p.bpm = roundBpm(r.bpm || p.bpm);
+        p.beatsPerBar = r.beatsPerBar || 4;
+        delete p.tempos; delete p.signatures;
+        // signatures du fichier (en temps) → numéros de mesure, en suivant les signatures précédentes
+        const sigs = []; let barBase = 0, beatBase = 0, cur = p.beatsPerBar;
+        (r.signatures || []).forEach(e => {
+            const bar = barBase + Math.round((e.beat - beatBase) / cur);
+            sigs.push({ bar: startBar + bar, beats: e.beats });
+            barBase = bar; beatBase = e.beat; cur = e.beats;
+        });
+        if (startBar > 0) sigs.unshift({ bar: startBar, beats: p.beatsPerBar });
+        if (sigs.length) p.signatures = sigs;
+        const startBeat = PulseTempo.barToBeats(p, startBar);
+        const tps = (r.tempos || []).map(e => ({ beat: startBeat + e.beat, bpm: e.bpm }));
+        if (tps.length) p.tempos = tps;
+        normalizeTempoMap(p);
+        start = secAtBeat(startBeat);
+        _tempoWatch = tempoSnapshot();          // projet vide : rien à recaler
+        const bpmEl = document.getElementById('bpmInput'); if (bpmEl) bpmEl.value = p.bpm;
+        if (window.PulseAudio) PulseAudio.setMetronomeBpm(p.bpm);
+        adopted = true;
     }
     const kept = r.notes.slice(0, PulseSynth.MAX_NOTES);
     let drumsSkipped = 0;
     if (inst === 'drums') { const lanes = PulseSynth.DRUM_LANES.map(l => l.p); drumsSkipped = kept.filter(n => !lanes.includes(n.p)).length; }
-    const clip = { start, duration: dur, offset: 0, name: file.name.replace(/\.[^.]+$/, '').slice(0, 28) || 'MIDI', color: t.color };
-    await bakeMidiClip(clip, { inst, beats: r.beats, notes: kept }, bpm);
-    t.clips.push(clip); t.clips.sort((a, b) => a.start - b.start);
+    // Une région par palier de tempo (chaque région joue au tempo de son début) : coupée à chaque changement
+    const startBeat0 = beatAtSec(start);
+    const cuts = [0];
+    if (adopted) (state.project.tempos || []).forEach(e => { const b = e.beat - startBeat0; if (b > 1e-6 && b < r.beats - 1e-6) cuts.push(b); });
+    cuts.push(r.beats);
+    const totalDur = adopted ? secAtBeat(startBeat0 + r.beats) - start : r.beats * 60 / bpmAtSec(start);
+    while (t.clips.some(c => !c.recording && c.start < start + totalDur - 1e-3 && c.start + c.duration > start + 1e-3)) {
+        const o = t.clips.find(c => !c.recording && c.start < start + totalDur - 1e-3 && c.start + c.duration > start + 1e-3);
+        start = o.start + o.duration;
+    }
+    const baseName = file.name.replace(/\.[^.]+$/, '').slice(0, 28) || 'MIDI';
+    const made = [];
+    for (let k = 0; k < cuts.length - 1; k++) {
+        const b0 = cuts[k], b1 = cuts[k + 1];
+        const s0 = k === 0 ? start : secAtBeat(beatAtSec(start) + b0);
+        const bpm = bpmAtSec(s0), beats = b1 - b0;
+        const notes = kept.filter(n => n.s >= b0 - 1e-9 && (n.s < b1 - 1e-9 || k === cuts.length - 2)).map(n => ({ ...n, s: n.s - b0 }));
+        const clip = { start: s0, duration: beats * 60 / bpm, offset: 0, name: cuts.length > 2 ? `${baseName} ${k + 1}` : baseName, color: t.color };
+        await bakeMidiClip(clip, { inst, beats, notes }, bpm);
+        t.clips.push(clip); made.push(clip);
+    }
+    t.clips.sort((a, b) => a.start - b.start);
+    const clip = made[0], bpm = clip.midi.bpm;
     state.selectedTrack = trackIdx;
     state.selectedClip = { trackIdx, clipIdx: t.clips.indexOf(clip) };
-    renderAll(); saveProject(); refreshPlaybackSoon();
-    const bits = [`✓ « ${file.name} » importé (${kept.length} note${kept.length > 1 ? 's' : ''}, ${r.beats / 4} mesure${r.beats > 4 ? 's' : ''})`];
-    if (r.bpm && Math.abs(r.bpm - bpm) > 0.5) bits.push(`le fichier est à ${r.bpm} BPM, le projet à ${bpm} : les notes suivent le tempo du projet`);
+    if (adopted && tempoVaries() && typeof renderTempoLane === 'function') renderTempoLane();
+    renderAll(); updateChrono(); saveProject(); refreshPlaybackSoon();
+    // mesures couvertes, d'après la signature de l'endroit (3/4 compte 3 temps par mesure)
+    const sb = beatAtSec(clip.start), b0 = PulseTempo.beatsToBar(state.project, sb), b1 = PulseTempo.beatsToBar(state.project, sb + r.beats);
+    const nBars = Math.max(1, b1.bar - b0.bar + (b1.beat > 1e-6 ? 1 : 0));
+    const bits = [`✓ « ${file.name} » importé (${kept.length} note${kept.length > 1 ? 's' : ''}, ${nBars} mesure${nBars > 1 ? 's' : ''})`];
+    if (adopted) {
+        const tc = (state.project.tempos || []).length, sc = (state.project.signatures || []).filter(e => e.bar > barAtSec(start)).length;
+        let m = `le projet prend le tempo du fichier (${state.project.bpm} BPM`;
+        if (tc) m += `, ${tc} changement${tc > 1 ? 's' : ''} de tempo`;
+        if (sc) m += `, ${sc} changement${sc > 1 ? 's' : ''} de signature`;
+        bits.push(m + ') — ⌘Z pour revenir');
+    } else if (r.bpm && Math.abs(r.bpm - bpm) > 0.5) bits.push(`le fichier est à ${r.bpm} BPM, le projet à ${bpm} : les notes suivent le tempo du projet`);
+    if (!adopted && fileChanges) bits.push('ses changements de tempo ne sont pas repris (le projet contient déjà des sons)');
     if (r.notes.length > kept.length) bits.push(`seules les ${kept.length} premières notes sont gardées`);
     if (drumsSkipped) bits.push(`${drumsSkipped} coups d'autres instruments de batterie ne sonnent pas (kit à 9 pièces)`);
     flash(bits.join(' — '));

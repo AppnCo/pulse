@@ -538,3 +538,11 @@ patterns.push(
   P('Changer ce tempo (§ BPM)…', 'Change this tempo ($1 BPM)…'), P('Changer le tempo à la mesure §…', 'Change the tempo at bar $1…'),
   P('Changer la signature à la mesure §…', 'Change the time signature at bar $1…'), P('Un seul tempo : § BPM, §', 'Single tempo: $1 BPM, $2'),
   P('§ BPM · mesure §', '$1 BPM · bar $2'), P('§ tempos', '$1 tempos'));
+// Import .mid avec sa carte de tempo (27/10)
+patterns.push(
+  ['le projet prend le tempo du fichier \\(([\\d.]+) BPM\\)', 'the project takes the file\'s tempo ($1 BPM)'],
+  ['le projet prend le tempo du fichier \\(([\\d.]+) BPM, (\\d+) changements? de tempo\\)', 'the project takes the file\'s tempo ($1 BPM, $2 tempo change(s))'],
+  ['le projet prend le tempo du fichier \\(([\\d.]+) BPM, (\\d+) changements? de signature\\)', 'the project takes the file\'s tempo ($1 BPM, $2 time signature change(s))'],
+  ['le projet prend le tempo du fichier \\(([\\d.]+) BPM, (\\d+) changements? de tempo, (\\d+) changements? de signature\\)', 'the project takes the file\'s tempo ($1 BPM, $2 tempo change(s), $3 time signature change(s))'],
+  P('⌘Z pour revenir', '⌘Z to go back'),
+  P('ses changements de tempo ne sont pas repris (le projet contient déjà des sons)', 'its tempo changes are not used (the project already has sounds)'));

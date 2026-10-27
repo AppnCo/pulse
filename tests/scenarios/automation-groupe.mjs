@@ -7,7 +7,7 @@ export default async ({ ev, nav, send, sleep }) => {
   const R = async (label, code) => console.log(label + ':', await ev(`(async()=>{${code}})()`));
   await R('export suit la courbe du groupe', `const ctx=await PulseAudio.init(); const sr=48000,b=ctx.createBuffer(1,sr*8,sr); b.getChannelData(0).fill(0.2); PulseAudio.registerBuffer('k',b);
     const P=(pts)=>({buses:[{id:'g1',output:'master',volume:100,automation:{volume:{points:pts}}}],tracks:[{volume:100,output:'g1',clips:[{id:'k',start:0,duration:8}]}]});
-    const at=async(p,t)=>{ const w=await ctx.decodeAudioData(await (await PulseAudio.exportWav(p)).arrayBuffer()); return w.getChannelData(0)[Math.round(t*sr)]; };
+    const at=async(p,t)=>{ const w=await new OfflineAudioContext(1,1,48000).decodeAudioData(await (await PulseAudio.exportWav(p)).arrayBuffer()); return w.getChannelData(0)[Math.round(t*sr)]; };
     const ref=await at(P([]),4); const v=async(pts,t)=>((await at(P(pts),t))/ref).toFixed(2);
     const pts=[{t:0,v:1},{t:4,v:1},{t:6,v:0}];
     return 'à 2s '+await v(pts,2)+' (1.00) | à 5s '+await v(pts,5)+' (0.50) | à 7s '+await v(pts,7)+' (0.00)'`);

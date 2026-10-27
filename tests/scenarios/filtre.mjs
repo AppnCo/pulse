@@ -9,7 +9,7 @@ export default async ({ ev, nav, send, sleep }) => {
     const tone=(id,f)=>{const b=ctx.createBuffer(1,sr*2,sr),d=b.getChannelData(0); for(let i=0;i<d.length;i++)d[i]=0.3*Math.sin(2*Math.PI*f*i/sr); PulseAudio.registerBuffer(id,b);};
     [30,100,200,1000,5000,12000].forEach(f=>tone('t'+f,f));
     const rms=async(id,fp)=>{const p={buses:[],tracks:[{volume:100,clips:[{id,start:0,duration:2}],effects:fp?['filter']:[],effectParams:{filter:fp||{}}}]};
-      const b=await ctx.decodeAudioData(await (await PulseAudio.exportTrackWav(p,0)).arrayBuffer()); const d=b.getChannelData(0); let s=0,n=0; for(let i=sr*0.5;i<sr*1.5;i++){s+=d[i]*d[i];n++;} return Math.sqrt(s/n);};
+      const b=await new OfflineAudioContext(1,1,48000).decodeAudioData(await (await PulseAudio.exportTrackWav(p,0)).arrayBuffer()); const d=b.getChannelData(0); let s=0,n=0; for(let i=sr*0.5;i<sr*1.5;i++){s+=d[i]*d[i];n++;} return Math.sqrt(s/n);};
     const db=async(f,fp)=>20*Math.log10(await rms('t'+f,fp)/await rms('t'+f,null));
     const o=[]; const chk=(nom,v,lo,hi)=>o.push((v>=lo&&v<=hi?'PASS ':'FAIL ')+nom+' '+v.toFixed(2)+' dB');
     const a={hpf:200,lpf:5000,slope:12}, b={hpf:200,slope:24}, off={hpf:20,lpf:20000};

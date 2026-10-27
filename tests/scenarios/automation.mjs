@@ -8,7 +8,7 @@ export default async ({ ev, nav, send, shot, sleep }) => {
   const R = async (label, code) => console.log(label + ':', await ev(`(async()=>{${code}})()`));
   await R('export suit la courbe', `const ctx=await PulseAudio.init(); const sr=48000,b=ctx.createBuffer(1,sr*8,sr); b.getChannelData(0).fill(0.2); PulseAudio.registerBuffer('k',b);
     const P=(pts)=>({buses:[],tracks:[{volume:100,clips:[{id:'k',start:0,duration:8}],automation:{volume:{points:pts}}}]});
-    const at=async(p,t,opts)=>{ const w=await ctx.decodeAudioData(await (await PulseAudio.exportWav(p,opts)).arrayBuffer()); return w.getChannelData(0)[Math.round(t*sr)]; };
+    const at=async(p,t,opts)=>{ const w=await new OfflineAudioContext(1,1,48000).decodeAudioData(await (await PulseAudio.exportWav(p,opts)).arrayBuffer()); return w.getChannelData(0)[Math.round(t*sr)]; };
     const ref=await at(P([]),4); const v=async(pts,t,o)=>((await at(P(pts),t,o))/ref).toFixed(2);
     const pts=[{t:0,v:1},{t:4,v:1},{t:6,v:0}];
     return 'à 2s '+await v(pts,2)+' (1.00) | à 5s '+await v(pts,5)+' (0.50) | à 7s '+await v(pts,7)+' (0.00) | plage 4.5→8, à +0.5s '+await v(pts,0.5,{startSec:4.5,endSec:8})+' (0.50)'`);

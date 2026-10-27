@@ -10,7 +10,7 @@ export default async ({ ev, nav, send, sleep }) => {
     const ctx=await PulseAudio.init(); const sr=48000;
     const run=async(f,a,fx)=>{ const b=ctx.createBuffer(2,sr,sr); for(const c of [0,1]){const d=b.getChannelData(c); for(let i=0;i<sr;i++) d[i]=a*Math.sin(2*Math.PI*f*i/sr);} PulseAudio.registerBuffer('s'+f+a,b);
       const p={buses:[],sends:[],tracks:[{volume:100,clips:[{id:'s'+f+a,start:0,duration:1}],...fx}]};
-      return (await ctx.decodeAudioData(await (await PulseAudio.exportTrackWav(p,0)).arrayBuffer())).getChannelData(0); };
+      return (await new OfflineAudioContext(1,1,48000).decodeAudioData(await (await PulseAudio.exportTrackWav(p,0)).arrayBuffer())).getChannelData(0); };
     const goertzel=(x,f)=>{ let re=0,im=0; for(let i=sr/4;i<sr*3/4;i++){const w=0.5-0.5*Math.cos(2*Math.PI*(i-sr/4)/(sr/2)); re+=x[i]*w*Math.cos(2*Math.PI*f*i/sr); im+=x[i]*w*Math.sin(2*Math.PI*f*i/sr);} return Math.hypot(re,im); };
     const fx={effects:['sat'],effectParams:{sat:{drive:100}}};
     const x=await run(7000,0.5,fx), f0=goertzel(x,7000);

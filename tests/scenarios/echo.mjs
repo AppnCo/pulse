@@ -9,7 +9,7 @@ export default async ({ ev, nav, send, shot, sleep }) => {
   const R = async (label, code) => console.log(label + ':', await ev(`(async()=>{${code}})()`));
   const tools = `const ctx=await PulseAudio.init(); const sr=48000; if(!PulseAudio.getBuffer('clap')){const b=ctx.createBuffer(1,sr,sr),d=b.getChannelData(0); for(let i=0;i<4800;i++)d[i]=0.5*Math.sin(2*Math.PI*440*i/sr); PulseAudio.registerBuffer('clap',b);}
     const run=async(bpm,snd)=>{const t={volume:100,clips:[{id:'clap',start:0,duration:1}],effects:['delay'],effectParams:{delay:{wet:Math.round(snd.echo*0.5),feedback:Math.round(20+snd.echo*0.35),...(snd.echoMs?{ms:snd.echoMs}:{beats:snd.echoBeats})}}};
-      const o=await ctx.decodeAudioData(await (await PulseAudio.exportTrackWav({bpm,buses:[],tracks:[t]},0)).arrayBuffer()); const x=o.getChannelData(0);
+      const o=await new OfflineAudioContext(1,1,48000).decodeAudioData(await (await PulseAudio.exportTrackWav({bpm,buses:[],tracks:[t]},0)).arrayBuffer()); const x=o.getChannelData(0);
       const rms=(a)=>{let s=0; for(let i=Math.round(a*sr);i<Math.round((a+0.1)*sr);i++)s+=x[i]*x[i]; return Math.sqrt(s/(0.1*sr));}; return {o,rms,fx:JSON.stringify(t.effectParams.delay)};};
     const f=(v)=>v.toFixed(5); const ok=(c)=>c?'PASS ':'FAIL ';`;
   await R('sur le rythme (120 BPM, ½ temps = 0,25 s)', `${tools} const r=await run(120,{echo:50,echoBeats:0.5});

@@ -38,7 +38,7 @@ export default async (c) => {
   // le son suit : l'export avec l'EQ diffère de celui sans
   await R('le son change', `const sr=48000, ctx=PulseAudio.getContext(), b=ctx.createBuffer(1,sr,sr); let r=1; for(let i=0;i<4800;i++){ r=(r*16807)%2147483647; b.getChannelData(0)[i]=0.5*(r/1073741823.5-1); } PulseAudio.registerBuffer('clap',b);
     const t=state.project.tracks[0]; t.clips=[{id:'clap',start:0,duration:1}];
-    const tail=async()=>{ const w=await PulseAudio.exportTrackWav(state.project,0); const x=await ctx.decodeAudioData(await w.arrayBuffer()), L=x.getChannelData(0); let s=0; for(let i=14400;i<43200;i++) s+=L[i]*L[i]; return Math.sqrt(s/28800); };
+    const tail=async()=>{ const w=await PulseAudio.exportTrackWav(state.project,0); const x=await new OfflineAudioContext(1,1,48000).decodeAudioData(await w.arrayBuffer()), L=x.getChannelData(0); let s=0; for(let i=14400;i<43200;i++) s+=L[i]*L[i]; return Math.sqrt(s/28800); };
     const a=await tail(); const keep=t.effectParams.reverb.eq; t.effectParams.reverb.eq=[]; const z=await tail(); t.effectParams.reverb.eq=keep; return 'queue avec EQ '+a.toFixed(5)+' / sans '+z.toFixed(5)+(Math.abs(a-z)/z>0.05?' PASS':' FAIL')`);
   // double-clic sur un point = le retirer
   const p2 = JSON.parse(await ev(`JSON.stringify(document.querySelector('.rveq-pt[data-i="1"] circle').getBoundingClientRect())`));

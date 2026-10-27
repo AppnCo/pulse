@@ -15,7 +15,7 @@ export default async (c) => {
   // 3. Queue de reverb quand l'envoi vient d'un groupe
   const dur = await ev(`(async()=>{ await PulseAudio.init(); const ctx=PulseAudio.getContext(); const sr=48000,b=ctx.createBuffer(1,sr,sr),d=b.getChannelData(0); for(let i=0;i<sr;i++)d[i]=0.2*Math.sin(i/30); PulseAudio.registerBuffer('ton',b);
     const p=state.project; p.tracks[2].clips=[{id:'ton',start:0,duration:1}]; p.tracks.forEach(t=>t.sends={}); p.buses.forEach(g=>g.sends={}); p.buses.find(g=>g.id==='vocal1').sends={revlong:80};
-    const w=await PulseAudio.exportWav(p); const x=await ctx.decodeAudioData(await w.arrayBuffer()); return x.duration })()`);
+    const w=await PulseAudio.exportWav(p); const x=await new OfflineAudioContext(1,1,48000).decodeAudioData(await w.arrayBuffer()); return x.duration })()`);
   ok(dur > 2, `queue de reverb gardée avec un envoi de groupe (${dur.toFixed(2)} s)`);
 
   // 2. Chaque piste séparée inclut la piste Rec

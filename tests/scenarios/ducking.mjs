@@ -9,7 +9,7 @@ export default async ({ ev, nav, send, sleep }) => {
     const ctx=await PulseAudio.init(); const sr=48000; const b=ctx.createBuffer(2,sr*3,sr);
     for(const c of [0,1]){const d=b.getChannelData(c); for(let i=0;i<sr;i++) d[i]=0.5*Math.sin(2*Math.PI*300*i/sr);} PulseAudio.registerBuffer('dk',b);
     const lvl=async(fx,a,z)=>{ const p={bpm:120,buses:[],sends:[],tracks:[{volume:100,clips:[{id:'dk',start:0,duration:3}],...fx}]};
-      const x=(await ctx.decodeAudioData(await (await PulseAudio.exportTrackWav(p,0)).arrayBuffer())).getChannelData(0);
+      const x=(await new OfflineAudioContext(1,1,48000).decodeAudioData(await (await PulseAudio.exportTrackWav(p,0)).arrayBuffer())).getChannelData(0);
       let s=0; for(let i=Math.floor(a*sr);i<Math.floor(z*sr);i++) s+=x[i]*x[i]; return 20*Math.log10(Math.sqrt(s/((z-a)*sr))+1e-12); };
     const e=(duck)=>({effects:['delay'],effectParams:{delay:{beats:1,feedback:50,wet:100,dry:0,duck,hpf:150,lpf:6000}}});
     const r=(duck)=>({effects:['reverb'],effectParams:{reverb:{wet:100,size:2.4,pre:20,low:150,high:8000,duck}}});

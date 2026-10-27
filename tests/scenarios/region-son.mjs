@@ -7,7 +7,7 @@ export default async ({ ev, nav, send, sleep }) => {
   const R = async (label, code) => console.log(label + ':', await ev(`(async()=>{${code}})()`));
   await ev(`(async()=>{ const ctx=await PulseAudio.init(); const sr=48000,b=ctx.createBuffer(1,sr*2,sr); const d=b.getChannelData(0); for(let i=0;i<d.length;i++) d[i]=0.25*Math.sin(2*Math.PI*440*i/sr); PulseAudio.registerBuffer('k',b);
     state.project.tracks[0].clips=[{id:'k',start:0,duration:1,offset:0,name:'a'},{id:'k',start:3,duration:1,offset:0,name:'b'}]; state.selectedTrack=0; renderAll();
-    window.__exp=async(ci)=>{ const t=JSON.parse(JSON.stringify(state.project.tracks[0])); t.clips=[t.clips[ci]]; const p={buses:[],sends:[],tracks:[t]}; return (await ctx.decodeAudioData(await (await PulseAudio.exportTrackWav(p,0)).arrayBuffer())).getChannelData(0); };
+    window.__exp=async(ci)=>{ const t=JSON.parse(JSON.stringify(state.project.tracks[0])); t.clips=[t.clips[ci]]; const p={buses:[],sends:[],tracks:[t]}; return (await new OfflineAudioContext(1,1,48000).decodeAudioData(await (await PulseAudio.exportTrackWav(p,0)).arrayBuffer())).getChannelData(0); };
     window.__zc=(x,a,z)=>{let n=0; for(let i=a+1;i<z;i++) if((x[i-1]<0)!==(x[i]<0)) n++; return n;}; })()`);
   await sleep(300);
   await R('menu : premier niveau', `openClipContextMenu(300,200,0,0); await new Promise(r=>setTimeout(r,120)); return [...document.querySelector('.clip-ctx-menu').children].filter(e=>e.classList.contains('ctx-item')).map(e=>e.textContent.trim()).join(' | ')`);

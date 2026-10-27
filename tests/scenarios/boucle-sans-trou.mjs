@@ -34,7 +34,7 @@ export default async ({ ev, nav, send, sleep, check }) => {
     state.loop={start:1,end:1.5}; state.looping=true; state.playhead=1; await togglePlay(); const from=rec.length;
     await new Promise(r=>setTimeout(r,700)); t.effects=['util']; t.effectParams={util:{gain:0}}; refreshPlaybackSoon();
     await new Promise(r=>setTimeout(r,900)); state.loop={start:1,end:1.4};
-    await new Promise(r=>setTimeout(r,1800)); await togglePlay();
+    await new Promise(r=>setTimeout(r,2400)); await togglePlay();
     const x=new Float32Array((rec.length-from)*512); let o=0; for(let k=from;k<rec.length;k++){ x.set(rec[k],o); o+=512; }
     const drops=[]; for(let i=300;i<x.length-300;i++){ if(x[i-250]-x[i+250]>0.006 && x[i-250]>0.01){ const mid=(x[i-250]+x[i+250])/2; let k=i-250; while(k<i+250 && x[k]>mid) k++; drops.push(k); i+=4000; } }
     let zeros=0,mz=0; for(let i=(drops[0]||0);i<x.length-3000;i++){ if(Math.abs(x[i])<1e-4){zeros++; mz=Math.max(mz,zeros);} else zeros=0; }
@@ -42,7 +42,9 @@ export default async ({ ev, nav, send, sleep, check }) => {
     return JSON.stringify({gaps, silenceMax:mz, sr});
   })()`));
   console.log(JSON.stringify(r2));
-  const last = r2.gaps.slice(-2);
+  // les tours après le premier raccord raccourci (le nombre de tours dépend de la charge de la machine : on ne compte pas sur « les 2 derniers »)
+  const cut = r2.gaps.findIndex(g => g < r2.sr * 0.45);
+  const after = cut < 0 ? [] : r2.gaps.slice(cut + 1);
   check('plugin ajouté pendant la boucle puis boucle raccourcie : aucun silence', r2.silenceMax < 5, r2.silenceMax);
-  check('après le changement, un tour = 0,4 s', last.length === 2 && last.every(g => Math.abs(g - r2.sr * 0.4) <= 2), r2.gaps.join(','));
+  check('après le changement, un tour = 0,4 s', after.length >= 2 && after.every(g => Math.abs(g - r2.sr * 0.4) <= 2), r2.gaps.join(','));
 };

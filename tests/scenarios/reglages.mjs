@@ -15,7 +15,7 @@ export default async ({ ev, nav, send, shot, sleep }) => {
   await R('⌘Z annule la 1re', `undoAction(); return ${n}`);
   await R('rétablir x2', `redoAction(); redoAction(); return ${n}`);
   await R('mp3 local', `const w=await PulseAudio.exportWav(state.project); const m=await encodeToMp3(w,192); return 'lamejs='+(typeof lamejs)+' mp3 '+m.size+' octets'`);
-  await R('export volume au maximum', `const ctx=PulseAudio.getContext(); const pk=async(o)=>{ const b=await ctx.decodeAudioData(await (await PulseAudio.exportWav(state.project,o)).arrayBuffer()); let m=0; for(let c=0;c<b.numberOfChannels;c++){const d=b.getChannelData(c); for(let i=0;i<d.length;i++) m=Math.max(m,Math.abs(d[i]));} return (20*Math.log10(m)).toFixed(1); };
+  await R('export volume au maximum', `const ctx=PulseAudio.getContext(); const pk=async(o)=>{ const b=await new OfflineAudioContext(1,1,48000).decodeAudioData(await (await PulseAudio.exportWav(state.project,o)).arrayBuffer()); let m=0; for(let c=0;c<b.numberOfChannels;c++){const d=b.getChannelData(c); for(let i=0;i<d.length;i++) m=Math.max(m,Math.abs(d[i]));} return (20*Math.log10(m)).toFixed(1); };
     return 'crête normale '+await pk({})+' dBFS → avec volume au maximum '+await pk({normalize:true})+' dBFS (cible -1.0)'`);
   await ev(`openSettings()`); await sleep(500);
   if (SHOTS) await shot(SHOTS + '/shot-settings.jpg');

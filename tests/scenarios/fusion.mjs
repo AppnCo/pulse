@@ -10,7 +10,7 @@ export default async ({ ev, nav, send, sleep }) => {
   await R('ancien projet migré', `const t=state.project.tracks[0]; const sansEnvoi=!(state.project.sends||[]).some(x=>x.type==='reverb'); return ((sansEnvoi ? t.effects.includes('reverb') : (!t.effects.includes('reverb')&&t.sends.revlong===36))?'PASS ':'FAIL ')+'effets='+JSON.stringify(t.effects)+' envois='+JSON.stringify(t.sends)`);
   await R('fusion', `const ctx=await PulseAudio.init(); const sr=48000,b=ctx.createBuffer(1,sr,sr),d=b.getChannelData(0); for(let i=0;i<4800;i++)d[i]=0.5*Math.sin(2*Math.PI*440*i/sr); PulseAudio.registerBuffer('clap',b);
     const t=state.project.tracks[0]; t.volume=60; t.pan=-40; t.sends.del14=40; t.clips=[{id:'clap',start:2,duration:1},{id:'clap',start:3.5,duration:1}]; t.automation={volume:{points:[{t:0,v:1},{t:4,v:0.5}]}};
-    const snap=async()=>{const o=await ctx.decodeAudioData(await (await PulseAudio.exportWav(state.project)).arrayBuffer()); const m=(c,a)=>{const x=o.getChannelData(c); let s=0; for(let i=Math.round(a*sr);i<Math.round((a+0.1)*sr);i++)s+=x[i]*x[i]; return Math.sqrt(s/(0.1*sr));};
+    const snap=async()=>{const o=await new OfflineAudioContext(1,1,48000).decodeAudioData(await (await PulseAudio.exportWav(state.project)).arrayBuffer()); const m=(c,a)=>{const x=o.getChannelData(c); let s=0; for(let i=Math.round(a*sr);i<Math.round((a+0.1)*sr);i++)s+=x[i]*x[i]; return Math.sqrt(s/(0.1*sr));};
       return [m(0,2),m(1,2),m(0,2.5),m(0,3.5),m(0,4),m(0,1.9)];};
     const before=await snap(); await bounceTrack(0); await new Promise(r=>setTimeout(r,300)); const after=await snap();
     const worst=Math.max(...before.map((v,i)=>Math.abs(v-after[i])/(v+1e-4)));

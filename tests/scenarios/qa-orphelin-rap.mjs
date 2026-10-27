@@ -4,7 +4,7 @@ export default async (c) => {
   const { ev, sleep, send } = c;
   await boot(c, RAP);
   const Ms = mouse(send);
-  const rms = `const ctx=PulseAudio.getContext(); const sr=48000; const m=async()=>{const x=(await ctx.decodeAudioData(await (await PulseAudio.exportWav(state.project)).arrayBuffer())).getChannelData(0); let s=0; for(let i=sr*0.3;i<sr*0.8;i++)s+=x[i]*x[i]; return +Math.sqrt(s/(sr*0.5)).toFixed(4);};`;
+  const rms = `const ctx=PulseAudio.getContext(); const sr=48000; const m=async()=>{const x=(await new OfflineAudioContext(1,1,48000).decodeAudioData(await (await PulseAudio.exportWav(state.project)).arrayBuffer())).getChannelData(0); let s=0; for(let i=sr*0.3;i<sr*0.8;i++)s+=x[i]*x[i]; return +Math.sqrt(s/(sr*0.5)).toFixed(4);};`;
   await ev(`(async()=>{ await PulseAudio.init(); const ctx=PulseAudio.getContext(); const sr=48000,b=ctx.createBuffer(1,sr,sr),d=b.getChannelData(0); for(let i=0;i<sr;i++)d[i]=0.2*Math.sin(2*Math.PI*300*i/sr); PulseAudio.registerBuffer('ton',b);
     state.project.tracks[2].clips=[{id:'ton',start:0,duration:1}]; busById('mixbus1').volume=0; renderAll(); })()`);
   console.log('Mix Bus 1 à zéro, avant :', await ev(`(async()=>{${rms} return await m()})()`), '(attendu 0 : le son doit passer par Mix Bus 1)');

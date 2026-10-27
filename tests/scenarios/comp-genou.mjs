@@ -9,7 +9,7 @@ export default async ({ ev, nav, send, sleep }) => {
   await R('genou et rattrapage', `const ctx=await PulseAudio.init(); const sr=48000;
     const gain=async(amp,cp)=>{const b=ctx.createBuffer(1,sr*2,sr),d=b.getChannelData(0); for(let i=0;i<d.length;i++)d[i]=amp*Math.sin(2*Math.PI*300*i/sr); PulseAudio.registerBuffer('cg'+amp,b);
       const p={buses:[],tracks:[{volume:100,clips:[{id:'cg'+amp,start:0,duration:2}],...(cp?{effects:['comp'],effectParams:{comp:cp}}:{})}]};
-      const x=(await ctx.decodeAudioData(await (await PulseAudio.exportTrackWav(p,0)).arrayBuffer())).getChannelData(0); let s=0; for(let i=sr;i<sr*1.8;i++)s+=x[i]*x[i];
+      const x=(await new OfflineAudioContext(1,1,48000).decodeAudioData(await (await PulseAudio.exportTrackWav(p,0)).arrayBuffer())).getChannelData(0); let s=0; for(let i=sr;i<sr*1.8;i++)s+=x[i]*x[i];
       return Math.sqrt(s/(sr*0.8));};
     const rel=async(amp,cp)=>(20*Math.log10(await gain(amp,cp)/await gain(amp,null))).toFixed(2);
     const base={threshold:-20,ratio:4,attack:10,release:50,makeup:0};
@@ -17,7 +17,7 @@ export default async ({ ev, nav, send, sleep }) => {
   await R('caractères', `const ctx=await PulseAudio.init(); const sr=48000;
     const b=ctx.createBuffer(1,sr*2,sr),d=b.getChannelData(0); for(let i=0;i<d.length;i++)d[i]=0.5*Math.sin(2*Math.PI*300*i/sr); PulseAudio.registerBuffer('cgm',b);
     const run=async(cp)=>{const p={buses:[],tracks:[{volume:100,clips:[{id:'cgm',start:0,duration:2}],...(cp?{effects:['comp'],effectParams:{comp:cp}}:{})}]};
-      return (await ctx.decodeAudioData(await (await PulseAudio.exportTrackWav(p,0)).arrayBuffer())).getChannelData(0);};
+      return (await new OfflineAudioContext(1,1,48000).decodeAudioData(await (await PulseAudio.exportTrackWav(p,0)).arrayBuffer())).getChannelData(0);};
     const amp=(x,f)=>{let re=0,im=0; for(let i=sr;i<sr*1.8;i++){const a=2*Math.PI*f*i/sr; re+=x[i]*Math.cos(a); im+=x[i]*Math.sin(a);} return Math.hypot(re,im);};
     const ref=amp(await run(null),300); const o=[];
     for(const mode of [0,1,2,3]){ const x=await run({threshold:-20,ratio:4,attack:10,release:50,knee:0,makeup:0,mode}); const f=amp(x,300);

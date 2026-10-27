@@ -8,7 +8,7 @@ export default async ({ ev, nav, send, sleep }) => {
   const R = async (label, code) => console.log(label + ':', await ev(`(async()=>{${code}})()`));
   await ev(`toggleRec()`); await sleep(2500); await ev(`togglePlay()`); await sleep(500);
   // niveau de l'export à mi-fondu (fondu d'entrée de 1 s sur le début du clip)
-  const lvl = `const ctx=PulseAudio.getContext(); const b=await ctx.decodeAudioData(await (await PulseAudio.exportWav(state.project)).arrayBuffer()); const d=b.getChannelData(0); const c=state.project.tracks[0].clips[0]; const i0=Math.round((c.start+0.5)*b.sampleRate); let m=0; for(let i=i0-480;i<i0+480;i++) m=Math.max(m,Math.abs(d[i]));`;
+  const lvl = `const ctx=PulseAudio.getContext(); const b=await new OfflineAudioContext(1,1,48000).decodeAudioData(await (await PulseAudio.exportWav(state.project)).arrayBuffer()); const d=b.getChannelData(0); const c=state.project.tracks[0].clips[0]; const i0=Math.round((c.start+0.5)*b.sampleRate); let m=0; for(let i=i0-480;i<i0+480;i++) m=Math.max(m,Math.abs(d[i]));`;
   await R('fondu droit : niveau à mi-fondu', `const cc=state.project.tracks[0].clips[0]; cc.fadeIn=1; delete cc.fadeInCurve; ${lvl} return m.toFixed(4)`);
   await R('fondu arrondi k=2 : plus bas à mi-fondu', `state.project.tracks[0].clips[0].fadeInCurve=2; ${lvl} return m.toFixed(4)+' (attendu ≈ 1/2 du précédent)'`);
   await ev(`state.project.tracks[0].clips[0].fadeIn=1; delete state.project.tracks[0].clips[0].fadeInCurve; renderTimelineTracks()`); await sleep(150);

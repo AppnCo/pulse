@@ -37,7 +37,7 @@ export default async ({ ev, nav, send, sleep, shot }) => {
   if (process.env.SHOTS) await shot(process.env.SHOTS + '/mband.jpg');
   await ev(`togglePlay()`);
   // l'export suit : la bande de 250 Hz baisse
-  await R('export', `const t=state.project.tracks[0]; const ctx=PulseAudio.getContext(); const lv=async()=>{ const w=await PulseAudio.exportTrackWav(state.project,0); const x=await ctx.decodeAudioData(await w.arrayBuffer()), L=x.getChannelData(0); let s=0; for(let i=48000;i<96000;i++) s+=L[i]*L[i]; return Math.sqrt(s/48000); };
+  await R('export', `const t=state.project.tracks[0]; const ctx=PulseAudio.getContext(); const lv=async()=>{ const w=await PulseAudio.exportTrackWav(state.project,0); const x=await new OfflineAudioContext(1,1,48000).decodeAudioData(await w.arrayBuffer()), L=x.getChannelData(0); let s=0; for(let i=48000;i<96000;i++) s+=L[i]*L[i]; return Math.sqrt(s/48000); };
     const a=await lv(); t.effects=t.effects.filter(e=>e!=='mband'); const z=await lv(); t.effects.push('mband'); return 'avec '+a.toFixed(4)+' / sans '+z.toFixed(4)+(a<z*0.8?' PASS':' FAIL')`);
   // double-clic ailleurs = 2e bande, puis ✕
   await m.click(X(6000), Yp(150), 1); await m.click(X(6000), Yp(150), 2); await sleep(150);

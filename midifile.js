@@ -52,7 +52,7 @@
     }
 
     // ---------- Lecture ----------
-    // Renvoie { notes, beats, bpm, drums, ppq, trackNames }. Lève une Error en français si le fichier est illisible.
+    // Renvoie { notes, beats, bpm, drums, ppq, names, beatsPerBar, tempos: [{ beat, bpm }], signatures: [{ beat, beats }] } (changements après le début). Lève une Error en français si le fichier est illisible.
     function decode(buf) {
         const d = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
         let i = 0;
@@ -66,7 +66,8 @@
         if (div & 0x8000) throw new Error('ce fichier .mid utilise un découpage en images (SMPTE), non géré');
         const ppq = div || PPQ;
         const notes = [], names = [];
-        let bpm = null, drumHits = 0, allHits = 0;
+        let drumHits = 0, allHits = 0;
+        const tempoEv = [], sigEv = [];
         for (let t = 0; t < nTr && i < d.length; t++) {
             const id = tag(), len = u32(), end = Math.min(d.length, i + len);
             if (id !== 'MTrk') { i = end; continue; }
@@ -81,7 +82,12 @@
                 if (st === 0xFF) {
                     const type = u8(); let l = 0, c;
                     do { c = u8(); l = (l << 7) | (c & 0x7F); } while (c & 0x80);
-                    if (type === 0x51 && l === 3 && bpm === null) bpm = Math.round(60000000 / ((d[i] << 16) | (d[i + 1] << 8) | d[i + 2]) * 10) / 10;
+                    if (type === 0x51 && l === 3) {
+                        const b = Math.round(60000000 / ((d[i] << 16) | (d[i + 1] << 8) | d[i + 2]) * 10) / 10;
+                        tempoEv.push({ beat: tick / ppq, bpm: b });
+                    }
+                    // signature : numérateur / 2^dénominateur, ramenée en noires par mesure (6/8 → 3)
+                    if (type === 0x58 && l >= 2) sigEv.push({ beat: tick / ppq, beats: Math.max(1, Math.min(12, Math.round(d[i] * 4 / Math.pow(2, d[i + 1])) || 4)) });
                     if (type === 0x03 && l > 0) names.push(new TextDecoder().decode(d.subarray(i, i + l)));
                     i += l;
                 } else if (st === 0xF0 || st === 0xF7) {
@@ -105,9 +111,22 @@
             i = end;
         }
         if (!notes.length) throw new Error('aucune note dans ce fichier .mid');
+        // Carte de tempo du fichier : paliers triés, le dernier gagne quand deux tombent au même endroit
+        const clean = (list, k) => {
+            const out = [];
+            list.sort((a, b) => a.beat - b.beat).forEach(e => {
+                const last = out[out.length - 1];
+                if (last && Math.abs(last.beat - e.beat) < 1e-6) last[k] = e[k]; else out.push({ ...e });
+            });
+            return out.filter((e, j) => j === 0 || e[k] !== out[j - 1][k]);
+        };
+        const tempos = clean(tempoEv, 'bpm'), sigs = clean(sigEv, 'beats');
+        const bpm = tempos.length && tempos[0].beat < 1e-6 ? tempos[0].bpm : (tempos.length ? 120 : null);
+        const beatsPerBar = sigs.length && sigs[0].beat < 1e-6 ? sigs[0].beats : 4;
         notes.sort((a, b) => a.s - b.s || a.p - b.p);
         const last = Math.max(...notes.map(n => n.s + n.d));
-        return { notes, beats: Math.max(4, Math.ceil(last / 4 - 1e-6) * 4), bpm, drums: allHits > 0 && drumHits / allHits > 0.6, ppq, names };
+        return { notes, beats: Math.max(4, Math.ceil(last / 4 - 1e-6) * 4), bpm, drums: allHits > 0 && drumHits / allHits > 0.6, ppq, names,
+            beatsPerBar, tempos: tempos.filter(e => e.beat > 1e-6), signatures: sigs.filter(e => e.beat > 1e-6) };
     }
 
     root.PulseMidiFile = { encode, decode, PPQ };

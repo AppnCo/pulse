@@ -9,7 +9,7 @@ export default async (c) => {
     const b=ctx.createBuffer(1,sr,sr), d=b.getChannelData(0); for(let n=0;n<sr;n++) d[n]=${sig};
     PulseAudio.registerBuffer('sig', b);
     const proj={id:'x',bpm:120,buses:[],sends:[],tracks:[{name:'A',type:'audio',volume:100,effects:['${fx}'],effectParams:${JSON.stringify(params)},clips:[{id:'sig',start:0,duration:1,offset:0}]}]};
-    const wav=await PulseAudio.exportWav(proj); const ab=await ctx.decodeAudioData(await wav.arrayBuffer());
+    const wav=await PulseAudio.exportWav(proj); const ab=await new OfflineAudioContext(1,1,48000).decodeAudioData(await wav.arrayBuffer());
     return { l:Array.from(ab.getChannelData(0).slice(0,sr)), r:Array.from(ab.getChannelData(1).slice(0,sr)) };
   })()`);
   const freq = (s) => { let z = 0; for (let i = 4800; i < s.length - 1; i++) if (s[i] <= 0 && s[i + 1] > 0) z++; return z / ((s.length - 4800) / 48000); };

@@ -9,7 +9,7 @@ export default async ({ ev, nav, send, sleep }) => {
     const tone=(id,amp)=>{const b=ctx.createBuffer(1,sr*2,sr),d=b.getChannelData(0); for(let i=0;i<d.length;i++)d[i]=amp*Math.sin(2*Math.PI*440*i/sr); PulseAudio.registerBuffer(id,b);};
     tone('fort',0.3); tone('faible',0.01);
     const rms=async(id,on)=>{const p={buses:[],tracks:[{volume:100,clips:[{id,start:0,duration:2}],effects:on?['gate']:[],effectParams:{gate:{threshold:-35,release:50,reduction:24}}}]};
-      const b=await ctx.decodeAudioData(await (await PulseAudio.exportTrackWav(p,0)).arrayBuffer()); const d=b.getChannelData(0); let s=0,n=0; for(let i=sr;i<sr*1.8;i++){s+=d[i]*d[i];n++;} return Math.sqrt(s/n);};
+      const b=await new OfflineAudioContext(1,1,48000).decodeAudioData(await (await PulseAudio.exportTrackWav(p,0)).arrayBuffer()); const d=b.getChannelData(0); let s=0,n=0; for(let i=sr;i<sr*1.8;i++){s+=d[i]*d[i];n++;} return Math.sqrt(s/n);};
     const db=async(id)=>20*Math.log10(await rms(id,true)/await rms(id,false));
     const o=[]; const chk=(nom,v,lo,hi)=>o.push((v>=lo&&v<=hi?'PASS ':'FAIL ')+nom+' '+v.toFixed(2)+' dB');
     chk('son fort (au-dessus du seuil) intact', await db('fort'), -0.2, 0.2);

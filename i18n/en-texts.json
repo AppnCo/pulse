@@ -2214,6 +2214,30 @@
   [
    "(.+?) tempos",
    "$1 tempos"
+  ],
+  [
+   "le projet prend le tempo du fichier \\(([\\d.]+) BPM\\)",
+   "the project takes the file's tempo ($1 BPM)"
+  ],
+  [
+   "le projet prend le tempo du fichier \\(([\\d.]+) BPM, (\\d+) changements? de tempo\\)",
+   "the project takes the file's tempo ($1 BPM, $2 tempo change(s))"
+  ],
+  [
+   "le projet prend le tempo du fichier \\(([\\d.]+) BPM, (\\d+) changements? de signature\\)",
+   "the project takes the file's tempo ($1 BPM, $2 time signature change(s))"
+  ],
+  [
+   "le projet prend le tempo du fichier \\(([\\d.]+) BPM, (\\d+) changements? de tempo, (\\d+) changements? de signature\\)",
+   "the project takes the file's tempo ($1 BPM, $2 tempo change(s), $3 time signature change(s))"
+  ],
+  [
+   "⌘Z pour revenir",
+   "⌘Z to go back"
+  ],
+  [
+   "ses changements de tempo ne sont pas repris \\(le projet contient déjà des sons\\)",
+   "its tempo changes are not used (the project already has sounds)"
   ]
  ]
 }
