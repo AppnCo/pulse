@@ -538,6 +538,14 @@ patterns.push(
   P('Changer ce tempo (§ BPM)…', 'Change this tempo ($1 BPM)…'), P('Changer le tempo à la mesure §…', 'Change the tempo at bar $1…'),
   P('Changer la signature à la mesure §…', 'Change the time signature at bar $1…'), P('Un seul tempo : § BPM, §', 'Single tempo: $1 BPM, $2'),
   P('§ BPM · mesure §', '$1 BPM · bar $2'), P('§ tempos', '$1 tempos'));
+// Bulles d'aide restées en français (collecte du 27/10)
+Object.assign(exact, {
+  'Caler la boucle sur la région choisie (ou les régions choisies)': 'Set the loop to the chosen region (or regions)',
+  'Clic pour régler · clic maintenu et glisser pour changer l\'ordre · clic droit pour copier ou supprimer': 'Click to adjust · click, hold and drag to reorder · right-click to copy or remove',
+  'Effacer ce qui est à droite du curseur de base': 'Erase what is right of the playhead',
+  'Effacer ce qui est à gauche du curseur de base (sur la piste choisie)': 'Erase what is left of the playhead (on the chosen track)',
+  'Répéter la région choisie une fois de plus, juste après (autant de fois que tu appuies)': 'Repeat the chosen region once more, right after (as many times as you press)',
+});
 // Import .mid avec sa carte de tempo (27/10)
 patterns.push(
   ['le projet prend le tempo du fichier \\(([\\d.]+) BPM\\)', 'the project takes the file\'s tempo ($1 BPM)'],

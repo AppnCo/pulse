@@ -48,4 +48,18 @@ export default async ({ ev, nav, sleep, check }) => {
     return JSON.stringify({ bpb: d.beatsPerBar, bpm: d.bpm, sigs: d.signatures.length });
   })()`));
   check('6/8 lu comme 3 noires par mesure, sans tempo = pas de BPM imposé', r2.bpb === 3 && r2.bpm === null && r2.sigs === 0, JSON.stringify(r2));
+  // champ BPM du haut et signature des réglages : la carte est remise au propre
+  const r3 = JSON.parse(await ev(`(async()=>{
+    const p = state.project; p.tempos = [{ beat: 8, bpm: 60 }]; p.signatures = [{ bar: 2, beats: 3 }]; tempoMapChanged();
+    const bi = document.getElementById('bpmInput'); bi.value = '60'; bi.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 300));
+    const afterBpm = { bpm: p.bpm, tempos: p.tempos || null };
+    openSettings && openSettings(); await new Promise(r => setTimeout(r, 300));
+    const sel = document.querySelector('#setBeats'); let afterSig = null;
+    if (sel) { sel.value = '3'; sel.dispatchEvent(new Event('change', { bubbles: true })); afterSig = { bpb: p.beatsPerBar, sigs: p.signatures || null }; }
+    closeAllMenus && closeAllMenus(); document.querySelectorAll('.modal-backdrop').forEach(m => m.remove());
+    return JSON.stringify({ afterBpm, afterSig });
+  })()`));
+  check('BPM du haut = tempo d\'un changement : ce changement disparaît', r3.afterBpm.bpm === 60 && r3.afterBpm.tempos === null, JSON.stringify(r3.afterBpm));
+  check('signature des réglages = celle d\'un changement : ce changement disparaît', r3.afterSig && r3.afterSig.bpb === 3 && r3.afterSig.sigs === null, JSON.stringify(r3.afterSig));
 };

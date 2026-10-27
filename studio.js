@@ -3393,7 +3393,9 @@ function openSettings() {
         pushUndo();
         state.project.beatsPerBar = parseInt(e.target.value);
         PulseAudio.setBeatsPerBar && PulseAudio.setBeatsPerBar(bpb());
-        renderRuler(); renderTimelineTracks(); updateChrono(); saveProject();
+        // carte de tempo : une signature devenue identique à celle de départ ne sert plus, la piste de tempo se redessine
+        if ((state.project.tempos || state.project.signatures) && typeof tempoMapChanged === 'function') tempoMapChanged();
+        else { renderRuler(); renderTimelineTracks(); updateChrono(); saveProject(); }
         flash(`Mesure à ${bpb()} temps : la grille, le métronome et l'aimant suivent`);
     });
     modal.querySelector('#setCountIn').addEventListener('change', (e) => {
@@ -13070,9 +13072,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             e.target.blur();
             state.project.bpm = v; refreshPlaybackSoon(); // les échos calés sur le rythme suivent le nouveau tempo
             if (window.PulseAudio) PulseAudio.setMetronomeBpm(v);
-            renderRuler();
-            renderTimelineGrid(document.getElementById('timelineTracks'));
-            saveProject();
+            if ((state.project.tempos || state.project.signatures) && typeof tempoMapChanged === 'function') tempoMapChanged();   // premier palier de la carte
+            else {
+                renderRuler();
+                renderTimelineGrid(document.getElementById('timelineTracks'));
+                saveProject();
+            }
         }
     });
 
