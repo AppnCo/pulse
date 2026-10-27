@@ -497,3 +497,18 @@ Object.assign(exact, {
   'Propre': 'Clean', 'Chaude': 'Warm', 'Poussée': 'Pushed', 'Douce': 'Soft', 'Juteuse': 'Juicy', 'Cassée': 'Broken', 'Rond': 'Round', 'Crunch': 'Crunch', 'Hurlant': 'Screaming',
   'Léger': 'Light', 'Coloré': 'Colourful', 'Doux': 'Soft', 'Dur': 'Hard', 'Bits': 'Bits', 'Échantillons': 'Samples' });
 patterns.push(P('§ bandes au plus (en plus de la bande de départ)', '$1 bands at most (on top of the starting band)'), P('pente § dB', 'slope $1 dB'), P('tasse §', 'tightens $1'), P('aère §', 'opens $1'));
+
+// Geler une piste (27/10/2026)
+Object.assign(exact, {
+  '❄ Geler la piste (soulage l\'ordinateur)': '❄ Freeze the track (eases the computer)', '❄ Dégeler la piste': '❄ Unfreeze the track',
+  '❄ Piste gelée : effets figés (clic droit > Son > Dégeler)': '❄ Frozen track: effects locked (right-click > Sound > Unfreeze)',
+  '❄ Piste gelée : dégèle-la d\'abord (clic droit > Son > Dégeler)': '❄ Frozen track: unfreeze it first (right-click > Sound > Unfreeze)',
+  '❄ Piste gelée : ses régions sont figées (clic droit sur la piste > Son > Dégeler)': '❄ Frozen track: its regions are locked (right-click the track > Sound > Unfreeze)',
+  'Un gel est déjà en cours — attends qu\'il finisse': 'A freeze is already running — wait for it to finish',
+  'Arrête l\'enregistrement avant de geler une piste': 'Stop recording before freezing a track',
+  'Rien à geler : cette piste n\'a pas de région': 'Nothing to freeze: this track has no region',
+  'Rien à geler : la piste est silencieuse': 'Nothing to freeze: the track is silent',
+  '❄ Piste gelée : elle joue son rendu, effets compris. Volume, pan et envois restent réglables (clic droit > Son > Dégeler pour la modifier)': '❄ Track frozen: it plays its render, effects included. Volume, pan and sends stay adjustable (right-click > Sound > Unfreeze to edit it)',
+  'Le gel n\'a pas pu se faire — libère de la place sur ton disque et réessaie': 'The freeze failed — free up disk space and try again',
+  'Piste dégelée : ses régions et ses effets jouent de nouveau en direct': 'Track unfrozen: its regions and effects play live again' });
+patterns.push(P('❄ Gel de « § » en cours…', '❄ Freezing “$1”…'), P('« § » a été dégelée : son rendu était introuvable (ses régions et ses effets jouent comme avant)', '“$1” was unfrozen: its render was missing (its regions and effects play as before)'));

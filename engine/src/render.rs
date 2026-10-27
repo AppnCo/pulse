@@ -130,7 +130,23 @@ fn with_track_delays(project: &Project) -> Option<Project> {
     Some(p)
 }
 
+/// Pistes gelées : une seule région (le rendu, depuis 0 s) à la place des régions, sans effets de piste
+/// (même calcul que withFrozen dans audio.js). Volume, pan, envois, sortie et délai de piste restent actifs.
+fn with_frozen(project: &Project, media: &Media) -> Option<Project> {
+    if !project.tracks.iter().any(|t| t.frozen.is_some()) { return None; }
+    let mut p = project.clone();
+    for t in &mut p.tracks {
+        let Some(f) = t.frozen.take() else { continue };
+        t.clips = media.get(&f.id).map(|s| Clip { id: f.id.clone(), start: 0.0, duration: s.duration(), gain: Some(f.gain.unwrap_or(1.0)), ..Default::default() }).into_iter().collect();
+        t.effects.clear();
+        t.mono = Some(false);
+    }
+    Some(p)
+}
+
 pub fn render(project: &Project, media: &Media, opts: &RenderOptions) -> (Vec<f32>, Vec<f32>) {
+    let frozen = with_frozen(project, media);
+    let project = frozen.as_ref().unwrap_or(project);
     let shifted = with_track_delays(project);
     let project = shifted.as_ref().unwrap_or(project);
     let sr = opts.sample_rate as f64;

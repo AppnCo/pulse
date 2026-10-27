@@ -789,6 +789,39 @@ mod tests {
         assert_eq!(v, [48100, 48580, 47620], "navigateur : 48 100 / 48 580 / 47 620");
     }
 
+    /// Geler une piste : son rendu (régions + effets, avant le fader) joué à la place donne le même mix ; volume, pan, envois
+    /// et délai de piste restent actifs, les effets de piste ne sont plus appliqués une seconde fois. Voir tests/scenarios/geler-piste.mjs.
+    #[test]
+    fn geler_piste() {
+        let sr = SR as usize;
+        let tone = |f: f64, a: f64| (0..sr).map(|i| (a * (2.0 * std::f64::consts::PI * f * i as f64 / SR as f64).sin()) as f32).collect::<Vec<f32>>();
+        let media0 = Media::from([("v".to_owned(), Source { sample_rate: SR, channels: vec![tone(220.0, 0.6), tone(330.0, 0.4)] })]);
+        let track = |extra: &str| format!(r#"{{"volume":60,"pan":30,"delayMs":5,"effects":["filter","util"],"effectParams":{{"filter":{{"hpf":80}},"util":{{"gain":9}}}},"sends":{{"r":40}},"clips":[{{"id":"v","start":0.5,"duration":1,"fadeIn":0.05}}]{extra}}}"#);
+        let proj = |extra: &str| -> Project { serde_json::from_str(&format!(r#"{{"bpm":120,"sends":[{{"id":"r","type":"reverb"}}],"tracks":[{}]}}"#, track(extra))).unwrap() };
+        // Rendu à geler : la piste seule, sans fader, pan, délai ni envois (comme renderFreeze dans audio.js)
+        let solo: Project = serde_json::from_str(r#"{"bpm":120,"tracks":[{"effects":["filter","util"],"effectParams":{"filter":{"hpf":80},"util":{"gain":9}},"clips":[{"id":"v","start":0.5,"duration":1,"fadeIn":0.05}]}]}"#).unwrap();
+        // 1 s de plus pour la fin des effets (un filtre résonne encore après la région), puis le silence de la fin est retiré
+        let (mut fl, mut fr) = render(&solo, &media0, &RenderOptions { sample_rate: SR, only_track: Some(0), range: Some((0.0, 2.5)), ..Default::default() });
+        let end = (0..fl.len()).rev().find(|&i| fl[i].abs() > 1e-6 || fr[i].abs() > 1e-6).map_or(0, |i| i + 1);
+        fl.truncate(end); fr.truncate(end);
+        let pk = fl.iter().chain(fr.iter()).fold(0.0f32, |m, v| m.max(v.abs()));
+        let g = if pk > 0.99 { pk / 0.99 } else { 1.0 };
+        assert!(g > 1.0, "le rendu dépasse 0 dBFS (gain 9 dB) : il doit être ramené, crête {pk}");
+        let mut media = media0.clone();
+        media.insert("frz".to_owned(), Source { sample_rate: SR, channels: vec![fl.iter().map(|v| v / g).collect(), fr.iter().map(|v| v / g).collect()] });
+        let opts = RenderOptions { sample_rate: SR, ..Default::default() };
+        let (al, ar) = render(&proj(""), &media, &opts);
+        let (bl, br) = render(&proj(&format!(r#","frozen":{{"id":"frz","gain":{g}}}"#)), &media, &opts);
+        let n = al.len().min(bl.len());
+        let diff = (0..n).fold(0.0f32, |m, i| m.max((al[i] - bl[i]).abs()).max((ar[i] - br[i]).abs()));
+        let peak = al.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        println!("gel : écart max {diff:.2e} (crête du mix {peak:.3}, gain du rendu {g:.3})");
+        assert!(peak > 0.1 && diff < 1e-4, "piste gelée ≠ piste vivante : écart {diff}");
+        // Sans son rendu (fichier perdu), la piste gelée se tait au lieu de jouer ses régions sans effets
+        let (cl, _) = render(&proj(r#","frozen":{"id":"absent"}"#), &media0, &RenderOptions { sample_rate: SR, only_track: Some(0), ..Default::default() });
+        assert!(cl.iter().all(|v| *v == 0.0), "rendu introuvable : silence attendu");
+    }
+
     /// Limiteur : styles Transparent / Doux / Franc — mêmes chiffres que tests/scenarios/limiteur-styles.mjs.
     #[test]
     fn limiteur_styles() {

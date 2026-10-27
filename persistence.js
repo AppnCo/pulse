@@ -128,13 +128,24 @@ window.PulsePersist = (function() {
         });
     }
 
+    // Tous les sons dont un projet a besoin : régions, prises, originaux (Auto-Tune, warp, inversion), rendu des pistes gelées
+    // `rec` : garder aussi une prise en cours (le nettoyage ne doit pas l'effacer ; le fichier .pulse, lui, l'ignore)
+    function mediaIds(project, rec = true) {
+        const ids = new Set();
+        (project?.tracks || []).forEach(t => {
+            [...(t.clips || []), ...(t.takes || [])].forEach(c => { if (c.id && (rec || !c.recording)) ids.add(c.id); if (c.tune && c.tune.src) ids.add(c.tune.src); if (c.warp && c.warp.src) ids.add(c.warp.src); if (c.rev && c.rev.src) ids.add(c.rev.src); });
+            if (t.frozen && t.frozen.id) ids.add(t.frozen.id);
+        });
+        return [...ids];
+    }
+
     // Nettoyage global : garde l'audio référencé par N'IMPORTE QUEL projet enregistré (+ extraIds)
     async function gcAll(extraIds = []) {
         const keep = [...extraIds];
-        (await listProjectDocs()).forEach(p => (p.tracks || []).forEach(t => [...(t.clips || []), ...(t.takes || [])].forEach(c => { if (c.id) keep.push(c.id); if (c.tune && c.tune.src) keep.push(c.tune.src); if (c.warp && c.warp.src) keep.push(c.warp.src); })));
+        (await listProjectDocs()).forEach(p => keep.push(...mediaIds(p)));
         return gc(keep);
     }
 
-    return { saveBlob, loadBlob, deleteBlob, listIds, clearAll, gc, gcAll,
+    return { saveBlob, loadBlob, deleteBlob, listIds, clearAll, gc, gcAll, mediaIds,
              saveProjectDoc, loadProjectDoc, listProjectDocs, deleteProjectDoc };
 })();

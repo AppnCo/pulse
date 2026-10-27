@@ -66,6 +66,16 @@ pub struct Track {
     pub effects: Vec<String>,
     pub effect_params: EffectParams,
     pub automation: Automation,
+    /// Piste gelée : son rendu (régions + effets, avant le fader) joué à la place (voir render::with_frozen)
+    pub frozen: Option<Frozen>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Frozen {
+    pub id: String,
+    /// Facteur à réappliquer (le rendu est ramené sous 0 dBFS pour le WAV 16 bits)
+    pub gain: Option<f64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]

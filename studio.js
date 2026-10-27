@@ -798,6 +798,7 @@ function renderTracksPanel() {
             t.hidden ? 'is-hidden-track' : '',
             t.locked ? 'is-locked-track' : '',
             t.notes ? 'has-notes' : '',
+            t.frozen ? 'is-frozen-track' : '',
             t.muted ? 'is-muted' : '',
             t.solo ? 'is-solo' : '',
             trackGroup(t) ? 'in-group' : '',
@@ -869,7 +870,7 @@ function renderTimelineTracks() {
         const showRecHint = i === recTargetIdx && clips.length === 0 && !needsDropzone;
 
         return `${groupsStartingAt(i).map(g => renderGroupTimelineRow(g, timelineWidthPx)).join('')}
-        <div class="timeline-track ${isPendDel(t) ? 'pend-del' : ''} ${t.hidden ? 'is-hidden-track' : ''} ${t.locked ? 'is-locked-track' : ''} ${isInstru ? 'is-instru' : ''} ${isTrackFolded(t) ? 'is-group-collapsed' : ''}" data-i="${i}" style="width: ${timelineWidthPx}px${t.height ? `; --track-h: ${t.height}px` : ''}">
+        <div class="timeline-track ${isPendDel(t) ? 'pend-del' : ''} ${t.hidden ? 'is-hidden-track' : ''} ${t.locked ? 'is-locked-track' : ''} ${t.frozen ? 'is-frozen-track' : ''} ${isInstru ? 'is-instru' : ''} ${isTrackFolded(t) ? 'is-group-collapsed' : ''}" data-i="${i}" style="width: ${timelineWidthPx}px${t.height ? `; --track-h: ${t.height}px` : ''}">
             ${clips.map((c, ci) => renderClip(t, c, ci)).join('')}
             ${needsDropzone ? renderInstruDropzone(i) : ''}
             ${showRecHint ? '<div class="track-empty-hint"><span class="rec-dot"></span>Appuie sur <kbd>R</kbd> pour t\'enregistrer ici</div>' : ''}
@@ -1739,6 +1740,7 @@ function inspectorStrip(kind, x, idx) {
     <div class="strip insp-strip" data-kind="${kind}" data-id="${isMaster ? 'master' : kind === 'track' ? idx : esc(x.id)}" style="--track-color: ${color}">
         <div class="strip-name">${esc(name)}</div>
         ${kind === 'track' && !x.isCapture ? monoButtonHtml(x) : ''}
+        ${kind === 'track' && x.frozen ? '<div class="insp-note">❄ Piste gelée : effets figés (clic droit > Son > Dégeler)</div>' : ''}
         ${isMaster ? '<div class="insp-note">Tout le morceau sort ici</div>' : `<button class="strip-sound insp-sound" data-tooltip="${x.premaster ? 'Le réglage final de tout le morceau' : 'Réglage : charge un réglage prêt à l\'emploi (comme « Réglage » dans Logic)'}">${esc(soundLabel)} ▾</button>`}
         ${isMaster ? '' : slotListsHtml(kind, x)}
         ${(kind === 'track' || (kind === 'bus' && !x.premaster && !x.locked)) ? `<label class="insp-pan"><span>G</span><input type="range" class="insp-pan-input" min="-100" max="100" step="1" data-default="0" value="${x.pan || 0}" data-tooltip="Gauche / droite (⌘ + clic = centre, double-clic = écrire la valeur)"><span>D</span></label>` : ''}
@@ -2940,7 +2942,7 @@ async function cleanupOrphanAudio() {
     try {
         await PulsePersist.saveProjectDoc(JSON.parse(JSON.stringify(state.project)));
         const keep = [];
-        const collect = (p) => (p?.tracks || []).forEach(t => [...(t.clips || []), ...(t.takes || [])].forEach(c => { if (c.id) keep.push(c.id); if (c.tune && c.tune.src) keep.push(c.tune.src); if (c.warp && c.warp.src) keep.push(c.warp.src); if (c.rev && c.rev.src) keep.push(c.rev.src); }));
+        const collect = (p) => keep.push(...PulsePersist.mediaIds(p));
         collect(state.project);
         try { collect(JSON.parse(localStorage.getItem('pulse_autosave') || 'null')); } catch {}
         await PulsePersist.gcAll(keep);
@@ -4401,6 +4403,19 @@ async function restoreBuffersFromDisk() {
                 console.warn('Restore failed for', c.id, err);
                 missing++;
             }
+        }
+    }
+    // Rendu des pistes gelées (sans lui, la piste se tairait : on la dégèle pour retrouver ses régions et ses effets)
+    for (const t of state.project.tracks) {
+        if (!t.frozen || PulseAudio.hasBuffer(t.frozen.id)) continue;
+        try {
+            const blob = await PulsePersist.loadBlob(t.frozen.id);
+            if (!blob) throw new Error('missing');
+            PulseAudio.registerBuffer(t.frozen.id, await PulseAudio.getContext().decodeAudioData(await blob.arrayBuffer()));
+        } catch (err) {
+            console.warn('Rendu gelé introuvable', t.name, err);
+            unfreezeTrackData(t);
+            setTimeout(() => flash(`« ${t.name} » a été dégelée : son rendu était introuvable (ses régions et ses effets jouent comme avant)`), 2400);
         }
     }
     if (restored > 0) flash(`✓ Projet rouvert (${restored} son${restored>1?'s':''})`);
@@ -9760,10 +9775,49 @@ function toggleTrackPhase(t) {
 }
 // Verrouiller la piste : ses régions ne bougent plus, on ne peut plus y enregistrer
 function toggleTrackLocked(t) {
+    if (t.frozen) { flash('❄ Piste gelée : dégèle-la d\'abord (clic droit > Son > Dégeler)'); return; }
     pushUndo();
     if (t.locked) delete t.locked; else { t.locked = true; t.armed = false; }
     renderTracksPanel(); bindTrackEvents(); renderTimelineTracks(); saveProject();
     flash(t.locked ? '🔒 Piste verrouillée : plus de déplacement ni d\'enregistrement par accident' : 'Piste déverrouillée');
+}
+// Geler la piste (comme Logic) : régions + effets rendus en un seul son, joué à la place → l'ordinateur souffle.
+// Volume, pan, envois et sortie restent réglables ; régions et effets sont figés (piste verrouillée) jusqu'au dégel.
+let _freezeBusy = false;
+async function freezeTrack(t) {
+    if (t.frozen) return;
+    if (_freezeBusy) { flash('Un gel est déjà en cours — attends qu\'il finisse'); return; }
+    if (state.recording) { flash('Arrête l\'enregistrement avant de geler une piste'); return; }
+    if (!(t.clips || []).some(c => !c.muted && !c.recording)) { flash('Rien à geler : cette piste n\'a pas de région'); return; }
+    _freezeBusy = true;
+    flash(`❄ Gel de « ${t.name} » en cours…`);
+    try {
+        const r = await PulseAudio.renderFreeze(state.project, state.project.tracks.indexOf(t));
+        if (!r) { flash('Rien à geler : la piste est silencieuse'); return; }
+        const id = `frz_${Date.now().toString(36)}`;
+        PulseAudio.registerBuffer(id, r.buffer);
+        try { await PulsePersist.saveBlob(id, PulseAudio.audioBufferToWav(r.buffer), { kind: 'freeze' }); }
+        catch (e) { console.warn('Persist freeze failed', e); }
+        pushUndo();
+        t.frozen = { id, gain: r.gain, ...(t.locked ? { wasLocked: true } : {}) };
+        t.locked = true; t.armed = false;
+        renderAll(); saveProject(); refreshPlaybackSoon();
+        flash('❄ Piste gelée : elle joue son rendu, effets compris. Volume, pan et envois restent réglables (clic droit > Son > Dégeler pour la modifier)');
+    } catch (err) {
+        console.error(err);
+        flash('Le gel n\'a pas pu se faire — libère de la place sur ton disque et réessaie');
+    } finally { _freezeBusy = false; }
+}
+function unfreezeTrackData(t) {
+    if (!t.frozen) return;
+    if (!t.frozen.wasLocked) delete t.locked;
+    delete t.frozen;
+}
+function unfreezeTrack(t) {
+    if (!t.frozen) return;
+    pushUndo(); unfreezeTrackData(t);
+    renderAll(); saveProject(); refreshPlaybackSoon();
+    flash('Piste dégelée : ses régions et ses effets jouent de nouveau en direct');
 }
 // Masquer la piste : elle disparaît de l'écran mais continue de jouer (comme dans Logic)
 function toggleTrackHidden(t) {
@@ -9874,7 +9928,9 @@ function openTrackContextMenu(x, y, idx, t) {
         (t.type === 'audio' || !t.type) && !t.isCapture && !isInstruTrack(t)
             ? { label: t.autotune && t.autotune.on ? 'Auto-Tune de la piste (modifier ou retirer)…' : 'Auto-Tune de la piste…', action: () => { const ti = state.project.tracks.indexOf(t); const el = document.querySelector(`.track-item[data-i="${ti}"]`); const r = el ? el.getBoundingClientRect() : { right: 300, top: 120 }; openTunePanel(ti, -1, r.right + 8, r.top, true); } }
             : null,
-            { label: (t.effectParams && t.effectParams.util && t.effectParams.util.invert) ? 'Phase : remettre normale (Ø)' : 'Inverser la phase (Ø)', action: () => toggleTrackPhase(t) }
+            { label: (t.effectParams && t.effectParams.util && t.effectParams.util.invert) ? 'Phase : remettre normale (Ø)' : 'Inverser la phase (Ø)', action: () => toggleTrackPhase(t) },
+            t.frozen ? { label: '❄ Dégeler la piste', action: () => unfreezeTrack(t) }
+            : !t.isCapture && (t.clips || []).some(c => !c.recording) ? { label: '❄ Geler la piste (soulage l\'ordinateur)', action: () => freezeTrack(t) } : null
         ]},
         { label: 'Réglages', children: [
             { label: t.locked ? 'Déverrouiller la piste' : 'Verrouiller la piste', action: () => toggleTrackLocked(t) },
@@ -10095,6 +10151,7 @@ function toggleClipsLocked(clips) {
 }
 function clipIsLocked(clip) {
     const tr = clip && state.project.tracks.find(x => (x.clips || []).includes(clip));
+    if (tr && tr.frozen) { flash('❄ Piste gelée : ses régions sont figées (clic droit sur la piste > Son > Dégeler)'); return true; }
     if (tr && tr.locked) { flash('🔒 Piste verrouillée (clic droit sur la piste > Réglages > Déverrouiller)'); return true; }
     if (clip && clip.locked) { flash('🔒 Région verrouillée (clic droit > Réglages > Déverrouiller)'); return true; }
     return false;

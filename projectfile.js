@@ -98,8 +98,7 @@ window.PulseFile = (function() {
         const entries = [];
         const doc = { format: 'pulse', version: 1, savedAt: new Date().toISOString(), project };
         entries.push({ name: 'project.json', bytes: new TextEncoder().encode(JSON.stringify(doc)) });
-        const ids = new Set();
-        (project.tracks || []).forEach(t => [...(t.clips || []), ...(t.takes || [])].forEach(c => { if (c.id && !c.recording) ids.add(c.id); if (c.tune && c.tune.src) ids.add(c.tune.src); if (c.warp && c.warp.src) ids.add(c.warp.src); if (c.rev && c.rev.src) ids.add(c.rev.src); }));
+        const ids = new Set(PulsePersist.mediaIds(project, false));
         let missing = 0;
         for (const id of ids) {
             const blob = await PulsePersist.loadBlob(id);

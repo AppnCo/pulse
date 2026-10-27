@@ -1708,8 +1708,19 @@ window.PulseAudio = (function() {
             return { ...t, clips: (t.clips || []).map(c => ({ ...c, start: c.start + d, ...(c.loopEnd ? { loopEnd: c.loopEnd + d } : {}) })) };
         }) };
     }
+    // Piste gelée (`track.frozen = { id, gain }`, comme « Geler » dans Logic) : elle joue son rendu (régions + effets de piste,
+    // avant le fader) à la place de ses régions et de ses effets. Volume, pan, envois, sortie et délai de piste restent actifs.
+    // Même calcul dans render.rs (with_frozen).
+    function withFrozen(project) {
+        if (!project || !(project.tracks || []).some(t => t.frozen)) return project;
+        return { ...project, tracks: project.tracks.map(t => {
+            if (!t.frozen) return t;
+            const buf = buffers.get(t.frozen.id);
+            return { ...t, effects: [], mono: false, clips: buf ? [{ id: t.frozen.id, start: 0, duration: buf.duration, offset: 0, gain: t.frozen.gain || 1 }] : [] };
+        }) };
+    }
     function projectEndSec(project, onlyTrack = null) {
-        project = withTrackDelays(project);
+        project = withTrackDelays(withFrozen(project));
         let end = 0;
         project.tracks.forEach((t, i) => {
             if (onlyTrack !== null && i !== onlyTrack) return;
@@ -1724,9 +1735,10 @@ window.PulseAudio = (function() {
     // opts     : { fromTime, t0, endTime, onlyTrack, live }
     //   fromTime = position projet de départ, t0 = temps contexte correspondant
     //   live     = garde les pistes mutées dans le graphe (gain 0) pour mute/solo à chaud + VU-mètres
+    //   freeze   = rendu d'une piste à geler : le son est pris juste après ses effets (voir renderFreeze)
     function buildGraph(actx, project, dest, opts) {
-        project = withTrackDelays(project);
-        const { fromTime = 0, t0 = 0, endTime = Infinity, onlyTrack = null, live = false } = opts;
+        project = withTrackDelays(withFrozen(project));
+        const { fromTime = 0, t0 = 0, endTime = Infinity, onlyTrack = null, live = false, freeze = false } = opts;
         const sources = [];
 
         // Bus : piste → bus → bus… → master (un stem seul contourne les bus)
@@ -1833,7 +1845,7 @@ window.PulseAudio = (function() {
             if (onlyTrack !== null && trackIdx !== onlyTrack) return;
             const audible = onlyTrack !== null ? true : isTrackAudible(project, track);
             if (!audible && !live) return;
-            const trackDest = getBus(track.output);
+            const trackDest = freeze ? actx.createGain() : getBus(track.output);   // gel : la sortie normale de la piste ne va nulle part
 
             // Chaîne : clip → gain clip (fades) → effets → gain piste → pan → [analyser] → master
             const vol = (track.volume ?? 100) / 100;
@@ -1849,6 +1861,11 @@ window.PulseAudio = (function() {
                 fold.channelCount = 1; fold.channelCountMode = 'explicit'; fold.channelInterpretation = 'speakers';
                 fold.connect(fx.input);
                 fxIn = fold;
+            }
+            // Gel : le son après les effets, sans conversion ; un son mono garde un canal droit vide (le séparateur ne le recopie pas)
+            if (freeze) {
+                const sp = actx.createChannelSplitter(2), mg = actx.createChannelMerger(2);
+                fx.output.connect(sp); sp.connect(mg, 0, 0); sp.connect(mg, 1, 1); mg.connect(dest);
             }
 
             const panNode = actx.createStereoPanner();
@@ -2186,8 +2203,38 @@ window.PulseAudio = (function() {
         return renderOffline(project, {}, trackIdx);
     }
 
+    // Geler une piste : rend ses régions et ses effets (automation des effets comprise), avant le fader, depuis 0 s.
+    // Retourne { buffer, gain } ou null : buffer mono si le son de la piste l'est (même loi de pan que la piste vivante),
+    // ramené sous 0 dBFS pour le WAV 16 bits ; `gain` est le facteur à réappliquer à la lecture.
+    async function renderFreeze(project, trackIdx) {
+        const t = project.tracks[trackIdx];
+        if (!t || t.frozen) return null;
+        const automation = Object.fromEntries(Object.entries(t.automation || {}).filter(([k]) => k.startsWith('fx:')));
+        const copy = { ...project, tracks: project.tracks.map((x, i) => i !== trackIdx ? x
+            : { ...x, volume: 100, pan: 0, delayMs: 0, sends: {}, busSends: {}, preSends: {}, automation }) };
+        // 1 s de plus au moins pour la fin des effets (un filtre, un compresseur résonnent encore après la région), puis le silence de la fin est retiré
+        const out = await renderOffline(copy, { freeze: true, raw: true, minTail: 1 }, trackIdx);
+        if (!out) return null;
+        const L0 = out.getChannelData(0), R0 = out.getChannelData(1);
+        let end = L0.length;
+        while (end > 0 && Math.abs(L0[end - 1]) <= 1e-6 && Math.abs(R0[end - 1]) <= 1e-6) end--;
+        if (!end) return null;
+        const L = L0.subarray(0, end), R = R0.subarray(0, end);
+        const stereoSrc = !t.mono && (t.clips || []).some(c => !c.muted && !c.recording && (buffers.get(c.id)?.numberOfChannels || 1) > 1);
+        let stereo = stereoSrc, peak = 0;
+        for (let i = 0; i < L.length; i++) {
+            if (R[i] !== 0) stereo = true;
+            peak = Math.max(peak, Math.abs(L[i]), Math.abs(R[i]));
+        }
+        const gain = peak > 0.99 ? peak / 0.99 : 1;
+        const buffer = new AudioBuffer({ numberOfChannels: stereo ? 2 : 1, length: end, sampleRate: out.sampleRate });
+        [L, R].slice(0, stereo ? 2 : 1).forEach((d, c) => { const o = buffer.getChannelData(c); for (let i = 0; i < d.length; i++) o[i] = d[i] / gain; });
+        return { buffer, gain };
+    }
+
     async function renderOffline(project, opts, onlyTrack) {
         await init();
+        project = withFrozen(project);   // une piste gelée n'a plus d'effets : sa queue est déjà dans son rendu
         const totalDuration = projectEndSec(project, onlyTrack);
         if (totalDuration === 0) return null;
 
@@ -2203,7 +2250,7 @@ window.PulseAudio = (function() {
         const sendUsed = (type) => (project.sends || []).some(sd => !sd.muted && (sd.type === 'delay') === (type === 'delay')
             && (project.tracks.some((t, i) => (onlyTrack === null || i === onlyTrack) && (t.sends || {})[sd.id] > 0)
                 || (onlyTrack === null && (project.buses || []).some(b => (b.sends || {})[sd.id] > 0))));
-        const tail = isRange ? 0 : (uses('delay') || sendUsed('delay')) ? 4 : (uses('reverb') || sendUsed('reverb')) ? 2.5 : 0;
+        const tail = isRange ? 0 : Math.max(opts.minTail || 0, (uses('delay') || sendUsed('delay')) ? 4 : (uses('reverb') || sendUsed('reverb')) ? 2.5 : 0);
         const duration = rangeEnd - rangeStart + tail;
 
         const sampleRate = 48000;
@@ -2219,9 +2266,10 @@ window.PulseAudio = (function() {
             mg.connect(offline.destination);
         }
 
-        buildGraph(offline, project, mg, { fromTime: rangeStart, t0: 0, endTime: rangeEnd, onlyTrack });
+        buildGraph(offline, project, mg, { fromTime: rangeStart, t0: 0, endTime: rangeEnd, onlyTrack, freeze: !!opts.freeze });
 
         const rendered = await offline.startRendering();
+        if (opts.raw) return rendered;
         // « Volume au maximum » : on remonte tout le morceau pour que la crête arrive à -1 dBFS
         if (opts.normalize) {
             let peak = 0;
@@ -2898,7 +2946,7 @@ window.PulseAudio = (function() {
         getTrackAnalyser, getTrackMeters, trackChannelCount, getMasterAnalyser, getTrackSpectrum, getBusSpectrum, getCompReduction, setMasterVolume,
         setMetronome, setMetronomeBpm, setCountIn, isCountInEnabled,
         startMetronome, stopMetronome, playCountIn, stopCountIn, isCountingIn,
-        exportWav, exportTrackWav, audioBufferToWav, computeNormalizeGain, setLoop, loopScheduled, getRecWraps, getRecLinearPosition,
+        exportWav, exportTrackWav, renderFreeze, audioBufferToWav, computeNormalizeGain, setLoop, loopScheduled, getRecWraps, getRecLinearPosition,
         getContext: () => ctx
     };
 })();
