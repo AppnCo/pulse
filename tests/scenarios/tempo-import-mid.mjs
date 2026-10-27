@@ -62,4 +62,16 @@ export default async ({ ev, nav, sleep, check }) => {
   })()`));
   check('BPM du haut = tempo d\'un changement : ce changement disparaît', r3.afterBpm.bpm === 60 && r3.afterBpm.tempos === null, JSON.stringify(r3.afterBpm));
   check('signature des réglages = celle d\'un changement : ce changement disparaît', r3.afterSig && r3.afterSig.bpb === 3 && r3.afterSig.sigs === null, JSON.stringify(r3.afterSig));
+  // champ BPM du haut quand le tempo change : il montre le tempo à la tête de lecture, et le taper change CE palier (comme Logic)
+  const r4 = JSON.parse(await ev(`(async()=>{
+    const p = state.project, bi = document.getElementById('bpmInput'), w = (ms) => new Promise(r => setTimeout(r, ms));
+    pushUndo(); p.bpm = 120; p.beatsPerBar = 4; p.tempos = [{ beat: 8, bpm: 60 }]; delete p.signatures; tempoMapChanged(); await w(200);
+    state.playhead = 1; updatePlayhead(); updateChrono(); const avant = bi.value;
+    state.playhead = 5; updatePlayhead(); updateChrono(); const apres = bi.value;
+    bi.value = '80'; bi.dispatchEvent(new Event('change', { bubbles: true })); await w(200);
+    const edit = { bpm: p.bpm, tempos: JSON.stringify(p.tempos), champ: bi.value };
+    return JSON.stringify({ avant, apres, edit });
+  })()`));
+  check('champ BPM = tempo à la tête de lecture (120 puis 60)', r4.avant === '120' && r4.apres === '60', r4.avant + ' → ' + r4.apres);
+  check('taper 80 après le changement règle ce palier, pas le début', r4.edit.bpm === 120 && r4.edit.tempos === '[{"beat":8,"bpm":80}]' && r4.edit.champ === '80', JSON.stringify(r4.edit));
 };

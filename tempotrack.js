@@ -49,8 +49,7 @@ function normalizeTempoMap(p = state.project) {
 // Après chaque modification : régions MIDI et clips calés, grille, règle, compteur, son
 function tempoMapChanged() {
     normalizeTempoMap();
-    const bpmEl = document.getElementById('bpmInput');
-    if (bpmEl && document.activeElement !== bpmEl) bpmEl.value = state.project.bpm;
+    syncBpmField();
     if (window.PulseAudio) PulseAudio.setMetronomeBpm(state.project.bpm);
     tempoWatchTick();
     renderRuler(); renderTimelineTracks(); updateChrono(); saveProject(); refreshPlaybackSoon();

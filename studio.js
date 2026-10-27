@@ -4079,6 +4079,7 @@ let _chronoMode = 'tc'; // 'tc' (mm:ss.cs) ou 'bars' (mesure:temps:tick)
 function updateChrono() {
     if (!_chronoEl) _chronoEl = document.getElementById('chrono');
     if (!_chronoEl) return;
+    if (state.project && (state.project.tempos || state.project.signatures)) syncBpmField();
     const t = Math.max(0, state.playhead);
     let txt;
     if (_chronoMode === 'bars') {
@@ -9497,8 +9498,15 @@ function renderAll() {
     updateDocTitle();
     syncMonitor();
     // Le tempo affiché suit toujours le projet (réouverture, annulation…)
-    const bpmEl = document.getElementById('bpmInput');
-    if (bpmEl && document.activeElement !== bpmEl) bpmEl.value = state.project.bpm;
+    syncBpmField();
+}
+// Champ BPM du haut : comme l'écran de Logic, il montre le tempo à la tête de lecture (le tempo du projet s'il ne change jamais)
+function shownBpm() { return tempoVaries() ? bpmAtSec(Math.max(0, state.playhead)) : state.project.bpm; }
+function syncBpmField() {
+    const el = document.getElementById('bpmInput');
+    if (!el || document.activeElement === el) return;
+    const v = String(shownBpm());
+    if (el.value !== v) el.value = v;
 }
 
 // --- Events mixer : automation + faders live + pan ---
@@ -13065,6 +13073,19 @@ document.addEventListener('DOMContentLoaded', async () => {
             e.target.value = state.project.bpm;
             flash('Le tempo va de 40 à 240 BPM');
             e.target.blur();
+            return;
+        }
+        if (tempoVaries()) {
+            // tempo qui change en cours de morceau : on règle le palier où se trouve la tête de lecture (comme Logic)
+            e.target.blur();
+            const segs = PulseTempo.tempoSegments(state.project), t = Math.max(0, state.playhead);
+            let seg = segs[0]; segs.forEach(x => { if (x.sec <= t + 1e-9) seg = x; });
+            if (Math.abs(seg.bpm - v) < 1e-6) { syncBpmField(); return; }
+            pushUndo();
+            setTempoAtBeat(seg.beat, v);
+            tempoMapChanged();
+            const bar = PulseTempo.beatsToBar(state.project, seg.beat).bar + 1;
+            flash(seg.beat < 1e-6 ? `Le morceau commence à ${roundBpm(v)} BPM` : `À partir de la mesure ${bar} : ${roundBpm(v)} BPM`);
             return;
         }
         {
