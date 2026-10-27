@@ -2837,15 +2837,20 @@ window.PulseAudio = (function() {
     // projectPlayheadSec : position actuelle du playhead en secondes (pour aligner)
     let metroBpbar = 4;
     function setBeatsPerBar(n) { metroBpbar = Math.max(1, Math.min(12, Math.round(n) || 4)); }
-    function startMetronome(bpm, projectPlayheadSec = 0) {
+    // tempoMap : le projet (tempo et signature qui changent, tempo.js) — sinon tempo fixe `bpm`
+    let metroMap = null, metroOrigin = 0;
+    const mapVaries = (p) => !!(p && window.PulseTempo && ((p.tempos && p.tempos.length) || (p.signatures && p.signatures.length)));
+    function startMetronome(bpm, projectPlayheadSec = 0, tempoMap = null) {
         metroBpm = bpm;
+        metroMap = mapVaries(tempoMap) ? tempoMap : null;
         const beatSec = 60 / bpm;
         // Prochain beat à partir du playhead (pile dessus = on le joue)
-        const nextBeat = Math.ceil(projectPlayheadSec / beatSec - 1e-6);
+        const nextBeat = metroMap ? Math.ceil(window.PulseTempo.secToBeats(metroMap, projectPlayheadSec) - 1e-6) : Math.ceil(projectPlayheadSec / beatSec - 1e-6);
         metroBeat = nextBeat;
         // Même référence temporelle que la lecture (lookahead inclus)
         const base = isPlaying ? playbackStartCtxTime - (playbackStartProjectTime - projectPlayheadSec) : ctx.currentTime;
-        metroNextTime = base + (nextBeat * beatSec - projectPlayheadSec);
+        metroOrigin = base - projectPlayheadSec;     // heure de la carte son où tomberait le début du morceau
+        metroNextTime = metroMap ? metroOrigin + window.PulseTempo.beatsToSec(metroMap, nextBeat) : base + (nextBeat * beatSec - projectPlayheadSec);
         if (metroTimer) clearInterval(metroTimer);
         metroTimer = setInterval(metroScheduler, 25);
     }
@@ -2864,10 +2869,12 @@ window.PulseAudio = (function() {
         if (!metronomeEnabled) { stopMetronome(); return; }
         const beatSec = 60 / metroBpm;
         const lookahead = 0.1;
+        if (metroMap && !mapVaries(metroMap)) metroMap = null;
         while (metroNextTime < ctx.currentTime + lookahead) {
-            if (metroNextTime >= ctx.currentTime - 0.01) scheduleClick(metroNextTime, metroBeat % metroBpbar === 0);
+            const accent = metroMap ? window.PulseTempo.beatsToBar(metroMap, metroBeat).beat < 1e-6 : metroBeat % metroBpbar === 0;
+            if (metroNextTime >= ctx.currentTime - 0.01) scheduleClick(metroNextTime, accent);
             metroBeat++;
-            metroNextTime += beatSec;
+            metroNextTime = metroMap ? metroOrigin + window.PulseTempo.beatsToSec(metroMap, metroBeat) : metroNextTime + beatSec;
         }
     }
 

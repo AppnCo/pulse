@@ -22,10 +22,17 @@
     }
 
     // tracks : [{ name, drums, notes:[{s,d,p,v}], offset (en temps) }]
-    function encode(tracks, bpm) {
-        const tempo = Math.round(60000000 / Math.max(20, Math.min(400, bpm)));
-        const head = [{ t: 0, bytes: [0xFF, 0x51, 3, (tempo >> 16) & 255, (tempo >> 8) & 255, tempo & 255] },
-                      { t: 0, bytes: [0xFF, 0x58, 4, 4, 2, 24, 8] }];
+    // map (facultatif) : { beats, tempos: [{ beat, bpm }], signatures: [{ beat, beats }] } — changements de tempo et de signature
+    // écrits dans la piste de tête (Logic, FL, Ableton les relisent)
+    function encode(tracks, bpm, map) {
+        const usec = (b) => Math.round(60000000 / Math.max(20, Math.min(400, b)));
+        const tempoEv = (t, b) => { const u = usec(b); return { t, bytes: [0xFF, 0x51, 3, (u >> 16) & 255, (u >> 8) & 255, u & 255] }; };
+        const sigEv = (t, n) => ({ t, bytes: [0xFF, 0x58, 4, Math.max(1, Math.min(12, n | 0)), 2, 24, 8] });
+        const head = [tempoEv(0, bpm), sigEv(0, (map && map.beats) || 4)];
+        if (map) {
+            (map.tempos || []).forEach(e => { if (e.beat > 0) head.push(tempoEv(Math.round(e.beat * PPQ), e.bpm)); });
+            (map.signatures || []).forEach(e => { if (e.beat > 0) head.push(sigEv(Math.round(e.beat * PPQ), e.beats)); });
+        }
         const chunks = [trackBytes(head)];
         for (const tr of tracks) {
             const ev = [];

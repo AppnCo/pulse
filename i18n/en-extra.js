@@ -512,3 +512,29 @@ Object.assign(exact, {
   'Le gel n\'a pas pu se faire — libère de la place sur ton disque et réessaie': 'The freeze failed — free up disk space and try again',
   'Piste dégelée : ses régions et ses effets jouent de nouveau en direct': 'Track unfrozen: its regions and effects play live again' });
 patterns.push(P('❄ Gel de « § » en cours…', '❄ Freezing “$1”…'), P('« § » a été dégelée : son rendu était introuvable (ses régions et ses effets jouent comme avant)', '“$1” was unfrozen: its render was missing (its regions and effects play as before)'));
+
+// Piste de tempo : tempo et signature qui changent (27/10/2026)
+Object.assign(exact, {
+  'Tempo': 'Tempo', 'Cacher la piste de tempo (⌥T)': 'Hide the tempo track (⌥T)', 'Afficher la piste de tempo (⌥T)': 'Show the tempo track (⌥T)',
+  'Cacher la piste de tempo': 'Hide the tempo track', 'Piste de tempo': 'Tempo track',
+  'Piste de tempo : le tempo et la signature peuvent changer en cours de morceau (⌥T)': 'Tempo track: tempo and time signature can change during the song (⌥T)',
+  'Piste de tempo : double-clic pour changer le tempo à une mesure, glisse un point pour régler (⌥T pour la cacher)': 'Tempo track: double-click to change the tempo at a bar, drag a point to adjust (⌥T to hide it)',
+  'Piste de tempo cachée (⌥T pour la revoir)': 'Tempo track hidden (⌥T to show it again)',
+  'Signature : clic pour la changer': 'Time signature: click to change it',
+  'Tempo du début du morceau (BPM)': 'Tempo at the start of the song (BPM)',
+  'Temps par mesure au début du morceau (3 = valse, 4 = le plus courant)': 'Beats per bar at the start of the song (3 = waltz, 4 = most common)',
+  'Entre 1 et 12 temps par mesure': 'Between 1 and 12 beats per bar',
+  'Changer la signature ici…': 'Change the time signature here…', 'Supprimer ce changement de tempo': 'Delete this tempo change',
+  'Changement de tempo supprimé': 'Tempo change deleted',
+  'Revenir à un seul tempo (supprimer tous les changements)': 'Back to a single tempo (delete all changes)',
+  'Piste de tempo : le tempo et la signature changent en cours de morceau': 'Tempo track: tempo and time signature change during the song',
+  'Même tempo qu\'avant : rien ne change': 'Same tempo as before: nothing changes', 'Même signature qu\'avant : rien ne change': 'Same time signature as before: nothing changes' });
+patterns.push(
+  P('Le tempo va de § à § BPM', 'Tempo goes from $1 to $2 BPM'),
+  P('Tempo à partir de la mesure § (BPM)', 'Tempo from bar $1 (BPM)'), P('Temps par mesure à partir de la mesure §', 'Beats per bar from bar $1'),
+  P('Le morceau commence à § BPM', 'The song starts at $1 BPM'), P('Le morceau commence en §', 'The song starts in $1'),
+  P('À partir de la mesure § : § BPM — les régions MIDI, la grille et le métronome suivent, l\'audio ne bouge pas', 'From bar $1: $2 BPM — MIDI regions, the grid and the metronome follow, audio doesn\'t move'),
+  P('À partir de la mesure § : §', 'From bar $1: $2'),
+  P('Changer ce tempo (§ BPM)…', 'Change this tempo ($1 BPM)…'), P('Changer le tempo à la mesure §…', 'Change the tempo at bar $1…'),
+  P('Changer la signature à la mesure §…', 'Change the time signature at bar $1…'), P('Un seul tempo : § BPM, §', 'Single tempo: $1 BPM, $2'),
+  P('§ BPM · mesure §', '$1 BPM · bar $2'), P('§ tempos', '$1 tempos'));

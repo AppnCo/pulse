@@ -933,7 +933,78 @@ function renderTimelineTracks() {
 
 // Temps par mesure (4 par défaut : 4/4 ; 3 = valse, etc.)
 function bpb() { return Math.max(1, Math.min(12, Math.round(state.project.beatsPerBar) || 4)); }
+
+// === Carte de tempo (tempo.js) : tempo et signature qui changent en cours de morceau ===
+// Projet à tempo fixe : exactement les anciens calculs (60 / bpm, bpb()). Sinon tout passe par PulseTempo.
+// project.tempos = [{ beat, bpm }] (jamais au temps 0 : le premier tempo reste project.bpm),
+// project.signatures = [{ bar, beats }] (jamais à la mesure 0 : la première reste project.beatsPerBar).
+function tempoVaries(p = state.project) { return !!(window.PulseTempo && ((p.tempos && p.tempos.length) || (p.signatures && p.signatures.length))); }
+function beatAtSec(s) { return tempoVaries() ? PulseTempo.secToBeats(state.project, s) : s * state.project.bpm / 60; }
+function secAtBeat(b) { return tempoVaries() ? PulseTempo.beatsToSec(state.project, b) : b * 60 / state.project.bpm; }
+function bpmAtSec(s) { return tempoVaries() ? PulseTempo.bpmAt(state.project, s) : state.project.bpm; }
+function bpbAtSec(s) { return tempoVaries() ? PulseTempo.beatsPerBarAt(state.project, s) : bpb(); }
+// Mesure (0 = première) qui contient l'instant s, et l'instant où elle commence
+function barAtSec(s) { return tempoVaries() ? PulseTempo.beatsToBar(state.project, beatAtSec(s)).bar : Math.floor(s / (bpb() * 60 / state.project.bpm) + 1e-9); }
+function barStartSec(bar) { return tempoVaries() ? secAtBeat(PulseTempo.barToBeats(state.project, bar)) : bar * bpb() * 60 / state.project.bpm; }
+// Finesse de grille ('bar' | 'beat' | 'division' | 'fine') → instant de grille le plus proche
+function snapToGrid(t, eff) {
+    if (tempoVaries()) return PulseTempo.snapSec(state.project, t, eff === 'bar' ? 'bar' : eff === 'fine' ? 1 / 8 : eff === 'division' ? 1 / 4 : 1);
+    const beatSec = 60 / state.project.bpm;
+    const unit = eff === 'bar' ? beatSec * bpb() : eff === 'fine' ? beatSec / 8 : eff === 'division' ? beatSec / 4 : beatSec;
+    return Math.max(0, Math.round(t / unit) * unit);
+}
+// Temps (ou mesure) suivant / précédent sur la grille
+function stepGridSec(t, dir, unit) {
+    if (!tempoVaries()) {
+        const beat = 60 / state.project.bpm, u = unit === 'bar' ? beat * bpb() : beat, r = t / u;
+        return Math.max(0, (dir > 0 ? Math.floor(r + 1e-4) + 1 : Math.ceil(r - 1e-4) - 1) * u);
+    }
+    const p = state.project, b = PulseTempo.secToBeats(p, t);
+    if (unit === 'bar') {
+        const pos = PulseTempo.beatsToBar(p, b + (dir > 0 ? 1e-4 : -1e-4));
+        return Math.max(0, secAtBeat(PulseTempo.barToBeats(p, Math.max(0, pos.bar + (dir > 0 ? 1 : 0)))));
+    }
+    return Math.max(0, secAtBeat(Math.max(0, dir > 0 ? Math.floor(b + 1e-4) + 1 : Math.ceil(b - 1e-4) - 1)));
+}
+// Morceaux où tempo et signature ne changent pas : [{ a, b, bpm, beats }] (secondes)
+function tempoPieces(totalSec) {
+    const p = state.project, cuts = new Set([0]);
+    PulseTempo.tempoSegments(p).forEach(s => cuts.add(s.sec));
+    PulseTempo.sigSegments(p).forEach(s => cuts.add(PulseTempo.beatsToSec(p, s.beat)));
+    const xs = [...cuts].filter(x => x < totalSec).sort((a, b) => a - b);
+    return xs.map((a, i) => ({ a, b: i + 1 < xs.length ? xs[i + 1] : totalSec, bpm: PulseTempo.bpmAt(p, a), beats: PulseTempo.beatsPerBarAt(p, a) }));
+}
+// Pas de mesures de la règle quand le tempo varie : calculé sur la mesure la plus serrée, pour ne jamais faire de bouillie
+function rulerBarStepVar(pieces) {
+    return rulerBarStep(Math.min(...pieces.map(x => x.beats * 60 / x.bpm)) * state.pxPerSecond);
+}
+// Grille quand le tempo varie : un jeu de lignes répétées par morceau (même rendu que la grille fixe, sans un trait par temps dans le DOM)
+function renderTimelineGridVar(el) {
+    const p = state.project, pps = state.pxPerSecond, total = Math.max(180, computeProjectEndSec() + 60);
+    const pieces = tempoPieces(total), step = rulerBarStepVar(pieces);
+    const layers = [], sizes = [], pos = [];
+    const line = (alpha, period, from, to) => {
+        if (to - from < 0.5 || period < 1) return;
+        layers.push(`repeating-linear-gradient(90deg, rgba(255,255,255,${alpha}) 0px, rgba(255,255,255,${alpha}) 1px, transparent 1px, transparent ${period.toFixed(2)}px)`);
+        sizes.push(`${(to - from).toFixed(1)}px 100%`); pos.push(`${from.toFixed(1)}px 0`);
+    };
+    for (const pc of pieces) {
+        const beatPx = pps * 60 / pc.bpm, b = pc.b * pps;
+        const b0 = PulseTempo.secToBeats(p, pc.a), firstBeat = PulseTempo.beatsToSec(p, Math.ceil(b0 - 1e-6)) * pps;
+        const bar = PulseTempo.beatsToBar(p, b0 + 1e-6), barA = bar.beat < 2e-6 ? bar.bar : bar.bar + 1;
+        const barN = Math.ceil(barA / step) * step, firstBar = PulseTempo.beatsToSec(p, PulseTempo.barToBeats(p, barN)) * pps;
+        if (beatPx >= 240 && step === 1) line(0.03, beatPx / 4, firstBeat, b);
+        if (beatPx >= 20 && step === 1) line(0.045, beatPx, firstBeat, b);
+        if (firstBar < b) line(step > 1 ? 0.08 : 0.10, beatPx * pc.beats * step, firstBar, b);
+    }
+    el.style.backgroundImage = layers.join(',');
+    el.style.backgroundSize = sizes.join(',');
+    el.style.backgroundPosition = pos.join(',');
+    el.style.backgroundRepeat = layers.map(() => 'no-repeat').join(',');
+}
 function renderTimelineGrid(el) {
+    if (tempoVaries()) { renderTimelineGridVar(el); return; }
+    el.style.backgroundPosition = ''; el.style.backgroundRepeat = '';
     const beatSec = 60 / state.project.bpm;
     const beatPx = state.pxPerSecond * beatSec;
     const step = rulerBarStep(beatPx * bpb());         // dézoomé : une ligne toutes les N mesures, jamais une bouillie
@@ -1498,8 +1569,8 @@ function renderRuler() {
     // Subdivisions : seulement quand il y a la place (zoom serré, pour caler à la milliseconde près)
     const subs = beatPx >= 480 ? 8 : beatPx >= 100 ? 4 : 1;
 
-    let html = '';
-    for (let bar = 0; bar <= bars; bar += step) {
+    let html = tempoVaries() ? rulerHtmlVar(totalSec) : '';
+    if (!tempoVaries()) for (let bar = 0; bar <= bars; bar += step) {
         const x = bar * beatPx * bpb();
         html += `<div class="ruler-tick major" style="left:${x.toFixed(1)}px"></div>`;
         html += `<div class="ruler-label major${bar === 0 ? ' first' : ''}" style="left:${x.toFixed(1)}px">${bar + 1}</div>`;
@@ -1523,8 +1594,37 @@ function renderRuler() {
 
     // Marqueurs (re-injectés après innerHTML)
     renderMarkers();
+    if (typeof renderTempoLane === 'function') renderTempoLane();
     // Overlay loop (re-injectée après innerHTML)
     renderLoopOverlay();
+}
+
+// Règle quand le tempo ou la signature changent : mêmes repères, calculés morceau par morceau,
+// plus une pastille à chaque changement (rose = tempo, bleu = signature)
+function rulerHtmlVar(totalSec) {
+    const p = state.project, pps = state.pxPerSecond, pieces = tempoPieces(totalSec), step = rulerBarStepVar(pieces);
+    let html = '';
+    const lines = PulseTempo.gridLines(p, 0, totalSec, step > 1 ? { barsOnly: true, every: step } : {});
+    lines.forEach((l, i) => {
+        const x = l.sec * pps;
+        if (l.isBar) {
+            html += `<div class="ruler-tick major" style="left:${x.toFixed(1)}px"></div>`;
+            html += `<div class="ruler-label major${l.bar === 0 ? ' first' : ''}" style="left:${x.toFixed(1)}px">${l.bar + 1}</div>`;
+        }
+        if (step > 1) return;
+        const next = i + 1 < lines.length ? lines[i + 1].sec : PulseTempo.beatsToSec(p, PulseTempo.secToBeats(p, l.sec) + 1);
+        const beatPx = (next - l.sec) * pps, subs = beatPx >= 480 ? 8 : beatPx >= 100 ? 4 : 1;
+        if (!l.isBar) {
+            html += `<div class="ruler-tick minor" style="left:${x.toFixed(1)}px"></div>`;
+            if (beatPx >= 24) html += `<div class="ruler-label minor" style="left:${x.toFixed(1)}px">${l.beat + 1}</div>`;
+        }
+        for (let k = 1; k < subs; k++) html += `<div class="ruler-tick ${k % 2 === 0 || subs === 4 ? 'sub' : 'subsub'}" style="left:${(x + k * beatPx / subs).toFixed(1)}px"></div>`;
+    });
+    (p.signatures || []).forEach(sg => {
+        const x = PulseTempo.beatsToSec(p, PulseTempo.barToBeats(p, sg.bar)) * pps;
+        html += `<div class="ruler-sig" data-bar="${sg.bar}" style="left:${x.toFixed(1)}px" title="Signature : clic pour la changer">${PulseTempo.beatsToBar(p, PulseTempo.barToBeats(p, sg.bar)).beats}/4</div>`;
+    });
+    return html;
 }
 
 function renderMarkers() {
@@ -1574,8 +1674,7 @@ function addMarker(time) {
     pushUndo();
     if (!state.project.markers) state.project.markers = [];
     // Suggérer un nom automatique basé sur la position en mesures
-    const beatSec = 60 / state.project.bpm;
-    const barIdx = Math.floor(time / (beatSec * bpb())) + 1;
+    const barIdx = barAtSec(time) + 1;
     state.project.markers.push({ time, name: `M${barIdx}` });
     state.project.markers.sort((a, b) => a.time - b.time);
     saveProject();
@@ -3159,7 +3258,7 @@ async function togglePlay(fromRec = false) {
         try { await PulseAudio.play(state.project, state.playhead); } catch (err) { console.error(err); }
         // Le mixage natif prend un instant : on recale le curseur sur le vrai départ du son
         if (PulseAudio.isNative()) state.startTime = performance.now() - from0 * 1000;
-        if (state.metronome) PulseAudio.startMetronome(state.project.bpm, state.playhead);
+        if (state.metronome) PulseAudio.startMetronome(state.project.bpm, state.playhead, state.project);
         requestAnimationFrame(tick);
         if (!fromRec && !PulseAudio.isNative()) maybeStartBgCapture();
     } else {
@@ -3668,7 +3767,7 @@ async function startActualRecording(targetIdx) {
     if (!state.playing && state.selection && Math.abs(state.selection.end - state.selection.start) > 0.2) {
         const a = Math.min(state.selection.start, state.selection.end);
         const b = Math.max(state.selection.start, state.selection.end);
-        const pre = Math.min(a, (60 / state.project.bpm) * 8);
+        const pre = Math.min(a, a - secAtBeat(Math.max(0, beatAtSec(a) - 8)));
         punch = { start: a, end: b, preStart: a - pre, pre };
         state.playhead = punch.preStart;
         startSec = punch.preStart;
@@ -3695,8 +3794,8 @@ async function startActualRecording(targetIdx) {
         flash('Décompte : 1 · 2 · 3 · 4… (R pour annuler)');
         const recBtn = document.getElementById('btnRec');
         recBtn.classList.add('is-counting');
-        const stopOverlay = showCountOverlay(state.project.bpm, bpb());
-        const ok = await PulseAudio.playCountIn(state.project.bpm, bpb());
+        const stopOverlay = showCountOverlay(bpmAtSec(startSec), bpbAtSec(startSec));
+        const ok = await PulseAudio.playCountIn(bpmAtSec(startSec), bpbAtSec(startSec));
         stopOverlay();
         recBtn.classList.remove('is-counting');
         if (!ok) { state._punch = null; return; }
@@ -3888,7 +3987,7 @@ function tick() {
             if (state.recording && state._livingClip) { state._livingClip.clip.start = loopStart; renderTimelineTracks(); }   // le clip rouge repart du début de boucle
             if (state._cap && !state.recording) finalizeCapture();
             if (!engineLoops) PulseAudio.play(state.project, loopStart, { smooth: true, jump: true });   // le tour de boucle se fond (plus de coupure nette) ; hors lecture, play() coupe comme avant
-            if (state.metronome) PulseAudio.startMetronome(state.project.bpm, loopStart);
+            if (state.metronome) PulseAudio.startMetronome(state.project.bpm, loopStart, state.project);
             updatePlayhead();
             updateChrono();
             requestAnimationFrame(tick);
@@ -3981,11 +4080,17 @@ function updateChrono() {
     const t = Math.max(0, state.playhead);
     let txt;
     if (_chronoMode === 'bars') {
-        const beatSec = 60 / state.project.bpm;
-        const totalBeats = t / beatSec;
-        const bar  = Math.floor(totalBeats / bpb()) + 1;
-        const beat = Math.floor(totalBeats % bpb()) + 1;
-        const tick = Math.floor((totalBeats % 1) * 96); // 96 ticks/beat
+        let bar, beat, tick;
+        if (tempoVaries()) {
+            const pos = PulseTempo.beatsToBar(state.project, beatAtSec(t));
+            bar = pos.bar + 1; beat = Math.floor(pos.beat + 1e-9) + 1; tick = Math.floor((pos.beat - (beat - 1)) * 96 + 1e-6);
+        } else {
+            const beatSec = 60 / state.project.bpm;
+            const totalBeats = t / beatSec;
+            bar  = Math.floor(totalBeats / bpb()) + 1;
+            beat = Math.floor(totalBeats % bpb()) + 1;
+            tick = Math.floor((totalBeats % 1) * 96); // 96 ticks/beat
+        }
         txt = `${bar.toString().padStart(3,' ')} | ${beat} . ${tick.toString().padStart(2,'0')}`;
     } else {
         const min = Math.floor(t / 60);
@@ -4042,19 +4147,11 @@ function seekPlayhead(sec) {
 }
 // Un temps (ou une mesure) plus loin, calé sur la grille
 function stepPlayhead(dir, unit) {
-    const beat = 60 / state.project.bpm;
-    const u = unit === 'bar' ? beat * bpb() : beat;
-    const r = state.playhead / u;
-    const n = dir > 0 ? Math.floor(r + 1e-4) + 1 : Math.ceil(r - 1e-4) - 1;
-    seekPlayhead(Math.max(0, n * u));
+    seekPlayhead(stepGridSec(state.playhead, dir, unit));
 }
 // Pendant la lecture, ← / → déplacent le curseur de base (celui où l'on revient à l'arrêt) ; la lecture continue sans sauter
 function stepPlayOrigin(dir, unit) {
-    const beat = 60 / state.project.bpm;
-    const u = unit === 'bar' ? beat * bpb() : beat;
-    const r = state.playOrigin / u;
-    const n = dir > 0 ? Math.floor(r + 1e-4) + 1 : Math.ceil(r - 1e-4) - 1;
-    state.playOrigin = Math.max(0, n * u);
+    state.playOrigin = stepGridSec(state.playOrigin, dir, unit);
     updatePlayhead();
     flash(`Le curseur de base passe à ${secondsToDuration(state.playOrigin)} — la lecture continue`);
 }
@@ -4266,6 +4363,7 @@ const SHORTCUT_GROUPS = [
             ['⌘A · ⌥⌘A', 'Choisir toutes les régions de toutes les pistes · seulement celles de la piste choisie'],
             ['Plage glissée sur plusieurs pistes', 'Les régions touchées sont choisies : elles se déplacent ensemble (même vers une autre piste), ⌘X les coupe, clic droit pour leur volume'],
             ['⌥C', 'Panneau de couleurs (régions choisies, sinon pistes choisies)'],
+            ['⌥T', 'Piste de tempo : le tempo et la signature changent en cours de morceau'],
             ['⌘G', 'Aimant : Libre ↔ Intelligent (les régions et le curseur se calent sur le rythme et sur le bord des régions)'],
             ['⌘ + glisser une région', 'La placer librement, sans aimant'],
             ['Shift + glisser', 'Choisir un passage (Shift + clic : en ajouter / en retirer)'],
@@ -5457,8 +5555,7 @@ async function bakeMidiClip(clip, midi, bpm) {
 async function createMidiClip(trackIdx, atSec, noUndo = false) {
     const t = state.project.tracks[trackIdx];
     if (!t) return;
-    const bpm = state.project.bpm, bar = bpb() * 60 / bpm;
-    const start = Math.max(0, Math.floor((atSec + 1e-6) / bar) * bar);
+    const start = Math.max(0, barStartSec(barAtSec(atSec + 1e-6))), bpm = bpmAtSec(start), beats = bpbAtSec(start), bar = beats * 60 / bpm;
     if (t.clips.some(c => !c.recording && c.start < start + bar - 1e-3 && c.start + c.duration > start + 1e-3)) {
         flash('Il y a déjà une région ici — double-clique dans un espace vide, ou ouvre celle-ci avec un double-clic');
         return;
@@ -5467,7 +5564,7 @@ async function createMidiClip(trackIdx, atSec, noUndo = false) {
     const inst = t.midiInst || (t.type === 'drums' ? 'drums' : 'piano');
     const n = t.clips.filter(c => c.midi).length + 1;
     const clip = { start, duration: bar, offset: 0, name: `${MIDI_INSTS()[inst].label} ${n}`, color: t.color };
-    await bakeMidiClip(clip, { inst, beats: bpb(), notes: [] }, bpm);
+    await bakeMidiClip(clip, { inst, beats, notes: [] }, bpm);
     t.clips.push(clip);
     t.clips.sort((a, b) => a.start - b.start);
     state.selectedTrack = trackIdx;
@@ -5505,7 +5602,7 @@ function openMidiEditor(trackIdx, clipIdx, fresh) {
     _midiSession = { clip, trackIdx, undoPushed: false };
     PulsePianoRoll.open({
         midi: clip.midi, title: `${t.name} — ${clip.name || 'Région'}`, color: clip.color || t.color,
-        key: state.project.key, flash, bpb: bpb(),
+        key: state.project.key, flash, bpb: bpbAtSec(clip.start),
         ghost: t.clips.filter(c => c !== clip && c.midi && !(clip.midi.pid && c.midi.pid === clip.midi.pid)).map(c => c.midi.notes),
         view: clip.midi.inst === 'drums' ? 'steps' : 'roll',
         onPreview: playMidiPreview,
@@ -5557,7 +5654,7 @@ async function commitMidi(clip, midi, fromHistory = false) {
     const ti = state.project.tracks.findIndex(t => t.clips.includes(clip));
     if (ti < 0) { flash('Cette région n\'existe plus — l\'éditeur se ferme'); PulsePianoRoll.close(true); return; }
     if (!fromHistory) pushUndo();   // une étape par série de modifications : ⌘Z défait la dernière série, pas toute la séance
-    const bpm = state.project.bpm, spb = 60 / bpm;
+    const bpm = bpmAtSec(clip.start), spb = 60 / bpm;
     const lenChanged = midi.beats !== clip.midi.beats;
     const pid = clip.midi.pid;
     const buf = await bakeMidiClip(clip, midi, bpm);
@@ -5599,23 +5696,30 @@ const safeName = (s) => String(s || 'pulse').replace(/[^\p{L}\p{N}_\-]+/gu, '_')
 function exportMidiClip(trackIdx, clipIdx) {
     const t = state.project.tracks[trackIdx], c = t && t.clips[clipIdx];
     if (!c || !c.midi) return;
-    const bytes = PulseMidiFile.encode([{ name: c.name || t.name, drums: c.midi.inst === 'drums', notes: c.midi.notes }], state.project.bpm);
+    const bytes = PulseMidiFile.encode([{ name: c.name || t.name, drums: c.midi.inst === 'drums', notes: c.midi.notes }], c.midi.bpm || bpmAtSec(c.start));
     triggerDownload(new Blob([bytes], { type: 'audio/midi' }), `${safeName(c.name || t.name)}.mid`);
     flash('✓ Fichier .mid enregistré — tu peux l\'ouvrir dans FL Studio, Logic, Ableton…');
+}
+// Changements de tempo et de signature à écrire dans un .mid (positions en temps depuis le début)
+function midiTempoMap() {
+    const p = state.project;
+    if (!tempoVaries()) return { beats: bpb(), tempos: [], signatures: [] };
+    return { beats: bpb(), tempos: PulseTempo.tempoSegments(p).slice(1).map(x => ({ beat: x.beat, bpm: x.bpm })),
+        signatures: PulseTempo.sigSegments(p).slice(1).map(x => ({ beat: x.beat, beats: x.beats })) };
 }
 function exportMidiTrack(trackIdx) {
     const t = state.project.tracks[trackIdx];
     const regs = (t && t.clips || []).filter(c => c.midi && !c.muted);
     if (!regs.length) { flash('Il n\'y a pas encore de région MIDI sur cette piste'); return; }
-    const spb = 60 / state.project.bpm;
     const notes = [];
     regs.forEach(c => {
-        const cs = c.start / spb, beats = c.midi.beats, total = ((c.loopEnd ? c.loopEnd - c.start : c.duration) / spb);
+        const spb = 60 / (c.midi.bpm || bpmAtSec(c.start));    // la région est rendue au tempo de son début
+        const cs = beatAtSec(c.start), beats = c.midi.beats, total = ((c.loopEnd ? c.loopEnd - c.start : c.duration) / spb);
         PulseSynth.loopNotes(c.midi.notes, beats, Math.max(beats, total)).forEach(n => {
             if (n.s < total - 1e-6) notes.push({ s: n.s + cs, d: Math.min(n.d, total - n.s), p: n.p, v: n.v });
         });
     });
-    const bytes = PulseMidiFile.encode([{ name: t.name, drums: t.type === 'drums', notes }], state.project.bpm);
+    const bytes = PulseMidiFile.encode([{ name: t.name, drums: t.type === 'drums', notes }], state.project.bpm, midiTempoMap());
     triggerDownload(new Blob([bytes], { type: 'audio/midi' }), `${safeName(t.name)}.mid`);
     flash(`✓ Piste « ${t.name} » enregistrée en .mid`);
 }
@@ -5631,8 +5735,8 @@ async function importMidiFile(file, trackIdx, atSec) {
         trackIdx = i; t = state.project.tracks[i];
     } else pushUndo();
     const inst = t.midiInst || (t.type === 'drums' ? 'drums' : 'piano');
-    const bpm = state.project.bpm, spb = 60 / bpm, bar = 4 * spb;
-    let start = Math.max(0, Math.round((atSec || 0) / bar) * bar);
+    let start = Math.max(0, snapToGrid(atSec || 0, 'bar'));
+    const bpm = bpmAtSec(start), spb = 60 / bpm;
     const dur = r.beats * spb;
     while (t.clips.some(c => !c.recording && c.start < start + dur - 1e-3 && c.start + c.duration > start + 1e-3)) {
         const o = t.clips.find(c => !c.recording && c.start < start + dur - 1e-3 && c.start + c.duration > start + 1e-3);
@@ -5681,34 +5785,43 @@ function renderMidiNotes(c, widthPx) {
     return `<svg class="clip-wave-svg midi-notes" viewBox="0 0 ${widthPx} ${h}" preserveAspectRatio="none"><path d="${path}"/></svg>`;
 }
 
-// Le tempo change : les régions MIDI sont recalculées à la volée (et gardent leur place sur les temps)
-function rerenderMidiForTempo(bpm) {
-    // Première passe : on note l'ancien tempo de chaque région avant de toucher à quoi que ce soit
-    // (deux moitiés d'une région coupée peuvent partager le même objet « midi »)
+// Le tempo change : les régions MIDI sont recalculées et gardent leur place sur les temps.
+// Chaque région est rendue au tempo de son début (comme une région warpée) : avec une carte de tempo, une région
+// placée après un changement joue au nouveau tempo.
+// oldMap : la carte d'avant ({ bpm, beatsPerBar, tempos, signatures }) → les régions se déplacent pour rester sur leur temps ;
+// null → seulement remettre au bon tempo les régions qui ne le sont plus (déplacée de l'autre côté d'un changement…), sans les déplacer.
+function rerenderMidiForTempo(oldMap) {
     const todo = [];
     state.project.tracks.forEach(t => (t.clips || []).forEach(c => {
-        if (!c.midi || !c.midi.bpm || Math.abs(c.midi.bpm - bpm) < 1e-6) return;
-        todo.push({ c, f: c.midi.bpm / bpm });
+        if (!c.midi || !c.midi.bpm || c.recording) return;
+        const start = oldMap ? Math.max(0, secAtBeat(PulseTempo.secToBeats(oldMap, c.start))) : c.start;
+        const bpm = bpmAtSec(start);
+        if (Math.abs(c.midi.bpm - bpm) < 1e-6 && Math.abs(start - c.start) < 1e-9) return;
+        todo.push({ c, start, bpm, f: c.midi.bpm / bpm });
     }));
-    const bufs = new Map();   // un seul rendu par motif
-    todo.forEach(({ c, f }) => {
-        const key = c.midi;
-        if (!bufs.has(key)) {
-            const buf = renderMidiBuffer(c.midi, bpm);
-            const id = `mid_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-            PulseAudio.registerBuffer(id, buf);
-            PulsePersist.saveBlob(id, PulseAudio.audioBufferToWav(buf), { kind: 'midi' }).catch(() => {});
-            bufs.set(key, { buf, id, peaks: makePeaks(buf) });
+    // Première passe sur les objets « midi » d'origine (deux moitiés d'une région coupée peuvent partager le même) : un rendu par motif et par tempo
+    const bufs = new Map();
+    todo.forEach(({ c, start, bpm, f }) => {
+        if (Math.abs(f - 1) > 1e-9) {
+            let byBpm = bufs.get(c.midi); if (!byBpm) bufs.set(c.midi, byBpm = new Map());
+            if (!byBpm.has(bpm)) {
+                const buf = renderMidiBuffer(c.midi, bpm);
+                const id = `mid_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+                PulseAudio.registerBuffer(id, buf);
+                PulsePersist.saveBlob(id, PulseAudio.audioBufferToWav(buf), { kind: 'midi' }).catch(() => {});
+                byBpm.set(bpm, { id, peaks: makePeaks(buf) });
+            }
+            const r = byBpm.get(bpm);
+            c.id = r.id; c.peaks = r.peaks;
         }
-        const r = bufs.get(key);
         const oldStart = c.start;
-        c.start = oldStart * f;                       // la région reste sur la même mesure
+        c.start = start;                              // la région reste sur la même mesure
         c.offset = (c.offset || 0) * f; c.duration *= f;
         if (c.fadeIn) c.fadeIn *= f; if (c.fadeOut) c.fadeOut *= f;
-        if (c.loopEnd) c.loopEnd = c.start + (c.loopEnd - oldStart) * f;
-        c.id = r.id; c.peaks = r.peaks;
+        if (c.loopEnd) c.loopEnd = start + (c.loopEnd - oldStart) * f;
     });
-    todo.forEach(({ c }) => { c.midi.bpm = bpm; });
+    // Deuxième passe : chaque région note son tempo (copie du motif si deux régions qui le partageaient n'ont plus le même)
+    todo.forEach(({ c, bpm }) => { if (c.midi.bpm !== bpm) c.midi = { ...c.midi, bpm }; });
     return todo.length;
 }
 
@@ -5818,20 +5931,37 @@ async function toggleReverse(clip) {
     flash(clip.rev ? '✓ Son inversé — refais la même chose pour le remettre à l\'endroit' : '✓ Son remis à l\'endroit');
 }
 
-// Le tempo du projet change : les clips calés suivent (pas pendant l'enregistrement)
-let _warpWatchBpm = null, _warpWatchTimer = null;
-function watchWarpTempo() {
-    _warpWatchBpm = state.project.bpm;
-    clearInterval(_warpWatchTimer);
-    _warpWatchTimer = setInterval(async () => {
-        const bpm = state.project.bpm;
-        if (bpm === _warpWatchBpm || _warpBusy || state.recording) return;
-        _warpWatchBpm = bpm;
-        if (window.PulseSynth && rerenderMidiForTempo(bpm) > 0) { renderTimelineTracks(); saveProject(); refreshPlaybackSoon(); }
+// Le tempo du projet change (tempo, signature, carte de tempo) : les régions MIDI et les clips calés suivent (pas pendant l'enregistrement)
+// Avec une carte de tempo, on vérifie aussi en continu qu'une région déplacée de l'autre côté d'un changement joue au bon tempo.
+let _tempoWatch = null, _warpWatchTimer = null, _pointerHeld = false;
+const tempoKey = (p) => JSON.stringify([p.bpm, p.beatsPerBar || 4, p.tempos || [], p.signatures || []]);
+function tempoSnapshot() {
+    const p = state.project;
+    return { proj: p, key: tempoKey(p), map: JSON.parse(JSON.stringify({ bpm: p.bpm, beatsPerBar: p.beatsPerBar, tempos: p.tempos || [], signatures: p.signatures || [] })) };
+}
+let _tempoTicking = false;
+async function tempoWatchTick() {
+    if (_tempoTicking || _warpBusy || state.recording || _pointerHeld) return;
+    const w = _tempoWatch, key = tempoKey(state.project), same = w && w.proj === state.project;
+    const changed = same && w.key !== key;
+    if (!changed && !tempoVaries()) { if (!same) _tempoWatch = tempoSnapshot(); return; }   // tempo fixe et rien n'a bougé (ou projet rouvert / annulé : il est déjà juste)
+    _tempoTicking = true;
+    try {
+        _tempoWatch = tempoSnapshot();
+        if (window.PulseSynth && rerenderMidiForTempo(changed ? w.map : null) > 0) { renderTimelineTracks(); saveProject(); refreshPlaybackSoon(); }
         const todo = [];
-        state.project.tracks.forEach(t => (t.clips || []).forEach(c => { if (c.warp && c.warp.bpm !== bpm && !c.tune) todo.push(c); }));
-        for (const c of todo) await applyWarp(c, c.warp.srcBpm, bpm);
-    }, 700);
+        state.project.tracks.forEach(t => (t.clips || []).forEach(c => { if (c.warp && Math.abs(c.warp.bpm - bpmAtSec(c.start)) > 1e-6 && !c.tune) todo.push(c); }));
+        for (const c of todo) await applyWarp(c, c.warp.srcBpm, bpmAtSec(c.start));
+    } finally { _tempoTicking = false; }
+}
+function watchWarpTempo() {
+    _tempoWatch = tempoSnapshot();
+    clearInterval(_warpWatchTimer);
+    document.addEventListener('pointerdown', () => { _pointerHeld = true; }, true);
+    window.addEventListener('pointerup', () => { _pointerHeld = false; }, true);
+    window.addEventListener('pointercancel', () => { _pointerHeld = false; }, true);
+    window.addEventListener('blur', () => { _pointerHeld = false; });
+    _warpWatchTimer = setInterval(tempoWatchTick, 700);
 }
 
 function openWarpPanel(trackIdx, clipIdx, x, y) {
@@ -5850,7 +5980,7 @@ function openWarpPanel(trackIdx, clipIdx, x, y) {
                 <input type="text" class="set-num warp-bpm" value="…" inputmode="decimal"> <span>BPM</span>
                 <button class="set-btn warp-half" data-tooltip="Le tempo trouvé est le double ou la moitié du vrai ?">÷2</button>
                 <button class="set-btn warp-double">×2</button></div>
-            <div class="fx-row"><label class="fx-label">Tempo du projet</label><span class="warp-proj"><b>${Math.round(state.project.bpm * 10) / 10}</b> BPM</span></div>
+            <div class="fx-row"><label class="fx-label">Tempo du projet</label><span class="warp-proj"><b>${Math.round(bpmAtSec(clip.start) * 10) / 10}</b> BPM</span></div>
             <div class="warp-note"></div>
         </div>
         <div class="fx-panel-footer">
@@ -5863,11 +5993,11 @@ function openWarpPanel(trackIdx, clipIdx, x, y) {
     const inp = panel.querySelector('.warp-bpm'), note = panel.querySelector('.warp-note');
     const refresh = () => {
         const v = parseFloat(String(inp.value).replace(',', '.'));
-        const chk = Number.isFinite(v) ? PulseWarp.checkRatio(v, state.project.bpm) : { ok: false };
+        const chk = Number.isFinite(v) ? PulseWarp.checkRatio(v, bpmAtSec(clip.start)) : { ok: false };
         panel.querySelector('.warp-apply').disabled = !chk.ok;
         note.textContent = !Number.isFinite(v) ? 'Écris le tempo du son (je le cherche tout seul si possible).'
             : !chk.ok ? 'Écart trop grand : essaie ÷2 ou ×2.'
-            : Math.abs(v - state.project.bpm) < 0.05 ? 'Déjà au bon tempo : rien à caler.'
+            : Math.abs(v - bpmAtSec(clip.start)) < 0.05 ? 'Déjà au bon tempo : rien à caler.'
             : chk.big ? 'Gros changement de vitesse : le son peut un peu se dégrader.' : `Le son sera ${chk.ratio < 1 ? 'accéléré' : 'ralenti'} de ${Math.abs(Math.round((1 - chk.ratio) * 100))} %.`;
     };
     inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') inp.blur(); });
@@ -5878,8 +6008,8 @@ function openWarpPanel(trackIdx, clipIdx, x, y) {
     panel.querySelector('.warp-apply').addEventListener('click', async () => {
         const v = parseFloat(String(inp.value).replace(',', '.'));
         panel.remove();
-        if (Math.abs(v - state.project.bpm) < 0.05) { flash('Déjà au bon tempo'); return; }
-        await applyWarp(clip, v, state.project.bpm);
+        if (Math.abs(v - bpmAtSec(clip.start)) < 0.05) { flash('Déjà au bon tempo'); return; }
+        await applyWarp(clip, v, bpmAtSec(clip.start));
     });
     const rm = panel.querySelector('.warp-remove');
     if (rm) rm.addEventListener('click', async () => { panel.remove(); await removeWarp(clip); });
@@ -6259,7 +6389,8 @@ function initLyrics() {
         if (!follow) return;
         const m = map(), spb = 60 / (state.project.bpm || 120), barSec = spb * (typeof bpb === 'function' ? bpb() : 4);
         const live = state.playing || state.recording;
-        const pos = state.playhead / barSec;                      // en mesures depuis le début
+        let pos = state.playhead / barSec;                        // en mesures depuis le début
+        if (tempoVaries()) { const q = PulseTempo.beatsToBar(state.project, beatAtSec(state.playhead)); pos = q.bar + q.beat / q.beats; }
         const k = Math.floor((pos - (m.start - 1)) / m.per);
         const L = view.querySelectorAll('.lf-line');
         const now = live ? Math.max(-1, Math.min(L.length, k)) : -1;   // après la dernière ligne : tout est « passé », plus rien d'allumé
@@ -8934,12 +9065,12 @@ function nudgeSelectedClip(dir, fine) {
     const clip = t?.clips[clipIdx];
     if (!clip) return;
     pushUndo();
-    const beatSec = 60 / state.project.bpm;
+    const beatSec = 60 / bpmAtSec(clip.start);
     const snapUnit = fine
         ? beatSec / 48   // ~1 frame à 30fps
         : (() => {
             const eff = getEffectiveSnap();
-            return eff === 'bar'      ? beatSec * bpb()
+            return eff === 'bar'      ? beatSec * bpbAtSec(clip.start)
                  : eff === 'fine'     ? beatSec / 8
                  : eff === 'division' ? beatSec / 4
                  : beatSec;
@@ -9568,7 +9699,7 @@ function quantizeClipsToGrid(clips) {
     pushUndo();
     let moved = 0;
     clips.forEach(c => {
-        const ns = Math.max(0, Math.round(c.start / unit) * unit), d = ns - c.start;
+        const ns = tempoVaries() ? snapToGrid(c.start, eff) : Math.max(0, Math.round(c.start / unit) * unit), d = ns - c.start;
         if (Math.abs(d) < 1e-4) return;
         c.start = ns;
         if (c.loopEnd) c.loopEnd += d;
@@ -10105,17 +10236,17 @@ async function joinSelectedClips(trackIdx, clipIdx, opts = {}) {
 // Joindre des régions de notes : une seule région qui contient toutes les notes à leur place (répétitions et coupes comprises)
 async function joinMidiClips(t, cs) {
     if (new Set(cs.map(c => c.midi.inst)).size > 1) { flash('Ces régions jouent des instruments différents : impossible de les joindre'); return; }
-    const bpm = state.project.bpm, spb = 60 / bpm;
     const t0 = Math.min(...cs.map(c => c.start)), t1 = Math.max(...cs.map(clipEndOf));
+    const bpm = bpmAtSec(t0), spb = 60 / bpm;     // la région jointe prend le tempo de son début
     const notes = [];
     cs.forEach(c => {
-        const off = c.offset || 0, end = clipEndOf(c);
+        const off = c.offset || 0, end = clipEndOf(c), cspb = 60 / (c.midi.bpm || bpm);
         for (let base = c.start; base < end - 1e-6; base += c.duration) {
             c.midi.notes.forEach(n => {
-                const rel = n.s * spb - off;   // place de la note dans ce tour de la région
+                const rel = n.s * cspb - off;   // place de la note dans ce tour de la région
                 if (rel < -1e-6 || rel >= c.duration - 1e-6) return;
                 const abs = base + rel; if (abs >= end - 1e-6) return;
-                const d = Math.min(n.d * spb, end - abs, c.duration - rel);
+                const d = Math.min(n.d * cspb, end - abs, c.duration - rel);
                 notes.push({ ...n, s: Math.round((abs - t0) / spb * 1e6) / 1e6, d: Math.max(0.01, Math.round(d / spb * 1e6) / 1e6) });
             });
         }
@@ -10222,7 +10353,7 @@ async function speedClip(trackIdx, clipIdx, f) {
     const clip = state.project.tracks[trackIdx]?.clips[clipIdx];
     if (!clip || clip.midi || clip.recording) { flash('La vitesse marche sur une région audio'); return; }
     if (clipIsLocked(clip)) return;
-    const P = state.project.bpm;
+    const P = bpmAtSec(clip.start);
     await applyWarp(clip, P / f, P);
 }
 // Normaliser à un niveau choisi (crête de la région)
@@ -12154,7 +12285,7 @@ function getEffectiveSnap() {
     if (mode === 'off') return 'off';
     if (res !== 'auto') return res;
     // Auto : finesse selon le zoom (comme Logic)
-    const beatPx = state.pxPerSecond * (60 / state.project.bpm);
+    const beatPx = state.pxPerSecond * (60 / bpmAtSec(state.playhead || 0));
     if (beatPx >= 480) return 'fine';     // 1/32 de temps : édition à la milliseconde
     if (beatPx >= 120) return 'division'; // 1/8 note
     if (beatPx >= 40)  return 'beat';
@@ -12176,13 +12307,7 @@ function snapPlayheadToEdges(t, free) {
 function snapTime(t, free) {
     const { mode } = snapSpec();
     if (mode === 'off' || free) return Math.max(0, t);
-    const eff = getEffectiveSnap();
-    const beatSec = 60 / state.project.bpm;
-    const unit = eff === 'bar'      ? beatSec * bpb()
-               : eff === 'fine'     ? beatSec / 8
-               : eff === 'division' ? beatSec / 4
-               : beatSec;
-    const nearest = Math.round(t / unit) * unit;
+    const nearest = snapToGrid(t, getEffectiveSnap());
     if (mode === 'magnet' && Math.abs(t - nearest) > SNAP_MAGNET_PX / state.pxPerSecond) return Math.max(0, t);
     return Math.max(0, nearest);
 }
@@ -12849,7 +12974,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         flash(state.metronome ? 'Métronome allumé : un clic au rythme du morceau' : 'Métronome éteint');
         if (state.metronome) {
             PulseAudio.setMetronome(true, state.project.bpm);
-            if (state.playing) PulseAudio.startMetronome(state.project.bpm, state.playhead);
+            if (state.playing) PulseAudio.startMetronome(state.project.bpm, state.playhead, state.project);
         } else {
             PulseAudio.setMetronome(false);
         }
