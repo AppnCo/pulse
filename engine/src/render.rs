@@ -36,6 +36,12 @@ impl Source {
 
 pub type Media = HashMap<String, Source>;
 
+/// Balance d'un son stéréo (-1 … 1) : centre = (1, 1), à fond d'un côté = √2 de ce côté, 0 de l'autre (−3 dB compensé, comme Logic).
+pub fn balance_gains(pan: f64) -> (f32, f32) {
+    let a = (pan.clamp(-1.0, 1.0) + 1.0) * std::f64::consts::FRAC_PI_4;
+    ((std::f64::consts::SQRT_2 * a.cos()) as f32, (std::f64::consts::SQRT_2 * a.sin()) as f32)
+}
+
 pub struct RenderOptions {
     pub sample_rate: u32,
     pub master_volume: f64,
@@ -303,14 +309,9 @@ pub fn render(project: &Project, media: &Media, opts: &RenderOptions) -> (Vec<f3
             let l_in = tl[n] * g;
             let (l, r) = if stereo {
                 let r_in = tr[n] * g;
-                // Même loi que le StereoPanner Web Audio pour une entrée stéréo
-                if pan <= 0.0 {
-                    let a = (pan + 1.0) * FRAC_PI_2;
-                    (l_in + r_in * a.cos() as f32, r_in * a.sin() as f32)
-                } else {
-                    let a = pan * FRAC_PI_2;
-                    (l_in * a.cos() as f32, r_in + l_in * a.sin() as f32)
-                }
+                // Balance (comme Logic, PulsePan d'audio.js) : l'autre côté s'éteint, rien n'est reporté
+                let (gl, gr) = balance_gains(pan);
+                (l_in * gl, r_in * gr)
             } else {
                 // Mono : puissance constante
                 let a = (pan + 1.0) / 2.0 * FRAC_PI_2;
@@ -373,16 +374,9 @@ pub fn render(project: &Project, media: &Media, opts: &RenderOptions) -> (Vec<f3
         };
         let curve = bus.automation.curve("volume");
         let pan_curve = bus.automation.curve("pan");
-        // Gauche / droite du groupe : même loi que le StereoPanner pour une entrée stéréo
+        // Gauche / droite du groupe : balance (comme une piste stéréo)
         let pan0 = (bus.pan.unwrap_or(0.0) / 100.0).clamp(-1.0, 1.0);
-        let pan_law = |pan: f64| if pan <= 0.0 {
-            let a = ((pan + 1.0) * FRAC_PI_2) as f32;
-            (1.0f32, a.cos(), 0.0f32, a.sin())   // l' = l + r·cos ; r' = r·sin
-        } else {
-            let a = (pan * FRAC_PI_2) as f32;
-            (a.cos(), 0.0f32, a.sin(), 1.0f32)   // l' = l·cos ; r' = r + l·sin
-        };
-        let law0 = pan_law(pan0);
+        let law0 = balance_gains(pan0);
         // Envois de ce groupe vers un autre groupe (posés après le traitement ; un groupe déjà traité ne les reçoit plus)
         let bus_aux = aux_sends(project, &bus.bus_sends, &bus.automation, &bus.pre_sends, bus.output.as_deref(), opts.master_volume);
         let mut aux_buf: Vec<(Vec<f32>, Vec<f32>)> = bus_aux.iter().map(|_| (vec![0.0f32; frames], vec![0.0f32; frames])).collect();
@@ -398,12 +392,12 @@ pub fn render(project: &Project, media: &Media, opts: &RenderOptions) -> (Vec<f3
             let t = from + n as f64 / sr;
             let auto = curve.as_ref().map_or(1.0, |c| c.at(t)) as f32;
             let pan = pan_curve.as_ref().map_or(pan0, |c| (-1.0 + 2.0 * c.at(t)).clamp(-1.0, 1.0));
-            let (pl_l, pl_r, pr_l, pr_r) = if pan_curve.is_some() { pan_law(pan) } else { law0 };
+            let (gl, gr) = if pan_curve.is_some() { balance_gains(pan) } else { law0 };
             let own_g = (own as f32) * auto;      // volume du groupe (sans la route vers le master)
             let (xl, xr) = (bl[n] * own_g, br[n] * own_g);
             let busmute = if bus.muted { 0.0f32 } else { 1.0 };
             let (pre_l, pre_r) = (bl[n] * busmute, br[n] * busmute);
-            let (l, r) = if pan <= 0.0 { (xl * pl_l + xr * pl_r, xr * pr_r) } else { (xl * pl_l, xr * pr_r + xl * pr_l) };
+            let (l, r) = (xl * gl, xr * gr);
             let route = (up * if dest.is_some() { 1.0 } else { opts.master_volume }) as f32;
             dl[n] += l * route;
             dr[n] += r * route;

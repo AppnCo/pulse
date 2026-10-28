@@ -160,10 +160,11 @@ mod tests {
         near(rms(&r, 0.3, 0.9), 0.018137);
 
         let (l, r) = run(r#","pan":-50,"effects":["reverb"],"effectParams":{"reverb":{"wet":60,"size":3.2}}"#);
-        near(rms(&l, 0.0, 0.1), 0.219652);
-        near(rms(&l, 0.3, 0.9), 0.224099);
-        near(rms(&r, 0.3, 0.9), 0.143765);
-        near(rms(&l, 1.5, 2.5), 0.005723);
+        // pan −50 sur un son stéréo (la reverb) = balance, mesuré dans Chrome le 28/10 (PulsePan)
+        near(rms(&l, 0.0, 0.1), 0.182757);
+        near(rms(&l, 0.3, 0.9), 0.181437);
+        near(rms(&r, 0.3, 0.9), 0.110030);
+        near(rms(&l, 1.5, 2.5), 0.006886);
     }
 
     /// Saturation multibande : mêmes chiffres que tests/scenarios/msat-parite.mjs (Chrome).
@@ -1181,12 +1182,13 @@ mod tests {
         let mut p = project(vec![clip(0.0, 1.0, 5.0)]);
         p.tracks[0].output = Some("g".into());
         p.buses = vec![serde_json::from_str::<Bus>(r#"{"id":"g","volume":100,"output":"master"}"#).unwrap()];
-        let (cl, cr) = render(&p, &ramp_media(), &opts());
+        let (_, cr) = render(&p, &ramp_media(), &opts());
         let n = SR as usize / 2;
         p.buses[0].pan = Some(100.0);
         let (l, r) = render(&p, &ramp_media(), &opts());
         assert!(l[n].abs() < 1e-4, "gauche = {}", l[n]);
-        close(r[n] as f64, (cl[n] + cr[n]) as f64);
+        // balance : le côté droit monte de 3 dB, la gauche n'y est pas reportée (comme une piste mono : +3 dB)
+        close(r[n] as f64, cr[n] as f64 * std::f64::consts::SQRT_2);
         // Un envoi de groupe ajoute de l'écho après la fin du son
         let mut q = project(vec![clip(0.0, 1.0, 5.0)]);
         q.tracks[0].output = Some("g".into());

@@ -1082,7 +1082,25 @@ window.PulseAudio = (function() {
                 return true;
             }
         }
-        registerProcessor('pulse-width', PulseWidth);`;
+        registerProcessor('pulse-width', PulseWidth);
+        // Gauche / droite (piste et groupe), comme Logic : un son mono est placé à puissance constante (comme le StereoPanner) ;
+        // un son stéréo passe en balance (centre = inchangé, à fond d'un côté : l'autre côté s'éteint, celui-ci +3 dB, rien n'est reporté).
+        // Même calcul dans render.rs (pan_gains / balance_gains).
+        class PulsePan extends AudioWorkletProcessor {
+            static get parameterDescriptors() { return [{ name: 'pan', defaultValue: 0, minValue: -1, maxValue: 1, automationRate: 'a-rate' }]; }
+            process(inputs, outputs, params) {
+                const inp = inputs[0], out = outputs[0], pp = params.pan, n = out[0].length;
+                if (!inp || !inp.length) { out[0].fill(0); out[1].fill(0); return true; }
+                const stereo = inp.length > 1, l = inp[0], r = stereo ? inp[1] : inp[0];
+                for (let i = 0; i < n; i++) {
+                    const p = Math.max(-1, Math.min(1, pp.length > 1 ? pp[i] : pp[0])), a = (p + 1) * Math.PI / 4;
+                    if (stereo) { out[0][i] = l[i] * Math.SQRT2 * Math.cos(a); out[1][i] = r[i] * Math.SQRT2 * Math.sin(a); }
+                    else { out[0][i] = l[i] * Math.cos(a); out[1][i] = l[i] * Math.sin(a); }
+                }
+                return true;
+            }
+        }
+        registerProcessor('pulse-pan', PulsePan);`;
 
     const FX_CHAIN = ['pitch', 'filter', 'gate', 'eq', 'sat', 'msat', 'crush', 'deess', 'comp', 'mband', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'reverb']; // ordre habituel des effets
     const SEND_REVERB_TRIM = 1 / 3; // la reverb seule sort 3 fois trop fort par rapport au son direct : on la ramène à niveau
@@ -1099,6 +1117,13 @@ window.PulseAudio = (function() {
         return (60 / (bpm > 0 ? bpm : 90)) * (dp.beats > 0 ? dp.beats : 0.5);
     }
     const fxReady = new WeakSet();
+    // Réglage gauche / droite d'une piste ou d'un groupe (PulsePan) ; `.pan` = le réglage (-1 … 1), comme un StereoPanner
+    function makePanner(actx) {
+        if (!fxReady.has(actx)) return actx.createStereoPanner();
+        const n = new AudioWorkletNode(actx, 'pulse-pan', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCountMode: 'max', channelInterpretation: 'speakers' });
+        n.pan = n.parameters.get('pan');
+        return n;
+    }
     async function ensureFx(actx) {
         if (fxReady.has(actx) || !actx.audioWorklet) return;
         const url = URL.createObjectURL(new Blob([FX_WORKLET], { type: 'application/javascript' }));
@@ -1801,7 +1826,7 @@ window.PulseAudio = (function() {
             }
             // Gauche / droite du groupe (comme une piste)
             if (bus.pan || autoCurvePts(bus, 'pan').length) {
-                const pn = actx.createStereoPanner();
+                const pn = makePanner(actx);
                 pn.pan.value = Math.max(-1, Math.min(1, (bus.pan || 0) / 100));
                 scheduleAuto(pn.pan, autoCurvePts(bus, 'pan'), n => -1 + 2 * n, fromTime, t0);   // après la valeur fixe, sinon elle écrase la courbe
                 tail.connect(pn);
@@ -1897,7 +1922,7 @@ window.PulseAudio = (function() {
                 fx.output.connect(sp); sp.connect(mg, 0, 0); sp.connect(mg, 1, 1); mg.connect(dest);
             }
 
-            const panNode = actx.createStereoPanner();
+            const panNode = makePanner(actx);
             panNode.pan.value = Math.max(-1, Math.min(1, (track.pan || 0) / 100));
             scheduleAuto(panNode.pan, autoCurvePts(track, 'pan'), n => -1 + 2 * n, fromTime, t0);
             let preMeter = trackGain;   // point de mesure du niveau : après le fader, avant le pan (comme un canal de console)
