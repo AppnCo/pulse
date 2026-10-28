@@ -1239,6 +1239,8 @@ pub struct Chain {
     /// Automation des réglages d'effet (même liste de réglages que le navigateur, voir AUTO_FX dans studio.js)
     auto: Vec<AutoParam>,
     auto_from: f64,
+    /// Échantillons déjà traités depuis `auto_from` (la chaîne peut être appelée bloc par bloc)
+    pos: u64,
     /// Paliers de tempo `(seconde, bpm)` suivis par l'écho calé sur le rythme ; `tempo_i` = palier en cours
     tempo: Vec<(f64, f64)>,
     tempo_i: usize,
@@ -1564,7 +1566,7 @@ impl Chain {
             .then(|| Pitch::new(&effect_params.pitch.clone().unwrap_or_default(), sr));
         let comp_p = effect_params.comp.clone().unwrap_or_default();
         Self { cut, filters, dyn_eq, sat, gate, crush, util, width, modfx, deess, deess2, mband, msat, comp, master, limit, delay, reverb, pitch, order: Stage::DEFAULT.to_vec(),
-            auto: Vec::new(), auto_from: 0.0, tempo: Vec::new(), tempo_i: 0, sr, comp_p, eq_bands, cut_kinds, names: effects.to_vec(), deess_freq: de.freq.unwrap_or(5500.0) }
+            auto: Vec::new(), auto_from: 0.0, pos: 0, tempo: Vec::new(), tempo_i: 0, sr, comp_p, eq_bands, cut_kinds, names: effects.to_vec(), deess_freq: de.freq.unwrap_or(5500.0) }
     }
     /// Tempo qui change en cours de morceau : l'écho calé sur le rythme (1/4, 1/8…) suit le tempo de l'endroit joué.
     /// `from` = instant du premier échantillon traité (le même que pour `with_auto`).
@@ -1694,10 +1696,12 @@ impl Chain {
         // emprunté puis rendu : aucune allocation (le retour casque direct appelle ceci en temps réel)
         let order = std::mem::take(&mut self.order);
         for n in 0..left.len() {
-            if !self.auto.is_empty() && n % 128 == 0 {
-                self.apply_auto(self.auto_from + n as f64 / self.sr);
+            let now = self.auto_from + self.pos as f64 / self.sr;
+            if !self.auto.is_empty() && self.pos % 128 == 0 {
+                self.apply_auto(now);
             }
-            if self.tempo_i + 1 < self.tempo.len() && self.auto_from + n as f64 / self.sr >= self.tempo[self.tempo_i + 1].0 - 1e-9 {
+            self.pos += 1;
+            if self.tempo_i + 1 < self.tempo.len() && now >= self.tempo[self.tempo_i + 1].0 - 1e-9 {
                 self.tempo_i += 1;
                 let bpm = self.tempo[self.tempo_i].1;
                 if let Some(d) = &mut self.delay { d.set_bpm(bpm); }
@@ -2048,29 +2052,41 @@ impl Master {
 }
 
 /// Traite le retour d'un envoi sur place : 100 % d'effet, aucun son direct (comme `getSend` dans audio.js).
-pub fn process_send(send: &Send, left: &mut [f32], right: &mut [f32], sr: f64, bpm: f64) {
-    let trim = if send.kind == "delay" { 1.0 } else { 1.0 / 3.0 } * send.volume.unwrap_or(100.0) / 100.0;
-    let mut delay = (send.kind == "delay").then(|| {
-        let mut d = Delay::new(&DelayParams { wet: Some(100.0), feedback: send.feedback, ms: send.ms, beats: send.beats, pp: send.pp, dry: None, ..Default::default() }, sr, bpm);
-        d.dry = 0.0;
-        d
-    });
-    let mut reverb = (send.kind != "delay").then(|| {
-        let mut r = Reverb::new(&ReverbParams { wet: Some(100.0), size: Some(send.size.unwrap_or(3.2)), ..Default::default() }, sr);
-        r.pre = vec![0.0; ((send.pre.unwrap_or(0.0).clamp(0.0, 500.0) / 1000.0) * sr).round() as usize];
-        r
-    });
-    for n in 0..left.len() {
-        let mut x = [left[n] as f64, right[n] as f64];
-        if let Some(d) = &mut delay {
-            d.tick(&mut x, 2);
-        }
-        if let Some(r) = &mut reverb {
-            r.tick(&mut x, 2);
-        }
-        left[n] = (x[0] * trim) as f32;
-        right[n] = (x[1] * trim) as f32;
+/// Retour d'un envoi (écho ou reverb), utilisable bloc par bloc
+pub struct SendFx { trim: f64, delay: Option<Delay>, reverb: Option<Reverb> }
+
+impl SendFx {
+    pub fn new(send: &Send, sr: f64, bpm: f64) -> Self {
+        let trim = if send.kind == "delay" { 1.0 } else { 1.0 / 3.0 } * send.volume.unwrap_or(100.0) / 100.0;
+        let delay = (send.kind == "delay").then(|| {
+            let mut d = Delay::new(&DelayParams { wet: Some(100.0), feedback: send.feedback, ms: send.ms, beats: send.beats, pp: send.pp, dry: None, ..Default::default() }, sr, bpm);
+            d.dry = 0.0;
+            d
+        });
+        let reverb = (send.kind != "delay").then(|| {
+            let mut r = Reverb::new(&ReverbParams { wet: Some(100.0), size: Some(send.size.unwrap_or(3.2)), ..Default::default() }, sr);
+            r.pre = vec![0.0; ((send.pre.unwrap_or(0.0).clamp(0.0, 500.0) / 1000.0) * sr).round() as usize];
+            r
+        });
+        Self { trim, delay, reverb }
     }
+    pub fn process(&mut self, left: &mut [f32], right: &mut [f32]) {
+        for n in 0..left.len() {
+            let mut x = [left[n] as f64, right[n] as f64];
+            if let Some(d) = &mut self.delay {
+                d.tick(&mut x, 2);
+            }
+            if let Some(r) = &mut self.reverb {
+                r.tick(&mut x, 2);
+            }
+            left[n] = (x[0] * self.trim) as f32;
+            right[n] = (x[1] * self.trim) as f32;
+        }
+    }
+}
+
+pub fn process_send(send: &Send, left: &mut [f32], right: &mut [f32], sr: f64, bpm: f64) {
+    SendFx::new(send, sr, bpm).process(left, right);
 }
 
 #[cfg(test)]

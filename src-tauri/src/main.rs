@@ -16,22 +16,31 @@ struct Info {
     position: f64,
     duration: f64,
     error: Option<String>,
+    /// Moments où le mixeur n'a pas suivi (réserve vide) depuis le début de la lecture
+    underruns: u64,
+    /// Dernière lecture lancée avec « projet » (sons déjà gardés) ou « pulse » (tout le fichier, sons compris)
+    via: String,
+    /// Nombre de lectures lancées (un changement de mix pris en direct ne relance rien)
+    plays: u64,
 }
 
 #[tauri::command]
-fn native_info(player: State<Player>) -> Info {
+fn native_info(player: State<Player>, sounds: State<Sounds>) -> Info {
     Info {
         rate: player.output_rate(),
         playing: player.is_playing(),
         position: player.position(),
         duration: player.duration(),
         error: player.take_error(),
+        underruns: player.underruns(),
+        via: sounds.1.lock().unwrap().clone(),
+        plays: player.plays(),
     }
 }
 
 /// Reçoit un .pulse (octets bruts), le mixe à la fréquence de la carte son et le joue depuis `from` (en-tête, secondes).
 #[tauri::command]
-async fn native_play(player: State<'_, Player>, request: Request<'_>) -> Result<f64, String> {
+async fn native_play(player: State<'_, Player>, sounds: State<'_, Sounds>, request: Request<'_>) -> Result<f64, String> {
     let InvokeBody::Raw(bytes) = request.body() else {
         return Err("le projet doit arriver en octets bruts".into());
     };
@@ -41,19 +50,73 @@ async fn native_play(player: State<'_, Player>, request: Request<'_>) -> Result<
     if rate == 0 {
         return Err("aucune sortie audio trouvée — branche un casque ou des enceintes".into());
     }
-    let (left, right) = tauri::async_runtime::spawn_blocking(move || -> Result<_, String> {
-        let (project, media) = file::open(Cursor::new(bytes)).map_err(|e| e.to_string())?;
-        let opts = render::RenderOptions { sample_rate: rate, ..Default::default() };
-        Ok(render::render(&project, &media, &opts))
+    // On ne prépare que le mixeur (les sons sont décodés, rien n'est mixé d'avance) : la lecture démarre tout de suite.
+    // Les sons décodés sont gardés : les relances suivantes (fader, mute…) n'envoient plus que le projet (native_play_project).
+    let cache = sounds.0.clone();
+    let (renderer, media) = tauri::async_runtime::spawn_blocking(move || -> Result<_, String> {
+        let (project, media, sizes) = file::open_sized(Cursor::new(bytes)).map_err(|e| e.to_string())?;
+        *cache.lock().unwrap() = media.iter().map(|(id, s)| (id.clone(), (sizes.get(id).copied().unwrap_or(0), s.clone()))).collect();
+        let opts = render::RenderOptions { sample_rate: rate, start: from.max(0.0), ..Default::default() };
+        let r = render::Renderer::new(&project, &media, &opts);
+        Ok((r, media))
     })
     .await
     .map_err(|e| e.to_string())??;
-    if left.is_empty() {
+    *sounds.1.lock().unwrap() = "pulse".into();
+    start_stream(&player, renderer, media, from, rate)
+}
+
+/// Sons du projet déjà décodés (identifiant → taille du WAV, son), gardés entre deux lectures
+struct Sounds(std::sync::Arc<Mutex<std::collections::HashMap<String, (u64, render::Source)>>>, Mutex<String>);
+
+/// Relance la lecture avec le projet seul (JSON) et les sons déjà gardés. `sizes` = taille du WAV de chaque son utilisé :
+/// s'il en manque un (ou qu'il a changé), erreur « sons manquants » et la page renvoie tout le .pulse.
+#[tauri::command]
+async fn native_play_project(player: State<'_, Player>, sounds: State<'_, Sounds>, json: String, sizes: std::collections::HashMap<String, u64>, from: f64) -> Result<f64, String> {
+    let rate = player.output_rate();
+    if rate == 0 {
+        return Err("aucune sortie audio trouvée — branche un casque ou des enceintes".into());
+    }
+    let cache = sounds.0.clone();
+    let (renderer, media) = tauri::async_runtime::spawn_blocking(move || -> Result<_, String> {
+        let project: pulse_engine::model::Project = serde_json::from_str(&json).map_err(|e| format!("projet illisible : {e}"))?;
+        let media: render::Media = {
+            let c = cache.lock().unwrap();
+            let mut m = render::Media::new();
+            for (id, size) in &sizes {
+                match c.get(id) {
+                    Some((s, src)) if s == size => { m.insert(id.clone(), src.clone()); }
+                    _ => return Err("sons manquants".to_string()),
+                }
+            }
+            m
+        };
+        let opts = render::RenderOptions { sample_rate: rate, start: from.max(0.0), ..Default::default() };
+        let r = render::Renderer::new(&project, &media, &opts);
+        Ok((r, media))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    *sounds.1.lock().unwrap() = "projet".into();
+    start_stream(&player, renderer, media, from, rate)
+}
+
+fn start_stream(player: &Player, renderer: render::Renderer, media: render::Media, from: f64, rate: u32) -> Result<f64, String> {
+    if renderer.frames() == 0 && from <= 0.0 {
         return Err("le projet ne contient aucun son à jouer".into());
     }
-    let duration = left.len() as f64 / rate as f64;
-    player.play(left, right, (from.max(0.0) * rate as f64) as usize);
+    let start = (from.max(0.0) * rate as f64).round() as usize;
+    let duration = (start + renderer.frames()) as f64 / rate as f64;
+    player.play_stream(renderer, std::sync::Arc::new(media), start);
     Ok(duration)
+}
+
+/// Nouveau mix pendant la lecture (volumes, pan, mute / solo, envois, groupes, Master) : pris en direct, sans relancer
+#[tauri::command]
+fn native_mix(player: State<Player>, json: String) -> Result<(), String> {
+    let project: pulse_engine::model::Project = serde_json::from_str(&json).map_err(|e| format!("projet illisible : {e}"))?;
+    player.set_mix(project);
+    Ok(())
 }
 
 #[tauri::command]
@@ -513,10 +576,11 @@ fn main() {
     tauri::Builder::default()
         .manage(Player::new())
         .manage(Monitor::new())
+        .manage(Sounds(std::sync::Arc::new(Mutex::new(std::collections::HashMap::new())), Mutex::new(String::new())))
         .manage(PendingOpen(Mutex::new(pending)))
         .manage(Midi(Mutex::new(Vec::new())))
         .manage(PickedRoot(Mutex::new(None)))
-        .invoke_handler(tauri::generate_handler![native_info, native_play, native_stop, monitor_start, monitor_stop, monitor_gain, monitor_track, monitor_info, midi_ports, midi_start, pick_folder, create_project_folder, project_folder_ok, save_file, reveal_project_folder, take_pending_open, read_pulse_file, import_url, read_import_file, save_download, test_log, test_exit])
+        .invoke_handler(tauri::generate_handler![native_info, native_play, native_play_project, native_mix, native_stop, monitor_start, monitor_stop, monitor_gain, monitor_track, monitor_info, midi_ports, midi_start, pick_folder, create_project_folder, project_folder_ok, save_file, reveal_project_folder, take_pending_open, read_pulse_file, import_url, read_import_file, save_download, test_log, test_exit])
         .build(context)
         .expect("Pulse n'a pas pu démarrer la fenêtre")
         .run(|app, event| {

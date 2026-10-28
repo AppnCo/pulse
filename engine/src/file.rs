@@ -56,9 +56,15 @@ fn decode_wav(bytes: Vec<u8>) -> Result<Source, PulseError> {
 
 /// Ouvre un .pulse : le projet + l'audio de chaque clip.
 pub fn open<R: Read + Seek>(reader: R) -> Result<(Project, Media), PulseError> {
+    open_sized(reader).map(|(p, m, _)| (p, m))
+}
+
+/// Comme `open`, avec la taille (octets) du fichier WAV de chaque son : elle sert à reconnaître un son déjà chargé
+pub fn open_sized<R: Read + Seek>(reader: R) -> Result<(Project, Media, std::collections::HashMap<String, u64>), PulseError> {
     let mut zip = zip::ZipArchive::new(reader)?;
     let mut project = None;
     let mut media = Media::new();
+    let mut sizes = std::collections::HashMap::new();
     for i in 0..zip.len() {
         let mut entry = zip.by_index(i)?;
         let name = entry.name()?.into_owned();
@@ -67,10 +73,11 @@ pub fn open<R: Read + Seek>(reader: R) -> Result<(Project, Media), PulseError> {
         if name == "project.json" {
             project = Some(serde_json::from_slice::<Doc>(&bytes)?.project);
         } else if let Some(id) = name.strip_prefix("media/").and_then(|n| n.strip_suffix(".wav")) {
+            sizes.insert(id.to_owned(), bytes.len() as u64);
             media.insert(id.to_owned(), decode_wav(bytes)?);
         }
     }
-    Ok((project.ok_or(PulseError::NoProject)?, media))
+    Ok((project.ok_or(PulseError::NoProject)?, media, sizes))
 }
 
 /// Écrit un WAV stéréo 24 bits.

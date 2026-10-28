@@ -1249,6 +1249,7 @@ window.PulseAudio = (function() {
     function setMasterVolume(v0to100) {
         masterVolume = v0to100 / 100;
         if (masterGain) masterGain.gain.setTargetAtTime(masterVolume * MASTER_TRIM, ctx.currentTime, 0.01);
+        if (nativeOn) nativeMixSoon();   // le moteur natif lit project.masterVolume (posé juste après par la page)
     }
 
     async function resumeIfNeeded() {
@@ -2163,6 +2164,17 @@ window.PulseAudio = (function() {
     let nativeBackend = null, nativeProject = null, nativeWall = 0, nativeFrom = 0, nativeOn = false, nativeTimer = null;
     function setNativeBackend(b) { nativeBackend = b || null; }
     function isNative() { return nativeOn; }
+    // Volume, pan, mute / solo, groupe : le moteur natif les prend en direct (sans relancer ni couper les queues de reverb)
+    let nativeMixTimer = null;
+    function nativeMixSoon() {
+        if (!nativeOn || !nativeProject) return;
+        if (!(nativeBackend && nativeBackend.mix)) { nativeRefreshSoon(); return; }
+        clearTimeout(nativeMixTimer);
+        nativeMixTimer = setTimeout(() => {
+            if (!nativeOn || !nativeProject) return;
+            nativeBackend.mix(nativeProject).catch(() => nativeRefreshSoon());
+        }, 15);
+    }
     function nativeRefreshSoon() {
         if (!nativeOn || !nativeProject) return;
         clearTimeout(nativeTimer);
@@ -2818,7 +2830,7 @@ window.PulseAudio = (function() {
     }
 
     function updateTrackVolume(trackIdx, vol0to100) {
-        if (nativeOn) { nativeRefreshSoon(); return; }
+        if (nativeOn) { nativeMixSoon(); return; }
         const n = liveNodes.get(trackIdx);
         if (!n) return;
         n.vol = vol0to100 / 100;
@@ -2826,7 +2838,7 @@ window.PulseAudio = (function() {
     }
 
     function updateTrackPan(trackIdx, pan100) {
-        if (nativeOn) { nativeRefreshSoon(); return; }
+        if (nativeOn) { nativeMixSoon(); return; }
         const n = liveNodes.get(trackIdx);
         if (n && n.panNode) {
             n.panNode.pan.setTargetAtTime(Math.max(-1, Math.min(1, pan100 / 100)), ctx.currentTime, 0.01);
@@ -2835,7 +2847,7 @@ window.PulseAudio = (function() {
 
     // Mute / solo à chaud pendant la lecture
     function refreshAudibility(project) {
-        if (nativeOn) { nativeRefreshSoon(); return; }
+        if (nativeOn) { nativeMixSoon(); return; }
         if (!ctx) return;
         liveNodes.forEach((n, idx) => {
             const t = project.tracks[idx];
@@ -2848,7 +2860,7 @@ window.PulseAudio = (function() {
     }
 
     function updateBusVolume(busId, vol0to100) {
-        if (nativeOn) { nativeRefreshSoon(); return; }
+        if (nativeOn) { nativeMixSoon(); return; }
         const g = liveBusNodes.get(busId);
         if (g) g.gain.setTargetAtTime(vol0to100 / 100, ctx.currentTime, 0.01);
     }

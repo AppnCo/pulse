@@ -22,6 +22,7 @@ impl Ring {
     /// Échantillons en attente
     pub fn len(&self) -> usize { self.w.load(Ordering::Acquire).wrapping_sub(self.r.load(Ordering::Acquire)) }
     pub fn is_empty(&self) -> bool { self.len() == 0 }
+    pub fn capacity(&self) -> usize { self.buf.len() }
     /// Côté micro. File pleine : l'échantillon est perdu (mieux vaut un trou qu'un retard qui grandit)
     pub fn push(&self, x: f32) -> bool {
         let w = self.w.load(Ordering::Relaxed);

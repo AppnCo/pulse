@@ -2643,6 +2643,7 @@ dependencies = [
  "midir",
  "pulse-engine",
  "serde",
+ "serde_json",
  "tauri",
  "tauri-build",
 ]

@@ -1229,4 +1229,69 @@ mod tests {
         close(l[k] as f64, attendu);
         close(r[k] as f64, attendu);
     }
+
+    #[test]
+    fn mixage_au_fil_de_l_eau_identique() {
+        // Projet chargé (effets de piste et de région, automation, groupes imbriqués, envois, tempo qui change, fondus enchaînés) :
+        // mixé d'un coup ou par petits blocs (comme la lecture en direct de l'appli), le son doit être le même à l'échantillon près.
+        let p: Project = serde_json::from_str(r#"{"bpm":120,"tempos":[{"beat":4,"bpm":90}],
+          "sends":[{"id":"rv","name":"Rev","type":"reverb","size":2.5,"volume":100},{"id":"dl","name":"Echo","type":"delay","beats":0.5,"feedback":40,"pp":1,"volume":100}],
+          "buses":[{"id":"g1","isGroup":true,"output":"g2","volume":80,"pan":-30,"effects":["comp","chorus"],"effectParams":{"chorus":{"wet":40}},"sends":{"rv":30}},
+                   {"id":"g2","isGroup":true,"output":"master","volume":90,"effects":["eq","reverb"],"effectParams":{"reverb":{"wet":20}}}],
+          "tracks":[
+            {"volume":90,"pan":20,"output":"g1","effects":["sat","delay","phaser"],"effectParams":{"delay":{"wet":30,"beats":0.25,"pp":1},"sat":{"drive":40}},
+             "sends":{"dl":25},"busSends":{"g2":20},
+             "automation":{"volume":{"points":[{"t":0,"v":1},{"t":2,"v":0.4},{"t":3,"v":1}]},"pan":{"points":[{"t":0,"v":0.2},{"t":4,"v":0.9}]},"fx:sat:drive":{"points":[{"t":0,"v":0.1},{"t":3,"v":0.8}]}},
+             "clips":[{"id":"a","start":0,"duration":2.5,"offset":1},{"id":"a","start":2,"duration":2,"offset":5,"fx":{"effects":["reverb","tremolo"],"effectParams":{"reverb":{"wet":50}}}}]},
+            {"volume":70,"pan":-60,"effects":["comp","limit"],"sends":{"rv":40},"preSends":{"send:rv":true},
+             "clips":[{"id":"a","start":0.7,"duration":1.3,"offset":3,"fadeIn":0.2,"fadeOut":0.4}]}
+          ]}"#).unwrap();
+        let m = ramp_media();
+        let (l0, r0) = crate::render::render_blocks(&p, &m, &opts(), 1 << 30);
+        assert!(l0.len() > 48_000 * 5 && l0.iter().any(|x| x.abs() > 0.01));
+        for block in [8192, 1000, 128, 37] {
+            let (l, r) = crate::render::render_blocks(&p, &m, &opts(), block);
+            let worst = l.iter().zip(&l0).chain(r.iter().zip(&r0)).map(|(a, b)| (a - b).abs()).fold(0.0f32, f32::max);
+            assert!(l.len() == l0.len() && worst == 0.0, "blocs de {block} : écart {worst}");
+        }
+    }
+
+    #[test]
+    fn mix_change_en_direct_sans_relancer() {
+        // En pleine lecture : la piste 1 passe à 50 % et à gauche, la piste 2 est coupée (mute), puis remise.
+        // Après le changement, le son doit être celui du projet modifié (au retard du limiteur près, 1,5 ms).
+        let p1: Project = serde_json::from_str(r#"{"tracks":[
+            {"volume":100,"clips":[{"id":"a","start":0,"duration":4,"offset":1}]},
+            {"volume":80,"pan":30,"clips":[{"id":"a","start":0,"duration":4,"offset":3}]}]}"#).unwrap();
+        let mut p2 = p1.clone();
+        p2.tracks[0].volume = Some(50.0);
+        p2.tracks[0].pan = Some(-60.0);
+        p2.tracks[1].muted = true;
+        let m = ramp_media();
+        let (l2, r2) = render(&p2, &m, &opts());
+        let (l1, _) = render(&p1, &m, &opts());
+        let mut ren = crate::render::Renderer::new(&p1, &m, &opts());
+        let half = 48_000 * 2;
+        let (mut l, mut r) = (vec![0.0f32; ren.frames()], vec![0.0f32; ren.frames()]);
+        ren.process(&m, &mut l[..half], &mut r[..half]);
+        ren.mix_from(&p2, &m);
+        let n = ren.frames();
+        ren.process(&m, &mut l[half..n], &mut r[half..n]);
+        assert_eq!(&l[..half], &l1[..half], "avant le changement : le projet d'origine");
+        // le changement glisse en ≈ 10 ms (pas de clic) : au bout de 150 ms, c'est exactement le nouveau mix
+        let settle = 7200;
+        let worst = (half + settle..n).map(|k| (l[k] - l2[k]).abs().max((r[k] - r2[k]).abs())).fold(0.0f32, f32::max);
+        assert!(worst < 1e-5, "après le changement : écart {worst}");
+        // pendant le glissement, aucun saut : la marche totale est répartie sur des centaines d'échantillons
+        let step = (l1[half] - l2[half]).abs();
+        let jump = (half..half + settle).map(|k| (l[k] - l[k - 1]).abs()).fold(0.0f32, f32::max);
+        assert!(step > 0.1 && jump < step / 100.0, "saut au changement : {jump} pour une marche de {step}");
+        // et on remet la piste 2 : elle revient
+        let mut ren = crate::render::Renderer::new(&p2, &m, &opts());
+        ren.mix_from(&p1, &m);
+        let (mut l, mut r) = (vec![0.0f32; n], vec![0.0f32; n]);
+        ren.process(&m, &mut l, &mut r);
+        let worst = (settle..n).map(|k| (l[k] - l1[k]).abs()).fold(0.0f32, f32::max);
+        assert!(worst < 1e-5, "piste remise : écart {worst}");
+    }
 }

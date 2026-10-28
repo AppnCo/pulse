@@ -13,12 +13,19 @@ const f=document.getElementById('f'); const sleep=ms=>new Promise(r=>setTimeout(
   log('save…'); await w.PulsePersist.saveBlob('stest', new Blob([w.PulseAudio.audioBufferToWav(b)],{type:'audio/wav'}),{kind:'import'});
   ST.project.tracks[0].clips=[{id:'stest',start:0,duration:4,offset:0}];
   log('saved'); ST.playhead=1;
-  await w.togglePlay();
+  const tPlay=performance.now(); await w.togglePlay(); log('démarrage de la lecture native en '+Math.round(performance.now()-tPlay)+' ms');
   await sleep(1200);
   log('playing='+ST.playing+' isNative='+w.PulseAudio.isNative()+' pos='+w.PulseAudio.getPlaybackPosition().toFixed(2)+' (≈2.2 attendu)');
   log('micro: secureContext='+w.isSecureContext+' mediaDevices='+(typeof w.navigator.mediaDevices)+' getUserMedia='+(w.navigator.mediaDevices&&typeof w.navigator.mediaDevices.getUserMedia)+' appareils='+(w.navigator.mediaDevices?(await w.navigator.mediaDevices.enumerateDevices()).map(d=>d.kind).join(','):'?'));
   { const ports = await window.__TAURI__.core.invoke('midi_ports'); const opened = await window.__TAURI__.core.invoke('midi_start'); log('midi: ports='+JSON.stringify(ports)+' ouverts='+JSON.stringify(opened)); }
   log('rust: '+JSON.stringify(await w.__TAURI__.core.invoke('native_info')));
+  // relance (comme un fader bougé) : projet seul, sons déjà gardés par le moteur
+  { const via0=(await window.__TAURI__.core.invoke('native_info')).via; const t1=performance.now(); await w.PulseNative.play(ST.project, 2); const dt=Math.round(performance.now()-t1);
+    await sleep(300); const ni=await window.__TAURI__.core.invoke('native_info'); log('relance: première='+via0+' puis='+ni.via+' en '+dt+' ms pos='+ni.position.toFixed(2));
+    // mute pendant la lecture : pris en direct, la lecture continue (pas de relance)
+    const p0=ni.position; ST.project.tracks[0].muted=true; w.PulseAudio.refreshAudibility(ST.project); await sleep(400);
+    const n2=await window.__TAURI__.core.invoke('native_info'); log('mute en direct: relances='+(n2.plays-ni.plays)+' avance='+(n2.position-p0).toFixed(2)+' trous='+n2.underruns+' joue='+n2.playing);
+    ST.project.tracks[0].muted=false; w.PulseAudio.refreshAudibility(ST.project); }
   // retour casque direct : vrai micro + vraie sortie, volume à ZÉRO (aucun larsen possible pendant le test)
   { const inv=window.__TAURI__.core.invoke; await inv('monitor_gain',{gain:0});
     try { await inv('monitor_track',{json:JSON.stringify({track:{name:'V',effects:['eq','comp','deess','sat','delay','reverb','chorus','limit'],effectParams:{reverb:{wet:30},delay:{wet:20}}},bpm:120})});

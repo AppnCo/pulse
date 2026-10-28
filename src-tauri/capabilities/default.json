@@ -12,6 +12,8 @@
     "core:window:allow-destroy",
     "allow-native-info",
     "allow-native-play",
+    "allow-native-play-project",
+    "allow-native-mix",
     "allow-native-stop",
     "allow-monitor-start",
     "allow-monitor-stop",
