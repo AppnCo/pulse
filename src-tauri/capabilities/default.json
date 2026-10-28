@@ -16,6 +16,7 @@
     "allow-monitor-start",
     "allow-monitor-stop",
     "allow-monitor-gain",
+    "allow-monitor-track",
     "allow-monitor-info",
     "allow-midi-ports",
     "allow-midi-start",

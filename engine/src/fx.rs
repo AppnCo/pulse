@@ -1691,7 +1691,8 @@ impl Chain {
     /// `mono` : la piste n'a que des sons mono (seul `left` est lu). Si la chaîne élargit en stéréo
     /// (`makes_stereo`), `right` doit quand même avoir la taille de `left` : il reçoit le canal droit.
     pub fn process(&mut self, left: &mut [f32], right: &mut [f32], mono: bool) {
-        let order = self.order.clone();
+        // emprunté puis rendu : aucune allocation (le retour casque direct appelle ceci en temps réel)
+        let order = std::mem::take(&mut self.order);
         for n in 0..left.len() {
             if !self.auto.is_empty() && n % 128 == 0 {
                 self.apply_auto(self.auto_from + n as f64 / self.sr);
@@ -1811,6 +1812,7 @@ impl Chain {
                 right[n] = x[1] as f32;
             }
         }
+        self.order = order;
     }
 }
 

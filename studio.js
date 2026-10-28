@@ -763,6 +763,26 @@ function syncMonitor() {
     if (!state.project || !state.project.tracks) return;
     PulseAudio.setMonitorRoute(state.project.tracks.some(trackMonitored));
 }
+// Retour direct de l'appli : il passe par la tranche de la piste écoutée (ses effets, son volume, son pan),
+// comme dans Logic. On renvoie la tranche au moteur natif dès qu'elle change (vérifié 4 fois par seconde).
+let _nativeMonTrack = null;
+function nativeMonitorTrackJson() {
+    const t = state.project && (state.project.tracks || []).find(x => (x.type || 'audio') === 'audio' && trackMonitored(x));
+    if (!t) return '';
+    const track = { name: t.name || '', effects: t.effects || [], effectParams: t.effectParams || {}, fxOrder: t.fxOrder || [], volume: t.volume == null ? 100 : t.volume, pan: t.pan || 0 };
+    const bpm = typeof tempoVaries === 'function' && tempoVaries() ? bpmAtSec(Math.max(0, state.playhead || 0)) : state.project.bpm;
+    return JSON.stringify({ track, bpm });
+}
+function syncNativeMonitorTrack() {
+    const nm = PulseAudio.getNativeMonitor && PulseAudio.getNativeMonitor();
+    if (!nm || !nm.active) { _nativeMonTrack = null; return; }
+    let j = '';
+    try { j = nativeMonitorTrackJson(); } catch { return; }
+    if (j === _nativeMonTrack) return;
+    _nativeMonTrack = j;
+    PulseNative.monitor.track(j).catch(() => {});
+}
+if (window.PulseNative && PulseNative.available) setInterval(syncNativeMonitorTrack, 250);
 function toggleTrackMonitor(t) {
     t.inputMonitor = !trackMonitored(t);
     // Même état que l'automatique : on n'enregistre rien dans le projet

@@ -81,6 +81,12 @@ fn monitor_gain(monitor: State<Monitor>, gain: f32) {
     monitor.set_gain(gain);
 }
 
+/// Piste écoutée au retour (effets, volume, pan) : `{ "track": …, "bpm": … }` ; vide = retour sec
+#[tauri::command]
+fn monitor_track(monitor: State<Monitor>, json: String) -> Result<(), String> {
+    if json.trim().is_empty() { monitor.clear_track(); Ok(()) } else { monitor.set_track(&json) }
+}
+
 #[tauri::command]
 fn monitor_info(monitor: State<Monitor>) -> MonitorInfo {
     monitor.info()
@@ -510,7 +516,7 @@ fn main() {
         .manage(PendingOpen(Mutex::new(pending)))
         .manage(Midi(Mutex::new(Vec::new())))
         .manage(PickedRoot(Mutex::new(None)))
-        .invoke_handler(tauri::generate_handler![native_info, native_play, native_stop, monitor_start, monitor_stop, monitor_gain, monitor_info, midi_ports, midi_start, pick_folder, create_project_folder, project_folder_ok, save_file, reveal_project_folder, take_pending_open, read_pulse_file, import_url, read_import_file, save_download, test_log, test_exit])
+        .invoke_handler(tauri::generate_handler![native_info, native_play, native_stop, monitor_start, monitor_stop, monitor_gain, monitor_track, monitor_info, midi_ports, midi_start, pick_folder, create_project_folder, project_folder_ok, save_file, reveal_project_folder, take_pending_open, read_pulse_file, import_url, read_import_file, save_download, test_log, test_exit])
         .build(context)
         .expect("Pulse n'a pas pu démarrer la fenêtre")
         .run(|app, event| {

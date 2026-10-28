@@ -23,6 +23,7 @@ window.PulseNative = (function () {
         start: (device, channel, buffer) => core().invoke('monitor_start', { device: device || '', channel: channel || 0, buffer }),
         stop: () => isAvailable() ? core().invoke('monitor_stop') : Promise.resolve(),
         gain: (g) => isAvailable() ? core().invoke('monitor_gain', { gain: g }) : Promise.resolve(),
+        track: (json) => isAvailable() ? core().invoke('monitor_track', { json: json || '' }) : Promise.resolve(),
         info: () => isAvailable() ? core().invoke('monitor_info') : Promise.resolve(null),
     };
     return { get available() { return isAvailable(); }, play, stop, info, isEnabled, setEnabled, monitor, onError: null };

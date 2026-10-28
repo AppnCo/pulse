@@ -23,6 +23,13 @@ export default async ({ ev, nav, send, sleep, check }) => {
     const out = { avail: PulseNative.available, defOn: PulseAudio.getNativeMonitor().usable };
     await PulseAudio.requestMic(); await w(500);
     out.a = { starts: starts().length, last: starts().slice(-1)[0], active: PulseAudio.getNativeMonitor().active, web: PulseAudio.getMonitorWebGain(), lat: PulseAudio.getLatencyInfo() };
+    // la tranche de la piste écoutée part au moteur natif, puis repart à chaque changement
+    const tracks = () => __calls.filter(c => c[0] === 'monitor_track').map(c => c[1].json);
+    await w(400); out.t1 = tracks().slice(-1)[0] || null;
+    const tk = state.project.tracks[0]; tk.effects = ['reverb']; tk.effectParams = { reverb: { wet: 30 } }; tk.volume = 70; tk.pan = -20;
+    await w(400); out.t2 = tracks().slice(-1)[0] || null; out.tn = tracks().length;
+    await w(600); out.tn2 = tracks().length;   // rien n'a changé : rien de renvoyé
+    tk.armed = false; await w(400); out.t3 = tracks().slice(-1)[0]; tk.armed = true; await w(400);
     // mémoire tampon grande : retour direct rouvert avec 256
     await PulseAudio.setBufferMode('grand'); await w(500);
     out.b = { last: starts().slice(-1)[0], active: PulseAudio.getNativeMonitor().active, web: PulseAudio.getMonitorWebGain() };
@@ -50,6 +57,10 @@ export default async ({ ev, nav, send, sleep, check }) => {
   check('dans l\'appli, le retour direct est activé par défaut', r.avail && r.defOn, JSON.stringify([r.avail, r.defOn]));
   check('micro ouvert : retour direct lancé (tampon 64, entrée 1) et retour web muet', r.a.starts === 1 && r.a.last[1].buffer === 64 && r.a.last[1].channel === 0 && r.a.active && r.a.web === 0, JSON.stringify(r.a));
   check('le retard affiché est celui du retour direct', r.a.lat && r.a.lat.native && r.a.lat.totalMs <= 8, JSON.stringify(r.a.lat));
+  const j1 = r.t1 && JSON.parse(r.t1), j2 = r.t2 && JSON.parse(r.t2);
+  check('la tranche de la piste écoutée part au moteur natif', j1 && j1.track.volume === 100 && j1.bpm === 120, r.t1);
+  check('un effet / le volume / le pan changent : la tranche repart (et seulement là)', j2 && j2.track.effects[0] === 'reverb' && j2.track.effectParams.reverb.wet === 30 && j2.track.volume === 70 && j2.track.pan === -20 && r.tn2 === r.tn, `${r.t2} (${r.tn} → ${r.tn2})`);
+  check('plus aucune piste écoutée : retour sec', r.t3 === '', JSON.stringify(r.t3));
   check('mémoire tampon grande : retour direct rouvert à 256', r.b.last[1].buffer === 256 && r.b.active && r.b.web === 0, JSON.stringify(r.b));
   check('coupé dans les Réglages : arrêté, retour web à la place', r.c.stopped && !r.c.active && r.c.web === 1 && r.c.saved === '0', JSON.stringify(r.c));
   check('s\'il ne s\'ouvre pas : retour web à la place, sans rien casser', !r.d.active && r.d.web === 1 && /introuvable/.test(r.d.err), JSON.stringify(r.d));

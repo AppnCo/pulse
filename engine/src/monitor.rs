@@ -45,28 +45,102 @@ impl Ring {
     }
 }
 
-/// Côté casque : remplit `out` (entrelacé, `channels` voies) avec la voix, à gain progressif.
+/// Tranche de la piste écoutée, appliquée au retour : ses effets, son volume et son pan (comme dans le mix).
+pub struct Strip { chain: Option<crate::fx::Chain>, vol: f32, pan: f64 }
+
+impl Strip {
+    /// Retour sec (aucune piste donnée) : la voix telle quelle des deux côtés
+    pub fn dry() -> Self { Self { chain: None, vol: 1.0, pan: f64::NAN } }
+    /// `json` = { "track": piste du projet, "bpm": tempo } ; `sr` = fréquence du retour
+    pub fn from_json(json: &str, sr: f64) -> Result<Self, String> {
+        #[derive(serde::Deserialize)]
+        struct Msg { track: crate::model::Track, #[serde(default)] bpm: Option<f64> }
+        let m: Msg = serde_json::from_str(json).map_err(|e| format!("piste illisible : {e}"))?;
+        let chain = crate::fx::Chain::for_track(&m.track, sr, m.bpm.filter(|b| *b > 0.0).unwrap_or(120.0));
+        let vol = (m.track.volume.unwrap_or(100.0) / 100.0).max(0.0) as f32;
+        let pan = (m.track.pan.unwrap_or(0.0) / 100.0).clamp(-1.0, 1.0);
+        Ok(Self { chain: if chain.is_empty() { None } else { Some(chain) }, vol, pan })
+    }
+    /// `l` = voix (mono) en entrée ; ressort `l` / `r` et les gains gauche / droite à appliquer
+    fn process(&mut self, l: &mut [f32], r: &mut [f32]) -> (f32, f32) {
+        if self.pan.is_nan() { r.copy_from_slice(l); return (1.0, 1.0); }
+        let stereo = match self.chain.as_mut() {
+            Some(c) => { r.iter_mut().for_each(|x| *x = 0.0); c.process(l, r, true); c.outputs_stereo() }
+            None => false,
+        };
+        let (gl, gr) = if stereo {
+            crate::render::balance_gains(self.pan)
+        } else {
+            r.copy_from_slice(l);
+            // son mono : puissance constante, comme une piste mono dans le mix
+            let a = (self.pan + 1.0) * std::f64::consts::FRAC_PI_4;
+            (a.cos() as f32, a.sin() as f32)
+        };
+        (gl * self.vol, gr * self.vol)
+    }
+}
+
+/// Échange de tranche sans bloquer le temps réel : la page prépare la nouvelle, le casque la prend
+/// au début d'un tampon (essai de verrou, jamais d'attente), l'ancienne est jetée hors du temps réel.
+pub struct StripSlot { m: Mutex<(Option<Box<Strip>>, Option<Box<Strip>>)>, ready: AtomicBool }
+
+impl StripSlot {
+    pub fn new() -> Self { Self { m: Mutex::new((None, None)), ready: AtomicBool::new(false) } }
+    pub fn put(&self, s: Strip) {
+        let mut g = self.m.lock().unwrap();
+        g.1 = None; // l'ancienne tranche est libérée ici, pas dans le temps réel
+        g.0 = Some(Box::new(s));
+        self.ready.store(true, Ordering::Release);
+    }
+    fn take_into(&self, cur: &mut Box<Strip>) {
+        if !self.ready.load(Ordering::Acquire) { return; }
+        if let Ok(mut g) = self.m.try_lock() {
+            if let Some(n) = g.0.take() { g.1 = Some(std::mem::replace(cur, n)); }
+            self.ready.store(false, Ordering::Release);
+        }
+    }
+}
+
+impl Default for StripSlot { fn default() -> Self { Self::new() } }
+
+/// Côté casque : état gardé d'un tampon à l'autre
+pub struct OutState { pub gain: f32, pub primed: bool, pub underruns: u64, strip: Box<Strip>, l: Vec<f32>, r: Vec<f32> }
+
+impl OutState {
+    pub fn new(gain: f32, primed: bool) -> Self { Self { gain, primed, underruns: 0, strip: Box::new(Strip::dry()), l: vec![0.0; 1024], r: vec![0.0; 1024] } }
+    pub fn set_strip(&mut self, s: Strip) { self.strip = Box::new(s); }
+}
+
+/// Remplit `out` (entrelacé, `channels` voies) avec la voix passée par la tranche, à gain progressif.
 /// `cushion` = réserve visée dans la file (≈ un tampon) : on attend de l'avoir avant de jouer,
 /// et si la file grossit trop (les deux horloges dérivent) on rattrape pour que le retard ne grandisse jamais.
-pub struct OutState { pub gain: f32, pub primed: bool, pub underruns: u64 }
-
 pub fn fill_output(ring: &Ring, out: &mut [f32], channels: usize, target_gain: f32, cushion: usize, st: &mut OutState) {
-    let frames = out.len() / channels.max(1);
+    let ch = channels.max(1);
+    let frames = out.len() / ch;
     if !st.primed {
         if ring.len() >= cushion { st.primed = true; } else { out.iter_mut().for_each(|s| *s = 0.0); return; }
     }
     if ring.len() > cushion * 3 + frames { ring.skip_to(cushion + frames); }
     // gain lissé sur ~5 ms à 48 kHz : pas de clic quand on coupe / remet le retour
     let step = 1.0 / 256.0;
-    for f in 0..frames {
-        let v = match ring.pop() {
-            Some(v) => v,
-            None => { st.underruns += 1; st.primed = false; 0.0 }
-        };
-        if st.gain < target_gain { st.gain = (st.gain + step).min(target_gain); } else if st.gain > target_gain { st.gain = (st.gain - step).max(target_gain); }
-        let y = v * st.gain;
-        let base = f * channels;
-        for c in 0..channels { out[base + c] = if c < 2 { y } else { 0.0 }; }
+    let mut done = 0;
+    while done < frames {
+        let n = (frames - done).min(st.l.len());
+        for i in 0..n {
+            st.l[i] = match ring.pop() {
+                Some(v) => v,
+                None => { st.underruns += 1; st.primed = false; 0.0 }
+            };
+        }
+        let (gl, gr) = st.strip.process(&mut st.l[..n], &mut st.r[..n]);
+        for i in 0..n {
+            if st.gain < target_gain { st.gain = (st.gain + step).min(target_gain); } else if st.gain > target_gain { st.gain = (st.gain - step).max(target_gain); }
+            let base = (done + i) * ch;
+            out[base] = st.l[i] * gl * st.gain;
+            if ch > 1 { out[base + 1] = st.r[i] * gr * st.gain; }
+            for c in 2..ch { out[base + c] = 0.0; }
+        }
+        done += n;
     }
 }
 
@@ -81,6 +155,8 @@ pub struct MonitorInfo {
     /// Retard micro → casque mesuré par le système (ms), 0 si inconnu
     pub latency_ms: f64,
     pub underruns: u64,
+    /// Pire temps de calcul d'un tampon, en % du temps disponible (au-delà de 100 : ça craquerait)
+    pub load_max_pct: f64,
     pub error: Option<String>,
 }
 
@@ -97,6 +173,10 @@ pub struct Monitor {
     lat_out: Arc<AtomicU64>,
     underruns: Arc<AtomicU64>,
     started: Arc<AtomicBool>,
+    load_max: Arc<AtomicU64>,
+    slot: Arc<StripSlot>,
+    /// Dernière piste reçue (rejouée à chaque ouverture, à la fréquence du moment)
+    track: Arc<Mutex<Option<String>>>,
 }
 
 impl Monitor {
@@ -108,8 +188,11 @@ impl Monitor {
         let lat_out = Arc::new(AtomicU64::new(0));
         let underruns = Arc::new(AtomicU64::new(0));
         let started = Arc::new(AtomicBool::new(false));
+        let slot = Arc::new(StripSlot::new());
+        let load_max = Arc::new(AtomicU64::new(0));
+        let track: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
         {
-            let (gain, info, lat_in, lat_out, underruns, started) = (gain.clone(), info.clone(), lat_in.clone(), lat_out.clone(), underruns.clone(), started.clone());
+            let (gain, info, lat_in, lat_out, underruns, started, slot, track, load_max) = (gain.clone(), info.clone(), lat_in.clone(), lat_out.clone(), underruns.clone(), started.clone(), slot.clone(), track.clone(), load_max.clone());
             // Les flux audio ne peuvent pas changer de thread : un thread dédié les possède
             std::thread::spawn(move || {
                 let mut streams: Option<(cpal::Stream, cpal::Stream)> = None;
@@ -122,7 +205,11 @@ impl Monitor {
                             lat_in.store(0, Ordering::Relaxed);
                             lat_out.store(0, Ordering::Relaxed);
                             underruns.store(0, Ordering::Relaxed);
-                            match build(device.as_deref(), channel, buffer, &gain, &lat_in, &lat_out, &underruns) {
+                            load_max.store(0, Ordering::Relaxed);
+                            // la tranche est prête avant le premier son
+                            let rate = cpal::default_host().default_output_device().and_then(|d| d.default_output_config().ok()).map(|c| c.sample_rate().0).unwrap_or(48000);
+                            let first = track.lock().unwrap().as_deref().and_then(|j| Strip::from_json(j, rate as f64).ok()).unwrap_or_else(Strip::dry);
+                            match build(device.as_deref(), channel, buffer, &gain, &lat_in, &lat_out, &underruns, &slot, first, &load_max) {
                                 Ok((i, o, mut mi)) => {
                                     streams = Some((i, o));
                                     mi.running = true;
@@ -137,7 +224,20 @@ impl Monitor {
                 drop(streams);
             });
         }
-        Self { tx, gain, info, lat_in, lat_out, underruns, started }
+        Self { tx, gain, info, lat_in, lat_out, underruns, started, load_max, slot, track }
+    }
+
+    /// Piste écoutée (effets, volume, pan) : `json` = { "track": …, "bpm": … }. Prise en compte en direct.
+    pub fn set_track(&self, json: &str) -> Result<(), String> {
+        let rate = { let i = self.info.lock().unwrap(); if i.running { i.rate } else { 0 } };
+        if rate > 0 { self.slot.put(Strip::from_json(json, rate as f64)?); } else { Strip::from_json(json, 48000.0)?; }
+        *self.track.lock().unwrap() = Some(json.to_string());
+        Ok(())
+    }
+    /// Retour sec (plus de piste)
+    pub fn clear_track(&self) {
+        *self.track.lock().unwrap() = None;
+        self.slot.put(Strip::dry());
     }
 
     /// Ouvre le retour direct. `device` = nom du micro (comme le montre le système), `channel` = entrée de l'interface (0 = la première),
@@ -165,6 +265,7 @@ impl Monitor {
                 i.latency_ms = (a + b) as f64 / 1000.0 + i.buffer as f64 * 1000.0 / i.rate.max(1) as f64;
             }
             i.underruns = self.underruns.load(Ordering::Relaxed);
+            i.load_max_pct = self.load_max.load(Ordering::Relaxed) as f64 / 100.0;
         }
         i
     }
@@ -200,6 +301,7 @@ fn micros(d: Option<std::time::Duration>) -> u64 { d.map(|d| d.as_micros() as u6
 fn build(
     device: Option<&str>, channel: usize, buffer: u32,
     gain: &Arc<AtomicU32>, lat_in: &Arc<AtomicU64>, lat_out: &Arc<AtomicU64>, underruns: &Arc<AtomicU64>,
+    slot: &Arc<StripSlot>, first: Strip, load_max: &Arc<AtomicU64>,
 ) -> Result<(cpal::Stream, cpal::Stream, MonitorInfo), String> {
     let host = cpal::default_host();
     let input = find_input(&host, device).ok_or("micro introuvable pour le retour direct")?;
@@ -238,13 +340,21 @@ fn build(
             None,
         )
         .map_err(|e| format!("micro : {e}"))?;
-    let (r_out, lo, g, un) = (ring.clone(), lat_out.clone(), gain.clone(), underruns.clone());
-    let mut st = OutState { gain: 0.0, primed: false, underruns: 0 };
+    let (r_out, lo, g, un, sl, lm) = (ring.clone(), lat_out.clone(), gain.clone(), underruns.clone(), slot.clone(), load_max.clone());
+    let srate = rate as f64;
+    let mut st = OutState::new(0.0, false);
+    st.set_strip(first);
     let ostream = output
         .build_output_stream(
             &cpal::StreamConfig { channels: out_ch as u16, sample_rate: cpal::SampleRate(rate), buffer_size: obuf },
             move |out: &mut [f32], info: &cpal::OutputCallbackInfo| {
+                let t0 = std::time::Instant::now();
+                sl.take_into(&mut st.strip);
                 fill_output(&r_out, out, out_ch, f32::from_bits(g.load(Ordering::Relaxed)), cushion, &mut st);
+                // charge = temps de calcul / durée du tampon (en centièmes de %)
+                let avail = (out.len() / out_ch.max(1)) as f64 / srate;
+                let pct = (t0.elapsed().as_secs_f64() / avail * 10000.0) as u64;
+                lm.fetch_max(pct, Ordering::Relaxed);
                 un.store(st.underruns, Ordering::Relaxed);
                 let t = info.timestamp();
                 lo.store(micros(t.playback.duration_since(&t.callback)), Ordering::Relaxed);
@@ -284,7 +394,7 @@ mod tests {
     #[test]
     fn sortie_attend_sa_reserve_puis_joue_sans_retard_qui_grandit() {
         let r = Ring::new(4096);
-        let mut st = OutState { gain: 1.0, primed: false, underruns: 0 };
+        let mut st = OutState::new(1.0, false);
         let mut out = vec![1.0f32; 2 * 64];
         // pas encore de réserve : silence
         for i in 0..32 { r.push(i as f32); }
@@ -305,7 +415,7 @@ mod tests {
     fn coupure_progressive_sans_clic() {
         let r = Ring::new(4096);
         for _ in 0..1024 { r.push(1.0); }
-        let mut st = OutState { gain: 1.0, primed: true, underruns: 0 };
+        let mut st = OutState::new(1.0, true);
         let mut out = vec![0.0f32; 512];
         fill_output(&r, &mut out, 1, 0.0, 64, &mut st);
         // descend pas à pas (1/256 par échantillon), aucun saut brutal
@@ -317,10 +427,48 @@ mod tests {
     fn trou_du_micro_compte_et_relance_la_reserve() {
         let r = Ring::new(4096);
         for _ in 0..64 { r.push(0.5); }
-        let mut st = OutState { gain: 1.0, primed: false, underruns: 0 };
+        let mut st = OutState::new(1.0, false);
         let mut out = vec![0.0f32; 128];
         fill_output(&r, &mut out, 1, 1.0, 64, &mut st);
         assert_eq!(st.underruns, 64);
         assert!(!st.primed, "on attend de nouveau la réserve");
+    }
+    #[test]
+    fn tranche_de_la_piste_volume_pan_et_effets() {
+        let sr = 48000.0;
+        let r = Ring::new(65536);
+        // piste à 50 %, pan à fond à droite, sans effet : voix à droite seulement, à moitié
+        let mut st = OutState::new(1.0, true);
+        st.set_strip(Strip::from_json(r#"{"track":{"name":"V","volume":50,"pan":100},"bpm":120}"#, sr).unwrap());
+        for _ in 0..512 { r.push(0.8); }
+        let mut out = vec![0.0f32; 2 * 256];
+        fill_output(&r, &mut out, 2, 1.0, 64, &mut st);
+        assert!(out[0].abs() < 1e-6 && (out[1] - 0.4).abs() < 1e-4, "{} {}", out[0], out[1]);
+        // centre : puissance constante (−3 dB de chaque côté), comme une piste mono dans le mix
+        st.set_strip(Strip::from_json(r#"{"track":{"name":"V"}}"#, sr).unwrap());
+        fill_output(&r, &mut out, 2, 1.0, 64, &mut st);
+        assert!((out[0] - 0.8 * std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-4 && (out[0] - out[1]).abs() < 1e-6);
+        // une reverb : le son continue après la voix (traîne) et ressort en stéréo
+        let mut st = OutState::new(1.0, true);
+        st.set_strip(Strip::from_json(r#"{"track":{"name":"V","effects":["reverb"],"effectParams":{"reverb":{"wet":50}}}}"#, sr).unwrap());
+        let r = Ring::new(65536);
+        for i in 0..4800 { r.push(if i < 480 { 0.5 } else { 0.0 }); }
+        let mut out = vec![0.0f32; 2 * 4800];
+        fill_output(&r, &mut out, 2, 1.0, 64, &mut st);
+        let tail: f32 = out[2 * 2400..].iter().map(|x| x.abs()).sum();
+        assert!(tail > 0.1, "traîne de reverb absente : {tail}");
+    }
+
+    #[test]
+    fn echange_de_tranche_pris_au_tampon_suivant() {
+        let slot = StripSlot::new();
+        let mut cur = Box::new(Strip::dry());
+        slot.put(Strip::from_json(r#"{"track":{"name":"V","volume":0}}"#, 48000.0).unwrap());
+        slot.take_into(&mut cur);
+        assert_eq!(cur.vol, 0.0);
+        assert!(!slot.ready.load(Ordering::Acquire));
+        // rien de nouveau : on garde la tranche
+        slot.take_into(&mut cur);
+        assert_eq!(cur.vol, 0.0);
     }
 }

@@ -21,7 +21,8 @@ const f=document.getElementById('f'); const sleep=ms=>new Promise(r=>setTimeout(
   log('rust: '+JSON.stringify(await w.__TAURI__.core.invoke('native_info')));
   // retour casque direct : vrai micro + vraie sortie, volume à ZÉRO (aucun larsen possible pendant le test)
   { const inv=window.__TAURI__.core.invoke; await inv('monitor_gain',{gain:0});
-    try { const mi=await inv('monitor_start',{device:'',channel:0,buffer:64}); await sleep(1000); const m2=await inv('monitor_info'); log('monitor running='+m2.running+' buffer='+m2.buffer+' latence='+m2.latency_ms.toFixed(1)+'ms trous='+m2.underruns+' entree='+m2.input); }
+    try { await inv('monitor_track',{json:JSON.stringify({track:{name:'V',effects:['eq','comp','deess','sat','delay','reverb','chorus','limit'],effectParams:{reverb:{wet:30},delay:{wet:20}}},bpm:120})});
+      const mi=await inv('monitor_start',{device:'',channel:0,buffer:64}); await sleep(1500); const m2=await inv('monitor_info'); log('monitor running='+m2.running+' buffer='+m2.buffer+' latence='+m2.latency_ms.toFixed(1)+'ms trous='+m2.underruns+' charge_max='+m2.load_max_pct.toFixed(1)+'% (8 effets) entree='+m2.input); }
     catch(e){ log('monitor ERREUR '+e); }
     await inv('monitor_stop'); await sleep(100); log('monitor après stop running='+(await inv('monitor_info')).running);
     // le nom du micro vu par la page doit être retrouvé par le moteur natif
