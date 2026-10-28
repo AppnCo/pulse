@@ -2,6 +2,7 @@
 pub mod file;
 pub mod fx;
 pub mod model;
+pub mod monitor;
 pub mod player;
 pub mod render;
 

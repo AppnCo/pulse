@@ -2,7 +2,7 @@
 // et lui prête le moteur audio Rust (lecture temps réel sur la carte son).
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use pulse_engine::{file, player::Player, render};
+use pulse_engine::{file, monitor::{Monitor, MonitorInfo}, player::Player, render};
 use serde::Serialize;
 use std::io::Cursor;
 use std::sync::Mutex;
@@ -59,6 +59,31 @@ async fn native_play(player: State<'_, Player>, request: Request<'_>) -> Result<
 #[tauri::command]
 fn native_stop(player: State<Player>) {
     player.stop();
+}
+
+// === Retour casque direct ===
+// Le micro va droit dans le casque par le moteur natif (tampon de 64 à 256 échantillons) au lieu du moteur web.
+// La page garde l'enregistrement ; ici on ne fait que le retour, qui n'entre jamais dans le mix.
+#[tauri::command]
+async fn monitor_start(monitor: State<'_, Monitor>, device: String, channel: usize, buffer: u32) -> Result<MonitorInfo, String> {
+    let dev = if device.trim().is_empty() { None } else { Some(device) };
+    let info = monitor.start(dev, channel, buffer.clamp(16, 2048));
+    match &info.error { Some(e) => Err(e.clone()), None => Ok(info) }
+}
+
+#[tauri::command]
+fn monitor_stop(monitor: State<Monitor>) {
+    monitor.stop();
+}
+
+#[tauri::command]
+fn monitor_gain(monitor: State<Monitor>, gain: f32) {
+    monitor.set_gain(gain);
+}
+
+#[tauri::command]
+fn monitor_info(monitor: State<Monitor>) -> MonitorInfo {
+    monitor.info()
 }
 
 // === Claviers MIDI USB ===
@@ -481,10 +506,11 @@ fn main() {
     let pending: Vec<String> = std::env::args().skip(1).filter(|a| a.to_lowercase().ends_with(".pulse")).collect();
     tauri::Builder::default()
         .manage(Player::new())
+        .manage(Monitor::new())
         .manage(PendingOpen(Mutex::new(pending)))
         .manage(Midi(Mutex::new(Vec::new())))
         .manage(PickedRoot(Mutex::new(None)))
-        .invoke_handler(tauri::generate_handler![native_info, native_play, native_stop, midi_ports, midi_start, pick_folder, create_project_folder, project_folder_ok, save_file, reveal_project_folder, take_pending_open, read_pulse_file, import_url, read_import_file, save_download, test_log, test_exit])
+        .invoke_handler(tauri::generate_handler![native_info, native_play, native_stop, monitor_start, monitor_stop, monitor_gain, monitor_info, midi_ports, midi_start, pick_folder, create_project_folder, project_folder_ok, save_file, reveal_project_folder, take_pending_open, read_pulse_file, import_url, read_import_file, save_download, test_log, test_exit])
         .build(context)
         .expect("Pulse n'a pas pu démarrer la fenêtre")
         .run(|app, event| {

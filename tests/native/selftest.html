@@ -19,6 +19,16 @@ const f=document.getElementById('f'); const sleep=ms=>new Promise(r=>setTimeout(
   log('micro: secureContext='+w.isSecureContext+' mediaDevices='+(typeof w.navigator.mediaDevices)+' getUserMedia='+(w.navigator.mediaDevices&&typeof w.navigator.mediaDevices.getUserMedia)+' appareils='+(w.navigator.mediaDevices?(await w.navigator.mediaDevices.enumerateDevices()).map(d=>d.kind).join(','):'?'));
   { const ports = await window.__TAURI__.core.invoke('midi_ports'); const opened = await window.__TAURI__.core.invoke('midi_start'); log('midi: ports='+JSON.stringify(ports)+' ouverts='+JSON.stringify(opened)); }
   log('rust: '+JSON.stringify(await w.__TAURI__.core.invoke('native_info')));
+  // retour casque direct : vrai micro + vraie sortie, volume à ZÉRO (aucun larsen possible pendant le test)
+  { const inv=window.__TAURI__.core.invoke; await inv('monitor_gain',{gain:0});
+    try { const mi=await inv('monitor_start',{device:'',channel:0,buffer:64}); await sleep(1000); const m2=await inv('monitor_info'); log('monitor running='+m2.running+' buffer='+m2.buffer+' latence='+m2.latency_ms.toFixed(1)+'ms trous='+m2.underruns+' entree='+m2.input); }
+    catch(e){ log('monitor ERREUR '+e); }
+    await inv('monitor_stop'); await sleep(100); log('monitor après stop running='+(await inv('monitor_info')).running);
+    // le nom du micro vu par la page doit être retrouvé par le moteur natif
+    try { const st=await Promise.race([w.navigator.mediaDevices.getUserMedia({audio:true}), sleep(4000).then(()=>{ throw 'micro non autorisé dans la fenêtre de test (à vérifier à la main)'; })]); const lab=st.getAudioTracks()[0].label; st.getTracks().forEach(t=>t.stop());
+      const m3=await inv('monitor_start',{device:lab,channel:0,buffer:64}); log('monitor nom page="'+lab+'" -> natif="'+m3.input+'" running='+m3.running); }
+    catch(e){ log('monitor nom ERREUR '+e); }
+    await inv('monitor_stop'); }
   await w.togglePlay(); await sleep(300);
   log('après stop: rust playing='+(await w.__TAURI__.core.invoke('native_info')).playing+' isNative='+w.PulseAudio.isNative()); log('FIN'); window.__TAURI__.core.invoke('test_exit');
  }catch(e){ log('ERREUR '+String(e)+' | '+(e&&e.name)+' | '+(e&&e.message)+' | '+JSON.stringify(e)); } })();

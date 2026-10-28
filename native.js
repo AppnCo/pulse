@@ -15,7 +15,17 @@ window.PulseNative = (function () {
     const KEY = 'pulse_native_play';
     const isEnabled = () => { try { return isAvailable() && localStorage.getItem(KEY) === '1'; } catch { return false; } };
     const setEnabled = (on) => { try { localStorage.setItem(KEY, on ? '1' : '0'); } catch {} };
-    return { get available() { return isAvailable(); }, play, stop, info, isEnabled, setEnabled, onError: null };
+    // Retour casque direct par le moteur natif (activé par défaut dans l'appli ; coupé = retour par le moteur web)
+    const MKEY = 'pulse_native_monitor';
+    const monitor = {
+        isEnabled: () => { try { return isAvailable() && localStorage.getItem(MKEY) !== '0'; } catch { return false; } },
+        setEnabled: (on) => { try { localStorage.setItem(MKEY, on ? '1' : '0'); } catch {} },
+        start: (device, channel, buffer) => core().invoke('monitor_start', { device: device || '', channel: channel || 0, buffer }),
+        stop: () => isAvailable() ? core().invoke('monitor_stop') : Promise.resolve(),
+        gain: (g) => isAvailable() ? core().invoke('monitor_gain', { gain: g }) : Promise.resolve(),
+        info: () => isAvailable() ? core().invoke('monitor_info') : Promise.resolve(null),
+    };
+    return { get available() { return isAvailable(); }, play, stop, info, isEnabled, setEnabled, monitor, onError: null };
 })();
 
 // Claviers MIDI dans l'appli : la fenêtre n'a pas « Web MIDI », on lui prête la même interface avec CoreMIDI (Rust).

@@ -1307,12 +1307,58 @@ window.PulseAudio = (function() {
     let monitorGain = null, monitorOn = false, monitorHold = false, monitorRoute = true;
     try { monitorOn = localStorage.getItem('pulse_monitor') === '1'; } catch {}
     function applyMonitor() {
+        syncNativeMonitor();
         if (!ctx || !micSource) return;
         if (!monitorGain) { monitorGain = ctx.createGain(); monitorGain.connect(ctx.destination); }
         try { micSource.disconnect(monitorGain); } catch {}
-        const audible = monitorOn && monitorRoute;
+        // le retour direct de l'appli (ou son ouverture en cours) remplace le retour web : jamais les deux à la fois
+        const audible = monitorOn && monitorRoute && !nativeMon.active && !nativeMon.pending;
         monitorGain.gain.value = audible && !monitorHold ? 1 : 0;
         if (audible) micSource.connect(monitorGain);
+    }
+
+    // Retour direct (appli de bureau) : le moteur natif renvoie le micro dans le casque avec un tout petit tampon
+    // (64 / 128 / 256 échantillons selon la mémoire tampon), comme Pro Tools ou Logic. S'il ne peut pas s'ouvrir
+    // (micro introuvable, micro et casque à des fréquences différentes…), on garde le retour web, sans rien casser.
+    const NATIVE_MON_FRAMES = { petit: 64, moyen: 128, grand: 256 };
+    const nativeMon = { active: false, pending: false, key: '', info: null, error: '' };
+    const nativeMonUsable = () => !!(window.PulseNative && PulseNative.monitor && PulseNative.monitor.isEnabled());
+    function syncNativeMonitor() {
+        const want = monitorOn && monitorRoute && !!micStream && nativeMonUsable();
+        const ch = micChannelPref();   // le moteur natif voit toutes les entrées de l'interface (il borne lui-même)
+        const frames = NATIVE_MON_FRAMES[bufferMode] || 64;
+        const label = want ? getMicLabel() : '';
+        const key = want ? [label, ch, frames].join('|') : '';
+        const g = monitorHold ? 0 : 1;
+        if (key === nativeMon.key) { if (nativeMon.active) PulseNative.monitor.gain(g).catch(() => {}); return; }
+        nativeMon.key = key;
+        if (!want) {
+            const was = nativeMon.active || nativeMon.pending;
+            nativeMon.active = false; nativeMon.pending = false; nativeMon.info = null;
+            if (was && window.PulseNative && PulseNative.monitor) PulseNative.monitor.stop().catch(() => {});
+            return;
+        }
+        nativeMon.pending = true; nativeMon.active = false;
+        PulseNative.monitor.start(label, ch, frames).then((info) => {
+            if (nativeMon.key !== key) return;
+            nativeMon.pending = false; nativeMon.active = true; nativeMon.info = info; nativeMon.error = '';
+            PulseNative.monitor.gain(monitorHold ? 0 : 1).catch(() => {});
+            applyMonitor();
+            // le retard réel se lit une fois que le son circule
+            setTimeout(() => { if (nativeMon.key === key && nativeMon.active) PulseNative.monitor.info().then((i) => { if (i && nativeMon.key === key) nativeMon.info = i; }).catch(() => {}); }, 300);
+        }).catch((err) => {
+            if (nativeMon.key !== key) return;
+            nativeMon.pending = false; nativeMon.active = false; nativeMon.info = null;
+            nativeMon.error = String((err && err.message) || err);
+            applyMonitor();   // retour web à la place
+        });
+    }
+    function getNativeMonitor() { return { usable: nativeMonUsable(), active: nativeMon.active, pending: nativeMon.pending, info: nativeMon.info, error: nativeMon.error }; }
+    function setNativeMonitor(on) {
+        if (!(window.PulseNative && PulseNative.monitor)) return;
+        PulseNative.monitor.setEnabled(on);
+        nativeMon.error = '';
+        applyMonitor();
     }
     function setMonitor(on) {
         monitorOn = !!on;
@@ -1347,6 +1393,11 @@ window.PulseAudio = (function() {
             const st = micStream && micStream.getAudioTracks()[0].getSettings();
             if (st && typeof st.latency === 'number') inp = st.latency * 1000;
         } catch {}
+        if (nativeMon.active && nativeMon.info) {
+            // retour direct de l'appli : c'est lui qu'on entend
+            const i = nativeMon.info, est = i.latency_ms > 0 ? i.latency_ms : 3 * i.buffer * 1000 / (i.rate || 48000);
+            return { outMs: out, inMs: inp, totalMs: est, lowLatency, sampleRate: ctx.sampleRate, native: true, buffer: i.buffer };
+        }
         return { outMs: out, inMs: inp, totalMs: out + (inp || 0), lowLatency, sampleRate: ctx.sampleRate };
     }
 
@@ -1401,6 +1452,7 @@ window.PulseAudio = (function() {
             micStream.getTracks().forEach(t => t.stop());
             micStream = null;
         }
+        syncNativeMonitor();   // plus de micro : le retour direct se ferme aussi
     }
 
     // Latence aller-retour estimée (sortie + entrée) + correction manuelle (localStorage pulse_latency_ms)
@@ -3028,7 +3080,7 @@ window.PulseAudio = (function() {
 
     return {
         init, resumeIfNeeded, requestMic, releaseMic, getMicAnalyser, getRoundTripLatency,
-        hasMic, isCapturing, setMonitor, isMonitorOn, setMonitorRoute, isLowLatency, setLowLatency, getLatencyInfo, setCeiling, getCeiling: () => ceilingDb, getMasterVolume: () => masterVolume * 100, getBufferMode, setBufferMode, listInputs, setInputDevice, setMicChannel, getMicChannels, muteTrackBetween, calibrateLatency, getMicLabel, getMicDeviceId, consumeMicFallback, updateBusVolume,
+        hasMic, isCapturing, setMonitor, isMonitorOn, setMonitorRoute, getNativeMonitor, setNativeMonitor, getMonitorWebGain: () => (monitorGain ? monitorGain.gain.value : null), isLowLatency, setLowLatency, getLatencyInfo, setCeiling, getCeiling: () => ceilingDb, getMasterVolume: () => masterVolume * 100, getBufferMode, setBufferMode, listInputs, setInputDevice, setMicChannel, getMicChannels, muteTrackBetween, calibrateLatency, getMicLabel, getMicDeviceId, consumeMicFallback, updateBusVolume,
         startRecording, stopRecording,
         registerBuffer, hasBuffer, getBuffer, getBufferDuration, clearBuffers, computePeaks,
         play, stopAll, getPlaybackPosition, setNativeBackend, isNative, setBeatsPerBar,

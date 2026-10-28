@@ -3335,6 +3335,7 @@ function openSettings() {
 
             <h4 class="set-title">Retour casque</h4>
             ${toggle('setMonitor', PulseAudio.isMonitorOn(), 'M\'entendre dans le casque par Pulse', 'Coché : ta voix revient dans ton casque en passant par Pulse. Décoché : tu t\'entends par le retour direct de ta carte son, s\'il y en a un (pas de double retour). Mets un casque : sur des enceintes, ça siffle. Le bouton « i » de chaque piste choisit quelle voix tu entends.')}
+            ${window.PulseNative && PulseNative.available ? toggle('setNativeMon', PulseAudio.getNativeMonitor().usable, 'Retour direct par l\'appli (le plus rapide)', 'Coché : ta voix passe directement du micro au casque par le moteur de l\'appli, avec la plus petite mémoire tampon possible (quelques millisecondes, comme dans les logiciels des studios pros). Décoché : elle passe par le moteur habituel, un peu plus lent.') : ''}
             ${toggle('setLowLat', PulseAudio.isLowLatency(), 'Faible latence', 'Pulse demande à ton ordi le plus petit délai possible pour ton micro. À garder coché, sauf si ça craque.')}
             <div class="set-row" data-tooltip="Petite : le moins de retard dans ton casque, pour enregistrer. Grande : plus de marge pour ton ordi, pour mixer un gros projet sans aucun craquement.">
                 <span>Mémoire tampon <em>(petite pour enregistrer, grande pour mixer)</em></span>
@@ -3462,12 +3463,23 @@ function openSettings() {
         const info = PulseAudio.getLatencyInfo();
         if (!info) { v.textContent = 'Pas encore mesurée'; n.textContent = '(lance une lecture ou active le micro)'; return; }
         const ms = Math.round(info.totalMs);
-        v.textContent = `${ms} ms`;
-        n.textContent = ms <= 12 ? '(excellent : tu ne sens rien)'
+        v.textContent = info.native ? `≈ ${ms} ms` : `${ms} ms`;
+        n.textContent = info.native ? '(retour direct par l\'appli : tu ne sens rien)' : ms <= 12 ? '(excellent : tu ne sens rien)'
             : ms <= 25 ? '(correct pour chanter)'
             : '(trop long : branche une carte son, ferme les autres applis, ou utilise le retour direct de ta carte son avec « M\'entendre dans le casque par Pulse » coupé)';
     };
     showLatency();
+    const nativeMonBox = modal.querySelector('#setNativeMon');
+    if (nativeMonBox) nativeMonBox.addEventListener('change', (e) => {
+        PulseAudio.setNativeMonitor(e.target.checked);
+        flash(e.target.checked ? '⚡ Retour direct par l\'appli : le moins de retard possible dans ton casque' : 'Retour par le moteur habituel');
+        // le retour direct s'ouvre en quelques dizaines de millisecondes ; s'il échoue, on le dit
+        setTimeout(() => {
+            const nm = PulseAudio.getNativeMonitor();
+            if (e.target.checked && nm.error) flash('Retour direct impossible (' + nm.error + ') : tu t\'entends par le moteur habituel');
+            showLatency();
+        }, 600);
+    });
     modal.querySelector('#setBuffer').addEventListener('change', async (e) => {
         const m = e.target.value;
         if (state.recording || state._recStarting) { e.target.value = PulseAudio.getBufferMode(); flash('Arrête d\'abord l\'enregistrement en cours (Espace)'); return; }
