@@ -3336,6 +3336,10 @@ function openSettings() {
             <h4 class="set-title">Retour casque</h4>
             ${toggle('setMonitor', PulseAudio.isMonitorOn(), 'M\'entendre dans le casque par Pulse', 'Coché : ta voix revient dans ton casque en passant par Pulse. Décoché : tu t\'entends par le retour direct de ta carte son, s\'il y en a un (pas de double retour). Mets un casque : sur des enceintes, ça siffle. Le bouton « i » de chaque piste choisit quelle voix tu entends.')}
             ${toggle('setLowLat', PulseAudio.isLowLatency(), 'Faible latence', 'Pulse demande à ton ordi le plus petit délai possible pour ton micro. À garder coché, sauf si ça craque.')}
+            <div class="set-row" data-tooltip="Petite : le moins de retard dans ton casque, pour enregistrer. Grande : plus de marge pour ton ordi, pour mixer un gros projet sans aucun craquement.">
+                <span>Mémoire tampon <em>(petite pour enregistrer, grande pour mixer)</em></span>
+                <select id="setBuffer" class="set-select">${[['petit', 'Petite — enregistrer'], ['moyen', 'Moyenne'], ['grand', 'Grande — mixer']].map(([k, l]) => `<option value="${k}" ${PulseAudio.getBufferMode() === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+            </div>
             <div class="set-row">
                 <span>Retard entre ta voix et ce que tu entends <em id="setLatNote"></em></span>
                 <span id="setLatValue" class="set-mic">…</span>
@@ -3464,6 +3468,15 @@ function openSettings() {
             : '(trop long : branche une carte son, ferme les autres applis, ou utilise le retour direct de ta carte son avec « M\'entendre dans le casque par Pulse » coupé)';
     };
     showLatency();
+    modal.querySelector('#setBuffer').addEventListener('change', async (e) => {
+        const m = e.target.value;
+        if (state.recording || state._recStarting) { e.target.value = PulseAudio.getBufferMode(); flash('Arrête d\'abord l\'enregistrement en cours (Espace)'); return; }
+        if (state.playing) togglePlay();
+        const ok = await PulseAudio.setBufferMode(m);
+        if (!ok) { e.target.value = PulseAudio.getBufferMode(); flash('Mémoire tampon : impossible de changer pendant une prise'); return; }
+        flash(m === 'grand' ? 'Mémoire tampon grande : idéal pour mixer (un peu plus de retard au casque)' : m === 'moyen' ? 'Mémoire tampon moyenne' : 'Mémoire tampon petite : le moins de retard pour enregistrer');
+        setTimeout(showLatency, 400);
+    });
     modal.querySelector('#setLowLat').addEventListener('change', (e) => {
         const reopened = PulseAudio.setLowLatency(e.target.checked);
         flash(e.target.checked ? '⚡ Faible latence activée' + (reopened ? '' : ' : prise en compte à la prochaine prise') : 'Faible latence coupée');

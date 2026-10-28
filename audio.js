@@ -1137,6 +1137,31 @@ window.PulseAudio = (function() {
 
     // Deux appels en même temps doivent attendre la même préparation (sinon le second repart sans master)
     let initPromise = null;
+    // Mémoire tampon de la carte son (comme le réglage « taille de la mémoire tampon » de Logic / Pro Tools) :
+    // petite = le moins de retard au casque (rec), grande = plus de marge pour le calcul (mix chargé, jamais de craquement).
+    const BUFFER_HINTS = { petit: 'interactive', moyen: 'balanced', grand: 'playback' };
+    let bufferMode = 'petit';
+    try { const m = localStorage.getItem('pulse_buffer'); if (BUFFER_HINTS[m]) bufferMode = m; } catch {}
+    const getBufferMode = () => bufferMode;
+    // Change la mémoire tampon : le moteur audio est rouvert (lecture arrêtée, micro rouvert s'il l'était). Refusé pendant une prise.
+    async function setBufferMode(m) {
+        if (!BUFFER_HINTS[m]) return false;
+        if (recNode || recorder) return false;
+        bufferMode = m;
+        try { localStorage.setItem('pulse_buffer', m); } catch {}
+        if (!ctx) return true;
+        if (initPromise) { try { await initPromise; } catch {} }
+        const hadMic = !!micStream;
+        stopAll();
+        releaseMic();
+        if (monitorGain) { try { monitorGain.disconnect(); } catch {} monitorGain = null; }
+        const old = ctx;
+        ctx = null; initPromise = null; masterGain = null; masterAnalyser = null; liveLimiter = null; workletReady = null;
+        try { await old.close(); } catch {}
+        await init();
+        if (hadMic) { try { await requestMic(); } catch {} }
+        return true;
+    }
     function init() {
         if (!initPromise) initPromise = doInit().catch((e) => { initPromise = null; throw e; });
         return initPromise;
@@ -1146,7 +1171,7 @@ window.PulseAudio = (function() {
         // Fréquence : celle de la carte son (jamais forcée). Imposer 48 kHz sur une sortie en 44,1 kHz fait rééchantillonner
         // le navigateur en direct, d'où des craquements dans l'appli Mac (WebKit) alors que YouTube passe sans souci.
         ctx = new (window.AudioContext || window.webkitAudioContext)({
-            latencyHint: 'interactive'
+            latencyHint: BUFFER_HINTS[bufferMode] || 'interactive'
         });
         await ensureFx(ctx);
         masterGain = ctx.createGain();
@@ -3003,7 +3028,7 @@ window.PulseAudio = (function() {
 
     return {
         init, resumeIfNeeded, requestMic, releaseMic, getMicAnalyser, getRoundTripLatency,
-        hasMic, isCapturing, setMonitor, isMonitorOn, setMonitorRoute, isLowLatency, setLowLatency, getLatencyInfo, setCeiling, getCeiling: () => ceilingDb, getMasterVolume: () => masterVolume * 100, listInputs, setInputDevice, setMicChannel, getMicChannels, muteTrackBetween, calibrateLatency, getMicLabel, getMicDeviceId, consumeMicFallback, updateBusVolume,
+        hasMic, isCapturing, setMonitor, isMonitorOn, setMonitorRoute, isLowLatency, setLowLatency, getLatencyInfo, setCeiling, getCeiling: () => ceilingDb, getMasterVolume: () => masterVolume * 100, getBufferMode, setBufferMode, listInputs, setInputDevice, setMicChannel, getMicChannels, muteTrackBetween, calibrateLatency, getMicLabel, getMicDeviceId, consumeMicFallback, updateBusVolume,
         startRecording, stopRecording,
         registerBuffer, hasBuffer, getBuffer, getBufferDuration, clearBuffers, computePeaks,
         play, stopAll, getPlaybackPosition, setNativeBackend, isNative, setBeatsPerBar,

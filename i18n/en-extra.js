@@ -44,6 +44,10 @@ const exact = {
   'Coupé : tu t\'entends par le retour de ta carte son': 'Off: you hear yourself through your audio interface\'s monitoring',
   'Pas encore mesurée': 'Not measured yet', '(lance une lecture ou active le micro)': '(start playback or turn the mic on)', '(correct pour chanter)': '(fine for singing)',
   '⚡ Faible latence activée': '⚡ Low latency on',
+  'Mémoire tampon': 'Buffer size', '(petite pour enregistrer, grande pour mixer)': '(small to record, large to mix)', 'Petite — enregistrer': 'Small — record', 'Moyenne': 'Medium', 'Grande — mixer': 'Large — mix',
+  'Petite : le moins de retard dans ton casque, pour enregistrer. Grande : plus de marge pour ton ordi, pour mixer un gros projet sans aucun craquement.': 'Small: the least delay in your headphones, to record. Large: more headroom for your computer, to mix a big project without any crackle.',
+  'Mémoire tampon grande : idéal pour mixer (un peu plus de retard au casque)': 'Large buffer: ideal for mixing (a bit more delay in the headphones)', 'Mémoire tampon moyenne': 'Medium buffer', 'Mémoire tampon petite : le moins de retard pour enregistrer': 'Small buffer: the least delay for recording',
+  'Mémoire tampon : impossible de changer pendant une prise': 'Buffer size: can\'t change during a take',
   'Tout est affiché : bus de sécurité et sortie compris': 'Everything is shown: safety bus and output included',
   'Le bus de sécurité et la sortie sont de nouveau cachés (ils marchent toujours)': 'The safety bus and the output are hidden again (they still work)',
   // enregistrement
