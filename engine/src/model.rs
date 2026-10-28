@@ -16,6 +16,9 @@ pub struct Project {
     pub ceiling_db: Option<f64>,
     /// Changements de tempo en cours de morceau (paliers) : `beat` = noires depuis le début (tempo.js)
     pub tempos: Vec<TempoChange>,
+    /// Fader Master (100 = 0 dB affiché, comme `masterVolume` du navigateur)
+    #[serde(rename = "masterVolume")]
+    pub master_volume: Option<f64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]

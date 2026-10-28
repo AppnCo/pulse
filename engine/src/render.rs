@@ -149,6 +149,9 @@ pub fn render(project: &Project, media: &Media, opts: &RenderOptions) -> (Vec<f3
     let project = frozen.as_ref().unwrap_or(project);
     let shifted = with_track_delays(project);
     let project = shifted.as_ref().unwrap_or(project);
+    // le fader Master du projet s'ajoute au niveau de sortie (même calcul que setMasterVolume d'audio.js)
+    let fader = project.master_volume.filter(|v| v.is_finite()).map(|v| v.max(0.0) / 100.0).unwrap_or(1.0);
+    let opts = &RenderOptions { sample_rate: opts.sample_rate, master_volume: opts.master_volume * fader, range: opts.range, only_track: opts.only_track };
     let sr = opts.sample_rate as f64;
     let (from, to) = opts.range.unwrap_or((0.0, project.end()));
     // Queue : comme le navigateur, on laisse mourir les échos (4 s) ou la reverb (2,5 s) quand on rend tout le projet

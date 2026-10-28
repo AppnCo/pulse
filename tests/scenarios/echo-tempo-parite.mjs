@@ -22,6 +22,7 @@ export default async ({ ev, nav, sleep, check }) => {
     t.clips = [{ id: 'ton', start: 1.5, duration: 1, name: 'ton' }];
     t.effects = ['delay']; t.effectParams = { delay: { wet: 40, feedback: 50, beats: 0.5, pp: 1 } };
     p.tempos = [{ beat: 4, bpm: 75 }];
+    p.masterVolume = 60; PulseAudio.setMasterVolume(60);   // le fader Master compte aussi dans Rust
     saveProject();
     const toB64 = async (blob) => { const u = new Uint8Array(await blob.arrayBuffer()); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
     const { blob } = await PulseFile.pack(p);
@@ -48,6 +49,6 @@ export default async ({ ev, nav, sleep, check }) => {
   // énergie de l'écho après le changement : il est bien là dans les deux
   const tail = (x) => { let s = 0; for (let k = Math.round(2.6 * 48000); k < Math.round(3.6 * 48000) && k < x.length; k++) s += x[k] * x[k]; return s; };
   console.log(JSON.stringify({ frames: [a.L.length, z.L.length], worst, at: at / 48000, peak, tailJs: tail(a.L), tailRust: tail(z.L) }));
-  check('navigateur et Rust : même mix à l\'échantillon près (écart < 0,0005)', worst < 5e-4 && peak > 0.05, `écart max ${worst.toExponential(2)} à ${(at / 48000).toFixed(3)} s`);
+  check('navigateur et Rust : même mix à l\'échantillon près (écart < 0,0005)', worst < 5e-4 && peak > 0.03, `écart max ${worst.toExponential(2)} à ${(at / 48000).toFixed(3)} s`);
   check('les répétitions continuent après le changement de tempo', tail(a.L) > 1 && Math.abs(tail(a.L) - tail(z.L)) / tail(a.L) < 0.01, `${tail(a.L).toFixed(2)} / ${tail(z.L).toFixed(2)}`);
 };

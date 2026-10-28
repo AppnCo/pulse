@@ -23,7 +23,7 @@ const exact = {
   'Clique sur une piste pour voir ses réglages ici': 'Click a track to see its settings here',
   'Piste en mono : les deux côtés sont mélangés': 'Track in mono: both sides are mixed', 'Piste de nouveau en stéréo': 'Track back in stereo',
   '✓  Auto-Tune (déjà là — ouvrir)': '✓  Auto-Tune (already there — open)',
-  'Soudé': 'Glued', 'Plus serré': 'Tighter',
+  'Soudé': 'Glued', 'Plus serré': 'Tighter', 'S (ou ⌥S)': 'S (or ⌥S)',
   'Le fader monte jusqu\'à +6 dB': 'The fader goes up to +6 dB', 'Le fader monte jusqu\'à 0 dB : au-delà, le son saturerait': 'The fader goes up to 0 dB: beyond that, the sound would clip',
   // sauvegarde et export du projet
   'Où veux-tu ranger ton projet ?': 'Where do you want to keep your project?',

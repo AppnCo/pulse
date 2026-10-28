@@ -434,6 +434,19 @@ mod tests {
     }
 
     /// Tempo qui change en cours de morceau : l'écho 1/8 suit le tempo de l'endroit joué (comme Logic).
+    /// Le fader Master enregistré dans le projet (`masterVolume`) compte dans le mix, comme dans le navigateur ; pas pour un stem.
+    #[test]
+    fn fader_master_du_projet() {
+        let base = r#"{"bpm":120,"tracks":[{"volume":100,"clips":[{"id":"a","start":0,"duration":1}]}]}"#;
+        let p: Project = serde_json::from_str(base).unwrap();
+        let q: Project = serde_json::from_str(&base.replace(r#""bpm":120,"#, r#""bpm":120,"masterVolume":50,"#)).unwrap();
+        let a = at(&p, &opts(), 0.5);
+        let b = at(&q, &opts(), 0.5);
+        assert!(a > 0.01 && (b / a - 0.5).abs() < 1e-3, "{a} / {b}");
+        let stem = RenderOptions { only_track: Some(0), ..opts() };
+        assert!((at(&q, &stem, 0.5) - at(&p, &stem, 0.5)).abs() < 1e-6);
+    }
+
     /// Mêmes valeurs que le navigateur (tests/scenarios/echo-tempo-variable.mjs).
     #[test]
     fn echo_suit_la_piste_de_tempo() {

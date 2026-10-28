@@ -24,7 +24,6 @@ PulseTune
 Rap Studio
 Recent projects
 Reverb
-S (ou ⌥S)
 Simple Beat
 Simple setup: 1 vocal + 1 instrumental. Perfect for a quick first track.
 Slapback
