@@ -1254,7 +1254,7 @@ window.PulseAudio = (function() {
         return { input: comp, output: trim };
     }
 
-    function getMasterAnalyser() { return masterAnalyser; }
+    function getMasterAnalyser() { return nativeOn ? nativeMeter('master', lv => lv.master) : masterAnalyser; }
     // Spectre d'une piste en lecture (null à l'arrêt ou si la piste ne joue pas)
     // Réduction réelle du compresseur (dB) par piste ('t' + numéro) ou groupe ('b' + id), mise à jour pendant la lecture
     const compGR = new Map();
@@ -2197,6 +2197,55 @@ window.PulseAudio = (function() {
     let nativeBackend = null, nativeProject = null, nativeWall = 0, nativeFrom = 0, nativeOn = false, nativeTimer = null;
     function setNativeBackend(b) { nativeBackend = b || null; }
     function isNative() { return nativeOn; }
+    // Ce que le moteur natif renvoie pendant la lecture : position, niveaux (vumètres), boucle tenue par lui
+    let nativeLive = null, nativeLiveTimer = null, nativeLoopOk = false, nativeLoopSent = undefined;
+    function nativeLiveStart() {
+        clearInterval(nativeLiveTimer);
+        nativeLive = null;
+        if (!(nativeBackend && nativeBackend.live)) return;
+        let busy = false;
+        nativeLiveTimer = setInterval(async () => {
+            if (!nativeOn) { clearInterval(nativeLiveTimer); nativeLiveTimer = null; nativeLive = null; return; }
+            if (busy) return;
+            busy = true;
+            try {
+                const v = await nativeBackend.live();
+                if (!nativeOn || !v) return;
+                const now = performance.now();
+                nativeLive = { ...v, at: now };
+                nativeLoopOk = !!v.looping;
+                // on recale le curseur sur le moteur s'il s'en écarte (tour de boucle, petite dérive d'horloge)
+                if (v.playing) {
+                    const model = nativeFrom + (now - nativeWall) / 1000;
+                    if (Math.abs(model - v.position) > 0.04) { nativeFrom = v.position; nativeWall = now; }
+                }
+            } catch {} finally { busy = false; }
+        }, 33);
+    }
+    // Faux analyseurs pour les vumètres : remplis avec les niveaux envoyés par le moteur natif (crête ou efficace)
+    const nativeMeters = new Map();
+    function nativeMeter(key, pick) {
+        let m = nativeMeters.get(key);
+        if (!m) {
+            m = {
+                fftSize: 512, frequencyBinCount: 256, context: { sampleRate: 48000 }, _fresh: () => {
+                    const lv = nativeLive && nativeLive.levels;
+                    return lv && performance.now() - nativeLive.at < 250 ? pick(lv) : 0;
+                },
+                getFloatTimeDomainData(a) { a.fill(m._fresh() || 0); },
+                getByteTimeDomainData(a) { a.fill(Math.max(0, Math.min(255, Math.round(128 + 128 * (m._fresh() || 0))))); },
+                getFloatFrequencyData(a) { a.fill(-Infinity); },
+                getByteFrequencyData(a) { a.fill(0); },
+            };
+            nativeMeters.set(key, m);
+        }
+        return m;
+    }
+    const nativeTrackLevel = (lv, i) => lv.tracks.find(t => t[0] === i);
+    function nativeHasTrack(i) {
+        const lv = nativeLive && nativeLive.levels;
+        return !!(lv && nativeTrackLevel(lv, i));
+    }
     // Volume, pan, mute / solo, groupe : le moteur natif les prend en direct (sans relancer ni couper les queues de reverb)
     let nativeMixTimer = null;
     function nativeMixSoon() {
@@ -2279,6 +2328,12 @@ window.PulseAudio = (function() {
         const n = l ? { a: Math.min(l.start, l.end), b: Math.max(l.start, l.end) } : null;
         if ((!n && !loopCfg) || (n && loopCfg && Math.abs(n.a - loopCfg.a) < 1e-6 && Math.abs(n.b - loopCfg.b) < 1e-6)) return;
         loopCfg = n;
+        if (nativeOn && nativeBackend && nativeBackend.loop) {
+            // le moteur natif boucle lui-même ; jusqu'à sa réponse, la page garde la main
+            const key = n ? n.a + ',' + n.b : null;
+            if (key !== nativeLoopSent) { nativeLoopSent = key; nativeLoopOk = false; nativeBackend.loop(n).catch(() => {}); }
+            return;
+        }
         cancelLoopNext();
         armLoop();
     }
@@ -2286,7 +2341,10 @@ window.PulseAudio = (function() {
     function getRecWraps() { return recWraps.slice(); }
     // Position sur le temps continu de la capture (ne revient pas en arrière à chaque tour de boucle)
     function getRecLinearPosition() { return recAlign && ctx ? recAlign.p + (ctx.currentTime - recAlign.c) : getPlaybackPosition(); }
-    function loopScheduled() { return !!(loopCfg && isPlaying && !nativeOn && (loopTimer || loopNext || loopSwapTimer)); }
+    function loopScheduled() {
+        if (nativeOn) return !!(loopCfg && isPlaying && nativeLoopOk);
+        return !!(loopCfg && isPlaying && (loopTimer || loopNext || loopSwapTimer));
+    }
 
     // opts.smooth : relance pour un changement d'effet pendant la lecture → fondu enchaîné de 20 ms entre l'ancien et le nouveau montage,
     // même position, sans coupure (avant : le son s'arrêtait net, 50 ms de silence + un « clac » à chaque plugin ajouté)
@@ -2297,8 +2355,11 @@ window.PulseAudio = (function() {
             nativeProject = project; nativeFrom = fromTime;
             nativeOn = true; isPlaying = true;
             try {
-                await nativeBackend.play(project, fromTime);
+                nativeLoopSent = loopCfg ? loopCfg.a + ',' + loopCfg.b : null;
+                nativeLoopOk = !!(loopCfg && loopCfg.b - loopCfg.a >= 0.05);
+                await nativeBackend.play(project, fromTime, loopCfg);
                 nativeWall = performance.now();
+                nativeLiveStart();
             } catch (err) {
                 nativeOn = false; isPlaying = false;
                 console.error('moteur natif :', err);
@@ -2361,7 +2422,15 @@ window.PulseAudio = (function() {
     }
 
     function getPlaybackPosition() {
-        if (nativeOn) return nativeFrom + (performance.now() - nativeWall) / 1000;
+        if (nativeOn) {
+            let x = nativeFrom + (performance.now() - nativeWall) / 1000;
+            // le moteur boucle : le curseur repart au début de la boucle au même moment
+            if (loopCfg && nativeLoopOk && x >= loopCfg.b && loopCfg.b - loopCfg.a > 0.05) {
+                x = loopCfg.a + ((x - loopCfg.b) % (loopCfg.b - loopCfg.a));
+                nativeFrom = x; nativeWall = performance.now();
+            }
+            return x;
+        }
         if (!ctx) return 0;
         if (loopNext && ctx.currentTime >= loopNext.c) return loopNext.p + (ctx.currentTime - loopNext.c);
         return playbackStartProjectTime + (ctx.currentTime - playbackStartCtxTime);
@@ -2844,6 +2913,7 @@ window.PulseAudio = (function() {
 
     // Niveaux gauche / droite d'une piste (analyseurs avant pan) ; null si la piste ne joue pas
     function getTrackMeters(trackIdx) {
+        if (nativeOn) return nativeHasTrack(trackIdx) ? { l: nativeMeter('l' + trackIdx, lv => { const t = nativeTrackLevel(lv, trackIdx); return t ? t[1] : 0; }), r: nativeMeter('r' + trackIdx, lv => { const t = nativeTrackLevel(lv, trackIdx); return t ? t[2] : 0; }) } : null;
         const n = liveNodes.get(trackIdx);
         return n && n.meterL ? { l: n.meterL, r: n.meterR } : null;
     }
@@ -2858,6 +2928,7 @@ window.PulseAudio = (function() {
     }
 
     function getTrackAnalyser(trackIdx) {
+        if (nativeOn) return nativeHasTrack(trackIdx) ? nativeMeter('a' + trackIdx, lv => { const t = nativeTrackLevel(lv, trackIdx); return t ? t[3] : 0; }) : null;
         const n = liveNodes.get(trackIdx);
         return n ? n.analyser : null;
     }

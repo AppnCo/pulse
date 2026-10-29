@@ -1294,4 +1294,49 @@ mod tests {
         let worst = (settle..n).map(|k| (l[k] - l1[k]).abs()).fold(0.0f32, f32::max);
         assert!(worst < 1e-5, "piste remise : écart {worst}");
     }
+
+    /// Boucle (cycle) dans le mixeur au fil de l'eau : repart pile au début, sans trou, même quand la lecture part avant ou dans la boucle
+    #[test]
+    fn boucle_sans_trou() {
+        let p = project(vec![clip(0.0, 8.0, 0.0)]);
+        let m = ramp_media();
+        let sr = SR as f64;
+        let o = RenderOptions { master_volume: 1.0, sample_rate: SR, start: 2.5, ..Default::default() };
+        // départ à 2,5 s dans une boucle 2 → 3 s : le mixeur commence à 2 s puis saute à 2,5 s
+        let mut ren = crate::render::Renderer::new(&p, &m, &RenderOptions { master_volume: 1.0, sample_rate: SR, start: 2.0, ..Default::default() });
+        ren.seek(2.5);
+        assert!(ren.set_loop(Some((2.0, 3.0))));
+        // une boucle qui commence avant le début du mixeur est refusée (la page relance)
+        let mut other = crate::render::Renderer::new(&p, &m, &o);
+        assert!(!other.set_loop(Some((1.0, 3.0))));
+        let mut out = Vec::new();
+        let mut times = Vec::new();
+        let (mut l, mut r) = (vec![0.0f32; 1000], vec![0.0f32; 1000]);
+        for _ in 0..200 {
+            times.push(ren.time());
+            let n = ren.process(&m, &mut l, &mut r);
+            assert!(n > 0);
+            out.extend_from_slice(&l[..n]);
+            if ren.take_wrap() { times.push(-1.0); }
+        }
+        // 200 000 échantillons ≈ 4,2 s : 0,5 s jusqu'à la fin, puis des tours d'1 s
+        let val = |t: f64| (t / 10.0) as f32 * std::f32::consts::FRAC_1_SQRT_2;
+        let half = (0.5 * sr) as usize;
+        assert!((out[half - 200] - val(3.0 - 200.0 / sr)).abs() < 2e-3, "avant la fin de boucle");
+        assert!((out[half + 500] - val(2.0 + 500.0 / sr)).abs() < 2e-3, "après le tour : on est revenu à 2 s");
+        assert!((out[half + SR as usize + 500] - val(2.0 + 500.0 / sr)).abs() < 2e-3, "deuxième tour identique");
+        // le limiteur du master retarde le son d'≈ 1,5 ms : le creux du fondu tombe un peu après
+        let dip = out[half - 100..half + 200].iter().cloned().fold(1.0f32, f32::min);
+        assert!(dip < 0.03, "fondu au tour de boucle : {dip}");
+        assert_eq!(times.iter().filter(|t| **t < 0.0).count(), 4, "4 tours");
+        // enlever la boucle : on continue tout droit
+        assert!(ren.set_loop(None));
+        let t0 = ren.time();
+        for _ in 0..60 { ren.process(&m, &mut l, &mut r); }
+        assert!(ren.time() > t0 + 1.2 && !ren.take_wrap());
+        // niveaux : une piste qui joue a une crête et un efficace
+        let (lv, master) = ren.levels();
+        assert_eq!(lv.len(), 1);
+        assert!(lv[0].1 > 0.1 && lv[0].3 > 0.1 && master > 0.1, "{lv:?} {master}");
+    }
 }

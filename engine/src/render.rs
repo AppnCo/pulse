@@ -222,7 +222,20 @@ pub struct Renderer {
     limiter: Option<crate::fx::Limiter>,
     /// Options d'origine (sans le fader Master du projet), pour recalculer le mix en direct
     base: RenderOptions,
+    /// Boucle (cycle) en échantillons depuis `from` : arrivé à la fin, on repart du début sans trou ; les effets gardent leur état
+    loop_ab: Option<(usize, usize)>,
+    /// Vrai juste après un tour de boucle (lu une fois par `take_wrap`)
+    wrapped: bool,
+    /// Fondu d'entrée (≈ 2 ms) après un tour de boucle, jusqu'à cet échantillon : pas de clic à la reprise
+    fade_in_end: Option<usize>,
+    /// Niveaux du dernier bloc mixé : (piste, crête gauche, crête droite avant le pan, efficace après le pan)
+    levels: Vec<(usize, f32, f32, f32)>,
+    /// Niveau efficace du master sur le dernier bloc
+    master_rms: f32,
 }
+
+/// Fondu aux bords de la boucle (échantillons)
+const LOOP_FADE: usize = 96;
 
 /// Réglages de mix d'une piste (volume, route, envois, courbes, pan) : ce qui peut changer en direct sans relancer
 struct Taps { vol: f64, route_gain: f32, dest: Option<usize>, sends: Vec<SendTap>, aux: Vec<AuxTap>, curve: Option<Curve>, pan_curve: Option<Curve>, pan0: f64, on: bool }
@@ -378,14 +391,49 @@ impl Renderer {
         let sends = project.sends.iter().map(|sd| (!sd.muted).then(|| crate::fx::SendFx::new(sd, sr, project.bpm))).collect();
         let limiter = opts.only_track.is_none().then(|| crate::fx::Limiter::new(project.ceiling(), sr));
         let _ = base_opts;
-        Self { sr, from, to, frames, pos: 0, master_volume: opts.master_volume, only_track: opts.only_track.is_some(), n_buses: project.buses.len(), tracks, buses, sends, limiter, base: RenderOptions { sample_rate: opts.sample_rate, master_volume: base_opts.master_volume, range: opts.range, only_track: opts.only_track, start: opts.start } }
+        Self { sr, from, to, frames, pos: 0, master_volume: opts.master_volume, only_track: opts.only_track.is_some(), n_buses: project.buses.len(), tracks, buses, sends, limiter, base: RenderOptions { sample_rate: opts.sample_rate, master_volume: base_opts.master_volume, range: opts.range, only_track: opts.only_track, start: opts.start },
+               loop_ab: None, wrapped: false, fade_in_end: None, levels: Vec::new(), master_rms: 0.0 }
     }
 
     /// Longueur totale (échantillons), queue des effets comprise
     pub fn frames(&self) -> usize { self.frames }
     /// Échantillons déjà mixés
     pub fn position(&self) -> usize { self.pos }
-    pub fn is_done(&self) -> bool { self.pos >= self.frames }
+    pub fn is_done(&self) -> bool { self.pos >= self.frames && !self.loop_ab.is_some_and(|(_, b)| self.pos < b) }
+    /// Instant (secondes dans le morceau) du prochain échantillon à mixer
+    pub fn time(&self) -> f64 { self.from + self.pos as f64 / self.sr }
+    /// Saute à l'instant `t` (secondes, pas avant le début du mixeur) ; les effets gardent leur état, leurs courbes suivent
+    pub fn seek(&mut self, t: f64) {
+        let t = t.max(self.from);
+        self.pos = ((t - self.from) * self.sr).round() as usize;
+        let t = self.time();
+        for tr in &mut self.tracks { tr.chain.seek(t); }
+        for b in &mut self.buses { b.chain.seek(t); }
+    }
+    /// Pose (ou enlève) la boucle. Refusée (false) si elle commence avant le début du mixeur : il faut alors relancer.
+    /// Si la lecture est déjà après la fin de la boucle, on repart tout de suite de son début.
+    pub fn set_loop(&mut self, l: Option<(f64, f64)>) -> bool {
+        let Some((a, b)) = l else { self.loop_ab = None; self.fade_in_end = None; return true };
+        let (a, b) = (a.min(b), a.max(b));
+        if a < self.from - 1e-6 || b - a < 0.05 { return false; }
+        let fa = ((a - self.from) * self.sr).round() as usize;
+        let fb = ((b - self.from) * self.sr).round() as usize;
+        self.loop_ab = Some((fa, fb));
+        if self.pos >= fb { self.wrap(); }
+        true
+    }
+    fn wrap(&mut self) {
+        let Some((a, _)) = self.loop_ab else { return };
+        let t = self.from + a as f64 / self.sr;
+        self.seek(t);
+        self.wrapped = true;
+        self.fade_in_end = Some(a + LOOP_FADE);
+    }
+    pub fn has_loop(&self) -> bool { self.loop_ab.is_some() }
+    /// Vrai une fois après chaque tour de boucle
+    pub fn take_wrap(&mut self) -> bool { std::mem::take(&mut self.wrapped) }
+    /// Niveaux du dernier bloc : (piste, crête G, crête D, efficace) et efficace du master
+    pub fn levels(&self) -> (&[(usize, f32, f32, f32)], f32) { (&self.levels, self.master_rms) }
 
     /// Change en direct volumes, pan, mute / solo, doses d'envoi, volumes et pan des groupes, fader Master — sans relancer :
     /// les effets gardent leur état (une queue de reverb continue). La structure (régions, effets, sorties) doit rester la même :
@@ -427,7 +475,11 @@ impl Renderer {
 
     /// Mixe le bloc suivant dans `left` / `right` (effacés d'abord) ; renvoie le nombre d'échantillons écrits (0 = fini)
     pub fn process(&mut self, media: &Media, left: &mut [f32], right: &mut [f32]) -> usize {
-        let n = left.len().min(right.len()).min(self.frames - self.pos);
+        // en boucle : le bloc s'arrête pile à la fin de la boucle (même au-delà de la fin du morceau)
+        let limit = match self.loop_ab { Some((_, b)) if self.pos < b => b, _ => self.frames };
+        let n = left.len().min(right.len()).min(limit.saturating_sub(self.pos));
+        self.levels.clear();
+        self.master_rms = 0.0;
         left.iter_mut().for_each(|x| *x = 0.0);
         right.iter_mut().for_each(|x| *x = 0.0);
         if n == 0 {
@@ -494,6 +546,7 @@ impl Renderer {
                     None => (&mut *left, &mut *right),
                 };
                 let k = smooth_k(sr);
+                let (mut pk_l, mut pk_r, mut sq) = (0.0f32, 0.0f32, 0.0f32);
                 for m in 0..n {
                     let t = from + (b0 + m) as f64 / sr;
                     // réglages changés en direct : on glisse vers la nouvelle valeur (inchangé si rien ne bouge)
@@ -517,6 +570,10 @@ impl Renderer {
                         let a = (pan + 1.0) / 2.0 * FRAC_PI_2;
                         (l_in * a.cos() as f32, l_in * a.sin() as f32)
                     };
+                    // vumètre : crêtes après le fader, avant le pan (comme un canal de console) ; efficace après le pan
+                    pk_l = pk_l.max(l_in.abs());
+                    pk_r = pk_r.max((if tr.stereo { trr[m] * g } else { l_in }).abs());
+                    sq += ((l + r) * 0.5) * ((l + r) * 0.5);
                     dl[m] += l * tr.route_s;
                     dr[m] += r * tr.route_s;
                     for (i, level, c, pre) in &tr.sends {
@@ -532,6 +589,7 @@ impl Renderer {
                         aux_buf[k].1[m] += sr2 * level;
                     }
                 }
+                self.levels.push((tr.idx, pk_l, pk_r, (sq / n as f32).sqrt()));
             }
             // Envois vers un groupe : vers son entrée (groupe à effets) ou directement vers le master
             for ((_, _, g, d, _), (al, ar)) in tr.aux.iter().zip(aux_buf) {
@@ -620,8 +678,23 @@ impl Renderer {
                 right[m] = x[1] as f32;
             }
         }
+        // Bords de la boucle : fondu de sortie juste avant la fin, fondu d'entrée juste après la reprise
+        if let Some((_, b)) = self.loop_ab {
+            for m in 0..n {
+                let k = b0 + m;
+                let mut g = 1.0f32;
+                if k < b && k + LOOP_FADE >= b { g = (b - k) as f32 / LOOP_FADE as f32; }
+                if let Some(e) = self.fade_in_end { if k < e && k + LOOP_FADE >= e { g *= (LOOP_FADE - (e - k)) as f32 / LOOP_FADE as f32; } }
+                if g < 1.0 { left[m] *= g; right[m] *= g; }
+            }
+        }
+        if self.fade_in_end.is_some_and(|e| b0 + n >= e) { self.fade_in_end = None; }
+        let mut sq = 0.0f32;
+        for m in 0..n { let x = (left[m] + right[m]) * 0.5; sq += x * x; }
+        self.master_rms = (sq / n as f32).sqrt();
         let _ = self.to;
         self.pos += n;
+        if self.loop_ab.is_some_and(|(_, b)| self.pos == b) { self.wrap(); }
         n
     }
 }

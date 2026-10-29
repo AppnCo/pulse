@@ -46,6 +46,11 @@ async fn native_play(player: State<'_, Player>, sounds: State<'_, Sounds>, reque
     };
     let bytes = bytes.clone();
     let from: f64 = request.headers().get("from").and_then(|v| v.to_str().ok()).and_then(|s| s.parse().ok()).unwrap_or(0.0);
+    // boucle « début,fin » en secondes (en-tête facultatif)
+    let lp: Option<(f64, f64)> = request.headers().get("loop").and_then(|v| v.to_str().ok()).and_then(|s| {
+        let (a, b) = s.split_once(',')?;
+        Some((a.trim().parse().ok()?, b.trim().parse().ok()?))
+    });
     let rate = player.output_rate();
     if rate == 0 {
         return Err("aucune sortie audio trouvée — branche un casque ou des enceintes".into());
@@ -56,8 +61,7 @@ async fn native_play(player: State<'_, Player>, sounds: State<'_, Sounds>, reque
     let (renderer, media) = tauri::async_runtime::spawn_blocking(move || -> Result<_, String> {
         let (project, media, sizes) = file::open_sized(Cursor::new(bytes)).map_err(|e| e.to_string())?;
         *cache.lock().unwrap() = media.iter().map(|(id, s)| (id.clone(), (sizes.get(id).copied().unwrap_or(0), s.clone()))).collect();
-        let opts = render::RenderOptions { sample_rate: rate, start: from.max(0.0), ..Default::default() };
-        let r = render::Renderer::new(&project, &media, &opts);
+        let r = looped_renderer(&project, &media, rate, from, lp);
         Ok((r, media))
     })
     .await
@@ -72,7 +76,7 @@ struct Sounds(std::sync::Arc<Mutex<std::collections::HashMap<String, (u64, rende
 /// Relance la lecture avec le projet seul (JSON) et les sons déjà gardés. `sizes` = taille du WAV de chaque son utilisé :
 /// s'il en manque un (ou qu'il a changé), erreur « sons manquants » et la page renvoie tout le .pulse.
 #[tauri::command]
-async fn native_play_project(player: State<'_, Player>, sounds: State<'_, Sounds>, json: String, sizes: std::collections::HashMap<String, u64>, from: f64) -> Result<f64, String> {
+async fn native_play_project(player: State<'_, Player>, sounds: State<'_, Sounds>, json: String, sizes: std::collections::HashMap<String, u64>, from: f64, lp: Option<(f64, f64)>) -> Result<f64, String> {
     let rate = player.output_rate();
     if rate == 0 {
         return Err("aucune sortie audio trouvée — branche un casque ou des enceintes".into());
@@ -91,14 +95,26 @@ async fn native_play_project(player: State<'_, Player>, sounds: State<'_, Sounds
             }
             m
         };
-        let opts = render::RenderOptions { sample_rate: rate, start: from.max(0.0), ..Default::default() };
-        let r = render::Renderer::new(&project, &media, &opts);
+        let r = looped_renderer(&project, &media, rate, from, lp);
         Ok((r, media))
     })
     .await
     .map_err(|e| e.to_string())??;
     *sounds.1.lock().unwrap() = "projet".into();
     start_stream(&player, renderer, media, from, rate)
+}
+
+/// Mixeur qui part de `from` ; avec une boucle qui commence avant, il démarre au début de la boucle puis saute à `from`
+/// (pour que le premier tour de boucle ait bien tous les sons)
+fn looped_renderer(project: &pulse_engine::model::Project, media: &render::Media, rate: u32, from: f64, lp: Option<(f64, f64)>) -> render::Renderer {
+    let from = from.max(0.0);
+    let lp = lp.map(|(a, b)| (a.min(b).max(0.0), a.max(b))).filter(|(a, b)| b - a >= 0.05);
+    let first = lp.map_or(from, |(a, _)| a.min(from));
+    let opts = render::RenderOptions { sample_rate: rate, start: first, ..Default::default() };
+    let mut r = render::Renderer::new(project, media, &opts);
+    if first < from { r.seek(from); }
+    if lp.is_some() { r.set_loop(lp); }
+    r
 }
 
 fn start_stream(player: &Player, renderer: render::Renderer, media: render::Media, from: f64, rate: u32) -> Result<f64, String> {
@@ -117,6 +133,21 @@ fn native_mix(player: State<Player>, json: String) -> Result<(), String> {
     let project: pulse_engine::model::Project = serde_json::from_str(&json).map_err(|e| format!("projet illisible : {e}"))?;
     player.set_mix(project);
     Ok(())
+}
+
+/// Boucle posée, changée ou enlevée pendant la lecture (le mixeur la prend au bloc suivant)
+#[tauri::command]
+fn native_loop(player: State<Player>, lp: Option<(f64, f64)>) {
+    player.set_loop(lp);
+}
+
+/// Position dans le morceau + niveaux de ce qu'on entend (vumètres) + boucle tenue par le moteur
+#[derive(serde::Serialize)]
+struct Live { position: f64, playing: bool, looping: bool, levels: Option<pulse_engine::player::Levels> }
+
+#[tauri::command]
+fn native_live(player: State<Player>) -> Live {
+    Live { position: player.position(), playing: player.is_playing(), looping: player.loop_ok(), levels: player.levels() }
 }
 
 #[tauri::command]
@@ -580,7 +611,7 @@ fn main() {
         .manage(PendingOpen(Mutex::new(pending)))
         .manage(Midi(Mutex::new(Vec::new())))
         .manage(PickedRoot(Mutex::new(None)))
-        .invoke_handler(tauri::generate_handler![native_info, native_play, native_play_project, native_mix, native_stop, monitor_start, monitor_stop, monitor_gain, monitor_track, monitor_info, midi_ports, midi_start, pick_folder, create_project_folder, project_folder_ok, save_file, reveal_project_folder, take_pending_open, read_pulse_file, import_url, read_import_file, save_download, test_log, test_exit])
+        .invoke_handler(tauri::generate_handler![native_info, native_play, native_play_project, native_mix, native_loop, native_live, native_stop, monitor_start, monitor_stop, monitor_gain, monitor_track, monitor_info, midi_ports, midi_start, pick_folder, create_project_folder, project_folder_ok, save_file, reveal_project_folder, take_pending_open, read_pulse_file, import_url, read_import_file, save_download, test_log, test_exit])
         .build(context)
         .expect("Pulse n'a pas pu démarrer la fenêtre")
         .run(|app, event| {

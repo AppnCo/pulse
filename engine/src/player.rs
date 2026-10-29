@@ -7,7 +7,29 @@ use crate::render::{Media, Renderer};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Sender};
-use std::sync::Arc;
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
+
+/// Niveaux d'un bloc mixé, rangés selon l'échantillon (temps continu de la carte son) où il sera entendu
+#[derive(Clone, Default, serde::Serialize)]
+pub struct Levels {
+    /// (piste, crête gauche, crête droite, efficace)
+    pub tracks: Vec<(usize, f32, f32, f32)>,
+    pub master: f32,
+}
+
+/// Ce que le mixeur partage avec le reste : tours de boucle et niveaux, repérés sur le temps continu de la carte son
+#[derive(Default)]
+struct Shared {
+    /// (échantillon continu, décalage à ajouter pour avoir la position dans le morceau) à chaque tour de boucle
+    wraps: VecDeque<(usize, i64)>,
+    /// (échantillon continu du début du bloc, niveaux)
+    levels: VecDeque<(usize, Levels)>,
+    /// Boucle demandée par la page, à prendre par le mixeur (Some(None) = enlever la boucle)
+    loop_req: Option<Option<(f64, f64)>>,
+    /// Boucle acceptée par le mixeur
+    loop_ok: bool,
+}
 
 /// Taille d'un bloc mixé (échantillons)
 const BLOCK: usize = 1024;
@@ -35,6 +57,7 @@ pub struct Player {
     plays: AtomicU64,
     /// Nouveau mix (volumes, mute, solo…) à prendre en direct par le mixeur
     mix: Arc<std::sync::Mutex<Option<crate::model::Project>>>,
+    shared: Arc<Mutex<Shared>>,
     pub error: Arc<std::sync::Mutex<Option<String>>>,
 }
 
@@ -58,8 +81,9 @@ impl Player {
         let underruns = Arc::new(AtomicU64::new(0));
         let error = Arc::new(std::sync::Mutex::new(None));
         let mix: Arc<std::sync::Mutex<Option<crate::model::Project>>> = Arc::new(std::sync::Mutex::new(None));
+        let shared: Arc<Mutex<Shared>> = Arc::new(Mutex::new(Shared::default()));
         {
-            let (pos, total, rate, playing, underruns, error, mix) = (pos.clone(), total.clone(), rate.clone(), playing.clone(), underruns.clone(), error.clone(), mix.clone());
+            let (pos, total, rate, playing, underruns, error, mix, shared) = (pos.clone(), total.clone(), rate.clone(), playing.clone(), underruns.clone(), error.clone(), mix.clone(), shared.clone());
             std::thread::spawn(move || {
                 let mut stream: Option<cpal::Stream> = None;
                 let mut feeder: Option<Feeder> = None;
@@ -77,7 +101,7 @@ impl Player {
                         Cmd::Stop => playing.store(false, Ordering::SeqCst),
                         Cmd::Stream { renderer, media, start } => {
                             underruns.store(0, Ordering::SeqCst);
-                            match build(renderer, media, start, &pos, &total, &playing, &underruns, &mix) {
+                            match build(renderer, media, start, &pos, &total, &playing, &underruns, &mix, &shared) {
                                 Ok((s, f)) => { stream = Some(s); feeder = Some(f); *error.lock().unwrap() = None; }
                                 Err(e) => { playing.store(false, Ordering::SeqCst); *error.lock().unwrap() = Some(e); }
                             }
@@ -88,13 +112,20 @@ impl Player {
                 drop(feeder);
             });
         }
-        Self { tx, pos, total, rate, playing, underruns, plays: AtomicU64::new(0), mix, error }
+        Self { tx, pos, total, rate, playing, underruns, plays: AtomicU64::new(0), mix, shared, error }
     }
 
     /// Fréquence de la sortie par défaut (0 = aucune sortie audio)
     pub fn output_rate(&self) -> u32 { self.rate.load(Ordering::SeqCst) }
     /// Joue au fil de l'eau ce que `renderer` mixe. `start_frame` = position du début du mixage dans le morceau (échantillons).
     pub fn play_stream(&self, renderer: Renderer, media: Arc<Media>, start_frame: usize) {
+        {
+            let mut sh = self.shared.lock().unwrap();
+            sh.wraps.clear();
+            sh.levels.clear();
+            sh.loop_req = None;
+            sh.loop_ok = renderer.has_loop();
+        }
         self.playing.store(true, Ordering::SeqCst);
         self.plays.fetch_add(1, Ordering::SeqCst);
         self.pos.store(start_frame, Ordering::SeqCst);
@@ -106,11 +137,27 @@ impl Player {
     /// Volumes, pan, mute / solo, envois, groupes, Master changés : pris en direct (≈ 0,2 s), sans couper ni relancer
     pub fn set_mix(&self, project: crate::model::Project) { *self.mix.lock().unwrap() = Some(project); }
     pub fn is_playing(&self) -> bool { self.playing.load(Ordering::SeqCst) }
-    /// Position de lecture en secondes
+    /// Position de lecture en secondes (dans le morceau : tient compte des tours de boucle)
     pub fn position(&self) -> f64 {
         let r = self.output_rate().max(1) as f64;
-        self.pos.load(Ordering::Relaxed) as f64 / r
+        let p = self.pos.load(Ordering::Relaxed);
+        let mut sh = self.shared.lock().unwrap();
+        while sh.wraps.len() >= 2 && sh.wraps[1].0 <= p { sh.wraps.pop_front(); }
+        let off = match sh.wraps.front() { Some(&(at, o)) if at <= p => o, _ => 0 };
+        (p as i64 + off).max(0) as f64 / r
     }
+    /// Niveaux de ce qu'on entend en ce moment (None à l'arrêt)
+    pub fn levels(&self) -> Option<Levels> {
+        if !self.is_playing() { return None; }
+        let p = self.pos.load(Ordering::Relaxed);
+        let mut sh = self.shared.lock().unwrap();
+        while sh.levels.len() >= 2 && sh.levels[1].0 <= p { sh.levels.pop_front(); }
+        sh.levels.front().filter(|(at, _)| *at <= p + BLOCK).map(|(_, l)| l.clone())
+    }
+    /// Pose / enlève la boucle pendant la lecture. Renvoie l'état connu (le mixeur la prend au bloc suivant).
+    pub fn set_loop(&self, l: Option<(f64, f64)>) { self.shared.lock().unwrap().loop_req = Some(l); }
+    /// Vrai si le mixeur boucle lui-même (sinon la page doit relancer au début de la boucle)
+    pub fn loop_ok(&self) -> bool { let sh = self.shared.lock().unwrap(); sh.loop_req.is_none() && sh.loop_ok }
     /// Durée du morceau (secondes, queue des effets comprise)
     pub fn duration(&self) -> f64 { self.total.load(Ordering::Relaxed) as f64 / self.output_rate().max(1) as f64 }
     /// Moments où la réserve était vide (le mixeur n'a pas suivi) depuis le début de la lecture
@@ -122,14 +169,23 @@ impl Player {
 impl Default for Player { fn default() -> Self { Self::new() } }
 
 /// Fil mixeur : remplit la réserve (gauche, droite, gauche, droite…) tant qu'il y a de la place
-fn spawn_feeder(mut renderer: Box<Renderer>, media: Arc<Media>, ring: Arc<Ring>, done: Arc<AtomicBool>, mix: Arc<std::sync::Mutex<Option<crate::model::Project>>>) -> Feeder {
+fn spawn_feeder(mut renderer: Box<Renderer>, media: Arc<Media>, ring: Arc<Ring>, done: Arc<AtomicBool>, mix: Arc<std::sync::Mutex<Option<crate::model::Project>>>, shared: Arc<Mutex<Shared>>, start: usize, rate: f64) -> Feeder {
     let stop = Arc::new(AtomicBool::new(false));
     let st = stop.clone();
     let handle = std::thread::Builder::new().name("pulse-mixeur".into()).spawn(move || {
         let (mut l, mut r) = (vec![0.0f32; BLOCK], vec![0.0f32; BLOCK]);
+        // temps continu de la carte son (ne revient jamais en arrière) du prochain échantillon poussé
+        let mut lin = start;
         while !st.load(Ordering::Relaxed) {
             let next = mix.lock().ok().and_then(|mut g| g.take());
             if let Some(p) = next { renderer.mix_from(&p, &media); }
+            let req = shared.lock().ok().and_then(|mut g| g.loop_req.take());
+            if let Some(lp) = req {
+                let ok = renderer.set_loop(lp);
+                let mut sh = shared.lock().unwrap();
+                sh.loop_ok = ok && lp.is_some();
+                if renderer.take_wrap() { sh.wraps.push_back((lin, (renderer.time() * rate).round() as i64 - lin as i64)); }
+            }
             if ring.len() >= 2 * AHEAD_FRAMES || ring.capacity() - ring.len() < 2 * BLOCK {
                 std::thread::sleep(std::time::Duration::from_millis(2));
                 continue;
@@ -138,6 +194,19 @@ fn spawn_feeder(mut renderer: Box<Renderer>, media: Arc<Media>, ring: Arc<Ring>,
             for k in 0..n {
                 ring.push(l[k]);
                 ring.push(r[k]);
+            }
+            {
+                let (tracks, master) = renderer.levels();
+                let mut sh = shared.lock().unwrap();
+                if n > 0 {
+                    sh.levels.push_back((lin, Levels { tracks: tracks.to_vec(), master }));
+                    while sh.levels.len() > 256 { sh.levels.pop_front(); }
+                }
+                lin += n;
+                if renderer.take_wrap() {
+                    sh.wraps.push_back((lin, (renderer.time() * rate).round() as i64 - lin as i64));
+                    while sh.wraps.len() > 256 { sh.wraps.pop_front(); }
+                }
             }
             if renderer.is_done() {
                 done.store(true, Ordering::SeqCst);
@@ -151,7 +220,7 @@ fn spawn_feeder(mut renderer: Box<Renderer>, media: Arc<Media>, ring: Arc<Ring>,
 fn build(
     renderer: Box<Renderer>, media: Arc<Media>, start: usize,
     pos: &Arc<AtomicUsize>, total: &Arc<AtomicUsize>, playing: &Arc<AtomicBool>, underruns: &Arc<AtomicU64>,
-    mix: &Arc<std::sync::Mutex<Option<crate::model::Project>>>,
+    mix: &Arc<std::sync::Mutex<Option<crate::model::Project>>>, shared: &Arc<Mutex<Shared>>,
 ) -> Result<(cpal::Stream, Feeder), String> {
     let host = cpal::default_host();
     let device = host.default_output_device().ok_or("aucune sortie audio trouvée — branche un casque ou des enceintes")?;
@@ -165,7 +234,8 @@ fn build(
     total.store(start + frames, Ordering::SeqCst);
     let ring = Arc::new(Ring::new(RESERVE));
     let done = Arc::new(AtomicBool::new(frames == 0));
-    let feeder = spawn_feeder(renderer, media, ring.clone(), done.clone(), mix.clone());
+    let rate = config.sample_rate().0 as f64;
+    let feeder = spawn_feeder(renderer, media, ring.clone(), done.clone(), mix.clone(), shared.clone(), start, rate);
     // un peu d'avance avant le premier son (au plus 2 s d'attente)
     let t0 = std::time::Instant::now();
     while ring.len() < 2 * START_FRAMES.min(frames) && !done.load(Ordering::SeqCst) && t0.elapsed() < std::time::Duration::from_secs(2) {

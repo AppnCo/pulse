@@ -1579,6 +1579,16 @@ impl Chain {
         self.auto_from = from;
         self
     }
+    /// Saut dans le morceau (tour de boucle) : les effets gardent leur état, les courbes et le tempo repartent de `t`
+    pub fn seek(&mut self, t: f64) {
+        self.auto_from = t;
+        self.pos = 0;
+        if self.tempo.len() >= 2 {
+            let i = self.tempo.iter().rposition(|s| s.0 <= t + 1e-9).unwrap_or(0);
+            if i != self.tempo_i { if let Some(d) = &mut self.delay { d.set_bpm(self.tempo[i].1); } }
+            self.tempo_i = i;
+        }
+    }
     /// Branche les courbes d'automation des réglages d'effet (`from` = instant du premier échantillon traité)
     pub fn with_auto(mut self, automation: &Automation, from: f64) -> Self {
         for (k, c) in &automation.other {

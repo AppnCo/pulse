@@ -14,7 +14,7 @@ P
 (cd src-tauri && cargo build 2>&1 | grep -E "^error|Finished")
 PULSE_TEST=1 "$CARGO_TARGET_DIR/debug/pulse-app" 2>/dev/null > /tmp/pulse-native-test.log &
 PID=$!
-for i in $(seq 1 40); do grep -q FIN /tmp/pulse-native-test.log 2>/dev/null && break; sleep 1; done
+for i in $(seq 1 70); do grep -q FIN /tmp/pulse-native-test.log 2>/dev/null && break; sleep 1; done
 kill $PID 2>/dev/null || true
 cat /tmp/pulse-native-test.log
-grep -q "isNative=true pos=" /tmp/pulse-native-test.log && grep -q "relance: première=pulse puis=projet" /tmp/pulse-native-test.log && grep -q "mute en direct: relances=0 avance=0.[3-5]" /tmp/pulse-native-test.log && grep -q "relance: première=pulse puis=projet" /tmp/pulse-native-test.log && grep -q "monitor running=true" /tmp/pulse-native-test.log && grep -q "monitor après stop running=false" /tmp/pulse-native-test.log && grep -q FIN /tmp/pulse-native-test.log && echo "OK" || { echo "ECHEC"; exit 1; }
+grep -q "isNative=true pos=" /tmp/pulse-native-test.log && grep -q "relance: première=pulse puis=projet" /tmp/pulse-native-test.log && grep -q "mute en direct: relances=0 avance=0.[3-5]" /tmp/pulse-native-test.log && grep -q "relance: première=pulse puis=projet" /tmp/pulse-native-test.log && grep -q "monitor running=true" /tmp/pulse-native-test.log && grep -q "monitor après stop running=false" /tmp/pulse-native-test.log && grep -q "boucle native: relances=0 hors_boucle=0" /tmp/pulse-native-test.log && grep -q "looping=true trous=0" /tmp/pulse-native-test.log && grep -qE "vumetres natifs: piste=0\.[0-9]*[1-9][0-9]* master=[1-9]" /tmp/pulse-native-test.log && grep -qE "boucle changée: relances=0 rust_pos=1\.[2-7]" /tmp/pulse-native-test.log && grep -q FIN /tmp/pulse-native-test.log && echo "OK" || { echo "ECHEC"; exit 1; }

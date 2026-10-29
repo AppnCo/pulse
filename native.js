@@ -5,7 +5,9 @@ window.PulseNative = (function () {
     const isAvailable = () => !!(core() && core().invoke);
     // Les sons restent en mémoire dans le moteur : on n'envoie d'abord que le projet (rapide, même avec de gros WAV).
     // Si un son lui manque (nouvelle prise, import…), on envoie tout le .pulse, sons compris.
-    async function play(project, from = 0) {
+    // loop = { a, b } (secondes) : le moteur boucle lui-même, sans trou
+    async function play(project, from = 0, loop = null) {
+        const lp = loop && loop.b - loop.a >= 0.05 ? [loop.a, loop.b] : null;
         if (!isAvailable()) throw new Error('moteur natif absent');
         try {
             const sizes = {};
@@ -13,17 +15,23 @@ window.PulseNative = (function () {
                 const b = await PulsePersist.loadBlob(id);
                 if (b) sizes[id] = b.size;
             }
-            return await core().invoke('native_play_project', { json: JSON.stringify(project), sizes, from });
+            return await core().invoke('native_play_project', { json: JSON.stringify(project), sizes, from, lp });
         } catch (err) {
             if (!/sons manquants/.test(String((err && err.message) || err))) throw err;
         }
         const { blob } = await PulseFile.pack(project);
         const bytes = new Uint8Array(await blob.arrayBuffer());
-        return core().invoke('native_play', bytes, { headers: { from: String(from) } });
+        const headers = { from: String(from) };
+        if (lp) headers.loop = lp[0] + ',' + lp[1];
+        return core().invoke('native_play', bytes, { headers });
     }
     const stop = () => isAvailable() ? core().invoke('native_stop') : Promise.resolve();
     // volumes, pan, mute / solo… changés pendant la lecture : le moteur les prend en direct, sans relancer
     const mix = (project) => isAvailable() ? core().invoke('native_mix', { json: JSON.stringify(project) }) : Promise.resolve();
+    // Boucle posée / changée / enlevée pendant la lecture
+    const loop = (l) => isAvailable() ? core().invoke('native_loop', { lp: l ? [l.a, l.b] : null }) : Promise.resolve();
+    // Position dans le morceau, niveaux pour les vumètres, boucle tenue par le moteur
+    const live = () => isAvailable() ? core().invoke('native_live') : Promise.resolve(null);
     const info = () => isAvailable() ? core().invoke('native_info') : Promise.resolve(null);
     // Réglage « lire avec le moteur natif » (désactivé par défaut)
     const KEY = 'pulse_native_play';
@@ -40,7 +48,7 @@ window.PulseNative = (function () {
         track: (json) => isAvailable() ? core().invoke('monitor_track', { json: json || '' }) : Promise.resolve(),
         info: () => isAvailable() ? core().invoke('monitor_info') : Promise.resolve(null),
     };
-    return { get available() { return isAvailable(); }, play, stop, mix, info, isEnabled, setEnabled, monitor, onError: null };
+    return { get available() { return isAvailable(); }, play, stop, mix, loop, live, info, isEnabled, setEnabled, monitor, onError: null };
 })();
 
 // Claviers MIDI dans l'appli : la fenêtre n'a pas « Web MIDI », on lui prête la même interface avec CoreMIDI (Rust).

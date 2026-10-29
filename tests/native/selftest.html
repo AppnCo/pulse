@@ -37,6 +37,22 @@ const f=document.getElementById('f'); const sleep=ms=>new Promise(r=>setTimeout(
       const m3=await inv('monitor_start',{device:lab,channel:0,buffer:64}); log('monitor nom page="'+lab+'" -> natif="'+m3.input+'" running='+m3.running); }
     catch(e){ log('monitor nom ERREUR '+e); }
     await inv('monitor_stop'); }
+  // boucle tenue par le moteur natif (sans relance) + vumètres alimentés par le moteur ; volume bas pour ne pas casser les oreilles
+  { const inv=window.__TAURI__.core.invoke;
+    await w.togglePlay(); await sleep(200);
+    ST.project.tracks[0].volume=15; ST.looping=true; ST.loop={start:1,end:2}; ST.playhead=1;
+    await w.togglePlay(); await sleep(300); const n0=await inv('native_info');
+    let lvl=0, mst=0, out=0, minPos=9, maxPos=0;
+    for(let k=0;k<25;k++){ w.PulseAudio.setLoop(ST.loop); await sleep(100); const pos=w.PulseAudio.getPlaybackPosition(); minPos=Math.min(minPos,pos); maxPos=Math.max(maxPos,pos); if(pos<0.98||pos>2.02) out++;
+      const mt=w.PulseAudio.getTrackMeters(0); if(mt){ const a=new Float32Array(64); mt.l.getFloatTimeDomainData(a); lvl=Math.max(lvl,a[0]); }
+      const ma=w.PulseAudio.getMasterAnalyser(); const b=new Uint8Array(ma.frequencyBinCount); ma.getByteTimeDomainData(b); mst=Math.max(mst,Math.abs(b[0]-128)); }
+    const n1=await inv('native_info'); const lv=await inv('native_live');
+    log('boucle native: relances='+(n1.plays-n0.plays)+' hors_boucle='+out+' pos_min='+minPos.toFixed(2)+' pos_max='+maxPos.toFixed(2)+' rust_pos='+lv.position.toFixed(2)+' looping='+lv.looping+' trous='+n1.underruns);
+    log('vumetres natifs: piste='+lvl.toFixed(3)+' master='+mst+' engineLoops='+w.PulseAudio.loopScheduled());
+    // boucle déplacée pendant la lecture : prise en direct
+    ST.loop={start:1.2,end:1.8}; for(let k=0;k<15;k++){ w.PulseAudio.setLoop(ST.loop); await sleep(100); } const n2=await inv('native_info'); const lv2=await inv('native_live');
+    log('boucle changée: relances='+(n2.plays-n1.plays)+' rust_pos='+lv2.position.toFixed(2)+' looping='+lv2.looping);
+    ST.looping=false; ST.project.tracks[0].volume=100; }
   await w.togglePlay(); await sleep(300);
   log('après stop: rust playing='+(await w.__TAURI__.core.invoke('native_info')).playing+' isNative='+w.PulseAudio.isNative()); log('FIN'); window.__TAURI__.core.invoke('test_exit');
  }catch(e){ log('ERREUR '+String(e)+' | '+(e&&e.name)+' | '+(e&&e.message)+' | '+JSON.stringify(e)); } })();

@@ -3436,6 +3436,8 @@ async function togglePlay(fromRec = false) {
         const useNative = !fromRec && window.PulseNative && PulseNative.isEnabled() && !state.recording;
         if (useNative) PulseNative.onError = (err) => flash('Le moteur natif n\'a pas pu jouer (' + (err && err.message || err) + ') : lecture par le moteur habituel');
         PulseAudio.setNativeBackend(useNative ? PulseNative : null);
+        // le moteur natif reçoit la boucle dès le départ (il la tient lui-même, sans trou)
+        if (useNative && PulseAudio.setLoop) PulseAudio.setLoop(state.looping && state.loop ? state.loop : null);
         const from0 = state.playhead;
         if (!fromRec) state.playOrigin = state.baseCleared ? null : state.playhead;   // le curseur revient ici à l'arrêt (comme Logic) ; sans base il reste où il s'arrête
         try { await PulseAudio.play(state.project, state.playhead); } catch (err) { console.error(err); }

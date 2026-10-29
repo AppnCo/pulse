@@ -13,7 +13,7 @@
     "allow-native-info",
     "allow-native-play",
     "allow-native-play-project",
-    "allow-native-mix",
+    "allow-native-mix", "allow-native-loop", "allow-native-live",
     "allow-native-stop",
     "allow-monitor-start",
     "allow-monitor-stop",
