@@ -64,5 +64,12 @@ export default async ({ ev, nav, send, sleep }) => {
   r = await ev(`mouseTool('left')+'/'+document.querySelector('.tool-pick[data-which="left"]').dataset.tool`); check('B = Ciseaux dans le menu', r === 'cut/cut', r);
   await ev(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'b',bubbles:true})); 1`); await sleep(100);
   r = await ev(`mouseTool('left')`); check('B à nouveau = Pointeur', r === 'pointer', r);
+  // Y = menu des outils sous la souris
+  await mouse('mouseMoved', X(8), Y(0, 0.5));
+  await ev(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'y',bubbles:true})); 1`); await sleep(150);
+  r = await ev(`(()=>{const m=document.querySelector('.tool-menu'); if(!m) return 'aucun'; const b=m.getBoundingClientRect(); document.querySelectorAll('.tool-menu').forEach(x=>x.remove()); return Math.abs(b.left-${X(8)})<40?'sous la souris':'ailleurs'})()`);
+  check('Y ouvre le menu des outils sous la souris', r === 'sous la souris', r);
+  r = await ev(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'t',bubbles:true})); String(!!document.querySelector('.tool-menu'))`);
+  check('T reste le tap tempo (pas de menu)', r === 'false', r);
   console.log(ok ? 'RESULTAT: OK' : 'RESULTAT: ECHEC'); if (!ok) throw new Error('outils-logic en échec');
 };

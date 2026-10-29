@@ -4462,6 +4462,7 @@ const SHORTCUT_GROUPS = [
             ['F', 'Effacer ce qui est à droite du curseur de base'],
             ['⌘X', 'Couper la région : la copier et l\'effacer d\'un coup (⌘V la recolle)'],
             ['B', 'Ciseaux : scinder une région là où tu cliques'],
+            ['Y', 'Menu des outils (Pointeur, Crayon, Gomme…) sous la souris'],
             ['Double-clic sur une région', 'La scinder : garde le 2e clic enfoncé, glisse pour choisir l\'endroit, relâche pour couper (Échap annule) — sur son nom : la renommer'],
             ['⌘C', 'Copier la région choisie'],
             ['⌘V', 'Coller à la position du curseur'],
@@ -11659,6 +11660,9 @@ function renderToolMenus() {
         openToolMenu(b.dataset.which, r.left, r.bottom + 4);
     }));
 }
+// Dernière position de la souris (le menu des outils s'ouvre dessous avec Y)
+const _lastMouse = { x: 300, y: 200 };
+document.addEventListener('mousemove', (e) => { _lastMouse.x = e.clientX; _lastMouse.y = e.clientY; }, { passive: true });
 function openToolMenu(which, x, y) {
     document.querySelectorAll('.tool-menu').forEach(m => m.remove());
     const ico = (k) => `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${MOUSE_TOOL_ICONS[k] || ''}</svg>`;
@@ -13548,7 +13552,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (k === 'u' && !mod && !shift && !e.altKey) { e.preventDefault(); loopFromSelection(); return; }
         if (k === 'l' || (k === 'c' && !mod && !shift && !e.altKey)) { document.getElementById('btnLoop').click(); return; }   // C = boucle (cycle) comme dans Logic
         if (k === 'k') { document.getElementById('btnMetronome').click(); return; }  // K = click/métronome (comme Logic)
-        if (k === 't') { e.preventDefault(); toggleTapMode(); return; }              // T = toggle mode tap (puis Espace tape)
+        if (k === 't') { e.preventDefault(); toggleTapMode(); return; }
+        if (k === 'y' && !mod) { e.preventDefault(); openToolMenu('left', _lastMouse.x, _lastMouse.y); return; }   // Y = menu des outils, là où est la souris (T de Logic ; ici T = tap tempo)              // T = toggle mode tap (puis Espace tape)
 
         // Zoom (Pro Tools style, adapté : E = zoom in, Z = zoom out)
         // E / Z : zoom calé sur la souris si elle est sur la timeline, sinon sur le curseur de base ; le défilement auto se met en pause
