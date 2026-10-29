@@ -1474,7 +1474,7 @@ async function importAudioFile(file, trackIdx, atTime = null, opts = {}) {
         // Un fichier posé sur une piste vide, pas armée : c'est l'instru → la piste devient « Instru » (icône à part, la voix ira ailleurs)
         // (seulement s'il n'y a pas déjà une instru et si la piste n'est pas rangée dans un groupe : une voix déposée sur « Lead » reste une voix)
         const inGroup = t.output && t.output !== 'master' && (state.project.buses || []).some(b => b.id === t.output && b.isGroup);
-        if (!t.clips.length && !t.armed && !t.isCapture && (!t.type || t.type === 'audio') && !inGroup
+        if (!opts.noInstru && !t.clips.length && !t.armed && !t.isCapture && (!t.type || t.type === 'audio') && !inGroup
             && !state.project.tracks.some((o, oi) => oi !== trackIdx && isInstruTrack(o))) {
             t.type = 'inst';
             if (/^Piste \d+$/.test(t.name || '')) t.name = 'Instru';
@@ -1716,6 +1716,68 @@ function addMarker(time) {
     saveProject();
     renderMarkers();
     flash(`Marqueur posé`);
+}
+
+// Fenêtre « Ajouter les fichiers » (comme Logic) quand on dépose plusieurs sons d'un coup.
+// Renvoie 'new' (une piste par fichier), 'one' (tous à la suite sur une piste), 'existing' (sur les pistes déjà là) ou null.
+const MULTI_IMPORT_KEY = 'pulse_multi_import';
+function askMultiImport(n) {
+    return new Promise((resolve) => {
+        let last = 'new'; try { last = localStorage.getItem(MULTI_IMPORT_KEY) || 'new'; } catch {}
+        const opts = [
+            ['new', 'Créer de nouvelles pistes', 'Une piste par fichier, tous calés au même endroit (idéal pour des pistes séparées / stems)'],
+            ['one', 'Placer tous les fichiers sur une seule piste', 'Les fichiers se suivent, l\'un après l\'autre'],
+            ['existing', 'Utiliser les pistes existantes', 'Le 1er fichier va sur la piste visée, les suivants sur les pistes en dessous (créées si besoin)']
+        ];
+        const bd = document.createElement('div');
+        bd.className = 'modal-backdrop visible';
+        bd.innerHTML = `<div class="modal ask-modal multi-import-modal">
+            <h2 class="modal-title">Ajouter ${n} fichiers</h2>
+            <div class="mi-opts">${opts.map(([v, l, h]) => `<label class="mi-opt"><input type="radio" name="miOpt" value="${v}"${v === last ? ' checked' : ''}><span><b>${l}</b><small>${h}</small></span></label>`).join('')}</div>
+            <div class="ask-actions"><button class="ask-cancel">Annuler</button><button class="ask-ok">OK</button></div>
+        </div>`;
+        document.body.appendChild(bd);
+        const done = (v) => { bd.remove(); document.removeEventListener('keydown', key, true); if (v) { try { localStorage.setItem(MULTI_IMPORT_KEY, v); } catch {} } resolve(v); };
+        const pick = () => bd.querySelector('input[name=miOpt]:checked')?.value || 'new';
+        const key = (e) => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); done(pick()); } else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(null); } };
+        document.addEventListener('keydown', key, true);
+        bd.querySelector('.ask-ok').onclick = () => done(pick());
+        bd.querySelector('.ask-cancel').onclick = () => done(null);
+        bd.querySelector('.mi-opts').addEventListener('dblclick', (e) => { if (e.target.closest('.mi-opt')) done(pick()); });
+        bd.addEventListener('mousedown', (e) => { if (e.target === bd) done(null); e.stopPropagation(); });
+        setTimeout(() => bd.querySelector('.ask-ok').focus(), 30);
+    });
+}
+
+async function importDroppedFiles(files, mode, at, targetIdx) {
+    const T = state.project.tracks;
+    const newTrack = (name) => {
+        const i = T.length;
+        T.push({ name: name.replace(/\.[^.]+$/, '').slice(0, 24), type: 'audio', color: COLORS[i % COLORS.length], clips: [], output: 'master', volume: 100 });
+        return i;
+    };
+    pushUndo();
+    const undoDepth = _undoStack.length;
+    const multi = files.length > 1;
+    let made = 0, pos = at, oneIdx = -1;
+    for (let k = 0; k < files.length; k++) {
+        const f = files[k];
+        let idx, created = false;
+        if (mode === 'one') { if (oneIdx < 0) { oneIdx = newTrack(f.name); created = true; } idx = oneIdx; }
+        else if (mode === 'existing') { idx = targetIdx + k; if (idx >= T.length) { idx = newTrack(f.name); created = true; } }
+        else { idx = newTrack(f.name); created = true; }
+        renderAll();
+        const ok = await importAudioFile(f, idx, pos, { noUndo: true, noInstru: multi });
+        if (ok) {
+            made++;
+            if (mode === 'one') { const c = T[idx].clips[T[idx].clips.length - 1]; pos = c.start + c.duration; }
+        } else if (created && !(T[idx].clips || []).length) {
+            // Fichier illisible : on ne laisse pas une piste vide à son nom
+            T.splice(idx, 1); if (idx === oneIdx) oneIdx = -1; renderAll();
+        }
+    }
+    if (!made && _undoStack.length === undoDepth) { _undoStack.pop(); updateUndoBtn(); }
+    if (multi && made) flash(`✓ ${made} fichier${made > 1 ? 's' : ''} ajouté${made > 1 ? 's' : ''}`);
 }
 
 // Petite fenêtre Pulse pour demander un texte (remplace la fenêtre du système). Renvoie le texte, ou null si on annule.
@@ -4681,26 +4743,17 @@ function bindGlobalDragDrop() {
         const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('audio/') || /\.(mp3|wav|m4a|aac|flac|ogg|aif|aiff)$/i.test(f.name));
         if (!files.length) { flash('Ce fichier n\'est pas un son — dépose un MP3, WAV, M4A ou FLAC'); return; }
 
-        for (const f of files) {
-            // Crée une nouvelle piste pour chaque fichier droppé en global
-            const newTrackIdx = state.project.tracks.length;
-            pushUndo();
-            state.project.tracks.push({
-                name: f.name.replace(/\.[^.]+$/, '').slice(0, 24),
-                type: 'audio',
-                color: COLORS[newTrackIdx % COLORS.length],
-                clips: [],
-                output: 'master',
-                volume: 100
-            });
-            renderAll();
-            const ok = await importAudioFile(f, newTrackIdx, state.playhead, { noUndo: true });
-            if (!ok) {
-                // Fichier illisible : on ne laisse pas une piste vide à son nom
-                const tt = state.project.tracks[newTrackIdx];
-                if (tt && !(tt.clips || []).length) { state.project.tracks.splice(newTrackIdx, 1); _undoStack.pop(); updateUndoBtn(); renderAll(); }
-            }
-        }
+        // Comme Logic : lâché sur la timeline → posé à cet endroit (calé sur la grille), sinon au curseur
+        const tl = document.querySelector('.timeline');
+        const tlr = tl && tl.getBoundingClientRect();
+        const overTl = tlr && e.clientX >= tlr.left && e.clientX <= tlr.right && e.clientY >= tlr.top && e.clientY <= tlr.bottom;
+        const at = overTl ? snapTime(Math.max(0, (e.clientX - tlr.left + tl.scrollLeft) / state.pxPerSecond), e.shiftKey) : state.playhead;
+        const rowEl = e.target.closest && e.target.closest('.timeline-track, .track-item');
+        const rowIdx = rowEl ? [...rowEl.parentElement.children].filter(c => c.matches('.timeline-track, .track-item')).indexOf(rowEl) : -1;
+        // Plusieurs fichiers : on demande quoi en faire, comme la fenêtre « Ajouter les fichiers » de Logic
+        const mode = files.length > 1 ? await askMultiImport(files.length) : 'new';
+        if (!mode) return;
+        await importDroppedFiles(files, mode, at, rowIdx >= 0 ? rowIdx : (state.selectedTrack ?? 0));
     });
 
     function hasFiles(e) {

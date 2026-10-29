@@ -2800,6 +2800,14 @@ body.midi-open .workspace { padding-bottom: var(--midi-h, 340px); }
 .ask-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 .ask-actions button { padding: 7px 16px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg-3); color: var(--text-1); font: inherit; cursor: pointer; }
 .ask-actions .ask-ok { background: linear-gradient(135deg, var(--violet-1), var(--violet-2)); border-color: transparent; font-weight: 600; }
+.multi-import-modal { max-width: 440px; }
+.mi-opts { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.mi-opt { display: flex; gap: 10px; align-items: flex-start; padding: 9px 10px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg-2); cursor: pointer; }
+.mi-opt:has(input:checked) { border-color: var(--violet-1); background: var(--bg-3); }
+.mi-opt input { margin-top: 3px; accent-color: var(--violet-1); }
+.mi-opt span { display: flex; flex-direction: column; gap: 2px; }
+.mi-opt b { font-weight: 600; font-size: 13px; }
+.mi-opt small { color: var(--text-2); font-size: 11.5px; line-height: 1.35; }
 /* Réglages : la valeur et son unité (dB, ms) restent sur une seule ligne */
 .set-row > span:last-child { white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
 
