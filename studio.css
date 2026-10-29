@@ -3626,3 +3626,48 @@ body.automation-mode .track-item .t-auto .auto-chip { max-width: 150px; height: 
 /* Signature qui change : pastille bleue dans la règle (clic = la changer) */
 .ruler-sig { position: absolute; top: 0; margin-left: 3px; font: 700 8.5px ui-monospace, "SF Mono", Menlo, monospace; color: #93C5FD; background: #14233a; border: 1px solid rgba(147,197,253,.5); border-radius: 0 0 5px 5px; border-top: 0; padding: 0 4px; line-height: 10px; cursor: pointer; z-index: 4; }
 .ruler-sig:hover { background: #1c3150; }
+
+/* Cadre de sélection des régions (moitié haute d'une piste, comme le Pointeur de Logic) */
+.region-lasso {
+    position: fixed;
+    z-index: 900;
+    pointer-events: none;
+    border: 1px solid var(--violet-3);
+    background: rgba(192, 132, 252, 0.12);
+    border-radius: 2px;
+}
+
+/* Menus d'outils (clic / ⌘ + clic / clic droit), comme dans Logic */
+.tool-ctl { display: flex; gap: 4px; align-items: center; margin-right: 10px; }
+.tool-pick {
+    display: flex; align-items: center; gap: 3px; height: 26px; padding: 0 6px 0 7px;
+    background: var(--bg-3); border: 1px solid var(--border); border-radius: 7px;
+    color: var(--text-2); cursor: pointer;
+}
+.tool-pick:hover { color: var(--text-1); border-color: var(--violet-2); }
+.tool-pick[data-which="left"]:not([data-tool="pointer"]) { color: var(--violet-3); border-color: var(--violet-2); }
+.tool-caret { font-size: 8px; opacity: 0.7; }
+.tool-menu {
+    position: fixed; z-index: 2000; min-width: 210px; padding: 5px;
+    background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+}
+.tool-menu-title { font-size: 10.5px; letter-spacing: 0.5px; text-transform: uppercase; color: var(--text-3); padding: 4px 8px 6px; }
+.tool-menu-item {
+    display: flex; align-items: center; gap: 9px; width: 100%; padding: 5px 8px;
+    background: none; border: 0; border-radius: 6px; color: var(--text-1); font-size: 12.5px; text-align: left; cursor: pointer;
+}
+.tool-menu-item:hover { background: var(--violet-2); color: #fff; }
+.tool-menu-item.is-on { color: var(--violet-3); }
+.tool-menu-item:hover.is-on { color: #fff; }
+.tool-check { margin-left: auto; }
+body[data-left-tool="pencil"] .timeline-tracks { cursor: crosshair; }
+body[data-left-tool="erase"] .timeline-tracks .clip,
+body[data-left-tool="glue"] .timeline-tracks .clip,
+body[data-left-tool="mute"] .timeline-tracks .clip,
+body[data-left-tool="solo"] .timeline-tracks .clip { cursor: pointer; }
+body[data-left-tool="text"] .timeline-tracks .clip { cursor: text; }
+body[data-left-tool="zoom"] .timeline-tracks { cursor: zoom-in; }
+body[data-left-tool="marquee"] .timeline-tracks, body[data-left-tool="marquee"] .timeline-tracks .clip { cursor: text; }
+body[data-left-tool="gain"] .timeline-tracks .clip { cursor: ns-resize; }
+body[data-left-tool="fade"] .timeline-tracks .clip { cursor: ew-resize; }

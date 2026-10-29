@@ -3346,11 +3346,11 @@ function openSettings() {
             <h4 class="set-title">Souris sur une région</h4>
             <div class="set-row">
                 <span>⌘ + clic</span>
-                <select id="setToolCmd" class="set-select">${['mute', 'gain', 'cut', 'none'].map(k => `<option value="${k}" ${mouseTool('cmd') === k ? 'selected' : ''}>${MOUSE_TOOL_LABELS[k]}</option>`).join('')}</select>
+                <select id="setToolCmd" class="set-select">${MOUSE_TOOL_LISTS.cmd.map(k => `<option value="${k}" ${mouseTool('cmd') === k ? 'selected' : ''}>${MOUSE_TOOL_LABELS[k]}</option>`).join('')}</select>
             </div>
             <div class="set-row">
                 <span>Clic droit <em>(un clic sans bouger ouvre le menu)</em></span>
-                <select id="setToolRight" class="set-select">${['gain', 'menu', 'mute', 'cut', 'none'].map(k => `<option value="${k}" ${mouseTool('right') === k ? 'selected' : ''}>${MOUSE_TOOL_LABELS[k]}</option>`).join('')}</select>
+                <select id="setToolRight" class="set-select">${MOUSE_TOOL_LISTS.right.map(k => `<option value="${k}" ${mouseTool('right') === k ? 'selected' : ''}>${MOUSE_TOOL_LABELS[k]}</option>`).join('')}</select>
             </div>
 
             <h4 class="set-title">Retour casque</h4>
@@ -3514,12 +3514,7 @@ function openSettings() {
         flash(e.target.checked ? '⚡ Faible latence activée' + (reopened ? '' : ' : prise en compte à la prochaine prise') : 'Faible latence coupée');
         setTimeout(showLatency, 400);
     });
-    const saveTool = (which, value) => {
-        let v = {}; try { v = JSON.parse(localStorage.getItem(MOUSE_TOOLS_KEY) || '{}') || {}; } catch {}
-        v[which] = value;
-        try { localStorage.setItem(MOUSE_TOOLS_KEY, JSON.stringify(v)); } catch {}
-        flash(`${which === 'cmd' ? '⌘ + clic' : 'Clic droit'} : ${MOUSE_TOOL_LABELS[value]}`);
-    };
+    const saveTool = (which, value) => setMouseTool(which, value);
     modal.querySelector('#setToolCmd').addEventListener('change', (e) => saveTool('cmd', e.target.value));
     modal.querySelector('#setToolRight').addEventListener('change', (e) => saveTool('right', e.target.value));
     modal.querySelector('#setCeiling').addEventListener('change', (e) => {
@@ -11236,6 +11231,7 @@ function bindTimelineClick() {
     tracks.addEventListener('contextmenu', (e) => {
         const clipEl = e.target.closest('.clip');
         e.preventDefault();
+        if (mouseTool('right') === 'toolmenu') return;   // le menu des outils s'est ouvert au mousedown
         const trackEl = e.target.closest('.timeline-track');
         if (!trackEl) return;
         const trackIdx = parseInt(trackEl.dataset.i);
@@ -11257,6 +11253,7 @@ function bindTimelineClick() {
 
         // Clic droit sur une région : l'outil choisi dans Réglages (volume par défaut)
         if (e.button === 2) {
+            if (mouseTool('right') === 'toolmenu') { e.preventDefault(); openToolMenu('left', e.clientX, e.clientY); return; }
             if (clipEl && trackEl && !e.target.closest('.instru-dropzone')) {
                 const tool = mouseTool('right');
                 if (tool !== 'menu') {
@@ -11295,9 +11292,16 @@ function bindTimelineClick() {
                     // ⌘ + clic : l'outil choisi dans Réglages (muter la région par défaut)
                     const cmdTool = mouseTool('cmd');
                     if (e.metaKey && !e.shiftKey && cmdTool !== 'none' && !e.target.closest('.clip-fade-zone, .fade-curve-handle, [data-loop-handle]')) {
+                        if (cmdTool !== 'pointer') {
+                            e.preventDefault();
+                            if (runClipTool(cmdTool, e, trackIdx, _ci, eventToTime, false) !== false) return;
+                        }
+                    }
+                    // Clic normal avec un autre outil que le Pointeur (le Ciseau garde son geste plus bas)
+                    const leftTool = mouseTool('left');
+                    if (!e.metaKey && !e.shiftKey && !['pointer', 'cut', 'pencil'].includes(leftTool) && !e.target.closest('.fade-curve-handle, [data-loop-handle]')) {
                         e.preventDefault();
-                        runClipTool(cmdTool, e, trackIdx, _ci, eventToTime, false);
-                        return;
+                        if (runClipTool(leftTool, e, trackIdx, _ci, eventToTime, false) !== false) return;
                     }
                     // Shift+click → multi-sélection
                     if (e.shiftKey && !e.target.closest('.clip-fade-zone') && !e.target.closest('[data-loop-handle]')) {
@@ -11417,6 +11421,34 @@ function bindTimelineClick() {
             }
         }
 
+        // Outils du clic normal dans le vide (comme Logic) : Marquee = plage partout, Crayon = région de notes, Loupe = zoom
+        if (trackEl && e.button === 0 && !e.metaKey && !e.shiftKey) {
+            const lt = mouseTool('left');
+            if (lt === 'marquee') {
+                if (state.selection) clearRangeSelection();
+                state.selectedClip = null; state.selectedClips = new Set();
+                document.querySelectorAll('.clip.is-selected').forEach(x => x.classList.remove('is-selected'));
+                return startRangeSelection(e, eventToTime);
+            }
+            if (lt === 'zoom') { e.preventDefault(); suspendFollow(); setZoom(e.altKey ? state.pxPerSecond / 1.5 : state.pxPerSecond * 1.5, eventToTime(e)); return; }
+            if (lt === 'pencil') {
+                const ti = parseInt(trackEl.dataset.i), tr = state.project.tracks[ti];
+                if (tr && (tr.type === 'keys' || tr.type === 'drums') && !e.target.closest('.instru-dropzone')) { e.preventDefault(); createMidiClip(ti, snapTime(eventToTime(e), false)); return; }
+            }
+        }
+
+        // Moitié haute d'une piste, dans le vide : comme l'outil Pointeur de Logic, glisser trace un cadre
+        // qui sélectionne les régions touchées en entier. Moitié basse : sélection d'une plage (zone Marquee de Logic).
+        if (trackEl && e.button === 0 && !e.altKey && !e.shiftKey) {
+            const trR = trackEl.getBoundingClientRect();
+            if (e.clientY - trR.top < trR.height / 2) {
+                if (state.selection) clearRangeSelection();
+                deselectTracksByTimelineClick();
+                placeOrSelect(e);
+                return startRegionLasso(e);
+            }
+        }
+
         // Clic sur zone vide → place le curseur + efface la sélection ;
         // clic enfoncé et glissé → on choisit une plage (visible seulement sur les pistes survolées), Suppr l'efface
         if (state.selection) clearRangeSelection();
@@ -11457,17 +11489,113 @@ function bindTimelineClick() {
 // === Outils de la souris (comme dans Logic) : ce que font ⌘ + clic et clic droit sur une région ===
 // Par défaut : ⌘ + clic = muter la région, clic droit (glisser) = son volume. Réglable dans Réglages.
 const MOUSE_TOOLS_KEY = 'pulse_mouse_tools';
-const MOUSE_TOOL_DEFAULT = { cmd: 'mute', right: 'gain' };
+const MOUSE_TOOL_DEFAULT = { left: 'pointer', cmd: 'mute', right: 'gain' };
+// Les outils de Logic (même liste, même ordre). Clic normal = 1er menu, ⌘ + clic = 2e, clic droit = 3e.
 const MOUSE_TOOL_LABELS = {
-    mute: 'Muter / démuter la région',
-    gain: 'Volume de la région (glisser)',
-    cut: 'Couper la région à cet endroit',
-    menu: 'Menu des actions',
+    pointer: 'Outil Pointeur',
+    pencil: 'Outil Crayon',
+    erase: 'Outil Gomme',
+    text: 'Outil Texte',
+    cut: 'Outil Ciseaux',
+    glue: 'Outil Colle',
+    solo: 'Outil Solo',
+    mute: 'Outil Muet',
+    zoom: 'Outil Loupe',
+    fade: 'Outil Fondu',
+    marquee: 'Outil Marquee',
+    gain: 'Outil Gain',
+    menu: 'Menu contextuel',
+    toolmenu: 'Menu des outils',
     none: 'Rien'
 };
+const MOUSE_TOOL_HELP = {
+    pointer: 'Choisir, déplacer, étirer les régions (haut de piste : cadre de sélection, bas : plage)',
+    pencil: 'Dessiner une région de notes sur une piste d\'instrument',
+    erase: 'Effacer la région cliquée',
+    text: 'Renommer la région',
+    cut: 'Couper la région à l\'endroit du clic',
+    glue: 'Joindre les régions choisies',
+    solo: 'Écouter la piste seule tant que le bouton est enfoncé',
+    mute: 'Muter / démuter la région',
+    zoom: 'Zoomer (Option : dézoomer)',
+    fade: 'Glisser sur le début ou la fin de la région pour un fondu',
+    marquee: 'Choisir une plage de temps, partout sur la piste',
+    gain: 'Volume de la région (glisser vers le haut / le bas)',
+    menu: 'Ouvre le menu de la région',
+    toolmenu: 'Ouvre ce menu pour changer l\'outil du clic normal',
+    none: ''
+};
+const MOUSE_TOOL_LISTS = {
+    left: ['pointer', 'pencil', 'erase', 'text', 'cut', 'glue', 'solo', 'mute', 'zoom', 'fade', 'marquee', 'gain'],
+    cmd: ['pointer', 'pencil', 'erase', 'text', 'cut', 'glue', 'solo', 'mute', 'zoom', 'fade', 'marquee', 'gain', 'none'],
+    right: ['pointer', 'pencil', 'erase', 'text', 'cut', 'glue', 'solo', 'mute', 'zoom', 'fade', 'marquee', 'gain', 'menu', 'toolmenu', 'none']
+};
+const MOUSE_TOOL_ICONS = {
+    pointer: '<path d="M5 3l14 8-6 1.5L10 19z" fill="currentColor" stroke="none"/>',
+    pencil: '<path d="M4 20l4-1L19 8l-3-3L5 16z"/><path d="M14 6l3 3"/>',
+    erase: '<path d="M8 20h12"/><path d="M4 15l9-9 6 6-7 7H8z"/>',
+    text: '<path d="M5 6V4h14v2"/><path d="M12 4v16"/><path d="M9 20h6"/>',
+    cut: '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4L8.1 15.9M14.5 14.5L20 20M8.1 8.1L12 12"/>',
+    glue: '<path d="M9 3h6v4H9z"/><path d="M7 7h10l-1 13H8z"/>',
+    solo: '<text x="12" y="17" text-anchor="middle" font-size="14" font-weight="700" fill="currentColor" stroke="none">S</text>',
+    mute: '<text x="12" y="17" text-anchor="middle" font-size="14" font-weight="700" fill="currentColor" stroke="none">M</text>',
+    zoom: '<circle cx="10" cy="10" r="6"/><path d="M15 15l5 5"/>',
+    fade: '<path d="M3 20C10 20 14 4 21 4"/>',
+    marquee: '<path d="M5 3v18"/><path d="M19 3v18"/><path d="M9 12h6" stroke-dasharray="2 2"/>',
+    gain: '<path d="M4 8v8M8 5v14M12 9v6M16 6v12M20 10v4"/>',
+    menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
+    toolmenu: '<path d="M5 3l10 6-4 1-2 5z" fill="currentColor" stroke="none"/><path d="M14 16h7M17.5 13v6"/>',
+    none: '<path d="M6 6l12 12"/>'
+};
 function mouseTool(which) {
-    try { const v = JSON.parse(localStorage.getItem(MOUSE_TOOLS_KEY) || '{}'); if (MOUSE_TOOL_LABELS[v[which]]) return v[which]; } catch {}
+    try { const v = JSON.parse(localStorage.getItem(MOUSE_TOOLS_KEY) || '{}'); if (MOUSE_TOOL_LABELS[v[which]] && (MOUSE_TOOL_LISTS[which] || []).includes(v[which])) return v[which]; } catch {}
     return MOUSE_TOOL_DEFAULT[which];
+}
+function setMouseTool(which, value, quiet) {
+    let v = {}; try { v = JSON.parse(localStorage.getItem(MOUSE_TOOLS_KEY) || '{}') || {}; } catch {}
+    v[which] = value;
+    try { localStorage.setItem(MOUSE_TOOLS_KEY, JSON.stringify(v)); } catch {}
+    if (which === 'left') {   // l'ancien bouton ciseau (B) suit l'outil du clic normal
+        state.tool = value === 'cut' ? 'scissors' : 'pointer';
+        document.body.classList.toggle('tool-scissors', value === 'cut');
+        const btn = document.getElementById('btnScissors'); if (btn) btn.classList.toggle('active', value === 'cut');
+        document.body.dataset.leftTool = value;
+    }
+    renderToolMenus();
+    if (!quiet) flash(`${which === 'left' ? 'Clic' : which === 'cmd' ? '⌘ + clic' : 'Clic droit'} : ${MOUSE_TOOL_LABELS[value]}`);
+}
+// Les 3 menus d'outils à côté de l'aimant, comme dans Logic
+function renderToolMenus() {
+    const host = document.getElementById('toolCtl');
+    if (!host) return;
+    const ico = (k) => `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${MOUSE_TOOL_ICONS[k] || ''}</svg>`;
+    const tip = { left: 'Outil du clic', cmd: 'Outil du ⌘ + clic', right: 'Outil du clic droit' };
+    host.innerHTML = ['left', 'cmd', 'right'].map(w => {
+        const k = mouseTool(w);
+        return `<button class="tool-pick" data-which="${w}" data-tool="${k}" data-tooltip="${tip[w]} : ${MOUSE_TOOL_LABELS[k]}">${ico(k)}<span class="tool-caret">▾</span></button>`;
+    }).join('');
+    host.querySelectorAll('.tool-pick').forEach(b => b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const r = b.getBoundingClientRect();
+        openToolMenu(b.dataset.which, r.left, r.bottom + 4);
+    }));
+}
+function openToolMenu(which, x, y) {
+    document.querySelectorAll('.tool-menu').forEach(m => m.remove());
+    const ico = (k) => `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${MOUSE_TOOL_ICONS[k] || ''}</svg>`;
+    const cur = mouseTool(which);
+    const m = document.createElement('div');
+    m.className = 'tool-menu';
+    m.innerHTML = `<div class="tool-menu-title">${which === 'left' ? 'Clic' : which === 'cmd' ? '⌘ + clic' : 'Clic droit'}</div>` +
+        MOUSE_TOOL_LISTS[which].map(k => `<button class="tool-menu-item ${k === cur ? 'is-on' : ''}" data-tool="${k}" title="${MOUSE_TOOL_HELP[k] || ''}">${ico(k)}<span>${MOUSE_TOOL_LABELS[k]}</span>${k === cur ? '<span class="tool-check">✓</span>' : ''}</button>`).join('');
+    document.body.appendChild(m);
+    const mr = m.getBoundingClientRect();
+    m.style.left = Math.max(6, Math.min(x, innerWidth - mr.width - 6)) + 'px';
+    m.style.top = Math.max(6, Math.min(y, innerHeight - mr.height - 6)) + 'px';
+    m.querySelectorAll('.tool-menu-item').forEach(it => it.addEventListener('click', (e) => { e.stopPropagation(); m.remove(); setMouseTool(which, it.dataset.tool); }));
+    const close = (e) => { if (!m.contains(e.target)) { m.remove(); document.removeEventListener('mousedown', close, true); document.removeEventListener('keydown', esc, true); } };
+    const esc = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); m.remove(); document.removeEventListener('mousedown', close, true); document.removeEventListener('keydown', esc, true); } };
+    setTimeout(() => { document.addEventListener('mousedown', close, true); document.addEventListener('keydown', esc, true); }, 0);
 }
 function runClipTool(tool, e, trackIdx, clipIdx, eventToTime, fromRight) {
     const clip = state.project.tracks[trackIdx]?.clips[clipIdx];
@@ -11482,7 +11610,50 @@ function runClipTool(tool, e, trackIdx, clipIdx, eventToTime, fromRight) {
         startClipGainDrag(e, trackIdx, clipIdx, fromRight);
     } else if (tool === 'menu') {
         openClipContextMenu(e.clientX, e.clientY, trackIdx, clipIdx);
+    } else if (tool === 'toolmenu') {
+        openToolMenu('left', e.clientX, e.clientY);
+    } else if (tool === 'erase') {
+        if (clipIsLocked(clip)) { flash('Région verrouillée'); return; }
+        const key = `${trackIdx}:${clipIdx}`;
+        if (!(state.selectedClips.size > 1 && state.selectedClips.has(key))) { state.selectedClips = new Set(); state.selectedClip = { trackIdx, clipIdx }; }
+        deleteSelectedClip();
+    } else if (tool === 'text') {
+        state.selectedClip = { trackIdx, clipIdx };
+        startClipRename(trackIdx, clipIdx);
+    } else if (tool === 'glue') {
+        if (!state.selectedClips.has(`${trackIdx}:${clipIdx}`)) { flash('Outil Colle : choisis d\'abord les régions à joindre (cadre ou Shift + clic), puis clique sur l\'une d\'elles'); return; }
+        joinSelectedClips(trackIdx, clipIdx);
+    } else if (tool === 'solo') {
+        startToolSolo(e, trackIdx);
+    } else if (tool === 'zoom') {
+        suspendFollow && suspendFollow();
+        setZoom(e.altKey ? state.pxPerSecond / 1.5 : state.pxPerSecond * 1.5, eventToTime(e));
+    } else if (tool === 'fade') {
+        const el = e.target.closest('.clip');
+        const r = el ? el.getBoundingClientRect() : null;
+        state.selectedClip = { trackIdx, clipIdx };
+        startFadeDrag(e, r && e.clientX - r.left > r.width / 2 ? 'out' : 'in', trackIdx, clipIdx);
+    } else if (tool === 'marquee') {
+        state.selectedClip = null; state.selectedClips = new Set();
+        document.querySelectorAll('.clip.is-selected').forEach(x => x.classList.remove('is-selected'));
+        startRangeSelection(e, eventToTime);
+    } else {
+        return false;   // pointeur, crayon sur une région, rien : comportement normal
     }
+    return true;
+}
+// Outil Solo : la piste joue seule tant que le bouton est enfoncé (comme dans Logic), puis tout revient comme avant
+function startToolSolo(e, trackIdx) {
+    const before = state.project.tracks.map(t => !!t.solo);
+    state.project.tracks.forEach((t, i) => { t.solo = i === trackIdx; });
+    renderTracksPanel(); bindTrackEvents(); refreshPlaybackSoon();
+    if (!state.playing) togglePlay();
+    const up = () => {
+        document.removeEventListener('mouseup', up);
+        state.project.tracks.forEach((t, i) => { t.solo = before[i]; });
+        renderTracksPanel(); bindTrackEvents(); refreshPlaybackSoon();
+    };
+    document.addEventListener('mouseup', up);
 }
 // Volume d'une région en tirant vers le haut / le bas. Clic droit sans bouger = le menu habituel.
 function startClipGainDrag(startEvent, trackIdx, clipIdx, menuIfNoMove) {
@@ -12242,6 +12413,53 @@ function trackIdxAtY(clientY) {
     return best;
 }
 
+// Cadre de sélection des régions (outil Pointeur de Logic) : toute région touchée par le cadre est choisie en entier.
+// Un simple clic sans glisser désélectionne les régions.
+function startRegionLasso(startEvent) {
+    const host = document.getElementById('timelineTracks');
+    const sx = startEvent.clientX, sy = startEvent.clientY;
+    let box = null, sel = new Set();
+    startEvent.preventDefault();
+    const onMove = (ev) => {
+        if (!box) {
+            if (Math.hypot(ev.clientX - sx, ev.clientY - sy) < 4) return;
+            box = document.createElement('div');
+            box.className = 'region-lasso';
+            document.body.appendChild(box);
+        }
+        const x1 = Math.min(sx, ev.clientX), x2 = Math.max(sx, ev.clientX);
+        const y1 = Math.min(sy, ev.clientY), y2 = Math.max(sy, ev.clientY);
+        Object.assign(box.style, { left: x1 + 'px', top: y1 + 'px', width: (x2 - x1) + 'px', height: (y2 - y1) + 'px' });
+        sel = new Set();
+        host.querySelectorAll('.timeline-track .clip').forEach(c => {
+            const ti = c.closest('.timeline-track').dataset.i, ci = c.dataset.ci;
+            const clip = state.project.tracks[+ti]?.clips[+ci];
+            const r = c.getBoundingClientRect();
+            const hit = !!clip && !clip.recording && r.right > x1 && r.left < x2 && r.bottom > y1 && r.top < y2;
+            c.classList.toggle('is-selected', hit);
+            c.classList.toggle('is-multi-selected', hit);
+            if (hit) sel.add(`${ti}:${ci}`);
+        });
+    };
+    const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        if (box) box.remove();
+        const keys = [...sel];
+        if (keys.length) {
+            const [ti, ci] = keys[0].split(':').map(Number);
+            state.selectedClip = { trackIdx: ti, clipIdx: ci };
+            state.selectedClips = keys.length > 1 ? new Set(keys) : new Set();
+        } else {
+            state.selectedClip = null;
+            state.selectedClips = new Set();
+        }
+        renderTimelineTracks();
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+}
+
 function startRangeSelection(startEvent, eventToTime) {
     const timeline = document.querySelector('.timeline');
     const startTime = eventToTime(startEvent);
@@ -12975,6 +13193,7 @@ function updateClipFadeVisual(clipEl, clip, activeDir) {
 
 // === Basculer l'outil actif (pointer / scissors) ===
 function setActiveTool(name) {
+    if (typeof setMouseTool === 'function') { setMouseTool('left', name === 'scissors' ? 'cut' : 'pointer', true); }
     state.tool = name;
     document.body.classList.toggle('tool-scissors', name === 'scissors');
     const btn = document.getElementById('btnScissors');
@@ -13158,6 +13377,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     setTrackHeight(state.trackHeight);
 
     document.getElementById('btnScissors').addEventListener('click', () => setActiveTool(state.tool === 'scissors' ? 'pointer' : 'scissors'));
+    // Menus d'outils façon Logic (outil du clic gardé d'une séance à l'autre)
+    renderToolMenus();
+    document.body.dataset.leftTool = mouseTool('left');
+    if (mouseTool('left') === 'cut') { state.tool = 'scissors'; document.body.classList.add('tool-scissors'); document.getElementById('btnScissors').classList.add('active'); }
     document.getElementById('btnTap').addEventListener('click', toggleTapMode);
     document.getElementById('btnExport').addEventListener('click', exportProject);
     document.getElementById('btnHelp').addEventListener('click', openCheatSheet);
