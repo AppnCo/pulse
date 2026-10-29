@@ -17,7 +17,9 @@
     padding: 0 20px;
     background: var(--bg-1);
     border-bottom: 1px solid var(--border);
-    z-index: 10;
+    /* positionnée et au-dessus du reste : ses infobulles (« Accueil »…) passent devant les faders de gauche */
+    position: relative;
+    z-index: 300;
 }
 
 .topbar-left {
@@ -3671,3 +3673,33 @@ body[data-left-tool="zoom"] .timeline-tracks { cursor: zoom-in; }
 body[data-left-tool="marquee"] .timeline-tracks, body[data-left-tool="marquee"] .timeline-tracks .clip { cursor: text; }
 body[data-left-tool="gain"] .timeline-tracks .clip { cursor: ns-resize; }
 body[data-left-tool="fade"] .timeline-tracks .clip { cursor: ew-resize; }
+
+/* Zoom très serré : la forme d'onde en ligne, échantillon par échantillon (comme Logic / Pro Tools) */
+.clip-wave-svg.line-wave { overflow: visible; color: color-mix(in srgb, var(--clip-color, #A855F7) 35%, white 65%); }
+.clip-wave-svg.line-wave .wave-line { fill: none; stroke: currentColor; stroke-width: 1.4; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.clip-wave-svg.line-wave .wave-line.with-dots { marker: none; stroke-width: 1.6; }
+.clip-wave-svg.line-wave .wave-axis { stroke: currentColor; stroke-opacity: 0.25; stroke-width: 1; vector-effect: non-scaling-stroke; }
+
+/* Pan de l'inspecteur : bouton rond comme Logic (au lieu du curseur G — D) */
+.insp-pan.as-knob { justify-content: center; position: relative; padding: 2px 0; }
+.insp-pan.as-knob .insp-pan-input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.insp-knob { width: 30px; height: 30px; cursor: ns-resize; }
+.insp-knob svg { display: block; width: 100%; height: 100%; }
+.insp-knob .knob-ring { fill: var(--bg-1); stroke: var(--border); stroke-width: 2; transition: stroke .15s var(--ease); }
+.insp-knob .knob-arc { fill: none; stroke: var(--violet-2, #A855F7); stroke-width: 2.4; stroke-linecap: round; }
+.insp-knob .knob-dot { fill: #fff; stroke: var(--violet-2, #A855F7); stroke-width: 1; }
+.insp-knob:hover .knob-ring { stroke: var(--violet-2, #A855F7); }
+
+/* En-tête de piste étroit (panneau réduit, pistes rangées dans un groupe) : les boutons M S R i se resserrent
+   au lieu de passer sous le bouton de pan ; encore plus étroit, le pan se cache (il reste dans l'inspecteur) */
+.track-item { container-type: inline-size; }
+.track-item .track-buttons { min-width: 0; overflow: hidden; }
+.track-item .track-buttons .t-mini { flex: 0 1 24px; min-width: 17px; padding: 0; }
+@container (max-width: 180px) {
+    .t-knob { display: none; }
+    .track-info { padding-right: 0 !important; }
+}
+.track-item .t-knob { width: 26px; height: 26px; margin-top: -13px; right: 8px; }
+.track-item .track-info { padding-right: 38px; }
+.track-item .track-buttons { gap: 3px; }
+.track-item .track-buttons .t-mini { min-width: 16px; }

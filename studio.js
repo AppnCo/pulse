@@ -1176,6 +1176,22 @@ function renderClipWaveformFine(c, widthPx) {
     const sr = buf.sampleRate, off = c.offset || 0;
     const d0 = buf.getChannelData(0), d1 = buf.numberOfChannels > 1 ? buf.getChannelData(1) : null;
     const gainScale = c.gain !== undefined ? Math.min(2, c.gain) : 1;
+    const envAt = (tt) => Math.min(1, c.fadeIn > 0 && tt < c.fadeIn ? Math.pow(tt / c.fadeIn, fadeK(c, 'in')) : 1,
+        c.fadeOut > 0 && tt > c.duration - c.fadeOut ? Math.pow(Math.max(0, (c.duration - tt) / c.fadeOut), fadeK(c, 'out')) : 1);
+    // Zoom très serré (moins de 3 échantillons par pixel) : la vraie forme d'onde en ligne, comme Logic / Pro Tools
+    if (pps >= sr / 3) {
+        const k0 = Math.max(0, Math.floor((off + lo / pps) * sr) - 1), k1 = Math.min(d0.length - 1, Math.ceil((off + hi / pps) * sr) + 1);
+        let pts = '';
+        for (let k = k0; k <= k1; k++) {
+            const tt = k / sr - off, x = tt * pps - lo;
+            const v = d1 ? (d0[k] + d1[k]) / 2 : d0[k];
+            const y = cy - Math.max(-cy * 0.98, Math.min(cy * 0.98, v * gainScale * envAt(tt) * h * 0.48));
+            pts += `${x.toFixed(1)},${y.toFixed(1)} `;
+        }
+        const dots = pps >= sr * 1.5;   // assez de place : un point par échantillon, comme Logic
+        return `<svg class="clip-wave-svg fine-wave line-wave" style="left:${lo + 2}px;width:${span}px;right:auto" viewBox="0 0 ${span} ${h}" preserveAspectRatio="none">`
+            + `<line x1="0" y1="${cy}" x2="${span}" y2="${cy}" class="wave-axis"/><polyline points="${pts}" class="wave-line${dots ? ' with-dots' : ''}"/></svg>`;
+    }
     let path = '';
     for (let i = 0; i < n; i++) {
         const t0 = off + (lo + i * bw) / pps;
@@ -1862,7 +1878,7 @@ function inspectorStrip(kind, x, idx) {
         ${kind === 'track' && x.frozen ? '<div class="insp-note">❄ Piste gelée : effets figés (clic droit > Son > Dégeler)</div>' : ''}
         ${isMaster ? '<div class="insp-note">Tout le morceau sort ici</div>' : `<button class="strip-sound insp-sound" data-tooltip="${x.premaster ? 'Le réglage final de tout le morceau' : 'Réglage : charge un réglage prêt à l\'emploi (comme « Réglage » dans Logic)'}">${esc(soundLabel)} ▾</button>`}
         ${isMaster ? '' : slotListsHtml(kind, x)}
-        ${(kind === 'track' || (kind === 'bus' && !x.premaster && !x.locked)) ? `<label class="insp-pan"><span>G</span><input type="range" class="insp-pan-input" min="-100" max="100" step="1" data-default="0" value="${x.pan || 0}" data-tooltip="Gauche / droite (⌘ + clic = centre, double-clic = écrire la valeur)"><span>D</span></label>` : ''}
+        ${(kind === 'track' || (kind === 'bus' && !x.premaster && !x.locked)) ? `<div class="insp-pan as-knob"><div class="insp-knob t-knob-look" role="slider" aria-label="Gauche / droite" data-tooltip="${panTip(x.pan || 0)}">${panKnobSvg(x.pan || 0)}</div><input type="range" class="insp-pan-input" min="-100" max="100" step="1" data-default="0" value="${x.pan || 0}" tabindex="-1" aria-hidden="true"></div>` : ''}
         <div class="strip-fader-wrap">
             <input type="range" class="fader insp-fader" min="0" max="100" step="0.5" data-vmap="1" data-default="${volToPos(100)}" value="${volToPos(vol)}" ${x && x.locked && !showAll() ? 'disabled' : ''}>
             <div class="strip-db">${volumeToDb(vol)} dB</div>
@@ -1939,7 +1955,62 @@ function syncTrackPan(idx) {
     const k = document.querySelector(`.t-knob[data-i="${idx}"]`);
     if (k) { k.dataset.pan = t.pan || 0; k.setAttribute('aria-valuenow', t.pan || 0); k.innerHTML = panKnobSvg(t.pan || 0); k.dataset.tooltip = panTip(t.pan || 0); }
     const p = document.querySelector('#inspector .insp-strip[data-kind="track"] .insp-pan-input');
-    if (p && state.selectedTrack === idx && document.activeElement !== p) p.value = t.pan || 0;
+    if (p && state.selectedTrack === idx && document.activeElement !== p) { p.value = t.pan || 0; paintInspKnob(p); }
+}
+// Pan de l'inspecteur : un bouton rond comme dans Logic (le curseur caché garde toute la mécanique : annuler, groupes, mixeur)
+function paintInspKnob(input) {
+    const k = input && input.parentElement && input.parentElement.querySelector('.insp-knob');
+    if (!k) return;
+    const v = parseInt(input.value) || 0;
+    k.innerHTML = panKnobSvg(v); k.dataset.tooltip = panTip(v); k.setAttribute('aria-valuenow', v);
+}
+function bindInspKnob(input) {
+    const k = input && input.parentElement && input.parentElement.querySelector('.insp-knob');
+    if (!k) return;
+    const set = (v) => {
+        v = Math.max(-100, Math.min(100, Math.round(v)));
+        if (String(v) === input.value) return;
+        input.value = v;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        paintInspKnob(input);
+    };
+    input.addEventListener('input', () => paintInspKnob(input));
+    let badge = null;
+    const showBadge = () => {
+        if (!badge) { badge = document.createElement('div'); badge.className = 'knob-badge'; document.body.appendChild(badge); }
+        const r = k.getBoundingClientRect();
+        badge.textContent = panLabel(parseInt(input.value) || 0);
+        badge.style.left = (r.left + r.width / 2) + 'px'; badge.style.top = (r.top - 6) + 'px';
+    };
+    k.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        e.preventDefault(); e.stopPropagation();
+        // ⌘ + clic (ou Option + clic) = centre, comme dans Logic
+        if (e.metaKey || e.altKey) { set(0); input.dispatchEvent(new Event('change', { bubbles: true })); return; }
+        const sx = e.clientX, sy = e.clientY, v0 = parseInt(input.value) || 0;
+        let moved = false;
+        document.body.classList.add('resizing-col');
+        const move = (ev) => {
+            const d = (ev.clientX - sx) - (ev.clientY - sy);   // haut ou droite = vers la droite ; Shift = fin
+            if (!moved && Math.abs(d) < 2) return;
+            moved = true;
+            set(v0 + d * (ev.shiftKey ? 0.25 : 1));
+            showBadge();
+        };
+        const up = () => {
+            document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up);
+            document.body.classList.remove('resizing-col');
+            if (badge) { badge.remove(); badge = null; }
+            if (moved) input.dispatchEvent(new Event('change', { bubbles: true }));
+        };
+        document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+    });
+    k.addEventListener('dblclick', (e) => { e.preventDefault(); e.stopPropagation(); if (typeof openValueEntry === 'function') openValueEntry(input); });
+    k.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        set((parseInt(input.value) || 0) + (e.deltaY < 0 ? 2 : -2));
+        clearTimeout(k._wt); k._wt = setTimeout(() => input.dispatchEvent(new Event('change', { bubbles: true })), 300);
+    }, { passive: false });
 }
 function renderInspector() {
     const el = document.getElementById('inspector');
@@ -2003,6 +2074,7 @@ function renderInspector() {
         bindSlotLists(strip, kind, x, idx);
         const pan = strip.querySelector('.insp-pan-input');
         if (pan) {
+            bindInspKnob(pan);
             let panUndo = false;
             pan.addEventListener('change', () => { panUndo = false; });
             pan.addEventListener('input', () => {
@@ -9250,7 +9322,7 @@ function zoomToFit() {
     if (!timeline) return;
     const availWidth = timeline.clientWidth - 60;
     const totalSec = Math.max(end + 4, 10);
-    const newPx = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, availWidth / totalSec));
+    const newPx = Math.max(ZOOM_MIN, Math.min(zoomMax(), availWidth / totalSec));
     setZoom(newPx, 0);
     timeline.scrollLeft = 0;
     flash('Zoom : tout le projet');
@@ -9260,6 +9332,12 @@ function zoomToFit() {
 const ZOOM_KEY = 'pulse_zoom_v1';
 // Zoom : de la séance entière (1 px = 1 s) jusqu'à la milliseconde (1 px ≈ 0,4 ms)
 const ZOOM_MIN = 1, ZOOM_MAX = 2400;
+// Zoom maximum comme Logic / Pro Tools : jusqu'à voir chaque échantillon (la forme d'onde devient une ligne).
+// Limite : la timeline ne doit pas dépasser ~30 millions de pixels de large (au-delà, le moteur de la page décroche).
+function zoomMax() {
+    const totalSec = Math.max(180, computeProjectEndSec() + 60);
+    return Math.max(ZOOM_MAX, Math.min(192000, 3e7 / totalSec));
+}
 function saveViewState() {
     const timeline = document.querySelector('.timeline');
     localStorage.setItem(ZOOM_KEY, JSON.stringify({
@@ -9352,7 +9430,7 @@ function suspendFollow() {
 function setZoom(px, anchorSec, center = false) {
     const timeline = document.querySelector('.timeline');
     const oldPx = state.pxPerSecond;
-    const newPx = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, px));
+    const newPx = Math.max(ZOOM_MIN, Math.min(zoomMax(), px));
     if (newPx === oldPx) return;
 
     // Par défaut le zoom se fait autour du pointeur de la souris (comme Pro Tools), sinon autour du curseur
@@ -13528,7 +13606,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     const tl = document.querySelector('.timeline');
                     const dur = clip.duration;
                     const availW = tl ? tl.clientWidth - 60 : 600;
-                    const newPx = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, (availW * 0.8) / dur));
+                    const newPx = Math.max(ZOOM_MIN, Math.min(zoomMax(), (availW * 0.8) / dur));
                     setZoom(newPx, clip.start + dur / 2);
                     flash('Zoom : clip sélectionné');
                 } else {

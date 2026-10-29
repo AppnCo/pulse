@@ -18,7 +18,8 @@ export default async ({ ev, nav, send, sleep, check }) => {
   await R(`undoAction(); await new Promise(r=>setTimeout(r,200)); return 1`);
   check('⌘Z remet les positions', (await R(`return ${starts}`)) === '2.13 | 0.9');
   await boot('en');
-  const pan = await R(`state.selectedTrack=0; renderInspector(); await new Promise(r=>setTimeout(r,200)); return [...document.querySelectorAll('#inspector .insp-pan span')].map(e=>e.textContent).join('/')`);
-  check('anglais : le réglage gauche / droite affiche L / R', pan === 'L/R', pan);
+  const pan = await R(`state.selectedTrack=0; renderInspector(); await new Promise(r=>setTimeout(r,200)); return (document.querySelector('#inspector .insp-knob') ? 'bouton' : '') + '/' + [...document.querySelectorAll('#inspector .insp-pan span')].length`);
+  // 29/10 : le pan de l'inspecteur est un bouton rond comme Logic (plus de lettres G / D ou L / R à traduire)
+  check('anglais : le pan de l\'inspecteur est un bouton rond, sans lettres', pan === 'bouton/0', pan);
   check('anglais : la touche D de la fiche de raccourcis reste « D »', (await R(`openCheatSheet(); await new Promise(r=>setTimeout(r,250)); const ok=[...document.querySelectorAll('#cheatModal kbd, #cheatModal .cheat-key, #cheatModal td, #cheatModal dt')].some(e=>e.textContent.trim()==='D'); closeCheatSheet(); return ok`)) === true);
 };
