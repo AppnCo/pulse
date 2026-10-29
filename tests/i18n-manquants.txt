@@ -1,6 +1,6 @@
 0.0 dB
 2 microphones, clean vocal preset. For an interview or a dialogue.
-29 ms
+21 ms
 A step drum machine and a keyboard bass. To lay a foundation without playing.
 A+
 All Vocal
@@ -15,8 +15,13 @@ E / Z
 Flanger
 Gate
 IV
+Menu des outils (Pointeur, Crayon, Gomme…) sous la souris
 Mix Bus 1
 New project
+Outil du clic : Outil Pointeur
+Outil du clic droit : Outil Gain
+Outil du ⌘ + clic : Outil Muet
+Outils de la souris
 Phaser
 Piano 1 — 2.00s @ 0:00.000
 Pick up where you left off

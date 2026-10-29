@@ -13694,8 +13694,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 // pour comprendre le « flash blanc » (journal : localStorage pulse_reload_log)
 (() => {
     try {
+        // pulse_alive est rafraîchi toutes les 3 s : un plantage recharge la page dans la foulée (battement récent),
+        // alors qu'après un ⌘Q (où pagehide n'arrive pas toujours) l'appli est relancée bien plus tard → pas d'alerte.
         const alive = localStorage.getItem('pulse_alive'), clean = localStorage.getItem('pulse_clean_exit');
-        if (alive && !clean) {
+        if (alive && !clean && Date.now() - +alive < 12000) {
             const log = JSON.parse(localStorage.getItem('pulse_reload_log') || '[]');
             log.push({ at: new Date().toISOString(), alive: +alive });
             localStorage.setItem('pulse_reload_log', JSON.stringify(log.slice(-20)));
@@ -13703,6 +13705,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         localStorage.removeItem('pulse_clean_exit');
         localStorage.setItem('pulse_alive', String(Date.now()));
+        setInterval(() => { try { localStorage.setItem('pulse_alive', String(Date.now())); } catch {} }, 3000);
         window.addEventListener('pagehide', () => { try { localStorage.setItem('pulse_clean_exit', '1'); } catch {} });
     } catch {}
 })();
