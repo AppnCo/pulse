@@ -35,5 +35,18 @@ export default async ({ ev, nav, send, sleep }) => {
   await mouse('mouseMoved', X(3), Y(1, 0.85), { down: true }); await mouse('mouseMoved', X(6), Y(1, 0.85), { down: true }); await mouse('mouseReleased', X(6), Y(1, 0.85)); await sleep(300);
   r = await ev(`JSON.stringify(state.selection && {tracks: state.selection.tracks})`);
   check('moitié basse : plage sur A et B', r && r.includes('[0,1]'), r);
+  // 5. tout en bas, sous la dernière piste (hors piste) : cadre de régions, pas de plage, curseur immobile
+  await R('vide', `clearRangeSelection(); state.selectedClips=new Set(); state.selectedClip=null; state.playhead=1; renderTimelineTracks(); return 'ok'`);
+  const yb = geo.rows[2].top + geo.rows[2].h + 40;
+  const below = await ev(`(()=>{ const el=document.elementFromPoint(${X(12)}, ${yb}); return !!(el && el.closest('.timeline') && !el.closest('.timeline-track, .timeline-ruler')) })()`);
+  check('zone sous les pistes bien dans la timeline', below, String(below));
+  await mouse('mouseMoved', X(12), yb); await mouse('mousePressed', X(12), yb);
+  await mouse('mouseMoved', X(10.5), Y(2, 0.5), { down: true }); await mouse('mouseMoved', X(10), Y(1, 0.5), { down: true }); await mouse('mouseReleased', X(10), Y(1, 0.5)); await sleep(300);
+  r = JSON.parse(await ev(`JSON.stringify({sel:[...state.selectedClips].sort().join(' '), plage: !!state.selection, ph: state.playhead})`));
+  check('sous les pistes : cadre sur B2 et C2, pas de plage, curseur pas bougé', r.sel === '1:1 2:1' && !r.plage && r.ph === 1, JSON.stringify(r));
+  // simple clic sous les pistes : désélectionne, curseur immobile
+  await mouse('mouseMoved', X(6), yb); await mouse('mousePressed', X(6), yb); await mouse('mouseReleased', X(6), yb); await sleep(200);
+  r = await ev(`state.selectedClips.size+'/'+!!state.selectedClip+'/'+state.playhead`);
+  check('clic sous les pistes : désélection sans bouger le curseur', r === '0/false/1', r);
   console.log(ok ? 'RESULTAT: OK' : 'RESULTAT: ECHEC'); if (!ok) throw new Error('cadre-regions en échec');
 };

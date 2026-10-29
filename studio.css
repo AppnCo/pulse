@@ -127,7 +127,10 @@
     display: flex;
     flex-direction: column;
     overflow-y: auto;
+    overflow-x: hidden;           /* pas de barre en bas : la timeline a la sienne */
+    scrollbar-width: none;        /* pas de barre entre les pistes et la timeline : elles défilent ensemble */
 }
+.tracks-panel::-webkit-scrollbar { display: none; }
 
 .tracks-header {
     display: flex;
@@ -2472,7 +2475,7 @@ body.lyrics-open .workspace { grid-template-columns: var(--tracks-w, 240px) 1fr 
 /* Tranche à gauche (inspecteur) */
 body.inspector-open .workspace { grid-template-columns: var(--insp-w, 208px) var(--tracks-w, 240px) 1fr; }
 body.inspector-open.lyrics-open .workspace { grid-template-columns: var(--insp-w, 208px) var(--tracks-w, 240px) 1fr minmax(220px, 300px); }
-.inspector { display: flex; gap: 6px; padding: 10px 8px; background: var(--bg-1); border-right: 1px solid var(--border); overflow-y: auto; min-height: 0; }
+.inspector { display: flex; gap: 6px; padding: 10px 8px; background: var(--bg-1); border-right: 1px solid var(--border); overflow-y: auto; overflow-x: hidden; min-height: 0; }
 .inspector .insp-strip { width: 92px; flex: 1 1 0; min-width: 0; padding: 10px 6px; gap: 8px; align-self: stretch; }
 .inspector .strip-name { font-size: 11px; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .inspector .strip-sound { width: 100%; }

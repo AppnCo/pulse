@@ -3246,8 +3246,20 @@ async function saveProjectFolder(askAgain = false) {
         if (!dir) return;
         flash('Enregistrement du projet…');
         const base = dir.split(/[\\/]/).filter(Boolean).pop() || 'Projet';
-        const { blob, missing } = await PulseFile.pack(state.project);
-        await nativeWrite(dir, `${fsSafe(base, 'Projet')}.pulse`, blob);
+        // Gros projet : sons répartis en plusieurs fichiers dans Sons/ (un bloc de plusieurs centaines de Mo ne passe pas d'un coup)
+        const split = await PulseFile.packSplit(state.project, fsSafe(base, 'Projet'));
+        let missing = split.missing;
+        if (split.parts.length > 1) {
+            for (let i = 0; i < split.parts.length; i++) {
+                flash(`Enregistrement du projet… (sons ${i + 1}/${split.parts.length})`);
+                await nativeWrite(dir, split.parts[i].name, split.parts[i].blob);
+            }
+            await nativeWrite(dir, `${fsSafe(base, 'Projet')}.pulse`, split.main);
+        } else {
+            const packed = await PulseFile.pack(state.project);
+            missing = packed.missing;
+            await nativeWrite(dir, `${fsSafe(base, 'Projet')}.pulse`, packed.blob);
+        }
         // Audio/ : un fichier par son (écrit une seule fois)
         state._savedAudio = state._savedAudio || new Set();
         const lines = [`Projet « ${state.project.name || base} » — ${state.project.bpm} BPM`, ''];
@@ -3300,10 +3312,17 @@ async function exportPulseFile() {
 // Double-clic sur un .pulse dans le Finder / l'Explorateur (appli de bureau) : le fichier s'ouvre dans Pulse
 async function openPulseFromPath(path) {
     try {
-        const buf = await window.__TAURI__.core.invoke('read_pulse_file', { path });
+        const inv = window.__TAURI__.core.invoke;
+        const buf = await inv('read_pulse_file', { path });
         const name = String(path).split(/[\\/]/).pop();
         const dir = String(path).slice(0, String(path).length - name.length - 1);
-        await openPulseFileInStudio(new File([buf], name), { dir });
+        const file = new File([buf], name);
+        // Gros projet : ses sons sont dans Sons/, à côté
+        const parts = [];
+        for (const rel of await PulseFile.partNames(file)) {
+            try { parts.push(new File([await inv('read_pulse_file', { path: dir + '/' + rel })], rel)); } catch {}
+        }
+        await openPulseFileInStudio(file, { dir, parts });
     } catch (err) {
         console.error(err);
         flash('Impossible d\'ouvrir ce fichier .pulse — vérifie qu\'il n\'est pas abîmé');
@@ -3324,7 +3343,17 @@ async function openPulseFileInStudio(file, opts = {}) {
     flash(`Ouverture de ${file.name}…`);
     try {
         flushProjectDocSave();
-        const project = await PulseFile.unpack(file);
+        // Morceaux de sons : ceux lus à côté du fichier (appli) ou déposés en même temps
+        const wanted = await PulseFile.partNames(file);
+        const parts = opts.parts || [];
+        const project = await PulseFile.unpack(file, parts);
+        const got = new Set(parts.map(p => p.name.split(/[\\/]/).pop()));
+        const lost = wanted.filter(w => !got.has(w.split('/').pop())).length;
+        if (lost) {
+            const ids = PulsePersist.mediaIds(project, false);
+            let absent = 0; for (const id of ids) if (!(await PulsePersist.loadBlob(id))) absent++;
+            if (absent) { try { sessionStorage.setItem('pulse_open_warn', `⚠ ${absent} son${absent > 1 ? 's' : ''} introuvable${absent > 1 ? 's' : ''} : ouvre le projet par double-clic sur le .pulse, ou glisse aussi les fichiers du dossier « Sons » en même temps`); } catch {} }
+        }
         // Un .pulse ouvert depuis son dossier de projet : on continue d'y enregistrer
         if (opts.dir && nativeFs()) { try { if (await window.__TAURI__.core.invoke('project_folder_ok', { dir: opts.dir })) project.savedDir = opts.dir; } catch {} }
         await PulsePersist.saveProjectDoc(project);
@@ -4734,7 +4763,13 @@ function bindGlobalDragDrop() {
         if (overlay) overlay.classList.remove('visible');
 
         const pulseFile = Array.from(e.dataTransfer.files).find(f => /\.pulse$/i.test(f.name));
-        if (pulseFile) { openPulseFileInStudio(pulseFile); return; }
+        if (pulseFile) {
+            // Un gros projet déposé avec ses morceaux (dossier Sons) : le principal est celui qui n'est pas un « - sons N »
+            const all = Array.from(e.dataTransfer.files).filter(f => /\.pulse$/i.test(f.name));
+            const main = all.find(f => !/ - sons \d+\.pulse$/i.test(f.name)) || pulseFile;
+            openPulseFileInStudio(main, { parts: all.filter(f => f !== main) });
+            return;
+        }
         const midis = Array.from(e.dataTransfer.files).filter(f => /\.midi?$/i.test(f.name));
         if (midis.length) {
             for (const f of midis) await importMidiFile(f, state.selectedTrack, state.playhead);
@@ -9468,6 +9503,20 @@ function zoomAnchorSec() {
     }
     return baseCursorSec();
 }
+// Où zoomer : sur le curseur de base s'il y en a un (au milieu de l'écran) ; sans base posée, autour de la souris
+// quand elle survole la timeline (le point sous la souris ne bouge pas)
+function zoomTarget() {
+    const hasBase = state.playing || state.recording || (!state.baseCleared && state.userBaseSec != null);
+    if (!hasBase) {
+        const tl = document.querySelector('.timeline');
+        if (tl && _ptr.x != null) {
+            const r = tl.getBoundingClientRect();
+            if (_ptr.x >= r.left && _ptr.x <= r.right && _ptr.y >= r.top && _ptr.y <= r.bottom)
+                return { sec: Math.max(0, (_ptr.x - r.left + tl.scrollLeft) / state.pxPerSecond), center: false };
+        }
+    }
+    return { sec: baseCursorSec(), center: true };
+}
 // Le curseur de base (là où la lecture revient à l'arrêt) plutôt que celui qui défile ; sans base, le curseur de lecture
 function baseCursorSec() {
     if ((state.playing || state.paused) && state.playOrigin != null && returnOnStop()) return state.playOrigin;
@@ -11199,14 +11248,15 @@ function bindTimelineClick() {
         suspendFollow();
         if (hZoom) {
             // Molette : comme E / Z, le zoom se cale sur le curseur (de base si tu as cliqué), au milieu de l'écran
-            _zoomAcc.sec = baseCursorSec();
+            _ptr.x = e.clientX; _ptr.y = e.clientY;
+            const zt = zoomTarget(); _zoomAcc.sec = zt.sec; _zoomAcc.center = zt.center;
             _zoomAcc.h *= Math.pow(1.15, Math.max(-1, Math.min(1, -e.deltaY / 100)));
         } else {
             heightWheel(e);
         }
         if (_zoomAcc.h !== 1 && !_zoomAcc.raf) _zoomAcc.raf = requestAnimationFrame(() => {
             const a = _zoomAcc; _zoomAcc = { h: 1, sec: 0, raf: 0 };
-            if (a.h !== 1) setZoom(state.pxPerSecond * a.h, a.sec, true);
+            if (a.h !== 1) setZoom(state.pxPerSecond * a.h, a.sec, a.center !== false);
         });
     };
     timeline.addEventListener('wheel', handleZoomWheel, { passive: false });
@@ -11581,6 +11631,13 @@ function bindTimelineClick() {
                 return startRegionLasso(e);
             }
         }
+        // Tout en bas, sous la dernière piste (hors piste) : comme Logic, c'est le Pointeur → cadre de sélection des régions
+        // (un simple clic désélectionne tout sans bouger le curseur)
+        if (!trackEl && e.button === 0 && !e.altKey && !e.shiftKey && !e.metaKey && mouseTool('left') !== 'marquee' && !e.target.closest('.empty-cta')) {
+            if (state.selection) clearRangeSelection();
+            deselectTracksByTimelineClick();
+            return startRegionLasso(e);
+        }
 
         // Clic sur zone vide → place le curseur + efface la sélection ;
         // clic enfoncé et glissé → on choisit une plage (visible seulement sur les pistes survolées), Suppr l'efface
@@ -11608,6 +11665,8 @@ function bindTimelineClick() {
         if (e.target.closest('.timeline-ruler, .timeline-tracks, .clip, .instru-dropzone')) return;
         if (state.selection) clearRangeSelection();
         deselectTracksByTimelineClick();
+        // Tout en bas, hors piste : Pointeur de Logic → cadre de sélection des régions (le curseur ne bouge pas)
+        if (e.button === 0 && !e.altKey && !e.shiftKey && !e.metaKey && mouseTool('left') !== 'marquee') return startRegionLasso(e);
         setPlayheadFromEvent(e);
         const onMove = (ev) => setPlayheadFromEvent(ev);
         const onUp = () => {
@@ -12465,6 +12524,25 @@ function startClipTrim(startEvent, clipEl, trackIdx, clipIdx, side) {
     const maxDuration = Math.max(0.1, srcDur - originalOffset);
     let limitFlashed = false;
     let trimWaveRaf = 0;
+    // Comme Logic : si la région fait partie d'une sélection, tirer son bord tire le même bord de toutes les régions choisies
+    const others = [];
+    if (state.selectedClips && state.selectedClips.size > 1 && state.selectedClips.has(`${trackIdx}:${clipIdx}`)) {
+        for (const key of state.selectedClips) {
+            const [ti, ci] = key.split(':').map(Number);
+            if (ti === trackIdx && ci === clipIdx) continue;
+            const c = state.project.tracks[ti]?.clips?.[ci];
+            if (!c || c.recording || clipIsLocked(c)) continue;
+            const off = c.offset || 0;
+            const src = (c.id && PulseAudio.getBufferDuration(c.id)) || (off + c.duration);
+            others.push({ ti, ci, c, start: c.start, dur: c.duration, off, max: Math.max(0.05, src - off) });
+        }
+    }
+    const paintClip = (ti, ci, c) => {
+        const el = document.querySelector(`.timeline-track[data-i="${ti}"] .clip[data-ci="${ci}"]`);
+        if (!el) return;
+        el.style.left  = (c.start    * state.pxPerSecond) + 'px';
+        el.style.width = (c.duration * state.pxPerSecond) + 'px';
+    };
 
     // Indicateur de durée pendant le trim
     let trimIndicator = document.getElementById('trimIndicator');
@@ -12494,6 +12572,12 @@ function startClipTrim(startEvent, clipEl, trackIdx, clipIdx, side) {
             clip.start = snapped;
             clip.duration = originalDuration - diff;
             clip.offset = originalOffset + diff;
+            for (const o of others) {
+                // même décalage, avec les butées propres à chaque région
+                const d = Math.max(-o.off, -o.start, Math.min(o.dur - 0.05, diff));
+                o.c.start = o.start + d; o.c.duration = o.dur - d; o.c.offset = o.off + d;
+                paintClip(o.ti, o.ci, o.c);
+            }
         } else {
             const raw = originalDuration + dt;
             let d = Math.max(0.05, snapTime(clip.start + raw, ev.shiftKey) - clip.start);
@@ -12501,6 +12585,12 @@ function startClipTrim(startEvent, clipEl, trackIdx, clipIdx, side) {
             if (d > maxDuration) { d = maxDuration; hitLimit(); }
             clip.duration = d;
             if (clip.loopEnd && clip.loopEnd <= clip.start + clip.duration) delete clip.loopEnd;
+            const delta = d - originalDuration;
+            for (const o of others) {
+                o.c.duration = Math.max(0.05, Math.min(o.max, o.dur + delta));
+                if (o.c.loopEnd && o.c.loopEnd <= o.c.start + o.c.duration) delete o.c.loopEnd;
+                paintClip(o.ti, o.ci, o.c);
+            }
         }
         // Mise à jour directe de l'élément (pas de re-render complet)
         const el = document.querySelector(`.timeline-track[data-i="${trackIdx}"] .clip[data-ci="${clipIdx}"]`);
@@ -13162,6 +13252,11 @@ function splitClipAt(trackIdx, clipIdx, atSec) {
     const t = state.project.tracks[trackIdx];
     const clip = t.clips[clipIdx];
     if (!clip || clip.recording) return;
+    // Comme Logic : couper une région choisie parmi d'autres coupe toutes les régions choisies au même endroit
+    if (state.selectedClips && state.selectedClips.size > 1 && state.selectedClips.has(`${trackIdx}:${clipIdx}`)) {
+        splitClipsAt([...state.selectedClips].map(k => k.split(':').map(Number)), atSec);
+        return;
+    }
     if (clip.loopEnd && clip.loopEnd > clip.start + clip.duration + 1e-6) { flash('Cette région est répétée : supprime sa répétition (clic droit) avant de la scinder'); return; }
     if (atSec <= clip.start || atSec >= clip.start + clip.duration) return;
     pushUndo();
@@ -13173,6 +13268,56 @@ function splitClipAt(trackIdx, clipIdx, atSec) {
     renderTimelineTracks();
     saveProject();
     flash('✂ Région scindée en deux — ⌘Z pour annuler');
+}
+
+// Coupe plusieurs régions au même instant (une seule annulation). pairs = [[piste, région], …]
+// Les régions que l'instant ne traverse pas sont laissées telles quelles. Après la coupe, les morceaux de droite sont choisis.
+function splitClipsAt(pairs, atSec) {
+    const byTrack = new Map();
+    for (const [ti, ci] of pairs) {
+        const c = state.project.tracks[ti]?.clips?.[ci];
+        if (!c || c.recording || clipIsLocked(c)) continue;
+        if (c.loopEnd && c.loopEnd > c.start + c.duration + 1e-6) continue;
+        if (atSec <= c.start + 1e-4 || atSec >= c.start + c.duration - 1e-4) continue;
+        if (!byTrack.has(ti)) byTrack.set(ti, []);
+        byTrack.get(ti).push(ci);
+    }
+    if (!byTrack.size) { flash('Aucune région choisie ne passe à cet endroit'); return 0; }
+    pushUndo();
+    const picked = new Set(); let n = 0;
+    for (const [ti, cis] of byTrack) {
+        const t = state.project.tracks[ti];
+        // on garde les objets (pas les numéros) : les numéros changent à chaque coupe
+        const objs = cis.map(ci => t.clips[ci]);
+        const rights = [];
+        for (const clip of objs) {
+            const ci = t.clips.indexOf(clip);
+            const left  = { ...clip, duration: atSec - clip.start, loopEnd: undefined, fadeOut: 0 };
+            const right = { ...clip, start: atSec, duration: clip.start + clip.duration - atSec,
+                            offset: (clip.offset || 0) + (atSec - clip.start), fadeIn: 0, name: (clip.name || 'Clip') + '\'' };
+            t.clips.splice(ci, 1, left, right);
+            rights.push(right);
+            n++;
+        }
+        for (const r of rights) picked.add(`${ti}:${t.clips.indexOf(r)}`);
+    }
+    state.selectedClips = picked;
+    const first = [...picked][0];
+    state.selectedClip = first ? { trackIdx: +first.split(':')[0], clipIdx: +first.split(':')[1] } : null;
+    renderTimelineTracks();
+    saveProject();
+    flash(`✂ ${n} région${n > 1 ? 's' : ''} scindée${n > 1 ? 's' : ''} au même endroit — ⌘Z pour annuler`);
+    return n;
+}
+
+// ⌘T (comme Logic) : couper à la tête de lecture les régions choisies ; sans sélection, celles de la piste choisie
+function splitAtPlayhead() {
+    const at = state.playhead;
+    let pairs = [];
+    if (state.selectedClips && state.selectedClips.size) pairs = [...state.selectedClips].map(k => k.split(':').map(Number));
+    else if (state.selectedClip) pairs = [[state.selectedClip.trackIdx, state.selectedClip.clipIdx]];
+    else { const ti = state.selectedTrack ?? 0; (state.project.tracks[ti]?.clips || []).forEach((_, ci) => pairs.push([ti, ci])); }
+    splitClipsAt(pairs, at);
 }
 
 // === ⌘G : bascule entre Libre et le dernier aimant choisi (Intelligent au départ) ===
@@ -13547,6 +13692,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Modifiers d'abord
         if (mod && shift && k === 's') { e.preventDefault(); clearAllSolos(); return; }
         if (mod && shift && k === 't') { e.preventDefault(); _doAddTrack('audio'); return; }
+        if (mod && !shift && !e.altKey && k === 't') { e.preventDefault(); splitAtPlayhead(); return; }
         if (mod && e.altKey && e.code === 'KeyS') { e.preventDefault(); saveProjectFolder(true); return; }   // ⌘⌥S = Enregistrer sous… (choisir un autre dossier)
         if (mod && k === 's')          { e.preventDefault(); saveProjectFolder(false); return; }
         if (mod && k === 'z' && !shift){ e.preventDefault(); undoAction(); return; }
@@ -13610,8 +13756,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         // Zoom (Pro Tools style, adapté : E = zoom in, Z = zoom out)
         // E / Z : zoom calé sur la souris si elle est sur la timeline, sinon sur le curseur de base ; le défilement auto se met en pause
-        if (k === 'e') { e.preventDefault(); suspendFollow(); setZoom(state.pxPerSecond * 1.25, baseCursorSec(), true); return; }
-        if (k === 'z' && !mod) { e.preventDefault(); suspendFollow(); setZoom(state.pxPerSecond / 1.25, baseCursorSec(), true); return; }
+        if (k === 'e') { e.preventDefault(); suspendFollow(); const zt = zoomTarget(); setZoom(state.pxPerSecond * 1.25, zt.sec, zt.center); return; }
+        if (k === 'z' && !mod) { e.preventDefault(); suspendFollow(); const zt = zoomTarget(); setZoom(state.pxPerSecond / 1.25, zt.sec, zt.center); return; }
 
         // Mode automation
         if (k === 'a' && !mod) { e.preventDefault(); toggleAutomationMode(); return; }
@@ -13717,6 +13863,24 @@ document.addEventListener('DOMContentLoaded', async () => {
     const timeline    = document.querySelector('.timeline');
     timeline.addEventListener('scroll', refreshFineWaves, { passive: true });
     timeline.addEventListener('scroll', () => timeline.style.setProperty('--tl-sl', timeline.scrollLeft + 'px'), { passive: true });   // la pastille d'automation reste visible à gauche
+    // Une seule zone de défilement pour l'œil : la molette / le trackpad au-dessus des pistes OU de la timeline
+    // fait bouger les deux dans la même image (sinon la colonne des pistes suivait avec un léger retard)
+    const wheelBoth = (e) => {
+        if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;   // zoom / hauteur : gérés ailleurs
+        if (e.target.closest && e.target.closest('input, select, textarea, .t-knob, .insp-knob, .tool-menu, .track-ctx-menu')) return;
+        const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? timeline.clientHeight : 1;
+        let dx = e.deltaX * unit, dy = e.deltaY * unit;
+        if (e.shiftKey && !dx) { dx = dy; dy = 0; }     // Shift + molette = défilement horizontal
+        e.preventDefault();
+        if (dx) { timeline.scrollLeft += dx; suspendFollow(); }
+        if (dy) {
+            const top = Math.max(0, Math.min(timeline.scrollHeight - timeline.clientHeight, timeline.scrollTop + dy));
+            _echoTL = top; timeline.scrollTop = top;
+            _echoTP = top; tracksPanel.scrollTop = top;
+        }
+    };
+    timeline.addEventListener('wheel', wheelBoth, { passive: false });
+    tracksPanel.addEventListener('wheel', wheelBoth, { passive: false });
     // Le dernier défilement imposé à l'autre côté est ignoré quand il revient (sinon les deux se renvoient la balle)
     let _echoTL = null, _echoTP = null;
     tracksPanel.addEventListener('scroll', () => {
@@ -13762,6 +13926,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         window.addEventListener('pagehide', () => { try { localStorage.setItem('pulse_clean_exit', '1'); } catch {} });
     } catch {}
 })();
+// Avertissement laissé par l'ouverture d'un projet (la page vient d'être rechargée)
+(() => { try { const w = sessionStorage.getItem('pulse_open_warn'); if (w) { sessionStorage.removeItem('pulse_open_warn'); setTimeout(() => flash(w), 1800); } } catch {} })();
 function flash(msg) {
     let el = document.getElementById('flash');
     if (!el) {

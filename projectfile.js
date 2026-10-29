@@ -109,8 +109,11 @@ window.PulseFile = (function() {
     }
 
     // Fichier .pulse → audio rangé dans IndexedDB, retourne le projet prêt à ouvrir
-    async function unpack(file) {
+    async function unpack(file, partFiles = []) {
         const files = unzipStore(await file.arrayBuffer());
+        for (const pf of partFiles) {
+            for (const [name, bytes] of unzipStore(await pf.arrayBuffer())) if (/^media\//.test(name)) files.set(name, bytes);
+        }
         const json = files.get('project.json');
         if (!json) throw new Error('no-project');
         const doc = JSON.parse(new TextDecoder().decode(json));
@@ -126,5 +129,38 @@ window.PulseFile = (function() {
         return project;
     }
 
-    return { pack, unpack, zipStore, unzipStore };
+    // Gros projet (dossier de l'appli) : les sons sont répartis dans des fichiers « morceaux » de taille raisonnable,
+    // rangés dans Sons/ à côté du .pulse principal (un seul gros bloc ne passe pas d'un coup vers le disque).
+    // Le .pulse principal garde la liste des morceaux : on l'ouvre comme d'habitude.
+    async function packSplit(project, baseName, maxBytes = 96 * 1048576) {
+        const ids = new Set(PulsePersist.mediaIds(project, false));
+        let missing = 0;
+        const groups = []; let cur = [], curSize = 0;
+        for (const id of ids) {
+            const blob = await PulsePersist.loadBlob(id);
+            if (!blob) { missing++; continue; }
+            if (cur.length && curSize + blob.size > maxBytes) { groups.push(cur); cur = []; curSize = 0; }
+            cur.push({ id, blob }); curSize += blob.size;
+        }
+        if (cur.length) groups.push(cur);
+        const parts = [];
+        for (let i = 0; i < groups.length; i++) {
+            const entries = [];
+            for (const { id, blob } of groups[i]) entries.push({ name: `media/${id}.wav`, bytes: new Uint8Array(await blob.arrayBuffer()) });
+            parts.push({ name: `Sons/${baseName} - sons ${i + 1}.pulse`, blob: zipStore(entries) });
+        }
+        const doc = { format: 'pulse', version: 1, savedAt: new Date().toISOString(), project, parts: parts.map(p => p.name) };
+        const main = zipStore([{ name: 'project.json', bytes: new TextEncoder().encode(JSON.stringify(doc)) }]);
+        return { main, parts, clips: ids.size - missing, missing };
+    }
+
+    // Les morceaux annoncés par un .pulse principal (liste vide si tout est dedans)
+    async function partNames(file) {
+        const files = unzipStore(await file.arrayBuffer());
+        const json = files.get('project.json');
+        if (!json) return [];
+        try { return JSON.parse(new TextDecoder().decode(json)).parts || []; } catch { return []; }
+    }
+
+    return { pack, packSplit, partNames, unpack, zipStore, unzipStore };
 })();
