@@ -9283,8 +9283,9 @@ function diagAdd(kind, detail) {
 (function diagInit() {
     try {
         const prev = JSON.parse(localStorage.getItem('pulse_session') || 'null');
-        if (prev && prev.open) diagAdd('redémarrage', `la page a redémarré sans se fermer — elle faisait : ${prev.doing || 'rien de particulier'}`);
-        const mark = (open) => { try { localStorage.setItem('pulse_session', JSON.stringify({ open, doing: (window.state && (state.recording ? 'enregistrement' : state.playing ? 'lecture' : 'arrêt')) || '', at: Date.now() })); } catch {} };
+        if (prev && prev.open) diagAdd('redémarrage', `la page a redémarré sans se fermer — elle faisait : ${prev.doing || 'rien de particulier'}${prev.wk ? ' — effets créés/arrêtés : ' + prev.wk : ''}`);
+        // wk = effets audio créés / arrêtés (fuite mémoire du 29/10) ; mem = mémoire JS si le moteur la donne
+        const mark = (open) => { try { const wk = window.__pulseWk; localStorage.setItem('pulse_session', JSON.stringify({ open, doing: (window.state && (state.recording ? 'enregistrement' : state.playing ? 'lecture' : 'arrêt')) || '', wk: wk ? wk.created + '/' + wk.retired : '', at: Date.now() })); } catch {} };
         mark(true);
         setInterval(() => mark(true), 3000);
         window.addEventListener('pagehide', () => mark(false));

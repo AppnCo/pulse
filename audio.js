@@ -3,6 +3,13 @@
 // Gère : init contexte, mic, enregistrement PCM sans perte, lecture multipiste, export.
 // Lecture et export passent par le MÊME graphe (buildGraph) : ce qu'on entend = ce qu'on exporte.
 
+// Compteur des effets audio (worklets) créés / arrêtés : écrit dans le journal de Pulse pour repérer une fuite
+(() => {
+    if (typeof AudioWorkletNode === 'undefined' || window.__pulseWk) return;
+    window.__pulseWk = { created: 0, retired: 0 };
+    const Orig = AudioWorkletNode;
+    window.AudioWorkletNode = new Proxy(Orig, { construct(t, a, nt) { window.__pulseWk.created++; return Reflect.construct(t, a, nt); } });
+})();
 window.PulseAudio = (function() {
     let ctx = null;
     let masterGain = null;
@@ -39,6 +46,15 @@ window.PulseAudio = (function() {
     // Lecture
     let activeSources = [];
     let activeGraph = [];   // tous les noeuds de la lecture en cours, débranchés à l'arrêt
+    // Débrancher un noeud ; un effet (worklet) est en plus arrêté pour de bon (voir le début de FX_WORKLET)
+    function retireAudioNode(n) {
+        try { n.disconnect(); } catch {}
+        if (typeof AudioWorkletNode !== 'undefined' && n instanceof AudioWorkletNode) {
+            if (!n.__retired) { n.__retired = true; window.__pulseWk && window.__pulseWk.retired++; }
+            try { n.port.postMessage({ __retire: true }); } catch {}
+            try { n.port.onmessage = null; } catch {}
+        }
+    }
     let activeOut = null;   // sortie (gain) du montage en cours, pour le fondu enchaîné quand on change un effet
     const fading = [];      // anciens montages en train de s'éteindre
     // Boucle sans trou : le tour suivant est monté ~250 ms avant la fin de boucle et démarre pile à la fin (fondu de 4 ms)
@@ -55,6 +71,23 @@ window.PulseAudio = (function() {
     // De-esser : on isole les aigus ; quand ils dominent la voix (un « S », un « CH »), on les baisse eux seuls.
     // Le seuil est relatif (aigus / voix entière) : ça marche pareil qu'on ait enregistré fort ou pas.
     const FX_WORKLET = `
+        // Un effet débranché doit s'arrêter pour de bon : sinon il tourne dans le vide pour toujours (process() renvoie true)
+        // et continue d'envoyer ses mesures à la page — à chaque relance de la lecture un de plus (fuite mémoire + prises vides).
+        // retireAudioNode() lui envoie { __retire: true } ; process() renvoie alors false et le navigateur le libère.
+        {
+            const __reg = globalThis.registerProcessor;
+            globalThis.registerProcessor = function (name, C) {
+                class Retirable extends C {
+                    constructor(o) {
+                        super(o);
+                        this.port.addEventListener('message', (e) => { if (e.data && e.data.__retire) this.__dead = true; });
+                        this.port.start();
+                    }
+                    process(i, o, p) { return this.__dead ? false : super.process(i, o, p); }
+                }
+                return __reg.call(globalThis, name, Retirable);
+            };
+        }
         // Automation d'un réglage d'effet : la courbe arrive dans les options ({ réglage: [{ t, v }] }, valeurs déjà converties)
         // et l'effet la suit lui-même à chaque bloc de 128 échantillons, en lecture comme à l'export
         function pulseAutoAt(pts, t) {
@@ -2197,7 +2230,7 @@ window.PulseAudio = (function() {
     }
     function tearPass(o) {
         o.src.forEach(x => { try { x.stop(); } catch {} });
-        o.graph.forEach(n => { try { n.disconnect(); } catch {} });
+        o.graph.forEach(retireAudioNode);
         try { o.out.disconnect(); } catch {}
     }
     // Annule un tour de boucle déjà monté (boucle changée, saut, arrêt) : le passage en cours reprend son volume
@@ -2304,7 +2337,7 @@ window.PulseAudio = (function() {
             // changement d'effet : les deux montages jouent la même chose, on les enchaîne au moment du départ ; saut : l'ancien s'éteint tout de suite
             const offAt = opts.jump ? now : t0;
             old.out.gain.cancelScheduledValues(0); old.out.gain.setValueAtTime(1, offAt); old.out.gain.linearRampToValueAtTime(0, offAt + XF);
-            const tear = () => { old.src.forEach(x => { try { x.stop(); } catch {} }); old.graph.forEach(n => { try { n.disconnect(); } catch {} }); try { old.out.disconnect(); } catch {} const k = fading.indexOf(old); if (k >= 0) fading.splice(k, 1); };
+            const tear = () => { old.src.forEach(x => { try { x.stop(); } catch {} }); old.graph.forEach(retireAudioNode); try { old.out.disconnect(); } catch {} const k = fading.indexOf(old); if (k >= 0) fading.splice(k, 1); };
             old.tear = tear; fading.push(old);
             old.timer = setTimeout(tear, (lead + XF + 0.06) * 1000);
         }
@@ -2321,7 +2354,7 @@ window.PulseAudio = (function() {
             try { s.stop(); } catch {}
         });
         activeSources = [];
-        activeGraph.forEach(n => { try { n.disconnect(); } catch {} });
+        activeGraph.forEach(retireAudioNode);
         activeGraph = [];
         if (activeOut) { try { activeOut.disconnect(); } catch {} activeOut = null; }
         isPlaying = false;
