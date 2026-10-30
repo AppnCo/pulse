@@ -721,6 +721,212 @@ fn import_file_path(path: &str) -> Result<std::path::PathBuf, String> {
     Ok(p)
 }
 
+// === Pulse servi depuis l'ordinateur (pulse://localhost/…) ===
+// Comme un vrai logiciel : les pages viennent du disque, pas d'Internet. Depuis une page en ligne, macOS bloquait
+// le canal rapide page ↔ appli (sauvegarde lente, moteur natif impossible). Les mises à jour restent automatiques :
+// au lancement, `web_update` compare la liste en ligne (web-manifest.json, empreinte de chaque fichier) avec la copie
+// locale et ne télécharge que ce qui a changé. Sans Internet : la dernière copie téléchargée, sinon celle embarquée.
+const WEB_BASE: &str = "https://appnco.app/pulse/";
+/// Adresse du site (PULSE_WEB_BASE pour les tests seulement)
+fn web_base() -> String {
+    match std::env::var("PULSE_WEB_BASE") {
+        Ok(b) if std::env::var_os("PULSE_TEST").is_some() => b,
+        _ => WEB_BASE.to_string(),
+    }
+}
+
+/// Dossier des données de l'appli (PULSE_DATA_DIR pour les tests : jamais celui de l'utilisateur)
+fn data_dir<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> std::path::PathBuf {
+    if let Some(d) = std::env::var_os("PULSE_DATA_DIR") {
+        return std::path::PathBuf::from(d);
+    }
+    app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir().join("pulse-data"))
+}
+
+fn safe_rel(rel: &str) -> bool {
+    !rel.is_empty() && !rel.starts_with('/') && !rel.contains('\\') && !rel.split('/').any(|c| c.is_empty() || c == "." || c == "..")
+}
+
+fn mime_of(rel: &str) -> &'static str {
+    match rel.rsplit('.').next().unwrap_or("").to_ascii_lowercase().as_str() {
+        "html" => "text/html; charset=utf-8",
+        "js" | "mjs" => "text/javascript; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "json" => "application/json",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "ico" => "image/x-icon",
+        "woff2" => "font/woff2",
+        "woff" => "font/woff",
+        "wav" => "audio/wav",
+        "mp3" => "audio/mpeg",
+        "wasm" => "application/wasm",
+        _ => "application/octet-stream",
+    }
+}
+
+fn serve_pulse<R: tauri::Runtime>(app: &tauri::AppHandle<R>, path: &str) -> tauri::http::Response<Vec<u8>> {
+    let rel = percent_decode(path.trim_start_matches('/'));
+    let rel = if rel.is_empty() { "studio.html".to_string() } else { rel };
+    let not_found = || tauri::http::Response::builder().status(404).body(b"introuvable".to_vec()).unwrap();
+    if !safe_rel(&rel) {
+        return not_found();
+    }
+    // copie téléchargée (complète : son web-manifest.json est écrit en dernier), sinon copie embarquée
+    let web = data_dir(app).join("web");
+    if web.join("web-manifest.json").is_file() {
+        if let Ok(bytes) = std::fs::read(web.join(&rel)) {
+            return tauri::http::Response::builder().header("Content-Type", mime_of(&rel)).header("Cache-Control", "no-store").body(bytes).unwrap();
+        }
+    }
+    match app.asset_resolver().get(rel.clone()) {
+        Some(a) => tauri::http::Response::builder().header("Content-Type", a.mime_type).header("Cache-Control", "no-store").body(a.bytes).unwrap(),
+        None => not_found(),
+    }
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn curl_get(url: &str, out: &std::path::Path, secs: u32) -> Result<(), String> {
+    let st = quiet(Command::new("curl").args(["-L", "--fail", "-s", "--max-time", &secs.to_string(), "-o"]).arg(out).arg(url))
+        .status()
+        .map_err(|e| format!("curl : {e}"))?;
+    if st.success() { Ok(()) } else { Err(format!("téléchargement impossible : {url}")) }
+}
+
+/// Met la copie locale de Pulse à jour depuis le site. Renvoie « à jour », « mis à jour (N fichiers) » ou une erreur (on garde l'ancienne copie).
+#[tauri::command]
+async fn web_update(app: tauri::AppHandle) -> Result<String, String> {
+    let dir = data_dir(&app);
+    tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+        static BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if BUSY.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return Ok("déjà en cours".into());
+        }
+        let r = web_update_inner(&app, &dir);
+        BUSY.store(false, std::sync::atomic::Ordering::SeqCst);
+        r
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn web_update_inner<R: tauri::Runtime>(app: &tauri::AppHandle<R>, dir: &std::path::Path) -> Result<String, String> {
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let web = dir.join("web");
+    let tmp_manifest = dir.join("web-manifest.download");
+    curl_get(&format!("{}web-manifest.json?t={}", web_base(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)), &tmp_manifest, 6)?;
+    let raw = std::fs::read(&tmp_manifest).map_err(|e| e.to_string())?;
+    let _ = std::fs::remove_file(&tmp_manifest);
+    let manifest: serde_json::Value = serde_json::from_slice(&raw).map_err(|_| "liste des fichiers illisible".to_string())?;
+    let files = manifest.get("files").and_then(|f| f.as_object()).ok_or("liste des fichiers vide")?;
+    if !files.contains_key("studio.html") || files.len() < 5 {
+        return Err("liste des fichiers incomplète".into());
+    }
+    if std::fs::read(web.join("web-manifest.json")).ok().as_deref() == Some(&raw[..]) {
+        return Ok("à jour".into());
+    }
+    let new = dir.join("web.new");
+    let _ = std::fs::remove_dir_all(&new);
+    let mut downloaded = 0;
+    for (rel, sum) in files {
+        let sum = sum.as_str().ok_or("empreinte manquante")?;
+        if !safe_rel(rel) {
+            return Err(format!("chemin refusé : {rel}"));
+        }
+        let target = new.join(rel);
+        if let Some(p) = target.parent() {
+            std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
+        }
+        // déjà là à l'identique (copie locale ou embarquée) : pas de téléchargement
+        let local = std::fs::read(web.join(rel)).ok().filter(|b| sha256_hex(b) == sum)
+            .or_else(|| app.asset_resolver().get(rel.clone()).map(|a| a.bytes).filter(|b| sha256_hex(b) == sum));
+        let bytes = match local {
+            Some(b) => b,
+            None => {
+                let url = format!("{}{}?v={}", web_base(), rel.split('/').map(|c| c.replace(' ', "%20")).collect::<Vec<_>>().join("/"), &sum[..12.min(sum.len())]);
+                curl_get(&url, &target, 30)?;
+                let b = std::fs::read(&target).map_err(|e| e.to_string())?;
+                if sha256_hex(&b) != sum {
+                    let _ = std::fs::remove_dir_all(&new);
+                    return Err(format!("fichier abîmé pendant le téléchargement : {rel}"));
+                }
+                downloaded += 1;
+                b
+            }
+        };
+        std::fs::write(&target, &bytes).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(new.join("web-manifest.json"), &raw).map_err(|e| e.to_string())?;
+    // bascule : l'ancienne copie n'est retirée qu'une fois la nouvelle en place
+    let old = dir.join("web.old");
+    let _ = std::fs::remove_dir_all(&old);
+    if web.exists() {
+        std::fs::rename(&web, &old).map_err(|e| e.to_string())?;
+    }
+    std::fs::rename(&new, &web).map_err(|e| e.to_string())?;
+    let _ = std::fs::remove_dir_all(&old);
+    Ok(format!("mis à jour ({downloaded} fichier{})", if downloaded > 1 { "s" } else { "" }))
+}
+
+// === Transfert unique des projets : ancienne adresse (page en ligne) → nouvelle (pulse://) ===
+// Les deux adresses ont chacune leur propre stockage. La page en ligne écrit tout (projets, sons, réglages) dans
+// <données>/migration/, puis la page locale le relit. L'ancien stockage n'est jamais effacé (secours).
+fn migration_dir<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> std::path::PathBuf {
+    data_dir(app).join("migration")
+}
+fn migration_name_ok(name: &str) -> bool {
+    !name.is_empty() && name.len() < 120 && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')) && !name.starts_with('.')
+}
+
+/// « fait » si les projets ont déjà été transférés (ou qu'il n'y avait rien), sinon « à faire »
+#[tauri::command]
+fn migration_state(app: tauri::AppHandle) -> String {
+    if migration_dir(&app).join("fait").is_file() { "fait".into() } else { "à faire".into() }
+}
+
+/// Range un fichier du transfert (envoyé par morceaux avec stage_put)
+#[tauri::command]
+async fn migration_put(app: tauri::AppHandle, stage: State<'_, Stage>, name: String, id: String) -> Result<u64, String> {
+    if !migration_name_ok(&name) {
+        return Err("nom refusé".into());
+    }
+    let bytes = stage.take(&id)?;
+    let dir = migration_dir(&app);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let n = bytes.len() as u64;
+    std::fs::write(dir.join(&name), bytes).map_err(|e| format!("écriture impossible : {e}"))?;
+    Ok(n)
+}
+
+/// Relit un fichier du transfert (page locale : octets bruts)
+#[tauri::command]
+fn migration_read(app: tauri::AppHandle, name: String) -> Result<tauri::ipc::Response, String> {
+    if !migration_name_ok(&name) {
+        return Err("nom refusé".into());
+    }
+    let bytes = std::fs::read(migration_dir(&app).join(&name)).map_err(|e| format!("lecture impossible : {e}"))?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+/// Transfert terminé : on le note et on libère la place prise par les fichiers recopiés
+#[tauri::command]
+fn migration_done(app: tauri::AppHandle) -> Result<(), String> {
+    let dir = migration_dir(&app);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    if let Ok(rd) = std::fs::read_dir(&dir) {
+        for e in rd.flatten() {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
+    std::fs::write(dir.join("fait"), b"projets transferes\n").map_err(|e| e.to_string())
+}
+
 /// Pour les tests automatiques (PULSE_TEST=1) : écrit une ligne sur la sortie standard
 #[tauri::command]
 fn test_log(text: String) {
@@ -739,6 +945,10 @@ fn test_exit(app: tauri::AppHandle) {
 /// Journal des problèmes sur le disque (lisible sans Pulse) : macOS ~/Library/Logs/Pulse/journal.log,
 /// Windows %LOCALAPPDATA%\\Pulse\\journal.log. Plantages du moteur (Rust) + journal de la page (redémarrages, erreurs, trous).
 fn journal_path() -> Option<std::path::PathBuf> {
+    // tests automatiques : jamais dans le journal de l'utilisateur
+    if std::env::var_os("PULSE_TEST").is_some() {
+        return Some(std::env::temp_dir().join("pulse-test-journal.log"));
+    }
     #[cfg(target_os = "windows")]
     let base = std::env::var_os("LOCALAPPDATA").map(|d| std::path::PathBuf::from(d).join("Pulse"));
     #[cfg(not(target_os = "windows"))]
@@ -790,6 +1000,8 @@ fn main() {
         .manage(Midi(Mutex::new(Vec::new())))
         .manage(PickedRoot(Mutex::new(None)))
         .manage(Stage(Mutex::new(std::collections::HashMap::new())))
+        // Pulse servi depuis le Mac (pulse://localhost/…) : copie téléchargée de la dernière version, sinon copie embarquée
+        .register_uri_scheme_protocol("pulse", |ctx, request| serve_pulse(ctx.app_handle(), request.uri().path()))
         .setup(|app| {
             // Test automatique : un script à lancer dans la page une fois chargée (PULSE_TEST_EVAL = chemin du fichier .js)
             if std::env::var_os("PULSE_TEST").is_some() {
@@ -805,7 +1017,7 @@ fn main() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![native_info, native_play, native_play_staged, stage_put, save_file_staged, save_download_staged, read_file_part, project_file_size, native_play_project, native_mix, native_swap, native_loop, native_live, native_scope, native_stop, diag_write, monitor_start, monitor_stop, monitor_gain, monitor_track, monitor_info, midi_ports, midi_start, pick_folder, create_project_folder, project_folder_ok, save_file, reveal_project_folder, take_pending_open, read_pulse_file, import_url, read_import_file, save_download, test_log, test_exit])
+        .invoke_handler(tauri::generate_handler![native_info, native_play, native_play_staged, stage_put, save_file_staged, save_download_staged, read_file_part, project_file_size, web_update, migration_state, migration_put, migration_read, migration_done, native_play_project, native_mix, native_swap, native_loop, native_live, native_scope, native_stop, diag_write, monitor_start, monitor_stop, monitor_gain, monitor_track, monitor_info, midi_ports, midi_start, pick_folder, create_project_folder, project_folder_ok, save_file, reveal_project_folder, take_pending_open, read_pulse_file, import_url, read_import_file, save_download, test_log, test_exit])
         .build(context)
         .expect("Pulse n'a pas pu démarrer la fenêtre")
         .run(|app, event| {

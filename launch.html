@@ -11,18 +11,30 @@ body{display:flex;align-items:center;justify-content:center;flex-direction:colum
 </style></head><body>
 <div class="dots"><i></i><i></i><i></i></div><div id="m">Pulse démarre…</div>
 <script>
-// Le logiciel charge la version en ligne (toujours à jour). Sans internet, il ouvre la copie embarquée.
+// Pulse tourne depuis l'ordinateur (pulse://localhost), comme un vrai logiciel : canal rapide avec l'appli,
+// moteur audio natif, sauvegarde rapide. Au lancement : mise à jour depuis le site (seulement ce qui a changé),
+// puis, la toute première fois, transfert des projets gardés par l'ancienne version (page en ligne).
 (async () => {
-  const LIVE = 'https://appnco.app/pulse/studio.html';
-  const go = (u) => location.replace(u);
-  // Si on a déjà été redirigé ici depuis la version en ligne, ne pas reboucler
-  try {
-    const ctl = new AbortController(); const to = setTimeout(() => ctl.abort(), 3500);
-    const r = await fetch(LIVE, { method: 'GET', cache: 'no-store', signal: ctl.signal });
-    clearTimeout(to);
-    if (r.ok) return go(LIVE);
-  } catch (e) {}
-  document.getElementById('m').textContent = 'Pas de connexion : version enregistrée sur cet ordinateur';
-  setTimeout(() => go('studio.html'), 600);
+  const inv = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
+  const msg = (t) => { document.getElementById('m').textContent = t; };
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  // adresse de Pulse sur l'ordinateur : pulse://localhost (Mac), http://pulse.localhost (Windows)
+  const LOCAL = (/Windows/.test(navigator.userAgent) ? 'http://pulse.localhost/' : 'pulse://localhost/') + 'studio.html';
+  if (!inv) { location.replace('studio.html'); return; }
+  // 1. mise à jour (on n'attend pas plus de 8 s : sinon elle finit en fond et servira au prochain lancement)
+  msg('Pulse démarre… (recherche de mise à jour)');
+  try { await Promise.race([inv('web_update').catch(() => null), sleep(8000)]); } catch {}
+  // 2. premier lancement de cette version : transfert des projets de l'ancienne (page en ligne)
+  let state = 'fait';
+  try { state = await inv('migration_state'); } catch {}
+  if (state !== 'fait') {
+    const MIG = 'https://appnco.app/pulse/migrate.html';
+    let reach = false;
+    try { const ctl = new AbortController(); setTimeout(() => ctl.abort(), 5000); reach = (await fetch(MIG, { cache: 'no-store', signal: ctl.signal })).ok; } catch {}
+    if (reach) { msg('Transfert de tes projets…'); location.replace(MIG); return; }
+    // pas d'Internet : on ouvre quand même, le transfert se fera au prochain lancement connecté
+    location.replace(LOCAL + '#transfert-en-attente'); return;
+  }
+  location.replace(LOCAL);
 })();
 </script></body></html>

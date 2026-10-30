@@ -11,7 +11,7 @@
     "core:window:allow-close",
     "core:window:allow-destroy",
     "allow-native-info",
-    "allow-native-play", "allow-native-play-staged", "allow-stage-put", "allow-save-file-staged", "allow-save-download-staged", "allow-read-file-part", "allow-project-file-size",
+    "allow-native-play", "allow-native-play-staged", "allow-stage-put", "allow-save-file-staged", "allow-save-download-staged", "allow-read-file-part", "allow-project-file-size", "allow-web-update", "allow-migration-state", "allow-migration-put", "allow-migration-read", "allow-migration-done",
     "allow-native-play-project",
     "allow-native-mix", "allow-native-swap", "allow-native-loop", "allow-native-live", "allow-native-scope", "allow-diag-write",
     "allow-native-stop",

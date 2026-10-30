@@ -15,3 +15,4 @@ serde_json = "1"
 pulse-engine = { path = "../engine" }
 midir = "0.10"
 base64 = "0.22"
+sha2 = "0.10"

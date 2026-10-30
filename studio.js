@@ -14048,6 +14048,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         window.addEventListener('pagehide', () => { try { localStorage.setItem('pulse_clean_exit', '1'); } catch {} });
     } catch {}
 })();
+// Passage à la version qui tourne depuis l'ordinateur (launch.html / migrate.js) : on le dit une fois
+(() => { try {
+    const h = location.hash;
+    if (h === '#transfert-fait') setTimeout(() => flash('✓ Pulse tourne maintenant depuis ton ordinateur, comme un logiciel. Tes projets ont été transférés.'), 1800);
+    if (h === '#transfert-en-attente') setTimeout(() => flash('Tes anciens projets seront transférés au prochain lancement avec Internet — rien n\'est perdu.'), 1800);
+    if (h === '#transfert-fait' || h === '#transfert-en-attente') history.replaceState(null, '', location.pathname + location.search);
+} catch {} })();
 // Avertissement laissé par l'ouverture d'un projet (la page vient d'être rechargée)
 (() => { try { const w = sessionStorage.getItem('pulse_open_warn'); if (w) { sessionStorage.removeItem('pulse_open_warn'); setTimeout(() => flash(w), 1800); } } catch {} })();
 function flash(msg) {
