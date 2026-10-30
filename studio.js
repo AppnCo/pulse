@@ -1408,7 +1408,7 @@ async function importFromUrl(url, trackIdx, btn) {
     flash('Téléchargement de ton instru… (la 1re fois, Pulse installe aussi son outil d\'import)');
     try {
         const path = await inv('import_url', { url });
-        const bytes = await inv('read_import_file', { path });
+        const bytes = await PulseNative.readBytes('import', 'read_import_file', path);
         const name = String(path).split(/[\\/]/).pop() || 'instru.m4a';
         const ext = (name.split('.').pop() || '').toLowerCase();
         const file = new File([bytes], name.replace(/_/g, ' '), { type: ext === 'm4a' || ext === 'mp4' ? 'audio/mp4' : ext === 'webm' ? 'audio/webm' : ext === 'wav' ? 'audio/wav' : 'audio/mpeg' });
@@ -1430,14 +1430,14 @@ async function convertFromUrl(url, fmt, btn) {
     try {
         if (fmt === 'mp3' && !window.lamejs) throw new Error('le MP3 n\'est pas prêt — recharge la page, ou choisis WAV');
         const path = await inv('import_url', { url });
-        const bytes = await inv('read_import_file', { path });
+        const bytes = await PulseNative.readBytes('import', 'read_import_file', path);
         await PulseAudio.init();
         const buf = await PulseAudio.getContext().decodeAudioData(bytes.slice(0));
         const wavBlob = PulseAudio.audioBufferToWav(buf);
         const outBlob = fmt === 'mp3' ? await encodeToMp3(wavBlob, 320) : wavBlob;
         const base = (String(path).split(/[\\/]/).pop() || 'son').replace(/\.[^.]+$/, '').replace(/_/g, ' ');
         const data = new Uint8Array(await outBlob.arrayBuffer());
-        await inv('save_download', data, { headers: { name: encodeURIComponent(`${base}.${fmt}`) } });
+        await PulseNative.sendBytes(data, 'save_download', { name: encodeURIComponent(`${base}.${fmt}`) }, 'save_download_staged', { name: `${base}.${fmt}` });
         flash(`✓ ${base}.${fmt} rangé dans ton dossier Téléchargements`);
     } catch (err) {
         flash('Conversion impossible : ' + (err && err.message ? err.message : err));
@@ -3257,7 +3257,8 @@ const nativeFs = () => !!(window.__TAURI__ && window.__TAURI__.core && window.__
 const fsSafe = (n, fb = 'piste') => String(n || fb).replace(/[^\p{L}\p{N}_\- ]+/gu, '_').trim().slice(0, 60) || fb;
 async function nativeWrite(dir, rel, data) {
     const bytes = data instanceof Uint8Array ? data : new Uint8Array(await (data instanceof Blob ? data : new Blob([data])).arrayBuffer());
-    return window.__TAURI__.core.invoke('save_file', bytes, { headers: { dir: encodeURIComponent(dir), path: encodeURIComponent(rel) } });
+    // canal rapide, sinon envoi par morceaux (page en ligne) : voir PulseNative.sendBytes
+    return PulseNative.sendBytes(bytes, 'save_file', { dir: encodeURIComponent(dir), path: encodeURIComponent(rel) }, 'save_file_staged', { dir, path: rel });
 }
 // Dossier du projet : celui déjà créé, sinon on demande où le ranger (une seule fois). null = annulé.
 async function ensureProjectFolder(askAgain = false, forExport = false) {
@@ -3287,9 +3288,19 @@ async function saveProjectFolder(askAgain = false) {
         const split = await PulseFile.packSplit(state.project, fsSafe(base, 'Projet'));
         let missing = split.missing;
         if (split.parts.length > 1) {
+            // morceaux de sons déjà écrits à l'identique dans ce dossier (même session) : on ne les réécrit pas
+            if (!state._savedParts || state._savedParts.dir !== dir) state._savedParts = { dir, map: {} };
+            const done = state._savedParts.map;
             for (let i = 0; i < split.parts.length; i++) {
+                const part = split.parts[i];
+                if (done[part.name] === part.sig) {
+                    let onDisk = null;
+                    try { onDisk = await window.__TAURI__.core.invoke('project_file_size', { dir, path: part.name }); } catch {}
+                    if (onDisk === part.blob.size) continue;
+                }
                 flash(`Enregistrement du projet… (sons ${i + 1}/${split.parts.length})`);
-                await nativeWrite(dir, split.parts[i].name, split.parts[i].blob);
+                await nativeWrite(dir, part.name, part.blob);
+                done[part.name] = part.sig;
             }
             await nativeWrite(dir, `${fsSafe(base, 'Projet')}.pulse`, split.main);
         } else {
@@ -3350,14 +3361,14 @@ async function exportPulseFile() {
 async function openPulseFromPath(path) {
     try {
         const inv = window.__TAURI__.core.invoke;
-        const buf = await inv('read_pulse_file', { path });
+        const buf = await PulseNative.readBytes('pulse', 'read_pulse_file', path);
         const name = String(path).split(/[\\/]/).pop();
         const dir = String(path).slice(0, String(path).length - name.length - 1);
         const file = new File([buf], name);
         // Gros projet : ses sons sont dans Sons/, à côté
         const parts = [];
         for (const rel of await PulseFile.partNames(file)) {
-            try { parts.push(new File([await inv('read_pulse_file', { path: dir + '/' + rel })], rel)); } catch {}
+            try { parts.push(new File([await PulseNative.readBytes('pulse', 'read_pulse_file', dir + '/' + rel)], rel)); } catch {}
         }
         await openPulseFileInStudio(file, { dir, parts });
     } catch (err) {
@@ -9520,12 +9531,33 @@ function restoreViewState() {
             state.playhead = s.playhead;
             setTimeout(() => { try { updatePlayhead(); updateChrono(); } catch {} }, 150);
         }
-        if (s.scrollLeft) {
+        const sameProject = s.project && state.project && s.project === state.project.id;
+        if (s.scrollLeft && sameProject) {
             setTimeout(() => {
                 const tl = document.querySelector('.timeline');
                 if (tl) tl.scrollLeft = s.scrollLeft;
             }, 100);
         }
+        // À l'ouverture, jamais une timeline vide alors que le projet a des régions (ex. zoom à fond sur le tout début) :
+        // on se place sur le curseur, et si rien n'y est visible non plus, on montre tout le projet
+        setTimeout(ensureRegionsInView, 450);
+    } catch {}
+}
+function ensureRegionsInView() {
+    try {
+        const tl = document.querySelector('.timeline');
+        if (!tl || !state.project) return;
+        const clips = state.project.tracks.flatMap(t => (t.clips || []).filter(c => !c.recording));
+        if (!clips.length) return;
+        const px = state.pxPerSecond, w = tl.clientWidth;
+        const seen = () => { const a = tl.scrollLeft / px, b = (tl.scrollLeft + w) / px; return clips.some(c => c.start < b && c.start + c.duration > a); };
+        if (seen()) return;
+        const ph = state.playhead || 0;
+        if (clips.some(c => ph >= c.start && ph <= c.start + c.duration)) {
+            tl.scrollLeft = Math.max(0, ph * px - w / 2);
+            if (seen()) return;
+        }
+        zoomToFit();
     } catch {}
 }
 
@@ -13923,6 +13955,24 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
     timeline.addEventListener('wheel', wheelBoth, { passive: false });
     tracksPanel.addEventListener('wheel', wheelBoth, { passive: false });
+    // Même course de défilement des deux côtés : la timeline a, sous les pistes, des zones en plus (bus, zone de dépôt, barre horizontale) ;
+    // une cale vide en bas de la colonne des pistes lui donne la même longueur, sinon la timeline descend plus bas et tout se décale
+    const panelSpacer = document.createElement('div');
+    panelSpacer.className = 'tracks-panel-spacer';
+    panelSpacer.style.cssText = 'flex:none;pointer-events:none';
+    tracksPanel.appendChild(panelSpacer);
+    const syncScrollHeights = () => {
+        const cur = panelSpacer.offsetHeight;
+        const want = Math.max(0, (timeline.scrollHeight - timeline.clientHeight) - (tracksPanel.scrollHeight - cur - tracksPanel.clientHeight));
+        if (Math.abs(want - cur) >= 1) panelSpacer.style.height = want + 'px';
+    };
+    window.syncScrollHeights = syncScrollHeights;
+    try {
+        const ro = new ResizeObserver(() => syncScrollHeights());
+        ro.observe(timeline); ro.observe(tracksPanel);
+        ro.observe(document.getElementById('timelineTracks')); ro.observe(document.getElementById('tracksList'));
+    } catch {}
+    syncScrollHeights();
     // Le dernier défilement imposé à l'autre côté est ignoré quand il revient (sinon les deux se renvoient la balle)
     let _echoTL = null, _echoTP = null;
     tracksPanel.addEventListener('scroll', () => {

@@ -51,6 +51,17 @@ async fn native_play(player: State<'_, Player>, sounds: State<'_, Sounds>, reque
         let (a, b) = s.split_once(',')?;
         Some((a.trim().parse().ok()?, b.trim().parse().ok()?))
     });
+    play_pulse_bytes(&player, &sounds, bytes, from, lp).await
+}
+
+/// Même chose que native_play, avec le .pulse déposé morceau par morceau (stage_put) : page en ligne
+#[tauri::command]
+async fn native_play_staged(player: State<'_, Player>, sounds: State<'_, Sounds>, stage: State<'_, Stage>, id: String, from: f64, lp: Option<(f64, f64)>) -> Result<f64, String> {
+    let bytes = stage.take(&id)?;
+    play_pulse_bytes(&player, &sounds, bytes, from, lp).await
+}
+
+async fn play_pulse_bytes(player: &Player, sounds: &Sounds, bytes: Vec<u8>, from: f64, lp: Option<(f64, f64)>) -> Result<f64, String> {
     let rate = player.output_rate();
     if rate == 0 {
         return Err("aucune sortie audio trouvée — branche un casque ou des enceintes".into());
@@ -67,7 +78,33 @@ async fn native_play(player: State<'_, Player>, sounds: State<'_, Sounds>, reque
     .await
     .map_err(|e| e.to_string())??;
     *sounds.1.lock().unwrap() = "pulse".into();
-    start_stream(&player, renderer, media, from, rate)
+    start_stream(player, renderer, media, from, rate)
+}
+
+// === Fichiers envoyés en morceaux ===
+// Depuis la page en ligne (appnco.app), macOS refuse le canal rapide et Tauri passe par un canal de secours
+// qui n'accepte que du texte : la page envoie alors les octets en base64, par morceaux de quelques Mo,
+// recollés ici avant d'écrire le fichier ou de lancer la lecture.
+struct Stage(Mutex<std::collections::HashMap<String, Vec<u8>>>);
+impl Stage {
+    fn take(&self, id: &str) -> Result<Vec<u8>, String> {
+        self.0.lock().unwrap().remove(id).ok_or_else(|| "fichier envoyé introuvable".to_string())
+    }
+}
+
+/// Ajoute un morceau (base64) au fichier en cours d'envoi `id` ; `first` = on repart de zéro
+#[tauri::command]
+fn stage_put(stage: State<Stage>, id: String, first: bool, data: String) -> Result<usize, String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD.decode(data.as_bytes()).map_err(|e| format!("morceau abîmé : {e}"))?;
+    let mut map = stage.0.lock().unwrap();
+    if first {
+        map.retain(|k, _| k == &id); // un envoi interrompu ne garde pas sa mémoire
+        map.insert(id.clone(), Vec::new());
+    }
+    let buf = map.get_mut(&id).ok_or("envoi non commencé")?;
+    buf.extend_from_slice(&bytes);
+    Ok(buf.len())
 }
 
 /// Sons du projet déjà décodés (identifiant → taille du WAV, son), gardés entre deux lectures
@@ -372,8 +409,18 @@ async fn save_file(request: Request<'_>) -> Result<String, String> {
         return Err("le fichier doit arriver en octets bruts".into());
     };
     let header = |k: &str| request.headers().get(k).and_then(|v| v.to_str().ok()).map(percent_decode).unwrap_or_default();
-    let dir = std::path::PathBuf::from(header("dir"));
-    let rel = header("path");
+    write_project_file(header("dir"), header("path"), bytes.clone()).await
+}
+
+/// Même chose que save_file, avec le fichier déposé morceau par morceau (stage_put) : page en ligne
+#[tauri::command]
+async fn save_file_staged(stage: State<'_, Stage>, dir: String, path: String, id: String) -> Result<String, String> {
+    let bytes = stage.take(&id)?;
+    write_project_file(dir, path, bytes).await
+}
+
+async fn write_project_file(dir: String, rel: String, bytes: Vec<u8>) -> Result<String, String> {
+    let dir = std::path::PathBuf::from(dir);
     if !dir.join(MARKER).is_file() {
         return Err("ce n'est pas un dossier de projet Pulse".into());
     }
@@ -382,7 +429,6 @@ async fn save_file(request: Request<'_>) -> Result<String, String> {
         return Err("chemin de fichier refusé".into());
     }
     let target = dir.join(rel_path);
-    let bytes = bytes.clone();
     tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -394,12 +440,27 @@ async fn save_file(request: Request<'_>) -> Result<String, String> {
     .map_err(|e| e.to_string())?
 }
 
+/// Taille d'un fichier du dossier de projet (rien s'il n'existe pas) : pour ne pas réécrire un morceau de sons inchangé
+#[tauri::command]
+fn project_file_size(dir: String, path: String) -> Option<u64> {
+    let dir = std::path::PathBuf::from(dir);
+    let rel = std::path::Path::new(&path);
+    if !dir.join(MARKER).is_file() || rel.is_absolute() || rel.components().any(|c| !matches!(c, std::path::Component::Normal(_))) {
+        return None;
+    }
+    std::fs::metadata(dir.join(rel)).ok().filter(|m| m.is_file()).map(|m| m.len())
+}
+
 /// Montre le dossier du projet dans le Finder / l'Explorateur
 #[tauri::command]
 fn reveal_project_folder(dir: String) -> Result<(), String> {
     let d = std::path::PathBuf::from(&dir);
     if !d.join(MARKER).is_file() {
         return Err("ce n'est pas un dossier de projet Pulse".into());
+    }
+    // tests automatiques : ne pas ouvrir de fenêtres du Finder sur l'écran
+    if std::env::var_os("PULSE_TEST").is_some() {
+        return Ok(());
     }
     #[cfg(target_os = "macos")]
     let cmd = "open";
@@ -424,12 +485,43 @@ fn take_pending_open(p: State<PendingOpen>) -> Vec<String> {
 /// Lit un fichier .pulse (octets bruts, sans passer par du JSON)
 #[tauri::command]
 fn read_pulse_file(path: String) -> Result<tauri::ipc::Response, String> {
-    let p = std::path::Path::new(&path);
+    let p = pulse_file_path(&path)?;
+    let bytes = std::fs::read(p).map_err(|e| format!("lecture impossible : {e}"))?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+fn pulse_file_path(path: &str) -> Result<std::path::PathBuf, String> {
+    let p = std::path::PathBuf::from(path);
     if p.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("pulse")) != Some(true) {
         return Err("ce n'est pas un fichier .pulse".into());
     }
-    let bytes = std::fs::read(p).map_err(|e| format!("lecture impossible : {e}"))?;
-    Ok(tauri::ipc::Response::new(bytes))
+    Ok(p)
+}
+
+#[derive(serde::Serialize)]
+struct FilePart { size: u64, data: String }
+
+/// Lecture d'un fichier par morceaux en base64 (page en ligne : le canal de secours ne sait pas renvoyer d'octets).
+/// kind = "pulse" (un .pulse) ou "import" (un son téléchargé par lien) — mêmes règles que read_pulse_file / read_import_file.
+#[tauri::command]
+async fn read_file_part(kind: String, path: String, offset: u64, len: u64) -> Result<FilePart, String> {
+    let p = match kind.as_str() {
+        "pulse" => pulse_file_path(&path)?,
+        "import" => import_file_path(&path)?,
+        _ => return Err("lecture refusée".into()),
+    };
+    tauri::async_runtime::spawn_blocking(move || -> Result<FilePart, String> {
+        use base64::Engine;
+        use std::io::{Read, Seek, SeekFrom};
+        let mut f = std::fs::File::open(&p).map_err(|e| format!("lecture impossible : {e}"))?;
+        let size = f.metadata().map_err(|e| e.to_string())?.len();
+        f.seek(SeekFrom::Start(offset.min(size))).map_err(|e| e.to_string())?;
+        let mut buf = Vec::with_capacity(len.min(size.saturating_sub(offset)) as usize);
+        f.take(len).read_to_end(&mut buf).map_err(|e| format!("lecture impossible : {e}"))?;
+        Ok(FilePart { size, data: base64::engine::general_purpose::STANDARD.encode(&buf) })
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 // === Import d'une instru par lien (YouTube / SoundCloud) avec yt-dlp ===
@@ -579,12 +671,22 @@ async fn save_download(request: Request<'_>) -> Result<String, String> {
         return Err("le fichier doit arriver en octets bruts".into());
     };
     let name = request.headers().get("name").and_then(|v| v.to_str().ok()).map(percent_decode).unwrap_or_default();
+    write_download(name, bytes.clone()).await
+}
+
+/// Même chose que save_download, avec le fichier déposé morceau par morceau (stage_put) : page en ligne
+#[tauri::command]
+async fn save_download_staged(stage: State<'_, Stage>, name: String, id: String) -> Result<String, String> {
+    let bytes = stage.take(&id)?;
+    write_download(name, bytes).await
+}
+
+async fn write_download(name: String, bytes: Vec<u8>) -> Result<String, String> {
     let clean: String = name.chars().map(|c| if c.is_alphanumeric() || " ._-()".contains(c) { c } else { '_' }).collect();
     let clean = clean.trim_matches(|c| c == '.' || c == ' ').to_string();
     if clean.is_empty() { return Err("nom de fichier refusé".into()); }
     let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).ok_or("dossier personnel introuvable")?;
     let dir = std::path::PathBuf::from(home).join("Downloads");
-    let bytes = bytes.clone();
     tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let (stem, ext) = match clean.rsplit_once('.') { Some((a, b)) => (a.to_string(), format!(".{b}")), None => (clean.clone(), String::new()) };
@@ -605,13 +707,18 @@ async fn save_download(request: Request<'_>) -> Result<String, String> {
 /// Lit le fichier téléchargé par import_url (octets bruts) — seulement dans le dossier d'import de Pulse
 #[tauri::command]
 fn read_import_file(path: String) -> Result<tauri::ipc::Response, String> {
+    let p = import_file_path(&path)?;
+    let bytes = std::fs::read(&p).map_err(|e| format!("lecture impossible : {e}"))?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+fn import_file_path(path: &str) -> Result<std::path::PathBuf, String> {
     let root = std::fs::canonicalize(import_dir()).map_err(|_| "aucun import en cours".to_string())?;
-    let p = std::fs::canonicalize(&path).map_err(|e| format!("fichier introuvable : {e}"))?;
+    let p = std::fs::canonicalize(path).map_err(|e| format!("fichier introuvable : {e}"))?;
     if !p.starts_with(&root) {
         return Err("fichier hors du dossier d'import".into());
     }
-    let bytes = std::fs::read(&p).map_err(|e| format!("lecture impossible : {e}"))?;
-    Ok(tauri::ipc::Response::new(bytes))
+    Ok(p)
 }
 
 /// Pour les tests automatiques (PULSE_TEST=1) : écrit une ligne sur la sortie standard
@@ -682,7 +789,23 @@ fn main() {
         .manage(PendingOpen(Mutex::new(pending)))
         .manage(Midi(Mutex::new(Vec::new())))
         .manage(PickedRoot(Mutex::new(None)))
-        .invoke_handler(tauri::generate_handler![native_info, native_play, native_play_project, native_mix, native_swap, native_loop, native_live, native_scope, native_stop, diag_write, monitor_start, monitor_stop, monitor_gain, monitor_track, monitor_info, midi_ports, midi_start, pick_folder, create_project_folder, project_folder_ok, save_file, reveal_project_folder, take_pending_open, read_pulse_file, import_url, read_import_file, save_download, test_log, test_exit])
+        .manage(Stage(Mutex::new(std::collections::HashMap::new())))
+        .setup(|app| {
+            // Test automatique : un script à lancer dans la page une fois chargée (PULSE_TEST_EVAL = chemin du fichier .js)
+            if std::env::var_os("PULSE_TEST").is_some() {
+                if let Some(js) = std::env::var_os("PULSE_TEST_EVAL").and_then(|p| std::fs::read_to_string(p).ok()) {
+                    let handle = app.handle().clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_secs(6));
+                        if let Some(w) = handle.get_webview_window("main") {
+                            let _ = w.eval(&js);
+                        }
+                    });
+                }
+            }
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![native_info, native_play, native_play_staged, stage_put, save_file_staged, save_download_staged, read_file_part, project_file_size, native_play_project, native_mix, native_swap, native_loop, native_live, native_scope, native_stop, diag_write, monitor_start, monitor_stop, monitor_gain, monitor_track, monitor_info, midi_ports, midi_start, pick_folder, create_project_folder, project_folder_ok, save_file, reveal_project_folder, take_pending_open, read_pulse_file, import_url, read_import_file, save_download, test_log, test_exit])
         .build(context)
         .expect("Pulse n'a pas pu démarrer la fenêtre")
         .run(|app, event| {

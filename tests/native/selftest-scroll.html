@@ -1,0 +1,16 @@
+<!doctype html><meta charset="utf-8"><title>selftest-scroll</title><body style="margin:0"><iframe id="f" src="studio.html" style="width:1400px;height:800px;border:0"></iframe>
+<script>
+// Appli de bureau : la colonne des pistes et la timeline ont la même course de défilement ; l'ouverture ne montre jamais une timeline vide
+const log=t=>{ try{ window.__TAURI__.core.invoke('test_log',{text:t}); }catch{} }; const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+(async()=>{ try{ await sleep(2500); const w=document.getElementById('f').contentWindow; const ST=w.eval('state');
+  const d=w.document, tp=d.querySelector('.tracks-panel'), tl=d.querySelector('.timeline');
+  const m=(lab)=>{ const a=tp.scrollHeight-tp.clientHeight, b=tl.scrollHeight-tl.clientHeight; log(`${lab}: course pistes=${a} timeline=${b} ecart=${Math.abs(a-b)}`); };
+  ST.project.tracks=Array.from({length:16},(_,i)=>({name:'P'+i,type:'audio',color:'#7C3AED',volume:100,pan:0,effects:[],clips:[]})); w.renderAll(); await sleep(400); m('sans regions');
+  ST.project.tracks.forEach((t,i)=>t.clips=[{id:'x'+i,name:'R',start:6,duration:180,offset:0}]); w.renderAll(); await sleep(400); m('avec regions');
+  tl.scrollTop=99999; await sleep(300); log(`tout en bas: pistes.scrollTop=${tp.scrollTop} timeline.scrollTop=${tl.scrollTop}`);
+  w.setZoom(4796, 0); tl.scrollLeft=0; ST.playhead=28.9; await sleep(300); w.ensureRegionsInView(); await sleep(300);
+  const a=tl.scrollLeft/ST.pxPerSecond; log(`reouverture zoom fort: vue a ${a.toFixed(2)} s zoom=${Math.round(ST.pxPerSecond)} (regions des 6 s)`);
+  ST.playhead=1; w.setZoom(4796, 0); tl.scrollLeft=0; await sleep(300); w.ensureRegionsInView(); await sleep(300);
+  log(`curseur hors region: zoom=${Math.round(ST.pxPerSecond)} vue a ${(tl.scrollLeft/ST.pxPerSecond).toFixed(2)} s`);
+  log('FIN'); window.__TAURI__.core.invoke('test_exit'); }catch(e){ log('ERREUR '+e); log('FIN'); } })();
+</script>

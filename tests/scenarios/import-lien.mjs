@@ -1,4 +1,4 @@
-// 18/10 : import d'une instru par lien (logiciel installé) — avec un faux Tauri : import_url renvoie un chemin, read_import_file les octets
+// 18/10 : import d'une instru par lien (l'appel save_file vide = test du canal rapide de PulseNative, ignoré) (logiciel installé) — avec un faux Tauri : import_url renvoie un chemin, read_import_file les octets
 export default async ({ ev, nav, send, sleep, check }) => {
   await send('Network.enable'); await send('Network.setCacheDisabled', { cacheDisabled: true });
   await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 860, deviceScaleFactor: 1, mobile: false });
@@ -17,7 +17,7 @@ export default async ({ ev, nav, send, sleep, check }) => {
   await R(`const i=document.querySelector('.dz-url-input'); i.value='https://www.youtube.com/watch?v=fail'; document.querySelector('.dz-url-btn').click(); await new Promise(r=>setTimeout(r,500)); return 1`);
   check('erreur de téléchargement : le bouton redevient « Importer »', (await R(`return document.querySelector('.dz-url-btn').textContent`)) === 'Importer');
   await R(`window.__calls=[]; const i=document.querySelector('.dz-url-input'); i.value='https://www.youtube.com/watch?v=abc'; document.querySelector('.dz-url-btn').click(); await new Promise(r=>setTimeout(r,1500)); return 1`);
-  const res = JSON.parse(await R(`const t=state.project.tracks[0]; return JSON.stringify({calls:window.__calls.map(c=>c.split(' ')[0]), clips:t.clips.length, name:t.clips[0]&&t.clips[0].name, dur:t.clips[0]&&+t.clips[0].duration.toFixed(2)})`));
+  const res = JSON.parse(await R(`const t=state.project.tracks[0]; return JSON.stringify({calls:window.__calls.map(c=>c.split(' ')[0]).filter(c=>c!=='save_file'), clips:t.clips.length, name:t.clips[0]&&t.clips[0].name, dur:t.clips[0]&&+t.clips[0].duration.toFixed(2)})`));
   check('lien YouTube : import_url puis read_import_file', res.calls.join(',') === 'import_url,read_import_file', res.calls.join(','));
   check('le son téléchargé devient l\'instru (3 s)', res.clips === 1 && Math.abs(res.dur - 3) < 0.05, JSON.stringify(res));
 };

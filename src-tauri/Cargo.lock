@@ -2640,6 +2640,7 @@ dependencies = [
 name = "pulse-app"
 version = "0.1.1"
 dependencies = [
+ "base64 0.22.1",
  "midir",
  "pulse-engine",
  "serde",

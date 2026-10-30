@@ -1,0 +1,28 @@
+<!doctype html><meta charset="utf-8"><title>selftest-save</title><body style="margin:0;background:#111;color:#0f0;font:18px monospace"><pre id="o" style="position:fixed;z-index:9;top:60px;left:10px;background:#000c;padding:10px"></pre>
+<iframe id="f" src="studio.html" style="width:100vw;height:100vh;border:0"></iframe>
+<script>
+// Test de l'appli de bureau : ⌘S d'un gros projet (16 pistes de 3 min) dans un dossier de projet Pulse
+const o=document.getElementById('o'); const log=t=>{ o.textContent+=t+'\n'; try{ window.__TAURI__.core.invoke('test_log',{text:t}); }catch{} };
+const f=document.getElementById('f'); const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+(async()=>{ try{
+  await sleep(2500); const w=f.contentWindow; w.__TAURI__=window.__TAURI__;
+  const DIR=decodeURIComponent(new URLSearchParams(location.search).get('dir')||'');
+  if (new URLSearchParams(location.search).get('chunks')) { w.__pulseForceChunks = true; log('envoi en morceaux forcé (comme la page en ligne)'); }
+  const ST=w.eval('state'); const ctx=await w.PulseAudio.init(); const sr=48000, N=16, SEC=180;
+  const tracks=[];
+  for(let t=0;t<N;t++){ const b=ctx.createBuffer(2,sr*SEC,sr); for(let c=0;c<2;c++){ const d=b.getChannelData(c); for(let i=0;i<d.length;i++) d[i]=Math.sin(i/sr*6.2832*(110+t*20))*0.2; }
+    const id='big'+t; w.PulseAudio.registerBuffer(id,b); await w.PulsePersist.saveBlob(id,new Blob([w.PulseAudio.audioBufferToWav(b)],{type:'audio/wav'}),{kind:'import'});
+    tracks.push({name:'Piste '+(t+1),type:'audio',color:'#7C3AED',volume:100,pan:0,effects:[],clips:[{id,name:'Piste '+(t+1),start:6,duration:SEC,offset:0}]}); }
+  ST.project.tracks=tracks; ST.project.name='Projet test'; ST.project.savedDir=DIR; w.saveProject(); log('projet prêt : '+N+' pistes de '+SEC+' s, dossier '+DIR);
+  const fl=w.flash; w.eval('flash = (m) => { window.__flashes = (window.__flashes||[]).concat([m]); }');
+  const t0=performance.now(); await Promise.race([w.saveProjectFolder(false), sleep(150000).then(()=>log('BLOQUÉ après 150 s'))]);
+  for(const m of (w.__flashes||[])) log('message: '+m);
+  log('sauvegarde terminée en '+Math.round(performance.now()-t0)+' ms');
+  // 2e ⌘S sans changer les sons : les morceaux déjà écrits ne sont pas renvoyés
+  w.__flashes=[]; ST.project.tracks[0].volume=80; const t1=performance.now(); await w.saveProjectFolder(false);
+  log('2e sauvegarde en '+Math.round(performance.now()-t1)+' ms, morceaux réécrits='+(w.__flashes||[]).filter(m=>/sons \d/.test(m)).length);
+  // ranger derrière soi : ce gros projet ne doit pas rester dans la mémoire de la fenêtre de test (les autres tests le rechargeraient)
+  try { w.localStorage.clear(); for (const d of await w.indexedDB.databases()) await new Promise(r=>{ const q=w.indexedDB.deleteDatabase(d.name); q.onsuccess=q.onerror=q.onblocked=()=>r(); }); } catch {}
+  log('FIN'); window.__TAURI__.core.invoke('test_exit');
+ }catch(e){ log('ERREUR '+String(e)+' | '+(e&&e.stack)); log('FIN'); } })();
+</script>

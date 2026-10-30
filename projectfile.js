@@ -147,7 +147,8 @@ window.PulseFile = (function() {
         for (let i = 0; i < groups.length; i++) {
             const entries = [];
             for (const { id, blob } of groups[i]) entries.push({ name: `media/${id}.wav`, bytes: new Uint8Array(await blob.arrayBuffer()) });
-            parts.push({ name: `Sons/${baseName} - sons ${i + 1}.pulse`, blob: zipStore(entries) });
+            // sig = quels sons (et de quelle taille) sont dans ce morceau : même sig + même taille sur le disque = rien à réécrire
+            parts.push({ name: `Sons/${baseName} - sons ${i + 1}.pulse`, blob: zipStore(entries), sig: groups[i].map(g => g.id + ':' + g.blob.size).join('|') });
         }
         const doc = { format: 'pulse', version: 1, savedAt: new Date().toISOString(), project, parts: parts.map(p => p.name) };
         const main = zipStore([{ name: 'project.json', bytes: new TextEncoder().encode(JSON.stringify(doc)) }]);

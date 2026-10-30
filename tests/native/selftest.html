@@ -66,6 +66,11 @@ const f=document.getElementById('f'); const sleep=ms=>new Promise(r=>setTimeout(
     tr0.effects=tr0.effects.filter(e=>e!=='reverb'&&e!=='comp');
     ST.looping=false; ST.project.tracks[0].volume=100; }
   await w.togglePlay(); await sleep(300);
+  // page en ligne (appnco.app) : le canal rapide est refusé, les sons partent en morceaux (stage_put) — la lecture native doit démarrer quand même
+  { const inv=window.__TAURI__.core.invoke; w.__pulseForceChunks=true; const n0=await inv('native_info');
+    await inv('native_stop'); const { blob } = await w.PulseFile.pack(ST.project);
+    await w.PulseNative.sendBytes(new Uint8Array(await blob.arrayBuffer()), 'native_play', { from: '1' }, 'native_play_staged', { from: 1, lp: null }).catch(e=>log('envoi en morceaux ERREUR '+e));
+    await sleep(500); const n1=await inv('native_info'); log('envoi en morceaux: joue='+n1.playing+' via='+n1.via+' pos='+n1.position.toFixed(2)); await inv('native_stop'); w.__pulseForceChunks=false; await sleep(300); }
   log('après stop: rust playing='+(await w.__TAURI__.core.invoke('native_info')).playing+' isNative='+w.PulseAudio.isNative()); log('FIN'); window.__TAURI__.core.invoke('test_exit');
  }catch(e){ log('ERREUR '+String(e)+' | '+(e&&e.name)+' | '+(e&&e.message)+' | '+JSON.stringify(e)); } })();
 </script>

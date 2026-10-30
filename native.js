@@ -23,7 +23,52 @@ window.PulseNative = (function () {
         const bytes = new Uint8Array(await blob.arrayBuffer());
         const headers = { from: String(from) };
         if (lp) headers.loop = lp[0] + ',' + lp[1];
-        return core().invoke('native_play', bytes, { headers });
+        return sendBytes(bytes, 'native_play', headers, 'native_play_staged', { from, lp });
+    }
+    // Envoi d'octets à l'appli. Depuis la page en ligne, macOS refuse le canal rapide : Tauri passe par un canal
+    // de secours qui ne prend que du texte (« octets bruts » refusés). On envoie alors en base64, par morceaux
+    // de 4 Mo recollés côté Rust (stage_put), puis la commande « _staged » utilise le fichier recollé.
+    // Le canal rapide marche-t-il ? Testé une fois : save_file vérifie le corps avant tout, un envoi vide suffit (rien n'est écrit)
+    let rawOk = null;
+    async function rawWorks() {
+        if (window.__pulseForceChunks) return false;   // tests : simuler la page en ligne
+        if (rawOk === null) {
+            try { await core().invoke('save_file', new Uint8Array(0), { headers: { dir: '', path: '' } }); rawOk = true; }
+            catch (err) { rawOk = !/octets bruts/.test(String((err && err.message) || err)); }
+        }
+        return rawOk;
+    }
+    const CHUNK = 4 << 20;
+    function toB64(u8) {
+        let s = '';
+        for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+        return btoa(s);
+    }
+    function fromB64(str, out, at) {
+        const bin = atob(str);
+        for (let i = 0; i < bin.length; i++) out[at + i] = bin.charCodeAt(i);
+        return bin.length;
+    }
+    async function sendBytes(bytes, rawCmd, headers, stagedCmd, stagedArgs) {
+        if (await rawWorks()) return core().invoke(rawCmd, bytes, { headers });
+        const id = 'f' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+        for (let i = 0, first = true; first || i < bytes.length; i += CHUNK, first = false) {
+            await core().invoke('stage_put', { id, first, data: toB64(bytes.subarray(i, i + CHUNK)) });
+        }
+        return core().invoke(stagedCmd, Object.assign({ id }, stagedArgs));
+    }
+    // Lecture d'un fichier par l'appli (kind « pulse » ou « import ») ; renvoie un ArrayBuffer
+    async function readBytes(kind, rawCmd, path) {
+        if (await rawWorks()) return core().invoke(rawCmd, { path });
+        let out = null, size = 0, at = 0;
+        do {
+            const part = await core().invoke('read_file_part', { kind, path, offset: at, len: CHUNK });
+            if (!out) { size = part.size; out = new Uint8Array(size); }
+            const n = fromB64(part.data, out, at);
+            at += n;
+            if (!n) break;
+        } while (at < size);
+        return out.buffer;
     }
     // Projet changé pendant la lecture (effet, réglage de plugin, région…) : le moteur passe au nouveau mix
     // en fondu enchaîné de 20 ms, sans s'arrêter. Échoue (« sons manquants », « pas en lecture ») → relancer avec play().
@@ -49,7 +94,9 @@ window.PulseNative = (function () {
     // Réglage « lire avec le moteur natif » : activé par défaut dans l'appli depuis le 30/10/2026 (2 h d'endurance sans un trou) ;
     // décoché dans les Réglages = retour au moteur du navigateur
     const KEY = 'pulse_native_play_v2';   // nouvelle clé : tout le monde repart sur le moteur natif
-    const isEnabled = () => { try { return isAvailable() && localStorage.getItem(KEY) !== '0'; } catch { return isAvailable(); } };
+    // Page en ligne (canal rapide refusé) : le moteur natif reste coupé. Il lui faudrait recevoir tous les sons
+    // en morceaux à chaque session (≈1 Go pour 16 pistes de 5 min = la page figée de longues secondes).
+    const isEnabled = () => { if (rawOk === false) return false; try { return isAvailable() && localStorage.getItem(KEY) !== '0'; } catch { return isAvailable(); } };
     const setEnabled = (on) => { try { localStorage.setItem(KEY, on ? '1' : '0'); } catch {} };
     // Retour casque direct par le moteur natif (activé par défaut dans l'appli ; coupé = retour par le moteur web)
     const MKEY = 'pulse_native_monitor';
@@ -62,7 +109,9 @@ window.PulseNative = (function () {
         track: (json) => isAvailable() ? core().invoke('monitor_track', { json: json || '' }) : Promise.resolve(),
         info: () => isAvailable() ? core().invoke('monitor_info') : Promise.resolve(null),
     };
-    return { get available() { return isAvailable(); }, play, swap, scope, stop, mix, loop, live, info, isEnabled, setEnabled, monitor, onError: null };
+    // le canal est testé dès le chargement (quelques ms), avant la première lecture
+    if (isAvailable()) setTimeout(() => { rawWorks().catch(() => {}); }, 0);
+    return { get available() { return isAvailable(); }, get chunked() { return rawOk === false; }, play, swap, scope, stop, mix, loop, live, info, isEnabled, setEnabled, monitor, sendBytes, readBytes, onError: null };
 })();
 
 // Claviers MIDI dans l'appli : la fenêtre n'a pas « Web MIDI », on lui prête la même interface avec CoreMIDI (Rust).
