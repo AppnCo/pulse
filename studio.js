@@ -2377,8 +2377,37 @@ function openFxCopyMenu(cx, cy, fx, x) {
     document.body.appendChild(menu);
     dismissMenuOnOutside(menu);
 }
+// Comme Logic : avec plusieurs pistes choisies, ajouter / retirer / allumer / éteindre un effet sur l'une le fait sur toutes
+// (si la piste touchée fait partie de la sélection). Les réglages, eux, restent propres à chaque piste.
+function fxGroup(x) {
+    const i = state.project.tracks.indexOf(x);
+    if (i < 0) return [x];   // groupe, bus, région : seulement lui
+    const sel = selectedTrackIdxs();
+    if (sel.length < 2 || !sel.includes(i)) return [x];
+    return sel.map(k => state.project.tracks[k]).filter(o => o && (o === x || (!o.isCapture && !o.locked)));
+}
+function addFxTo(o, n) {
+    o.effects = o.effects || [];
+    if (o.effects.includes(n)) return false;
+    o.effects.push(n);
+    // l'effet démarre avec les valeurs affichées dans son panneau (sinon le curseur dit une chose et le son en fait une autre)
+    if (FX_START[n]) { o.effectParams = o.effectParams || {}; if (!o.effectParams[n]) o.effectParams[n] = JSON.parse(JSON.stringify(FX_START[n])); }
+    return true;
+}
+// Allumer / éteindre : sur les autres pistes choisies, seulement là où cet effet est (ou a été) posé
+function setFxOn(x, fx, on) {
+    fxGroup(x).forEach(o => {
+        o.effects = o.effects || [];
+        const k = o.effects.indexOf(fx);
+        if (!on) { if (k >= 0) o.effects.splice(k, 1); return; }
+        const had = o === x || (o.effectParams && o.effectParams[fx]) || (fx === 'eq' && Array.isArray(o.eqBands) && o.eqBands.length);
+        if (k < 0 && had) o.effects.push(fx);
+    });
+}
+
 // Supprime un effet de la chaîne d'une piste ou d'un groupe (Auto-Tune : retire aussi la correction des prises)
 async function removeFx(fx, x) {
+    let group = [x];
     const name = fx === 'tune' ? 'Auto-Tune' : (FX_NAMES[fx] || fx);
     if (fx === 'tune') {
         const ti = state.project.tracks.indexOf(x);
@@ -2386,13 +2415,14 @@ async function removeFx(fx, x) {
         delete x.tuneSlot; saveProject();
     } else {
         pushUndo();
-        x.effects = (x.effects || []).filter(n => n !== fx);
+        group = fxGroup(x);
+        group.forEach(o => { o.effects = (o.effects || []).filter(n => n !== fx); });
         saveProject(); refreshPlaybackSoon();
     }
-    closeTransientPanels(); const fw = findPlugWin(x, fx); if (fw) fw.remove();   // seule la fenêtre de l'effet retiré se ferme
+    closeTransientPanels(); group.forEach(o => { const fw = findPlugWin(o, fx); if (fw) fw.remove(); });   // seules les fenêtres de l'effet retiré se ferment
     renderInspector();
     if (state.mixerOpen) { renderMixer(); bindMixerEvents(); }
-    flash(`${name} supprimé de « ${x.name} » — ⌘Z pour annuler`);
+    flash(group.length > 1 ? `${name} supprimé de ${group.length} pistes — ⌘Z pour annuler` : `${name} supprimé de « ${x.name} » — ⌘Z pour annuler`);
 }
 function pasteFxSetting(fx, x) {
     if (!_fxClip || _fxClip.fx !== fx) return;
@@ -2526,11 +2556,13 @@ function openAddEffectMenu(anchor, target, x) {
             openTunePanel(ti, -1, rr.left - 290, rr.top - 20, true);
             return;
         }
-        if (!(x.effects || []).includes(n)) {
-            pushUndo(); x.effects = x.effects || []; x.effects.push(n);
-            // l'effet démarre avec les valeurs affichées dans son panneau (sinon le curseur dit une chose et le son en fait une autre)
-            if (FX_START[n]) { x.effectParams = x.effectParams || {}; if (!x.effectParams[n]) x.effectParams[n] = JSON.parse(JSON.stringify(FX_START[n])); }
+        // plusieurs pistes choisies : l'effet est posé sur toutes (celles qui ne l'ont pas encore)
+        const group = fxGroup(x);
+        if (group.some(o => !(o.effects || []).includes(n))) {
+            pushUndo();
+            const added = group.filter(o => addFxTo(o, n)).length;
             saveProject(); refreshPlaybackSoon();
+            if (group.length > 1) flash(`${nameOf(n)} ajouté sur ${added} piste${added > 1 ? 's' : ''} — les réglages restent propres à chaque piste`);
         }
         renderInspector();
         if (state.mixerOpen) { renderMixer(); bindMixerEvents(); }
@@ -7450,8 +7482,7 @@ function openEqPanel(trackIdx, anchorEl) {
     panel.querySelector('.fx-bypass').addEventListener('change', (e) => {
         pushUndo();
         t.effects = t.effects || [];
-        if (e.target.checked) { if (!t.effects.includes('eq')) t.effects.push('eq'); }
-        else { const i = t.effects.indexOf('eq'); if (i >= 0) t.effects.splice(i, 1); }
+        setFxOn(t, 'eq', e.target.checked);   // plusieurs pistes choisies : toutes
         anchorEl.classList.toggle('active', !!e.target.checked);
         refreshPlaybackSoon(); saveProject();
     });
@@ -7932,7 +7963,7 @@ function openLimiterPanel(trackIdx, anchorEl) {
     panel.querySelector('.fx-panel-close').addEventListener('click', () => panel.remove());
     panel.querySelector('.fx-bypass').addEventListener('change', (e) => {
         pushUndo(); t.effects = t.effects || [];
-        if (e.target.checked) { if (!t.effects.includes('limit')) t.effects.push('limit'); } else { const i = t.effects.indexOf('limit'); if (i >= 0) t.effects.splice(i, 1); }
+        setFxOn(t, 'limit', e.target.checked);   // plusieurs pistes choisies : toutes
         anchorEl && anchorEl.classList && anchorEl.classList.toggle('active', !!e.target.checked);
         refreshPlaybackSoon(); saveProject();
     });
@@ -8124,7 +8155,7 @@ function openGatePanel(trackIdx, anchorEl) {
     new MutationObserver((_, o) => { if (!panel.isConnected) { stopListen(); o.disconnect(); } }).observe(document.body, { childList: true });
     panel.querySelector('.fx-bypass').addEventListener('change', (e) => {
         pushUndo(); t.effects = t.effects || [];
-        if (e.target.checked) { if (!t.effects.includes('gate')) t.effects.push('gate'); } else { const i = t.effects.indexOf('gate'); if (i >= 0) t.effects.splice(i, 1); }
+        setFxOn(t, 'gate', e.target.checked);   // plusieurs pistes choisies : toutes
         refreshPlaybackSoon(); saveProject(); refreshStrips();
     });
     syncKnobs();
@@ -8300,7 +8331,7 @@ function openDeessPanel(trackIdx, anchorEl) {
     new MutationObserver((_, o) => { if (!panel.isConnected) { stopListen(); o.disconnect(); } }).observe(document.body, { childList: true });
     panel.querySelector('.fx-bypass').addEventListener('change', (e) => {
         pushUndo(); t.effects = t.effects || [];
-        if (e.target.checked) { if (!t.effects.includes('deess')) t.effects.push('deess'); } else { const i = t.effects.indexOf('deess'); if (i >= 0) t.effects.splice(i, 1); }
+        setFxOn(t, 'deess', e.target.checked);   // plusieurs pistes choisies : toutes
         refreshPlaybackSoon(); saveProject(); refreshStrips();
     });
     syncKnobs(); lvlArc(0, false);
@@ -8475,7 +8506,7 @@ function openMbandPanel(trackIdx, anchorEl) {
     panel.querySelector('.fx-panel-close').addEventListener('click', () => panel.remove());
     panel.querySelector('.fx-bypass').addEventListener('change', (e) => {
         pushUndo(); t.effects = t.effects || [];
-        if (e.target.checked) { if (!t.effects.includes('mband')) t.effects.push('mband'); } else { const i = t.effects.indexOf('mband'); if (i >= 0) t.effects.splice(i, 1); }
+        setFxOn(t, 'mband', e.target.checked);   // plusieurs pistes choisies : toutes
         refreshPlaybackSoon(); saveProject(); refreshStrips();
     });
     buildFp(); draw();
@@ -8672,7 +8703,7 @@ function openMsatPanel(trackIdx, anchorEl) {
     panel.querySelector('.fx-panel-close').addEventListener('click', () => panel.remove());
     panel.querySelector('.fx-bypass').addEventListener('change', (e) => {
         pushUndo(); t.effects = t.effects || [];
-        if (e.target.checked) { if (!t.effects.includes('msat')) t.effects.push('msat'); } else { const i = t.effects.indexOf('msat'); if (i >= 0) t.effects.splice(i, 1); }
+        setFxOn(t, 'msat', e.target.checked);   // plusieurs pistes choisies : toutes
         refreshPlaybackSoon(); saveProject(); refreshStrips();
     });
     buildFp(); draw();
@@ -9038,8 +9069,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
     panel.querySelector('.fx-bypass').addEventListener('change', (e) => {
         syncIn();
         t.effects = t.effects || [];
-        if (e.target.checked) { if (!t.effects.includes(fxName)) t.effects.push(fxName); }
-        else { const i = t.effects.indexOf(fxName); if (i >= 0) t.effects.splice(i, 1); }
+        setFxOn(t, fxName, e.target.checked);   // plusieurs pistes choisies : toutes
         anchorEl.classList.toggle('active', !!e.target.checked);
         refreshPlaybackSoon();
         saveProject();
@@ -9889,12 +9919,12 @@ function bindMixerEvents() {
                 }
                 const t = state.project.tracks[i];
                 t.effects = t.effects || [];
-                const isActive = t.effects.includes(param);
-                if (!isActive) {
+                const group = fxGroup(t);
+                if (group.some(o => !(o.effects || []).includes(param))) {
                     pushUndo();
-                    t.effects.push(param);
+                    group.forEach(o => addFxTo(o, param));
                     slot.classList.add('active');
-                    saveProject();
+                    saveProject(); refreshPlaybackSoon();
                 }
                 openEffectPanel(i, param, slot);
             });
@@ -9912,7 +9942,7 @@ function bindMixerEvents() {
                 const t = state.project.tracks[i];
                 t.effects = t.effects || [];
                 const idx = t.effects.indexOf(param);
-                if (idx >= 0) { pushUndo(); t.effects.splice(idx, 1); slot.classList.remove('active'); saveProject(); }
+                if (idx >= 0) { pushUndo(); fxGroup(t).forEach(o => { o.effects = (o.effects || []).filter(n => n !== param); }); slot.classList.remove('active'); saveProject(); refreshPlaybackSoon(); }
             });
         });
 
