@@ -1689,6 +1689,8 @@ impl Chain {
         self.order = Stage::order(custom);
         self
     }
+    /// Réduction de gain du compresseur en ce moment (dB, dosée par le mélange), comme l'aiguille du navigateur
+    pub fn comp_gr(&self) -> Option<f32> { self.comp.as_ref().map(|c| (c.red * c.mix) as f32) }
     pub fn is_empty(&self) -> bool {
         self.cut.is_empty() && self.filters.is_empty() && self.dyn_eq.is_empty() && self.sat.is_none() && self.gate.is_none() && self.crush.is_none() && self.util.is_none() && self.width.is_none() && self.modfx.is_empty() && self.deess.is_none() && self.deess2.is_none() && self.mband.is_none() && self.msat.is_none() && self.comp.is_none() && self.master.is_none() && self.limit.is_none() && self.delay.is_none() && self.reverb.is_none() && self.pitch.is_none()
     }

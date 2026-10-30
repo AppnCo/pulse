@@ -5,32 +5,63 @@ use std::collections::HashMap;
 use std::f64::consts::FRAC_PI_2;
 
 /// Audio source d'un clip : canaux séparés, à sa fréquence d'origine.
+/// Les échantillons sont partagés (cloner une Source ne recopie rien) et gardés en 16 bits quand le WAV l'est
+/// (les sons d'un projet Pulse sont tous en 16 bits) : moitié moins de mémoire, son identique.
 #[derive(Debug, Clone)]
 pub struct Source {
     pub sample_rate: u32,
-    pub channels: Vec<Vec<f32>>,
+    data: std::sync::Arc<Samples>,
+}
+
+#[derive(Debug)]
+enum Samples {
+    F32(Vec<Vec<f32>>),
+    I16(Vec<Vec<i16>>),
 }
 
 impl Source {
+    pub fn new(sample_rate: u32, channels: Vec<Vec<f32>>) -> Self {
+        Self { sample_rate, data: std::sync::Arc::new(Samples::F32(channels)) }
+    }
+    pub fn from_i16(sample_rate: u32, channels: Vec<Vec<i16>>) -> Self {
+        Self { sample_rate, data: std::sync::Arc::new(Samples::I16(channels)) }
+    }
+    pub fn n_channels(&self) -> usize {
+        match &*self.data { Samples::F32(c) => c.len(), Samples::I16(c) => c.len() }
+    }
+    /// Échantillon `i` du canal `ch` (−1…1)
+    #[inline]
+    pub fn sample(&self, ch: usize, i: usize) -> Option<f32> {
+        match &*self.data {
+            Samples::F32(c) => c.get(ch).and_then(|d| d.get(i)).copied(),
+            Samples::I16(c) => c.get(ch).and_then(|d| d.get(i)).map(|&v| v as f32 * (1.0 / 32768.0)),
+        }
+    }
+    /// Octets gardés en mémoire
+    pub fn bytes(&self) -> usize {
+        match &*self.data { Samples::F32(c) => c.iter().map(|d| d.len() * 4).sum(), Samples::I16(c) => c.iter().map(|d| d.len() * 2).sum() }
+    }
     pub fn frames(&self) -> usize {
-        self.channels.first().map_or(0, Vec::len)
+        match &*self.data { Samples::F32(c) => c.first().map_or(0, Vec::len), Samples::I16(c) => c.first().map_or(0, Vec::len) }
     }
     pub fn duration(&self) -> f64 {
         self.frames() as f64 / self.sample_rate as f64
     }
     /// Échantillon à l'instant `t` (secondes), interpolé.
     fn at(&self, ch: usize, t: f64) -> f32 {
-        let data = &self.channels[ch.min(self.channels.len() - 1)];
+        let ch = ch.min(self.n_channels().saturating_sub(1));
         let pos = t * self.sample_rate as f64;
         if pos < 0.0 {
             return 0.0;
         }
         let i = pos.floor() as usize;
-        if i + 1 >= data.len() {
-            return data.get(i).copied().unwrap_or(0.0);
+        let len = self.frames();
+        if i + 1 >= len {
+            return self.sample(ch, i).unwrap_or(0.0);
         }
         let frac = (pos - i as f64) as f32;
-        data[i] * (1.0 - frac) + data[i + 1] * frac
+        let (a, b) = (self.sample(ch, i).unwrap_or(0.0), self.sample(ch, i + 1).unwrap_or(0.0));
+        a * (1.0 - frac) + b * frac
     }
 }
 
@@ -232,7 +263,16 @@ pub struct Renderer {
     levels: Vec<(usize, f32, f32, f32)>,
     /// Niveau efficace du master sur le dernier bloc
     master_rms: f32,
+    /// Réduction des compresseurs sur le dernier bloc : (groupe ?, indice, dB)
+    grs: Vec<(bool, usize, f32)>,
+    /// Son à afficher en spectre (fenêtre de plugin ouverte) : (groupe ?, indice), après les effets
+    scope_target: Option<(bool, usize)>,
+    scope: Vec<f32>,
+    scope_i: usize,
 }
+
+/// Longueur du son gardé pour le spectre (comme l'analyseur du navigateur : fftSize 4096)
+pub const SCOPE: usize = 4096;
 
 /// Fondu aux bords de la boucle (échantillons)
 const LOOP_FADE: usize = 96;
@@ -325,7 +365,7 @@ impl Renderer {
                 // Effets d'une région (avant ceux de la piste)
                 let fx = clip.fx.as_ref().filter(|f| !f.effects.is_empty())
                     .map(|f| crate::fx::Chain::new(&f.effects, &f.effect_params, sr, project.bpm_at(clip.start), project.ceiling()).with_order(&f.fx_order));
-                if !force_mono && (src.channels.len() > 1 || fx.as_ref().is_some_and(|c| c.outputs_stereo())) { stereo_in = true; }
+                if !force_mono && (src.n_channels() > 1 || fx.as_ref().is_some_and(|c| c.outputs_stereo())) { stereo_in = true; }
                 let (xin, xout) = crossfade_extents(&all, clip);
                 let seg_start = clip.start.max(from);
                 let seg_end = clip.end().min(to);
@@ -334,7 +374,7 @@ impl Renderer {
                 }
                 let first = ((seg_start - from) * sr).round() as usize;
                 let last = (((seg_end - from) * sr).round() as usize).min(frames);
-                let src_stereo = !force_mono && src.channels.len() > 1;
+                let src_stereo = !force_mono && src.n_channels() > 1;
                 let out_stereo = src_stereo || fx.as_ref().is_some_and(|c| c.outputs_stereo());
                 rt_clips.push(ClipRt { clip: (*clip).clone(), xin, xout, fx, src_stereo, out_stereo, first, last });
             }
@@ -392,11 +432,13 @@ impl Renderer {
         let limiter = opts.only_track.is_none().then(|| crate::fx::Limiter::new(project.ceiling(), sr));
         let _ = base_opts;
         Self { sr, from, to, frames, pos: 0, master_volume: opts.master_volume, only_track: opts.only_track.is_some(), n_buses: project.buses.len(), tracks, buses, sends, limiter, base: RenderOptions { sample_rate: opts.sample_rate, master_volume: base_opts.master_volume, range: opts.range, only_track: opts.only_track, start: opts.start },
-               loop_ab: None, wrapped: false, fade_in_end: None, levels: Vec::new(), master_rms: 0.0 }
+               loop_ab: None, wrapped: false, fade_in_end: None, levels: Vec::new(), master_rms: 0.0,
+               grs: Vec::new(), scope_target: None, scope: vec![0.0; SCOPE], scope_i: 0 }
     }
 
     /// Longueur totale (échantillons), queue des effets comprise
     pub fn frames(&self) -> usize { self.frames }
+    pub fn sample_rate(&self) -> f64 { self.sr }
     /// Échantillons déjà mixés
     pub fn position(&self) -> usize { self.pos }
     pub fn is_done(&self) -> bool { self.pos >= self.frames && !self.loop_ab.is_some_and(|(_, b)| self.pos < b) }
@@ -430,10 +472,33 @@ impl Renderer {
         self.fade_in_end = Some(a + LOOP_FADE);
     }
     pub fn has_loop(&self) -> bool { self.loop_ab.is_some() }
+    /// Boucle en cours, en secondes dans le morceau
+    pub fn loop_secs(&self) -> Option<(f64, f64)> { self.loop_ab.map(|(a, b)| (self.from + a as f64 / self.sr, self.from + b as f64 / self.sr)) }
     /// Vrai une fois après chaque tour de boucle
     pub fn take_wrap(&mut self) -> bool { std::mem::take(&mut self.wrapped) }
     /// Niveaux du dernier bloc : (piste, crête G, crête D, efficace) et efficace du master
     pub fn levels(&self) -> (&[(usize, f32, f32, f32)], f32) { (&self.levels, self.master_rms) }
+    /// Réduction des compresseurs (groupe ?, indice, dB) sur le dernier bloc
+    pub fn grs(&self) -> &[(bool, usize, f32)] { &self.grs }
+    /// Choisit le son gardé pour le spectre (None = aucun)
+    pub fn set_scope(&mut self, target: Option<(bool, usize)>) {
+        if target != self.scope_target { self.scope_target = target; self.scope.iter_mut().for_each(|x| *x = 0.0); self.scope_i = 0; }
+    }
+    pub fn scope_target(&self) -> Option<(bool, usize)> { self.scope_target }
+    /// Les SCOPE derniers échantillons du son choisi, du plus ancien au plus récent
+    pub fn scope(&self) -> Option<Vec<f32>> {
+        self.scope_target?;
+        let mut v = Vec::with_capacity(SCOPE);
+        v.extend_from_slice(&self.scope[self.scope_i..]);
+        v.extend_from_slice(&self.scope[..self.scope_i]);
+        Some(v)
+    }
+    fn scope_push(scope: &mut [f32], i: &mut usize, l: &[f32], r: &[f32]) {
+        for m in 0..l.len() {
+            scope[*i] = if r.is_empty() { l[m] } else { 0.5 * (l[m] + r[m]) };
+            *i = (*i + 1) % SCOPE;
+        }
+    }
 
     /// Change en direct volumes, pan, mute / solo, doses d'envoi, volumes et pan des groupes, fader Master — sans relancer :
     /// les effets gardent leur état (une queue de reverb continue). La structure (régions, effets, sorties) doit rester la même :
@@ -479,6 +544,7 @@ impl Renderer {
         let limit = match self.loop_ab { Some((_, b)) if self.pos < b => b, _ => self.frames };
         let n = left.len().min(right.len()).min(limit.saturating_sub(self.pos));
         self.levels.clear();
+        self.grs.clear();
         self.master_rms = 0.0;
         left.iter_mut().for_each(|x| *x = 0.0);
         right.iter_mut().for_each(|x| *x = 0.0);
@@ -500,7 +566,7 @@ impl Renderer {
                 let has_fx = c.fx.is_some();
                 let (mut cl, mut cr) = if has_fx { (vec![0.0f32; n], vec![0.0f32; n]) } else { (Vec::new(), Vec::new()) };
                 let offset = clip.offset.unwrap_or(0.0).max(0.0);
-                let nch = src.channels.len();
+                let nch = src.n_channels();
                 for k in c.first.max(b0)..c.last.min(b0 + n) {
                     let m = k - b0;
                     let x = from + k as f64 / sr - clip.start; // position dans le clip
@@ -537,7 +603,9 @@ impl Renderer {
             // 2. Effets de la piste
             if !tr.chain.is_empty() {
                 tr.chain.process(&mut tl, &mut trr, tr.mono_in);
+                if let Some(g) = tr.chain.comp_gr() { self.grs.push((false, tr.idx, g)); }
             }
+            if self.scope_target == Some((false, tr.idx)) { Self::scope_push(&mut self.scope, &mut self.scope_i, &tl, &trr); }
             // 3. Volume (fader, groupes, master, courbe) puis pan, et somme dans le mix
             let mut aux_buf: Vec<(Vec<f32>, Vec<f32>)> = tr.aux.iter().map(|_| (vec![0.0f32; n], vec![0.0f32; n])).collect();
             {
@@ -609,6 +677,8 @@ impl Renderer {
             let (mut bl, mut br) = std::mem::take(&mut bus_in[i]);
             done[i] = true;
             b.chain.process(&mut bl, &mut br, false);
+            if let Some(g) = b.chain.comp_gr() { self.grs.push((true, i, g)); }
+            if self.scope_target == Some((true, i)) { Self::scope_push(&mut self.scope, &mut self.scope_i, &bl, &br); }
             let mut aux_buf: Vec<(Vec<f32>, Vec<f32>)> = b.aux.iter().map(|_| (vec![0.0f32; n], vec![0.0f32; n])).collect();
             {
                 // un groupe déjà traité ne reçoit plus rien (comme le rendu d'un coup)

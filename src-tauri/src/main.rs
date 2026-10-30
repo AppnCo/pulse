@@ -104,6 +104,35 @@ async fn native_play_project(player: State<'_, Player>, sounds: State<'_, Sounds
     start_stream(&player, renderer, media, from, rate)
 }
 
+/// Projet changé pendant la lecture (effet ajouté, réglage de plugin, région…) : nouveau mixeur pris en fondu enchaîné
+/// de 20 ms, même position, même boucle, sans arrêt. Erreur « sons manquants » ou « pas en lecture » → la page relance normalement.
+#[tauri::command]
+async fn native_swap(player: State<'_, Player>, sounds: State<'_, Sounds>, json: String, sizes: std::collections::HashMap<String, u64>) -> Result<(), String> {
+    let rate = player.output_rate();
+    if rate == 0 || !player.is_playing() { return Err("pas en lecture".into()); }
+    let cache = sounds.0.clone();
+    let (renderer, media) = tauri::async_runtime::spawn_blocking(move || -> Result<_, String> {
+        let project: pulse_engine::model::Project = serde_json::from_str(&json).map_err(|e| format!("projet illisible : {e}"))?;
+        let media: render::Media = {
+            let c = cache.lock().unwrap();
+            let mut m = render::Media::new();
+            for (id, size) in &sizes {
+                match c.get(id) {
+                    Some((s, src)) if s == size => { m.insert(id.clone(), src.clone()); }
+                    _ => return Err("sons manquants".to_string()),
+                }
+            }
+            m
+        };
+        // part du début du morceau : le lecteur le cale lui-même sur l'instant en cours
+        let opts = render::RenderOptions { sample_rate: rate, start: 0.0, ..Default::default() };
+        Ok((render::Renderer::new(&project, &media, &opts), media))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    if player.swap(renderer, std::sync::Arc::new(media)) { Ok(()) } else { Err("pas en lecture".into()) }
+}
+
 /// Mixeur qui part de `from` ; avec une boucle qui commence avant, il démarre au début de la boucle puis saute à `from`
 /// (pour que le premier tour de boucle ait bien tous les sons)
 fn looped_renderer(project: &pulse_engine::model::Project, media: &render::Media, rate: u32, from: f64, lp: Option<(f64, f64)>) -> render::Renderer {
@@ -148,6 +177,12 @@ struct Live { position: f64, playing: bool, looping: bool, levels: Option<pulse_
 #[tauri::command]
 fn native_live(player: State<Player>) -> Live {
     Live { position: player.position(), playing: player.is_playing(), looping: player.loop_ok(), levels: player.levels() }
+}
+
+/// Spectre d'une fenêtre de plugin : piste (bus=false, indice) ou groupe (bus=true, indice) ; None = plus de spectre
+#[tauri::command]
+fn native_scope(player: State<Player>, target: Option<(bool, usize)>) {
+    player.set_scope(target);
 }
 
 #[tauri::command]
@@ -594,7 +629,43 @@ fn test_exit(app: tauri::AppHandle) {
     }
 }
 
+/// Journal des problèmes sur le disque (lisible sans Pulse) : macOS ~/Library/Logs/Pulse/journal.log,
+/// Windows %LOCALAPPDATA%\\Pulse\\journal.log. Plantages du moteur (Rust) + journal de la page (redémarrages, erreurs, trous).
+fn journal_path() -> Option<std::path::PathBuf> {
+    #[cfg(target_os = "windows")]
+    let base = std::env::var_os("LOCALAPPDATA").map(|d| std::path::PathBuf::from(d).join("Pulse"));
+    #[cfg(not(target_os = "windows"))]
+    let base = std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join("Library/Logs/Pulse"));
+    let dir = base?;
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir.join("journal.log"))
+}
+fn journal_write(kind: &str, detail: &str) {
+    use std::io::Write;
+    let Some(p) = journal_path() else { return };
+    // au-delà d'1 Mo, l'ancien journal passe en journal.old.log
+    if std::fs::metadata(&p).map(|m| m.len() > 1 << 20).unwrap_or(false) { let _ = std::fs::rename(&p, p.with_extension("old.log")); }
+    let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&p) {
+        let _ = writeln!(f, "{t}\t{kind}\t{}", detail.replace('\n', " | "));
+    }
+}
+
+/// Une ligne du journal de la page (redémarrage, erreur, trous dans le son…)
+#[tauri::command]
+fn diag_write(kind: String, detail: String) {
+    journal_write(&kind, &detail.chars().take(600).collect::<String>());
+}
+
 fn main() {
+    // un plantage du moteur est noté avant que l'appli ne se ferme
+    let prev = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let th = std::thread::current().name().unwrap_or("?").to_string();
+        journal_write("plantage-moteur", &format!("fil {th} : {info}"));
+        prev(info);
+    }));
+    journal_write("démarrage", env!("CARGO_PKG_VERSION"));
     let mut context = tauri::generate_context!();
     // Test automatique : fenêtre invisible, pour ne rien afficher à l'écran
     if std::env::var_os("PULSE_TEST").is_some() {
@@ -611,7 +682,7 @@ fn main() {
         .manage(PendingOpen(Mutex::new(pending)))
         .manage(Midi(Mutex::new(Vec::new())))
         .manage(PickedRoot(Mutex::new(None)))
-        .invoke_handler(tauri::generate_handler![native_info, native_play, native_play_project, native_mix, native_loop, native_live, native_stop, monitor_start, monitor_stop, monitor_gain, monitor_track, monitor_info, midi_ports, midi_start, pick_folder, create_project_folder, project_folder_ok, save_file, reveal_project_folder, take_pending_open, read_pulse_file, import_url, read_import_file, save_download, test_log, test_exit])
+        .invoke_handler(tauri::generate_handler![native_info, native_play, native_play_project, native_mix, native_swap, native_loop, native_live, native_scope, native_stop, diag_write, monitor_start, monitor_stop, monitor_gain, monitor_track, monitor_info, midi_ports, midi_start, pick_folder, create_project_folder, project_folder_ok, save_file, reveal_project_folder, take_pending_open, read_pulse_file, import_url, read_import_file, save_download, test_log, test_exit])
         .build(context)
         .expect("Pulse n'a pas pu démarrer la fenêtre")
         .run(|app, event| {

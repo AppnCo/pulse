@@ -5,7 +5,7 @@ const o=document.getElementById('o'); const log=t=>{ o.textContent+=t+'\n'; try{
 const f=document.getElementById('f'); const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 (async()=>{ try{
   await sleep(2500); const w=f.contentWindow; w.__TAURI__=window.__TAURI__;
-  w.localStorage.setItem('pulse_native_play','1');
+  w.localStorage.removeItem('pulse_native_play_v2');  // réglage par défaut : moteur natif
   log('PulseNative.available='+w.PulseNative.available+' enabled='+w.PulseNative.isEnabled());
   // un projet avec un clip de 4 s
   const ST=w.eval('state'); log('init…'); const ctx=await w.PulseAudio.init(); log('init ok'); const sr=48000,b=ctx.createBuffer(1,sr*4,sr); const d=b.getChannelData(0); for(let i=0;i<d.length;i++)d[i]=Math.sin(i/sr*6.2832*330)*0.3;
@@ -52,6 +52,18 @@ const f=document.getElementById('f'); const sleep=ms=>new Promise(r=>setTimeout(
     // boucle déplacée pendant la lecture : prise en direct
     ST.loop={start:1.2,end:1.8}; for(let k=0;k<15;k++){ w.PulseAudio.setLoop(ST.loop); await sleep(100); } const n2=await inv('native_info'); const lv2=await inv('native_live');
     log('boucle changée: relances='+(n2.plays-n1.plays)+' rust_pos='+lv2.position.toFixed(2)+' looping='+lv2.looping);
+    // plugin ajouté puis réglé pendant la lecture : fondu enchaîné, sans relance ni trou
+    const t0=(await inv('native_info')); const tr0=ST.project.tracks[0]; tr0.effects=(tr0.effects||[]).concat(['reverb']);
+    w.refreshPlaybackSoon(); await sleep(500);
+    tr0.effectParams=tr0.effectParams||{}; tr0.effectParams.reverb=Object.assign({},tr0.effectParams.reverb||{},{wet:60}); w.refreshPlaybackSoon(); await sleep(500);
+    const t1=await inv('native_info'); const lv3=await inv('native_live');
+    log('plugin en direct: relances='+(t1.plays-t0.plays)+' joue='+t1.playing+' trous='+t1.underruns+' looping='+lv3.looping+' rust_pos='+lv3.position.toFixed(2));
+    // fenêtres de plugin : spectre et aiguille du compresseur alimentés par le moteur natif
+    tr0.effects=tr0.effects.concat(['comp']); tr0.effectParams.comp=Object.assign({},tr0.effectParams.comp||{},{threshold:-40}); w.refreshPlaybackSoon();
+    let spMax=-Infinity, gr=null; const bins=new Float32Array(2048); const tq=performance.now();
+    for(let k=0;k<20;k++){ const an=w.PulseAudio.getTrackSpectrum(0); if(an){ an.getFloatFrequencyData(bins); for(const v of bins) if(Number.isFinite(v)&&v>spMax) spMax=v; } const g=w.PulseAudio.getCompReduction('t0'); if(g!==null) gr=g; await sleep(50); }
+    log('afficheurs plugin: spectre_max='+(Number.isFinite(spMax)?spMax.toFixed(0):'aucun')+' gr='+(gr===null?'aucun':gr.toFixed(1)));
+    tr0.effects=tr0.effects.filter(e=>e!=='reverb'&&e!=='comp');
     ST.looping=false; ST.project.tracks[0].volume=100; }
   await w.togglePlay(); await sleep(300);
   log('après stop: rust playing='+(await w.__TAURI__.core.invoke('native_info')).playing+' isNative='+w.PulseAudio.isNative()); log('FIN'); window.__TAURI__.core.invoke('test_exit');

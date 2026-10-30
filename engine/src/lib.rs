@@ -18,7 +18,7 @@ mod tests {
     fn ramp_media() -> Media {
         let n = SR as usize * 10;
         let data: Vec<f32> = (0..n).map(|i| i as f32 / n as f32).collect();
-        Media::from([("a".to_owned(), Source { sample_rate: SR, channels: vec![data] })])
+        Media::from([("a".to_owned(), Source::new(SR, vec![data]))])
     }
     fn clip(start: f64, duration: f64, offset: f64) -> Clip {
         Clip { id: "a".into(), start, duration, offset: Some(offset), ..Default::default() }
@@ -142,7 +142,7 @@ mod tests {
         for (i, v) in burst.iter_mut().take(4800).enumerate() {
             *v = (0.5 * (2.0 * std::f64::consts::PI * 440.0 * i as f64 / SR as f64).sin()) as f32;
         }
-        media.insert("clap".into(), Source { channels: vec![burst], sample_rate: SR });
+        media.insert("clap".into(), Source::new(SR, vec![burst]));
         let rms = |x: &[f32], a: f64, z: f64| {
             let (a, z) = ((a * SR as f64).round() as usize, (z * SR as f64).round() as usize);
             (x[a..z].iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / (z - a) as f64).sqrt()
@@ -175,7 +175,7 @@ mod tests {
         let mut media = Media::new();
         let v: Vec<f32> = (0..sr).map(|i| { let t = i as f64 / SR as f64; ((0.4 * (2.0 * std::f64::consts::PI * 200.0 * t).sin()
             + 0.15 * (2.0 * std::f64::consts::PI * 3000.0 * t).sin()) * if t < 0.5 { 1.0 } else { 0.3 }) as f32 }).collect();
-        media.insert("ms".into(), Source { channels: vec![v], sample_rate: SR });
+        media.insert("ms".into(), Source::new(SR, vec![v]));
         let rms = |x: &[f32], a: f64, z: f64| {
             let (a, z) = ((a * SR as f64).round() as usize, (z * SR as f64).round() as usize);
             (x[a..z].iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / (z - a) as f64).sqrt()
@@ -203,7 +203,7 @@ mod tests {
         let mut media = Media::new();
         let v: Vec<f32> = (0..sr).map(|i| { let t = i as f64 / SR as f64; (0.4 * (2.0 * std::f64::consts::PI * 100.0 * t).sin()
             + if t > 0.5 && t < 0.8 { 0.2 * (2.0 * std::f64::consts::PI * 3000.0 * t).sin() } else { 0.0 }) as f32 }).collect();
-        media.insert("mb".into(), Source { channels: vec![v], sample_rate: SR });
+        media.insert("mb".into(), Source::new(SR, vec![v]));
         let rms = |x: &[f32], a: f64, z: f64| {
             let (a, z) = ((a * SR as f64).round() as usize, (z * SR as f64).round() as usize);
             (x[a..z].iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / (z - a) as f64).sqrt()
@@ -239,7 +239,7 @@ mod tests {
             r = (r * 16807) % 2147483647;
             *x = (0.6 * (2.0 * std::f64::consts::PI * 300.0 * t).sin() + 0.25 * (r as f64 / 1073741823.5 - 1.0)) as f32;
         }
-        media.insert("vs".into(), Source { channels: vec![v], sample_rate: SR });
+        media.insert("vs".into(), Source::new(SR, vec![v]));
         let rms = |x: &[f32], a: f64, z: f64| {
             let (a, z) = ((a * SR as f64).round() as usize, (z * SR as f64).round() as usize);
             (x[a..z].iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / (z - a) as f64).sqrt()
@@ -286,7 +286,7 @@ mod tests {
             let s = (t > 0.3 && t < 0.4) || (t > 0.7 && t < 0.75);
             *x = (0.3 * (2.0 * std::f64::consts::PI * 300.0 * t).sin() + if s { 0.25 * (r as f64 / 1073741823.5 - 1.0) } else { 0.0 }) as f32;
         }
-        media.insert("vs".into(), Source { channels: vec![v], sample_rate: SR });
+        media.insert("vs".into(), Source::new(SR, vec![v]));
         let rms = |x: &[f32], a: f64, z: f64| {
             let (a, z) = ((a * SR as f64).round() as usize, (z * SR as f64).round() as usize);
             (x[a..z].iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / (z - a) as f64).sqrt()
@@ -316,7 +316,7 @@ mod tests {
             r = (r * 16807) % 2147483647;
             *v = (0.5 * (r as f64 / 1073741823.5 - 1.0)) as f32;
         }
-        media.insert("clap".into(), Source { channels: vec![burst], sample_rate: SR });
+        media.insert("clap".into(), Source::new(SR, vec![burst]));
         let rms = |x: &[f32], a: f64, z: f64| {
             let (a, z) = ((a * SR as f64).round() as usize, (z * SR as f64).round() as usize);
             (x[a..z].iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / (z - a) as f64).sqrt()
@@ -349,7 +349,7 @@ mod tests {
         for (i, v) in burst.iter_mut().take(4800).enumerate() {
             *v = (0.5 * (2.0 * std::f64::consts::PI * 440.0 * i as f64 / SR as f64).sin()) as f32;
         }
-        media.insert("clap".into(), Source { channels: vec![burst], sample_rate: SR });
+        media.insert("clap".into(), Source::new(SR, vec![burst]));
         let rms = |x: &[f32], a: f64, z: f64| {
             let (a, z) = ((a * SR as f64).round() as usize, (z * SR as f64).round() as usize);
             (x[a..z].iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / (z - a) as f64).sqrt()
@@ -379,7 +379,7 @@ mod tests {
         for (i, v) in burst.iter_mut().take(4800).enumerate() {
             *v = (0.5 * (2.0 * std::f64::consts::PI * 440.0 * i as f64 / SR as f64).sin()) as f32;
         }
-        media.insert("clap".into(), Source { channels: vec![burst], sample_rate: SR });
+        media.insert("clap".into(), Source::new(SR, vec![burst]));
         let p: Project = serde_json::from_str(r#"{"buses":[
             {"id":"voix","output":"mix","volume":50,"effects":["comp","reverb"],"effectParams":{"comp":{"ratio":2.18,"threshold":-16,"attack":10,"release":50},"reverb":{"wet":19,"size":1.84}}},
             {"id":"mix","output":"master","volume":80}],
@@ -407,7 +407,7 @@ mod tests {
         for (i, v) in burst.iter_mut().take(4800).enumerate() {
             *v = (0.5 * (2.0 * std::f64::consts::PI * 440.0 * i as f64 / SR as f64).sin()) as f32;
         }
-        media.insert("clap".into(), Source { channels: vec![burst], sample_rate: SR });
+        media.insert("clap".into(), Source::new(SR, vec![burst]));
         let run = |bpm: f64, delay: &str| {
             let json = format!(r#"{{"bpm":{bpm},"tracks":[{{"volume":100,"clips":[{{"id":"clap","start":0,"duration":1}}],"effects":["delay"],"effectParams":{{"delay":{delay}}}}}]}}"#);
             let p: Project = serde_json::from_str(&json).unwrap();
@@ -458,7 +458,7 @@ mod tests {
         for (i, v) in burst.iter_mut().take(4800).enumerate() {
             *v = (0.5 * (2.0 * std::f64::consts::PI * 440.0 * i as f64 / SR as f64).sin()) as f32;
         }
-        media.insert("clap".into(), Source { channels: vec![burst], sample_rate: SR });
+        media.insert("clap".into(), Source::new(SR, vec![burst]));
         // 120 BPM, puis 60 BPM à partir du temps 4 (= 2 s) ; un coup à 0 s et un coup à 3 s
         let json = r#"{"bpm":120,"tempos":[{"beat":4,"bpm":60}],"tracks":[{"volume":100,"clips":[{"id":"clap","start":0,"duration":1},{"id":"clap","start":3,"duration":1}],"effects":["delay"],"effectParams":{"delay":{"wet":25,"feedback":38,"beats":0.5}}}]}"#;
         let p: Project = serde_json::from_str(json).unwrap();
@@ -496,7 +496,7 @@ mod tests {
         for (i, v) in burst.iter_mut().take(4800).enumerate() {
             *v = (0.5 * (2.0 * std::f64::consts::PI * 440.0 * i as f64 / SR as f64).sin()) as f32;
         }
-        media.insert("clap".into(), Source { channels: vec![burst], sample_rate: SR });
+        media.insert("clap".into(), Source::new(SR, vec![burst]));
         let run = |sends: &str, extra: &str| {
             let json = format!(r#"{{"bpm":120,"sends":[{{"id":"revlong","type":"reverb","size":3.2,"pre":0,"volume":100}},{{"id":"del14","type":"delay","beats":1,"feedback":35,"volume":100}}],
                 "tracks":[{{"volume":100,"clips":[{{"id":"clap","start":0,"duration":1}}],"sends":{sends}{extra}}}]}}"#);
@@ -533,7 +533,7 @@ mod tests {
         let l: Vec<f32> = (0..n).map(|i| (0.25 * w(60.0, i) + 0.1 * w(1000.0, i)) as f32).collect();
         let r: Vec<f32> = (0..n).map(|i| (0.25 * w(60.0, i) + 0.1 * w(12000.0, i)) as f32).collect();
         let mut media = Media::new();
-        media.insert("mix".into(), Source { channels: vec![l, r], sample_rate: SR });
+        media.insert("mix".into(), Source::new(SR, vec![l, r]));
         let p: Project = serde_json::from_str(r#"{"bpm":90,"buses":[
             {"id":"mixbus1","output":"mixbus2","effects":["master"],"effectParams":{"master":{"body":0.8,"air":1.75,"glue":50,"warm":15,"width":1.06,"push":6}}},
             {"id":"mixbus2","output":"master","effects":["limit"]}],
@@ -568,7 +568,7 @@ mod tests {
         let n = 2 * SR as usize;
         let tone: Vec<f32> = (0..n).map(|i| (0.95 * (2.0 * std::f64::consts::PI * 440.0 * i as f64 / SR as f64).sin()) as f32).collect();
         let mut media = Media::new();
-        media.insert("fort".into(), Source { channels: vec![tone], sample_rate: SR });
+        media.insert("fort".into(), Source::new(SR, vec![tone]));
         let t = r#"{"volume":100,"clips":[{"id":"fort","start":0,"duration":2}]}"#;
         let p: Project = serde_json::from_str(&format!(r#"{{"tracks":[{t},{t},{t}]}}"#)).unwrap();
         let (l, _) = render(&p, &media, &RenderOptions::default());
@@ -834,7 +834,7 @@ mod tests {
         let pic = |delay: f64| {
             let p: Project = serde_json::from_str(&format!(r#"{{"bpm":120,"tracks":[{{"volume":100,"delayMs":{delay},"clips":[{{"id":"clic","start":1,"duration":1}}]}}]}}"#)).unwrap();
             let mut buf = vec![0.0f32; sr]; buf[100] = 0.8;
-            let media = Media::from([("clic".to_owned(), Source { sample_rate: SR, channels: vec![buf] })]);
+            let media = Media::from([("clic".to_owned(), Source::new(SR, vec![buf]))]);
             let (l, _) = render(&p, &media, &RenderOptions { sample_rate: SR, only_track: Some(0), ..Default::default() });
             l.iter().enumerate().fold((0, 0.0f32), |(k, m), (i, v)| if v.abs() > m { (i, v.abs()) } else { (k, m) }).0
         };
@@ -849,7 +849,7 @@ mod tests {
     fn geler_piste() {
         let sr = SR as usize;
         let tone = |f: f64, a: f64| (0..sr).map(|i| (a * (2.0 * std::f64::consts::PI * f * i as f64 / SR as f64).sin()) as f32).collect::<Vec<f32>>();
-        let media0 = Media::from([("v".to_owned(), Source { sample_rate: SR, channels: vec![tone(220.0, 0.6), tone(330.0, 0.4)] })]);
+        let media0 = Media::from([("v".to_owned(), Source::new(SR, vec![tone(220.0, 0.6), tone(330.0, 0.4)]))]);
         let track = |extra: &str| format!(r#"{{"volume":60,"pan":30,"delayMs":5,"effects":["filter","util"],"effectParams":{{"filter":{{"hpf":80}},"util":{{"gain":9}}}},"sends":{{"r":40}},"clips":[{{"id":"v","start":0.5,"duration":1,"fadeIn":0.05}}]{extra}}}"#);
         let proj = |extra: &str| -> Project { serde_json::from_str(&format!(r#"{{"bpm":120,"sends":[{{"id":"r","type":"reverb"}}],"tracks":[{}]}}"#, track(extra))).unwrap() };
         // Rendu à geler : la piste seule, sans fader, pan, délai ni envois (comme renderFreeze dans audio.js)
@@ -862,7 +862,7 @@ mod tests {
         let g = if pk > 0.99 { pk / 0.99 } else { 1.0 };
         assert!(g > 1.0, "le rendu dépasse 0 dBFS (gain 9 dB) : il doit être ramené, crête {pk}");
         let mut media = media0.clone();
-        media.insert("frz".to_owned(), Source { sample_rate: SR, channels: vec![fl.iter().map(|v| v / g).collect(), fr.iter().map(|v| v / g).collect()] });
+        media.insert("frz".to_owned(), Source::new(SR, vec![fl.iter().map(|v| v / g).collect(), fr.iter().map(|v| v / g).collect()]));
         let opts = RenderOptions { sample_rate: SR, ..Default::default() };
         let (al, ar) = render(&proj(""), &media, &opts);
         let (bl, br) = render(&proj(&format!(r#","frozen":{{"id":"frz","gain":{g}}}"#)), &media, &opts);
@@ -1217,7 +1217,7 @@ mod tests {
     fn piste_forcee_en_mono() {
         // Source stéréo : gauche 0,2 / droite 0,6. En mono, les deux côtés se mélangent (0,4) avant le pan.
         let n = SR as usize * 2;
-        let media = Media::from([("a".to_owned(), Source { sample_rate: SR, channels: vec![vec![0.2; n], vec![0.6; n]] })]);
+        let media = Media::from([("a".to_owned(), Source::new(SR, vec![vec![0.2; n], vec![0.6; n]]))]);
         let mut p = project(vec![clip(0.0, 1.0, 0.0)]);
         let k = SR as usize / 2;
         let (l, r) = render(&p, &media, &opts());
@@ -1338,5 +1338,47 @@ mod tests {
         let (lv, master) = ren.levels();
         assert_eq!(lv.len(), 1);
         assert!(lv[0].1 > 0.1 && lv[0].3 > 0.1 && master > 0.1, "{lv:?} {master}");
+    }
+
+    #[test]
+    fn remplacement_en_fondu_sans_trou() {
+        // Lecture en boucle 1 → 3 s, puis le projet change (volume à moitié) : le nouveau mixeur reprend pile au même endroit,
+        // garde la boucle, et passe de l'ancien au nouveau en 20 ms (pas d'arrêt, pas de saut)
+        let p = project(vec![clip(0.0, 8.0, 0.0)]);
+        let mut p2 = p.clone();
+        p2.tracks[0].volume = Some(50.0);
+        let m = std::sync::Arc::new(ramp_media());
+        let sr = SR as f64;
+        let mut ren = Box::new(crate::render::Renderer::new(&p, &m, &RenderOptions { master_volume: 1.0, sample_rate: SR, start: 1.0, ..Default::default() }));
+        assert!(ren.set_loop(Some((1.0, 3.0))));
+        let (mut l, mut r) = (vec![0.0f32; 1024], vec![0.0f32; 1024]);
+        let (mut ol, mut or) = (vec![0.0f32; 1024], vec![0.0f32; 1024]);
+        let mut out = Vec::new();
+        for _ in 0..60 { let n = ren.process(&m, &mut l, &mut r); out.extend_from_slice(&l[..n]); let _ = ren.take_wrap(); }
+        let t_swap = ren.time();
+        let at_swap = out.len();
+        let mut new = Box::new(crate::render::Renderer::new(&p2, &m, &RenderOptions { master_volume: 1.0, sample_rate: SR, start: 0.0, ..Default::default() }));
+        let mut fade = Some(crate::player::start_fade(&mut new, &m, ren, m.clone()));
+        assert!((new.time() - t_swap).abs() < 1.0 / sr, "même instant");
+        assert!(new.has_loop(), "boucle gardée");
+        let mut wraps = 0;
+        for _ in 0..150 {
+            let n = new.process(&m, &mut l, &mut r);
+            if let Some(f) = &mut fade { if !f.mix(n, &mut l, &mut r, &mut ol, &mut or) { fade = None; } }
+            out.extend_from_slice(&l[..n]);
+            if new.take_wrap() { wraps += 1; }
+        }
+        assert!(fade.is_none(), "fondu fini");
+        assert!(wraps >= 2, "la boucle continue : {wraps} tours");
+        // pas de saut au remplacement : deux échantillons voisins restent proches (la rampe monte de ~2e-6 par échantillon)
+        let jump = out[at_swap - 50..at_swap + 1200].windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0f32, f32::max);
+        assert!(jump < 1e-3, "saut au remplacement : {jump}");
+        // après le fondu : volume à moitié (-6 dB ≈ ×0,5), même endroit du morceau
+        let k = at_swap + 3000;
+        let t = t_swap + 3000.0 / sr;
+        let want = (t / 10.0) as f32 * std::f32::consts::FRAC_1_SQRT_2 * 0.5;
+        // limiteur du master : retard de ≈ 1,5 ms
+        let near = (k - 200..k + 200).map(|j| (out[j] - want).abs()).fold(1.0f32, f32::min);
+        assert!(near < 2e-3, "nouveau mix au bon endroit : {} vs {want}", out[k]);
     }
 }

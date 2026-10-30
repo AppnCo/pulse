@@ -32,6 +32,68 @@ window.PulseAudio = (function() {
     let recNode = null;             // AudioWorkletNode (PCM brut)
     let recSink = null;
     let recChunks = [];
+    // Sauvetage de la prise en cours (comme Logic qui écrit sur le disque en enregistrant) : chaque seconde, les nouveaux
+    // échantillons sont rangés dans la base des sons (rescue_<prise>_<n>) et décrits dans localStorage « pulse_rec_rescue ».
+    // Si Pulse s'arrête net pendant la prise, la page la remet sur sa piste au redémarrage (studio.js : recoverRecRescue).
+    const RESCUE_META = 'pulse_rec_rescue';
+    let rescue = null;
+    function rescueStart(track, startSec, project) {
+        rescue = { key: 'rescue_' + Date.now().toString(36), n: 0, pending: [], len: 0, timer: null, busy: false };
+        const meta = { key: rescue.key, project: project || null, track, start: startSec, sr: ctx.sampleRate, latency: getRoundTripLatency(), parts: 0, at: Date.now() };
+        try { localStorage.setItem(RESCUE_META, JSON.stringify(meta)); } catch {}
+        rescue.meta = meta;
+        rescue.timer = setInterval(() => rescueFlush(), 1000);
+    }
+    function rescuePush(pcm) { if (rescue) { rescue.pending.push(pcm); rescue.len += pcm.length; } }
+    async function rescueFlush() {
+        const r = rescue;
+        if (!r || r.busy || !r.len || !window.PulsePersist) return;
+        r.busy = true;
+        const all = new Float32Array(r.len); let o = 0;
+        for (const c of r.pending) { all.set(c, o); o += c.length; }
+        r.pending = []; r.len = 0;
+        try {
+            await PulsePersist.saveBlob(r.key + '_' + r.n, new Blob([all.buffer], { type: 'application/octet-stream' }), { kind: 'rescue' });
+            r.n++; r.meta.parts = r.n;
+            if (rescue === r) localStorage.setItem(RESCUE_META, JSON.stringify(r.meta));
+        } catch (e) { console.warn('sauvetage de la prise', e); }
+        finally { r.busy = false; }
+    }
+    // Prise arrêtée normalement : plus besoin de la copie de secours
+    function rescueStop() {
+        const r = rescue; rescue = null;
+        if (!r) return;
+        clearInterval(r.timer);
+        try { localStorage.removeItem(RESCUE_META); } catch {}
+        // on attend qu'une écriture en cours se termine avant d'effacer
+        setTimeout(() => clearRescueParts(r.key, r.n + 1), 500);
+    }
+    async function clearRescueParts(key, n) {
+        if (!window.PulsePersist) return;
+        try { for (const id of await PulsePersist.listIds()) if (String(id).startsWith(key + '_')) await PulsePersist.deleteBlob(id); } catch {}
+    }
+    // Prise coupée par un arrêt brutal : { meta, pcm (Float32Array) } ou null
+    async function takeRecRescue() {
+        let meta = null;
+        try { meta = JSON.parse(localStorage.getItem(RESCUE_META) || 'null'); } catch {}
+        if (!meta || !meta.key || !window.PulsePersist) return null;
+        const parts = [];
+        for (let i = 0; i < (meta.parts || 0); i++) {
+            const b = await PulsePersist.loadBlob(meta.key + '_' + i);
+            if (b) parts.push(new Float32Array(await b.arrayBuffer()));
+        }
+        const len = parts.reduce((a, p) => a + p.length, 0);
+        const pcm = new Float32Array(len); let o = 0;
+        for (const p of parts) { pcm.set(p, o); o += p.length; }
+        return { meta, pcm };
+    }
+    async function clearRecRescue() {
+        let meta = null;
+        try { meta = JSON.parse(localStorage.getItem(RESCUE_META) || 'null'); localStorage.removeItem(RESCUE_META); } catch {}
+        // tous les morceaux de sauvetage restants (prise récupérée ou vieux restes)
+        try { for (const id of await PulsePersist.listIds()) if (String(id).startsWith('rescue_')) await PulsePersist.deleteBlob(id); } catch {}
+        return meta;
+    }
     let recFirstFrameTime = -1;     // ctx.currentTime de la 1ère frame capturée
     let recSamples = 0;
     let recAlign = null;            // { c: temps contexte, p: position projet } de la lecture en cours au début de la capture
@@ -1275,9 +1337,9 @@ window.PulseAudio = (function() {
     // Limiteur en lecture : { i: crête d'entrée, o: crête de sortie, gr: gain le plus bas } pour son écran
     const limLive = new Map();
     function getLimiterMeter(key) { const v = limLive.get(key); return v && performance.now() - v.ts < 250 ? v : null; }
-    function getCompReduction(key) { return compGR.has(key) && performance.now() - (compGRts.get(key) || 0) < 250 ? compGR.get(key) : null; }
-    function getBusSpectrum(busId) { return liveBusSpec.get(busId) || null; }
-    function getTrackSpectrum(trackIdx) { const n = liveNodes.get(trackIdx); return n && n.spec ? n.spec : null; }
+    function getCompReduction(key) { if (nativeOn) return nativeCompGR(key); return compGR.has(key) && performance.now() - (compGRts.get(key) || 0) < 250 ? compGR.get(key) : null; }
+    function getBusSpectrum(busId) { if (nativeOn) { const i = nativeBusIndex(busId); return i >= 0 ? nativeSpectrum([true, i]) : null; } return liveBusSpec.get(busId) || null; }
+    function getTrackSpectrum(trackIdx) { if (nativeOn) return nativeSpectrum([false, trackIdx]); const n = liveNodes.get(trackIdx); return n && n.spec ? n.spec : null; }
 
     function setMasterVolume(v0to100) {
         masterVolume = v0to100 / 100;
@@ -1567,8 +1629,10 @@ window.PulseAudio = (function() {
                     if (recFirstFrameTime < 0) recFirstFrameTime = e.data.t0;
                     recChunks.push(e.data.pcm);
                     recSamples += e.data.pcm.length;
+                    rescuePush(e.data.pcm);
                 }
             };
+            rescueStart(targetTrackIdx, projectStartSec, callbacks.projectId);
             // Sortie muette vers la destination pour que le node soit bien "tiré" par le graphe
             recSink = ctx.createGain();
             recSink.gain.value = 0;
@@ -1608,6 +1672,7 @@ window.PulseAudio = (function() {
                 try { micSource.disconnect(node); } catch {}
                 try { node.disconnect(); recSink.disconnect(); } catch {}
                 recNode = null; recSink = null;
+                rescueStop();
 
                 const sr = ctx.sampleRate;
                 const all = new Float32Array(recSamples);
@@ -2241,6 +2306,89 @@ window.PulseAudio = (function() {
         }
         return m;
     }
+    // Spectre d'une fenêtre de plugin avec le moteur natif : le moteur garde les 4096 derniers échantillons de la piste
+    // (ou du groupe) demandée, on en fait le spectre ici comme l'analyseur du navigateur (fenêtre de Blackman, lissage 0,82)
+    let nativeScopeKey = null, nativeScopeAsked = 0, nativeScopeTimer = null;
+    const nativeSpecs = new Map();
+    function nativeScopeWant(target) {
+        const key = target.join(':');
+        nativeScopeAsked = performance.now();
+        if (key !== nativeScopeKey) {
+            nativeScopeKey = key;
+            if (nativeBackend && nativeBackend.scope) nativeBackend.scope(target).catch(() => {});
+        }
+        if (!nativeScopeTimer) nativeScopeTimer = setInterval(() => {
+            // plus aucune fenêtre ne le demande : le moteur arrête de le garder
+            if (performance.now() - nativeScopeAsked < 2000 && nativeOn) return;
+            clearInterval(nativeScopeTimer); nativeScopeTimer = null; nativeScopeKey = null;
+            if (nativeBackend && nativeBackend.scope) nativeBackend.scope(null).catch(() => {});
+        }, 300);
+    }
+    function fftMag(x) {
+        // FFT réelle radix-2 (taille puissance de 2), renvoie |X[k]| / N pour k < N/2
+        const N = x.length, re = Float64Array.from(x), im = new Float64Array(N);
+        for (let i = 1, j = 0; i < N; i++) {
+            let bit = N >> 1;
+            for (; j & bit; bit >>= 1) j ^= bit;
+            j ^= bit;
+            if (i < j) { const t = re[i]; re[i] = re[j]; re[j] = t; }
+        }
+        for (let len = 2; len <= N; len <<= 1) {
+            const a = -2 * Math.PI / len, wr = Math.cos(a), wi = Math.sin(a);
+            for (let i = 0; i < N; i += len) {
+                let cr = 1, ci = 0;
+                for (let k = 0; k < len / 2; k++) {
+                    const p = i + k, q = p + len / 2;
+                    const tr = re[q] * cr - im[q] * ci, ti = re[q] * ci + im[q] * cr;
+                    re[q] = re[p] - tr; im[q] = im[p] - ti; re[p] += tr; im[p] += ti;
+                    const ncr = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = ncr;
+                }
+            }
+        }
+        const out = new Float32Array(N / 2);
+        for (let k = 0; k < N / 2; k++) out[k] = Math.hypot(re[k], im[k]) / N;
+        return out;
+    }
+    function nativeSpectrum(target) {
+        nativeScopeWant(target);
+        const key = target.join(':');
+        let s = nativeSpecs.get(key);
+        if (!s) {
+            const N = 4096, win = new Float32Array(N);
+            for (let i = 0; i < N; i++) win[i] = 0.42 - 0.5 * Math.cos(2 * Math.PI * i / N) + 0.08 * Math.cos(4 * Math.PI * i / N);
+            s = {
+                fftSize: N, frequencyBinCount: N / 2, smoothingTimeConstant: 0.82, minDecibels: -100, maxDecibels: -30, context: { sampleRate: 48000 },
+                _src: null, _mag: new Float32Array(N / 2),
+                _data() {
+                    const lv = nativeLive && nativeLive.levels;
+                    const fresh = lv && lv.scope && nativeScopeKey === key && performance.now() - nativeLive.at < 1500;
+                    return fresh ? lv.scope : null;
+                },
+                _update() {
+                    const d = s._data();
+                    if (!d) { s._mag.fill(0); s._src = null; return; }
+                    if (d === s._src) return;
+                    s._src = d;
+                    const m = fftMag(d.map((v, i) => v * win[i]));
+                    for (let k = 0; k < m.length; k++) s._mag[k] = s.smoothingTimeConstant * s._mag[k] + (1 - s.smoothingTimeConstant) * m[k];
+                },
+                getFloatFrequencyData(a) { s._update(); for (let k = 0; k < a.length; k++) a[k] = 20 * Math.log10(s._mag[k] || 1e-12); },
+                getByteFrequencyData(a) { s._update(); for (let k = 0; k < a.length; k++) { const db = 20 * Math.log10(s._mag[k] || 1e-12); a[k] = Math.max(0, Math.min(255, Math.round((db - s.minDecibels) / (s.maxDecibels - s.minDecibels) * 255))); } },
+                getFloatTimeDomainData(a) { const d = s._data(); if (!d) { a.fill(0); return; } const o = d.length - a.length; for (let i = 0; i < a.length; i++) a[i] = d[o + i] || 0; },
+                getByteTimeDomainData(a) { const d = s._data(); const o = d ? d.length - a.length : 0; for (let i = 0; i < a.length; i++) a[i] = Math.max(0, Math.min(255, Math.round(128 + 128 * (d ? d[o + i] || 0 : 0)))); },
+            };
+            nativeSpecs.set(key, s);
+        }
+        return s;
+    }
+    const nativeBusIndex = (busId) => nativeProject && nativeProject.buses ? nativeProject.buses.findIndex(b => b.id === busId) : -1;
+    function nativeCompGR(key) {
+        const lv = nativeLive && nativeLive.levels;
+        if (!lv || !lv.gr || performance.now() - nativeLive.at > 1500) return null;   // nativeLive est remis à null à l'arrêt
+        const bus = key[0] === 'b', idx = bus ? nativeBusIndex(key.slice(1)) : parseInt(key.slice(1), 10);
+        const g = lv.gr.find(x => x[0] === bus && x[1] === idx);
+        return g ? g[2] : null;
+    }
     const nativeTrackLevel = (lv, i) => lv.tracks.find(t => t[0] === i);
     function nativeHasTrack(i) {
         const lv = nativeLive && nativeLive.levels;
@@ -2262,7 +2410,7 @@ window.PulseAudio = (function() {
         clearTimeout(nativeTimer);
         nativeTimer = setTimeout(() => {
             if (!nativeOn || !nativeProject) return;
-            play(nativeProject, getPlaybackPosition());
+            play(nativeProject, getPlaybackPosition(), { smooth: true });
         }, 250);
     }
 
@@ -2350,6 +2498,12 @@ window.PulseAudio = (function() {
     // même position, sans coupure (avant : le son s'arrêtait net, 50 ms de silence + un « clac » à chaque plugin ajouté)
     async function play(project, fromTime, opts = {}) {
         if (nativeBackend && !(recNode || recorder)) {
+            // changement pendant la lecture : le moteur natif passe au nouveau mix en fondu, sans s'arrêter
+            if (opts.smooth && nativeOn && isPlaying && nativeBackend.swap) {
+                nativeProject = project;
+                try { await nativeBackend.swap(project); return; }
+                catch (err) { if (!nativeOn) return; /* sinon : relance complète ci-dessous */ }
+            }
             stopAll();
             clearLiveNodes();
             nativeProject = project; nativeFrom = fromTime;
@@ -2408,7 +2562,12 @@ window.PulseAudio = (function() {
     }
 
     function stopAll() {
-        if (nativeOn) { nativeOn = false; clearTimeout(nativeTimer); try { nativeBackend && nativeBackend.stop(); } catch {} }
+        if (nativeOn) {
+            nativeOn = false; clearTimeout(nativeTimer);
+            // trous dans le son pendant cette lecture (le mixeur n'a pas suivi) : notés dans le journal
+            try { const b = nativeBackend; if (b && b.info) b.info().then(i => { if (i && i.underruns > 0 && typeof diagAdd === 'function') diagAdd('trous', i.underruns + ' trou(s) dans le son pendant la lecture native'); }).catch(() => {}); } catch {}
+            try { nativeBackend && nativeBackend.stop(); } catch {}
+        }
         if (loopNext || loopTimer || loopSwapTimer) { clearTimeout(loopTimer); clearTimeout(loopSwapTimer); loopTimer = loopSwapTimer = null; if (loopNext) { tearPass(loopNext); loopNext = null; } }
         fading.slice().forEach(o => { clearTimeout(o.timer); o.tear(); });   // un fondu en cours est coupé tout de suite à l'arrêt
         activeSources.forEach(s => {
@@ -3197,7 +3356,7 @@ window.PulseAudio = (function() {
     return {
         init, resumeIfNeeded, requestMic, releaseMic, getMicAnalyser, getRoundTripLatency,
         hasMic, isCapturing, setMonitor, isMonitorOn, setMonitorRoute, getNativeMonitor, setNativeMonitor, getMonitorWebGain: () => (monitorGain ? monitorGain.gain.value : null), isLowLatency, setLowLatency, getLatencyInfo, setCeiling, getCeiling: () => ceilingDb, getMasterVolume: () => masterVolume * 100, getBufferMode, setBufferMode, listInputs, setInputDevice, setMicChannel, getMicChannels, muteTrackBetween, calibrateLatency, getMicLabel, getMicDeviceId, consumeMicFallback, updateBusVolume,
-        startRecording, stopRecording,
+        startRecording, stopRecording, takeRecRescue, clearRecRescue,
         registerBuffer, hasBuffer, getBuffer, getBufferDuration, clearBuffers, computePeaks,
         play, stopAll, getPlaybackPosition, setNativeBackend, isNative, setBeatsPerBar,
         updateTrackVolume, updateTrackPan, updateComp, setAutoRanges, eqSections, eqIsDynamic, getEqDyn, eqBandCoefs, getLimiterMeter, getGateMeter, getDeessMeter, getMbandMeter, refreshAudibility, clearLiveNodes,

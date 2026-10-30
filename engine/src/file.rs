@@ -37,7 +37,15 @@ fn decode_wav(bytes: Vec<u8>) -> Result<Source, PulseError> {
     let mut reader = hound::WavReader::new(Cursor::new(bytes))?;
     let spec = reader.spec();
     let n = spec.channels as usize;
-    let mut channels = vec![Vec::new(); n];
+    // 16 bits (tous les sons d'un projet Pulse) : gardés tels quels, moitié moins de mémoire qu'en flottant
+    if spec.sample_format == hound::SampleFormat::Int && spec.bits_per_sample == 16 {
+        let mut channels: Vec<Vec<i16>> = (0..n).map(|_| Vec::with_capacity(reader.len() as usize / n.max(1))).collect();
+        for (i, s) in reader.samples::<i16>().enumerate() {
+            channels[i % n].push(s?);
+        }
+        return Ok(Source::from_i16(spec.sample_rate, channels));
+    }
+    let mut channels: Vec<Vec<f32>> = (0..n).map(|_| Vec::with_capacity(reader.len() as usize / n.max(1))).collect();
     match spec.sample_format {
         hound::SampleFormat::Float => {
             for (i, s) in reader.samples::<f32>().enumerate() {
@@ -51,7 +59,7 @@ fn decode_wav(bytes: Vec<u8>) -> Result<Source, PulseError> {
             }
         }
     }
-    Ok(Source { sample_rate: spec.sample_rate, channels })
+    Ok(Source::new(spec.sample_rate, channels))
 }
 
 /// Ouvre un .pulse : le projet + l'audio de chaque clip.

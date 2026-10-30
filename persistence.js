@@ -83,7 +83,8 @@ window.PulsePersist = (function() {
     async function gc(projectClipIds) {
         const stored = await listIds();
         const refSet = new Set(projectClipIds);
-        const orphans = stored.filter(id => !refSet.has(id));
+        // les morceaux d'une prise en cours de sauvetage (rescue_…) ne sont jamais effacés ici : voir recRescue dans audio.js
+        const orphans = stored.filter(id => !refSet.has(id) && !String(id).startsWith('rescue_'));
         for (const id of orphans) await deleteBlob(id);
         return orphans.length;
     }

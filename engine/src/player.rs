@@ -16,6 +16,11 @@ pub struct Levels {
     /// (piste, crête gauche, crête droite, efficace)
     pub tracks: Vec<(usize, f32, f32, f32)>,
     pub master: f32,
+    /// Réduction des compresseurs : (groupe ?, indice, dB)
+    pub gr: Vec<(bool, usize, f32)>,
+    /// Son après les effets de la piste / du groupe choisi pour le spectre (4096 échantillons)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope: Option<Vec<f32>>,
 }
 
 /// Ce que le mixeur partage avec le reste : tours de boucle et niveaux, repérés sur le temps continu de la carte son
@@ -29,6 +34,10 @@ struct Shared {
     loop_req: Option<Option<(f64, f64)>>,
     /// Boucle acceptée par le mixeur
     loop_ok: bool,
+    /// Nouveau mixeur complet (effet ajouté, réglage de plugin, région déplacée…) à prendre en fondu enchaîné, sans relancer
+    swap: Option<(Box<Renderer>, Arc<Media>)>,
+    /// Piste (false, indice) ou groupe (true, indice) dont la page veut le spectre
+    scope: Option<(bool, usize)>,
 }
 
 /// Taille d'un bloc mixé (échantillons)
@@ -40,6 +49,8 @@ const START_FRAMES: usize = 4800;
 /// Avance gardée par le mixeur (≈ 0,2 s à 48 kHz) : assez pour couvrir un à-coup de l'ordi,
 /// assez court pour qu'un fader, un mute ou un solo s'entende tout de suite
 const AHEAD_FRAMES: usize = 9600;
+/// Fondu enchaîné entre l'ancien et le nouveau mixeur (≈ 20 ms à 48 kHz, comme le moteur du navigateur)
+const XFADE: usize = 960;
 
 enum Cmd {
     Stream { renderer: Box<Renderer>, media: Arc<Media>, start: usize },
@@ -124,6 +135,7 @@ impl Player {
             sh.wraps.clear();
             sh.levels.clear();
             sh.loop_req = None;
+            sh.swap = None;
             sh.loop_ok = renderer.has_loop();
         }
         self.playing.store(true, Ordering::SeqCst);
@@ -136,6 +148,16 @@ impl Player {
     pub fn stop(&self) { let _ = self.tx.send(Cmd::Stop); }
     /// Volumes, pan, mute / solo, envois, groupes, Master changés : pris en direct (≈ 0,2 s), sans couper ni relancer
     pub fn set_mix(&self, project: crate::model::Project) { *self.mix.lock().unwrap() = Some(project); }
+    /// Remplace le mixeur pendant la lecture (projet changé : effet, réglage de plugin, région…) : même position, même boucle,
+    /// fondu enchaîné de 20 ms, sans arrêt ni clac. `renderer` doit partir du début du morceau (il est calé sur la lecture en cours).
+    /// Renvoie false si rien ne joue (il faut alors lancer la lecture normalement).
+    pub fn swap(&self, renderer: Renderer, media: Arc<Media>) -> bool {
+        if !self.is_playing() { return false; }
+        self.shared.lock().unwrap().swap = Some((Box::new(renderer), media));
+        true
+    }
+    /// Choisit la piste / le groupe dont on garde le son pour le spectre d'une fenêtre de plugin (None = aucun)
+    pub fn set_scope(&self, target: Option<(bool, usize)>) { self.shared.lock().unwrap().scope = target; }
     pub fn is_playing(&self) -> bool { self.playing.load(Ordering::SeqCst) }
     /// Position de lecture en secondes (dans le morceau : tient compte des tours de boucle)
     pub fn position(&self) -> f64 {
@@ -168,17 +190,73 @@ impl Player {
 
 impl Default for Player { fn default() -> Self { Self::new() } }
 
+fn old_rate(r: &Renderer) -> f64 { r.sample_rate() }
+
+/// Ancien mixeur qui s'efface pendant un remplacement (fondu enchaîné de XFADE échantillons)
+pub struct Fade { old: Box<Renderer>, media: Arc<Media>, done: usize }
+
+/// Cale le nouveau mixeur pile où en est l'ancien (même instant, même boucle) et prépare le fondu
+pub fn start_fade(new: &mut Renderer, new_media: &Media, old: Box<Renderer>, media: Arc<Media>) -> Fade {
+    // Le nouveau mixeur tourne d'abord ≈ 50 ms « à blanc » juste avant : le limiteur et les effets sont amorcés
+    // (sinon leur retard interne donne quelques échantillons de silence → un clac pendant le fondu)
+    let t = old.time();
+    let pre = (t - 0.05).max(0.0);
+    new.seek(pre);
+    let mut left = ((t - new.time()) * old_rate(&old)).round() as usize;
+    let (mut l, mut r) = (vec![0.0f32; BLOCK], vec![0.0f32; BLOCK]);
+    while left > 0 {
+        let k = left.min(BLOCK);
+        let n = new.process(new_media, &mut l[..k], &mut r[..k]);
+        if n == 0 { break; }
+        left -= n;
+    }
+    let _ = new.take_wrap();
+    new.seek(t);
+    if let Some(lp) = old.loop_secs() { new.set_loop(Some(lp)); }
+    Fade { old, media, done: 0 }
+}
+
+impl Fade {
+    /// Mélange les `n` échantillons du nouveau mixeur (déjà dans l, r) avec ceux de l'ancien qui s'efface.
+    /// Renvoie false quand le fondu est fini.
+    pub fn mix(&mut self, n: usize, l: &mut [f32], r: &mut [f32], ol: &mut [f32], or: &mut [f32]) -> bool {
+        let n = n.min(ol.len()).min(or.len());
+        if n == 0 { return false; }
+        let m = self.old.process(&self.media, &mut ol[..n], &mut or[..n]);
+        let _ = self.old.take_wrap();
+        for k in 0..n.min(m) {
+            let g = ((self.done + k) as f32 / XFADE as f32).min(1.0);
+            l[k] = l[k] * g + ol[k] * (1.0 - g);
+            r[k] = r[k] * g + or[k] * (1.0 - g);
+        }
+        self.done += n;
+        self.done < XFADE && m > 0
+    }
+}
+
 /// Fil mixeur : remplit la réserve (gauche, droite, gauche, droite…) tant qu'il y a de la place
-fn spawn_feeder(mut renderer: Box<Renderer>, media: Arc<Media>, ring: Arc<Ring>, done: Arc<AtomicBool>, mix: Arc<std::sync::Mutex<Option<crate::model::Project>>>, shared: Arc<Mutex<Shared>>, start: usize, rate: f64) -> Feeder {
+fn spawn_feeder(mut renderer: Box<Renderer>, mut media: Arc<Media>, ring: Arc<Ring>, done: Arc<AtomicBool>, mix: Arc<std::sync::Mutex<Option<crate::model::Project>>>, shared: Arc<Mutex<Shared>>, start: usize, rate: f64) -> Feeder {
     let stop = Arc::new(AtomicBool::new(false));
     let st = stop.clone();
     let handle = std::thread::Builder::new().name("pulse-mixeur".into()).spawn(move || {
         let (mut l, mut r) = (vec![0.0f32; BLOCK], vec![0.0f32; BLOCK]);
+        let (mut ol, mut or) = (vec![0.0f32; BLOCK], vec![0.0f32; BLOCK]);
+        // ancien mixeur qui s'efface pendant un remplacement (mixeur, ses sons, échantillons déjà fondus)
+        let mut fading: Option<Fade> = None;
         // temps continu de la carte son (ne revient jamais en arrière) du prochain échantillon poussé
         let mut lin = start;
         while !st.load(Ordering::Relaxed) {
             let next = mix.lock().ok().and_then(|mut g| g.take());
             if let Some(p) = next { renderer.mix_from(&p, &media); }
+            let sw = shared.lock().ok().and_then(|mut g| g.swap.take());
+            if let Some((nr, nm)) = sw {
+                let old = std::mem::replace(&mut renderer, nr);
+                let old_media = std::mem::replace(&mut media, nm);
+                fading = Some(start_fade(&mut renderer, &media, old, old_media));
+                shared.lock().unwrap().loop_ok = renderer.has_loop();
+            }
+            let want = shared.lock().map(|g| g.scope).unwrap_or(None);
+            if renderer.scope_target() != want { renderer.set_scope(want); }
             let req = shared.lock().ok().and_then(|mut g| g.loop_req.take());
             if let Some(lp) = req {
                 let ok = renderer.set_loop(lp);
@@ -191,6 +269,9 @@ fn spawn_feeder(mut renderer: Box<Renderer>, media: Arc<Media>, ring: Arc<Ring>,
                 continue;
             }
             let n = renderer.process(&media, &mut l, &mut r);
+            if let Some(f) = &mut fading {
+                if !f.mix(n, &mut l, &mut r, &mut ol, &mut or) { fading = None; }
+            }
             for k in 0..n {
                 ring.push(l[k]);
                 ring.push(r[k]);
@@ -199,7 +280,7 @@ fn spawn_feeder(mut renderer: Box<Renderer>, media: Arc<Media>, ring: Arc<Ring>,
                 let (tracks, master) = renderer.levels();
                 let mut sh = shared.lock().unwrap();
                 if n > 0 {
-                    sh.levels.push_back((lin, Levels { tracks: tracks.to_vec(), master }));
+                    sh.levels.push_back((lin, Levels { tracks: tracks.to_vec(), master, gr: renderer.grs().to_vec(), scope: renderer.scope() }));
                     while sh.levels.len() > 256 { sh.levels.pop_front(); }
                 }
                 lin += n;

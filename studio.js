@@ -3190,6 +3190,43 @@ async function importPendingInstru() {
     }
 }
 
+// Prise coupée par un arrêt brutal de Pulse (plantage, Mac éteint…) : le son a été mis à l'abri chaque seconde pendant
+// l'enregistrement (audio.js, rescue). Au redémarrage, on la remet sur sa piste, à sa place, sans rien demander.
+async function recoverRecRescue() {
+    if (!PulseAudio.takeRecRescue) return;
+    let r = null;
+    try { r = await PulseAudio.takeRecRescue(); } catch (e) { console.warn('prise de secours', e); return; }
+    if (!r) return;
+    const { meta, pcm } = r;
+    try {
+        // seulement dans le projet où la prise a été faite (un autre projet ouvert : la copie attend qu'on le rouvre)
+        if (!meta.project || meta.project !== state.project.id) return;
+        // les régions « en cours d'enregistrement » restées dans le projet ne servent plus
+        let stale = false;
+        state.project.tracks.forEach(t => { const n = (t.clips || []).length; t.clips = (t.clips || []).filter(c => !c.recording); if (t.clips.length !== n) stale = true; });
+        const sr = meta.sr || PulseAudio.getContext().sampleRate;
+        const drop = Math.min(pcm.length, Math.max(0, Math.round((meta.latency || 0) * sr)));
+        const data = pcm.subarray(drop);
+        const t = state.project.tracks[meta.track];
+        if (!t || data.length < sr * 0.5) { await PulseAudio.clearRecRescue(); if (stale) { saveProject(); renderAll(); } return; }
+        const buf = PulseAudio.getContext().createBuffer(1, data.length, sr);
+        buf.getChannelData(0).set(data);
+        const id = `rec_${Date.now().toString(36)}`;
+        await PulsePersist.saveBlob(id, PulseAudio.audioBufferToWav(buf), { kind: 'rec' });
+        PulseAudio.registerBuffer(id, buf);
+        const clip = { id, start: Math.max(0, meta.start || 0), offset: 0, duration: data.length / sr, peaks: makePeaks(buf), name: t.name || 'Voix' };
+        ensureTakeNumbers(t, clip);
+        clip.take = ++t.takeSeq;
+        if (recMode() === 'takes') setAsideRange(t, clip.start, clip.start + clip.duration, clip, true);
+        t.clips.push(clip);
+        saveProject();
+        renderAll();
+        await PulseAudio.clearRecRescue();
+        const sec = Math.round(clip.duration);
+        setTimeout(() => flash(`✓ Prise récupérée après l'arrêt de Pulse (${Math.floor(sec / 60)} min ${String(sec % 60).padStart(2, '0')}) sur « ${t.name || 'la piste'} » — vérifie qu'elle tombe bien en place`), 2500);
+    } catch (e) { console.warn('prise de secours', e); }
+}
+
 // Nettoyage des fichiers audio que plus aucun projet n'utilise (au démarrage : l'historique d'annulation est vide)
 async function cleanupOrphanAudio() {
     try {
@@ -3551,9 +3588,9 @@ function openSettings() {
             ${window.PulseNative && PulseNative.available ? `<h4 class="set-title">Dossier du projet</h4>
             ${toggle('setFolderAudio', folderAudioCopies(), 'Copier aussi les sons en WAV dans le dossier Audio', 'Le fichier .pulse contient déjà tous tes sons. Cocher ajoute des WAV à part (pratique pour les ouvrir dans un autre logiciel) mais double le poids du dossier.')}` : ''}
 
-            ${window.PulseNative && PulseNative.available ? `<h4 class="set-title">Moteur natif (bêta)</h4>
+            ${window.PulseNative && PulseNative.available ? `<h4 class="set-title">Moteur audio</h4>
             <div class="set-row">
-                <span>Lire le morceau avec le moteur Pulse de l'appli <em>(le même son, mixé par le moteur natif. Pour écouter et mixer : dès que tu enregistres, Pulse repasse tout seul sur le moteur habituel)</em></span>
+                <span>Lire avec le moteur Pulse de l'appli <em>(recommandé : plus stable et plus léger. Décoche pour revenir au moteur du navigateur si tu entends un souci. Pendant un enregistrement, Pulse passe tout seul sur le moteur du navigateur)</em></span>
                 <span><input type="checkbox" id="setNativeOn" ${PulseNative.isEnabled() ? 'checked' : ''}></span>
             </div>` : ''}
 
@@ -3853,7 +3890,7 @@ async function beginCapture(targetIdx, startSec) {
     // l'entrée de la carte son choisie pour cette piste (sinon la première)
     const tgt = state.project.tracks[targetIdx];
     PulseAudio.setMicChannel((tgt && tgt.inputChannel) || 1);
-    await PulseAudio.startRecording(targetIdx, startSec, {});
+    await PulseAudio.startRecording(targetIdx, startSec, { projectId: state.project.id });
 }
 
 // Lecture lancée avec une piste prête à enregistrer et un micro déjà autorisé : on capte en arrière-plan,
@@ -9448,6 +9485,8 @@ function diagAdd(kind, detail) {
         const l = diagLog(); l.push({ t: new Date().toISOString(), kind, detail: String(detail || '').slice(0, 300) });
         localStorage.setItem(DIAG_KEY, JSON.stringify(l.slice(-20)));
     } catch {}
+    // dans l'appli : copie dans le journal sur le disque (~/Library/Logs/Pulse/journal.log), lisible même si Pulse ne démarre plus
+    try { const core = window.__TAURI__ && window.__TAURI__.core; if (core && core.invoke) core.invoke('diag_write', { kind: String(kind), detail: String(detail || '') }).catch(() => {}); } catch {}
 }
 (function diagInit() {
     try {
@@ -13545,6 +13584,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     await restoreBuffersFromDisk();
     renderAll();
     await importPendingInstru();
+    await recoverRecRescue();
     cleanupOrphanAudio();
     bindTimelineClick();
     bindGlobalDragDrop();

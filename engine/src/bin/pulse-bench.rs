@@ -14,7 +14,7 @@ fn main() {
     let mut noise = || { seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5; (seed as f32 / u32::MAX as f32 - 0.5) * 0.3 };
     let l: Vec<f32> = (0..len).map(|i| (i as f32 * 0.0577).sin() * 0.2 + noise()).collect();
     let r: Vec<f32> = (0..len).map(|i| (i as f32 * 0.0411).sin() * 0.2 + noise()).collect();
-    let media = Media::from([("a".to_owned(), Source { sample_rate: sr, channels: vec![l, r] })]);
+    let media = Media::from([("a".to_owned(), Source::new(sr, vec![l, r]))]);
     let fx = [r#""effects":["eq","comp","deess","sat","delay","reverb","chorus","limit"],"effectParams":{"reverb":{"wet":20},"delay":{"wet":15},"chorus":{"wet":20},"sat":{"drive":30}}"#,
               r#""effects":["eq","comp","phaser","util"],"effectParams":{}"#];
     let tracks: Vec<String> = (0..n).map(|i| format!(r#"{{"volume":70,"pan":{},"output":"{}","sends":{{"rv":20}},{},"clips":[{{"id":"a","start":0,"duration":{secs},"offset":0}}]}}"#,

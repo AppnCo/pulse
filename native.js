@@ -25,6 +25,17 @@ window.PulseNative = (function () {
         if (lp) headers.loop = lp[0] + ',' + lp[1];
         return core().invoke('native_play', bytes, { headers });
     }
+    // Projet changé pendant la lecture (effet, réglage de plugin, région…) : le moteur passe au nouveau mix
+    // en fondu enchaîné de 20 ms, sans s'arrêter. Échoue (« sons manquants », « pas en lecture ») → relancer avec play().
+    async function swap(project) {
+        if (!isAvailable()) throw new Error('moteur natif absent');
+        const sizes = {};
+        for (const id of new Set(PulsePersist.mediaIds(project, false))) {
+            const b = await PulsePersist.loadBlob(id);
+            if (b) sizes[id] = b.size;
+        }
+        return core().invoke('native_swap', { json: JSON.stringify(project), sizes });
+    }
     const stop = () => isAvailable() ? core().invoke('native_stop') : Promise.resolve();
     // volumes, pan, mute / solo… changés pendant la lecture : le moteur les prend en direct, sans relancer
     const mix = (project) => isAvailable() ? core().invoke('native_mix', { json: JSON.stringify(project) }) : Promise.resolve();
@@ -32,10 +43,13 @@ window.PulseNative = (function () {
     const loop = (l) => isAvailable() ? core().invoke('native_loop', { lp: l ? [l.a, l.b] : null }) : Promise.resolve();
     // Position dans le morceau, niveaux pour les vumètres, boucle tenue par le moteur
     const live = () => isAvailable() ? core().invoke('native_live') : Promise.resolve(null);
+    // Spectre d'une fenêtre de plugin : [groupe ?, indice] ou null
+    const scope = (target) => isAvailable() ? core().invoke('native_scope', { target: target || null }) : Promise.resolve();
     const info = () => isAvailable() ? core().invoke('native_info') : Promise.resolve(null);
-    // Réglage « lire avec le moteur natif » (désactivé par défaut)
-    const KEY = 'pulse_native_play';
-    const isEnabled = () => { try { return isAvailable() && localStorage.getItem(KEY) === '1'; } catch { return false; } };
+    // Réglage « lire avec le moteur natif » : activé par défaut dans l'appli depuis le 30/10/2026 (2 h d'endurance sans un trou) ;
+    // décoché dans les Réglages = retour au moteur du navigateur
+    const KEY = 'pulse_native_play_v2';   // nouvelle clé : tout le monde repart sur le moteur natif
+    const isEnabled = () => { try { return isAvailable() && localStorage.getItem(KEY) !== '0'; } catch { return isAvailable(); } };
     const setEnabled = (on) => { try { localStorage.setItem(KEY, on ? '1' : '0'); } catch {} };
     // Retour casque direct par le moteur natif (activé par défaut dans l'appli ; coupé = retour par le moteur web)
     const MKEY = 'pulse_native_monitor';
@@ -48,7 +62,7 @@ window.PulseNative = (function () {
         track: (json) => isAvailable() ? core().invoke('monitor_track', { json: json || '' }) : Promise.resolve(),
         info: () => isAvailable() ? core().invoke('monitor_info') : Promise.resolve(null),
     };
-    return { get available() { return isAvailable(); }, play, stop, mix, loop, live, info, isEnabled, setEnabled, monitor, onError: null };
+    return { get available() { return isAvailable(); }, play, swap, scope, stop, mix, loop, live, info, isEnabled, setEnabled, monitor, onError: null };
 })();
 
 // Claviers MIDI dans l'appli : la fenêtre n'a pas « Web MIDI », on lui prête la même interface avec CoreMIDI (Rust).
