@@ -44,7 +44,8 @@
     const json = (o) => new TextEncoder().encode(JSON.stringify(o));
 
     // === 1. Ancienne version (page en ligne) : tout écrire dans le dossier de transfert ===
-    async function exportAll() {
+    // go = false : les tests restent sur la page (pas d'enchaînement vers la nouvelle version / le studio)
+    async function exportAll(go = true) {
         say('Transfert de tes projets vers la nouvelle version de Pulse…');
         const ls = {};
         // sans les marqueurs de session (la nouvelle version croirait à un redémarrage forcé)
@@ -75,17 +76,17 @@
         }
         await put('clips.json', json(metas));
         await put('export-ok', json({ at: Date.now(), projects: projects.length, clips: metas.length }));
-        location.replace(LOCAL + 'migrate.html');
+        if (go) location.replace(LOCAL + 'migrate.html');
     }
 
     // === 2. Nouvelle version (pulse://) : relire et ranger ce qui manque ===
     async function read(name) { return new Uint8Array(await inv('migration_read', { name })); }
     const parse = (u8) => JSON.parse(new TextDecoder().decode(u8));
-    async function importAll() {
+    async function importAll(go = true) {
         say('Rangement de tes projets dans la nouvelle version…');
         let ok = null;
         try { ok = parse(await read('export-ok')); } catch {}
-        if (!ok) { location.replace('studio.html'); return; }   // export incomplet : on réessaiera au prochain lancement
+        if (!ok) { if (go) location.replace('studio.html'); return false; }   // export incomplet : on réessaiera au prochain lancement
         const ls = parse(await read('localstorage.json'));
         for (const [k, v] of Object.entries(ls)) if (localStorage.getItem(k) === null) localStorage.setItem(k, v);
         const db = await openDB(true);
@@ -105,7 +106,8 @@
         }
         localStorage.setItem('pulse_migrated_v1', String(Date.now()));
         await inv('migration_done');
-        location.replace('studio.html#transfert-fait');
+        if (go) location.replace('studio.html#transfert-fait');
+        return true;
     }
 
     async function run() {
