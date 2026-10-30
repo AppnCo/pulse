@@ -265,6 +265,7 @@ pub struct Renderer {
     master_rms: f32,
     /// Réduction des compresseurs sur le dernier bloc : (groupe ?, indice, dB)
     grs: Vec<(bool, usize, f32)>,
+    fxm: Vec<(bool, usize, crate::fx::FxMeters)>,
     /// Son à afficher en spectre (fenêtre de plugin ouverte) : (groupe ?, indice), après les effets
     scope_target: Option<(bool, usize)>,
     scope: Vec<f32>,
@@ -433,7 +434,7 @@ impl Renderer {
         let _ = base_opts;
         Self { sr, from, to, frames, pos: 0, master_volume: opts.master_volume, only_track: opts.only_track.is_some(), n_buses: project.buses.len(), tracks, buses, sends, limiter, base: RenderOptions { sample_rate: opts.sample_rate, master_volume: base_opts.master_volume, range: opts.range, only_track: opts.only_track, start: opts.start },
                loop_ab: None, wrapped: false, fade_in_end: None, levels: Vec::new(), master_rms: 0.0,
-               grs: Vec::new(), scope_target: None, scope: vec![0.0; SCOPE], scope_i: 0 }
+               grs: Vec::new(), fxm: Vec::new(), scope_target: None, scope: vec![0.0; SCOPE], scope_i: 0 }
     }
 
     /// Longueur totale (échantillons), queue des effets comprise
@@ -480,6 +481,7 @@ impl Renderer {
     pub fn levels(&self) -> (&[(usize, f32, f32, f32)], f32) { (&self.levels, self.master_rms) }
     /// Réduction des compresseurs (groupe ?, indice, dB) sur le dernier bloc
     pub fn grs(&self) -> &[(bool, usize, f32)] { &self.grs }
+    pub fn fx_meters(&self) -> &[(bool, usize, crate::fx::FxMeters)] { &self.fxm }
     /// Choisit le son gardé pour le spectre (None = aucun)
     pub fn set_scope(&mut self, target: Option<(bool, usize)>) {
         if target != self.scope_target { self.scope_target = target; self.scope.iter_mut().for_each(|x| *x = 0.0); self.scope_i = 0; }
@@ -545,6 +547,7 @@ impl Renderer {
         let n = left.len().min(right.len()).min(limit.saturating_sub(self.pos));
         self.levels.clear();
         self.grs.clear();
+        self.fxm.clear();
         self.master_rms = 0.0;
         left.iter_mut().for_each(|x| *x = 0.0);
         right.iter_mut().for_each(|x| *x = 0.0);
@@ -604,6 +607,7 @@ impl Renderer {
             if !tr.chain.is_empty() {
                 tr.chain.process(&mut tl, &mut trr, tr.mono_in);
                 if let Some(g) = tr.chain.comp_gr() { self.grs.push((false, tr.idx, g)); }
+                if let Some(m) = tr.chain.take_meters() { self.fxm.push((false, tr.idx, m)); }
             }
             if self.scope_target == Some((false, tr.idx)) { Self::scope_push(&mut self.scope, &mut self.scope_i, &tl, &trr); }
             // 3. Volume (fader, groupes, master, courbe) puis pan, et somme dans le mix
@@ -678,6 +682,7 @@ impl Renderer {
             done[i] = true;
             b.chain.process(&mut bl, &mut br, false);
             if let Some(g) = b.chain.comp_gr() { self.grs.push((true, i, g)); }
+            if let Some(m) = b.chain.take_meters() { self.fxm.push((true, i, m)); }
             if self.scope_target == Some((true, i)) { Self::scope_push(&mut self.scope, &mut self.scope_i, &bl, &br); }
             let mut aux_buf: Vec<(Vec<f32>, Vec<f32>)> = b.aux.iter().map(|_| (vec![0.0f32; n], vec![0.0f32; n])).collect();
             {

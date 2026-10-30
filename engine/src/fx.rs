@@ -275,7 +275,7 @@ impl MultiSat {
 }
 
 /// Multibande à bandes libres : même calcul que le worklet `pulse-mband` de audio.js.
-struct MbBand { ks: [Vec<Biquad>; 2], env: f64, att: f64, rel: f64, thr: f64, range: f64, out: f64, solo: bool, mute: bool, idx: usize, lo: f64, hi: f64 }
+struct MbBand { ks: [Vec<Biquad>; 2], mg: f64, env: f64, att: f64, rel: f64, thr: f64, range: f64, out: f64, solo: bool, mute: bool, idx: usize, lo: f64, hi: f64 }
 /// Nouveaux filtres pour une bande : même nombre = on garde leur mémoire, sinon on repart de zéro (comme le navigateur)
 fn retune_all(old: &[Vec<Biquad>; 2], new: Vec<Biquad>) -> [Vec<Biquad>; 2] {
     if old[0].len() != new.len() { return [new.clone(), new]; }
@@ -285,6 +285,13 @@ fn retune_all(old: &[Vec<Biquad>; 2], new: Vec<Biquad>) -> [Vec<Biquad>; 2] {
 }
 pub struct MultiBand { bands: Vec<MbBand>, any_solo: bool, sr: f64 }
 impl MultiBand {
+    /// afficheur : par bande, le gain dynamique le plus marqué (dB) et le niveau (dB)
+    fn take_meter(&mut self) -> (Vec<f32>, Vec<f32>) {
+        let g = self.bands.iter().map(|b| b.mg as f32).collect();
+        let e = self.bands.iter().map(|b| (20.0 * b.env.max(1e-9).log10()) as f32).collect();
+        self.bands.iter_mut().for_each(|b| b.mg = 0.0);
+        (g, e)
+    }
     /// Filtres d'une bande (refaits quand ses limites sont automatisées), même calcul que mkKs dans pulse-mband
     fn make_ks(lo0: f64, hi0: f64, sr: f64) -> Vec<Biquad> {
         let biq = |hp: bool, f: f64| {
@@ -304,7 +311,7 @@ impl MultiBand {
         let co = |ms: f64| 1.0 - (-1.0 / (ms.max(0.05) / 1000.0 * sr)).exp();
         let bands: Vec<MbBand> = p.bands.iter().enumerate().filter(|(_, b)| b.on != Some(false)).take(6).map(|(idx, b)| {
             let ks = Self::make_ks(b.lo.unwrap_or(20.0), b.hi.unwrap_or(20000.0), sr);
-            MbBand { lo: b.lo.unwrap_or(20.0), hi: b.hi.unwrap_or(20000.0), ks: [ks.clone(), ks], env: 0.0, att: co(b.att.unwrap_or(10.0)), rel: co(b.rel.unwrap_or(120.0)), thr: b.thr.unwrap_or(-30.0),
+            MbBand { lo: b.lo.unwrap_or(20.0), hi: b.hi.unwrap_or(20000.0), ks: [ks.clone(), ks], mg: 0.0, env: 0.0, att: co(b.att.unwrap_or(10.0)), rel: co(b.rel.unwrap_or(120.0)), thr: b.thr.unwrap_or(-30.0),
                 range: b.range.unwrap_or(-6.0).clamp(-24.0, 24.0), out: b.out.unwrap_or(0.0).clamp(-24.0, 24.0), solo: b.solo.unwrap_or(false), mute: b.mute.unwrap_or(false), idx }
         }).collect();
         if bands.is_empty() { return None; }
@@ -340,6 +347,7 @@ impl MultiBand {
             let gl = if b.mute { 0.0 } else { 10f64.powf((gd + b.out) / 20.0) };
             if self.any_solo { if b.solo { y0 += v[0] * gl; y1 += v[1] * gl; } }
             else { y0 += v[0] * (gl - 1.0); y1 += v[1] * (gl - 1.0); }
+            if gd.abs() > b.mg.abs() { b.mg = gd; }
         }
         x[0] = y0;
         if nc > 1 { x[1] = y1; }
@@ -362,8 +370,17 @@ pub struct DeesserV2 {
     att: f64,
     relc: f64,
     smooth: f64,
+    /// afficheur : crête du son, niveau dans la zone, réduction (dB) depuis la dernière lecture
+    m_v: f64,
+    m_s: f64,
+    m_r: f64,
 }
 impl DeesserV2 {
+    fn take_meter(&mut self) -> [f32; 4] {
+        let m = [self.m_v as f32, self.m_s as f32, self.m_r as f32, self.env_f as f32];
+        self.m_v = 0.0; self.m_s = 0.0; self.m_r = 0.0;
+        m
+    }
     pub fn new(p: &crate::model::DeessParams, sr: f64) -> Self {
         let coef = |sec: f64| 1.0 - (-1.0 / (sec * sr)).exp();
         let lo = p.lo.unwrap_or(5000.0).clamp(1000.0, 16000.0);
@@ -380,6 +397,7 @@ impl DeesserV2 {
             thr: p.thr.unwrap_or(-26.0), range: p.range.unwrap_or(10.0).clamp(0.0, 30.0),
             wide: p.wide.unwrap_or(false), rel: p.rel.unwrap_or(false),
             env_b: 0.0, env_f: 0.0, gain: 1.0, att: coef(0.001), relc: coef(0.060), smooth: coef(0.002),
+            m_v: 0.0, m_s: 0.0, m_r: 0.0,
         }
     }
     fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
@@ -404,6 +422,10 @@ impl DeesserV2 {
         for ch in 0..nc {
             x[ch] = if self.wide { x[ch] * self.gain } else { x[ch] + hs[ch] * (self.gain - 1.0) };
         }
+        if pk_f > self.m_v { self.m_v = pk_f; }
+        if self.env_b > self.m_s { self.m_s = self.env_b; }
+        let rd = -20.0 * self.gain.max(1e-9).log10();
+        if rd > self.m_r { self.m_r = rd; }
     }
 }
 
@@ -646,6 +668,9 @@ struct Gate {
     lp: Option<[f64; 5]>,
     zh: [[f64; 4]; 2],
     zl: [[f64; 4]; 2],
+    /// afficheur : niveau vu par le gate (max) et gain appliqué (min) depuis la dernière lecture
+    m_env: f64,
+    m_gain: f64,
 }
 
 impl Gate {
@@ -679,7 +704,14 @@ impl Gate {
             lp: p.lp.filter(|f| *f > 0.0 && *f < 20_000.0).map(|f| bq(false, f.min(sr * 0.45))),
             zh: [[0.0; 4]; 2],
             zl: [[0.0; 4]; 2],
+            m_env: 0.0,
+            m_gain: 1.0,
         }
+    }
+    fn take_meter(&mut self) -> [f32; 2] {
+        let m = [self.m_env as f32, self.m_gain as f32];
+        self.m_env = 0.0; self.m_gain = 1.0;
+        m
     }
     fn target(&self) -> f64 {
         if self.left > 0 { return 1.0; }
@@ -709,6 +741,8 @@ impl Gate {
         for v in &mut x[..nc] {
             *v *= self.gain;
         }
+        if self.env > self.m_env { self.m_env = self.env; }
+        if self.gain < self.m_gain { self.m_gain = self.gain; }
     }
 }
 
@@ -1212,6 +1246,23 @@ pub fn sat_tick(v: f64, k: f64, trim: f64) -> f64 {
 }
 
 /// Chaîne d'une piste : EQ → saturation → de-esser → compresseur → écho → reverb, les deux canaux liés.
+/// Mesures pour les fenêtres de plugin (format attendu par la page, comme les messages des worklets)
+#[derive(serde::Serialize, Clone, Debug, Default)]
+pub struct FxMeters {
+    /// [niveau vu, gain]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gate: Option<[f32; 2]>,
+    /// [crête, niveau zone, réduction dB, niveau actuel]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deess: Option<[f32; 4]>,
+    /// (gain dB par bande, niveau dB par bande)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mband: Option<(Vec<f32>, Vec<f32>)>,
+    /// [crête entrée, crête sortie, gain]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<[f32; 3]>,
+}
+
 pub struct Chain {
     /// Filtre (coupe-bas / coupe-haut), avant l'EQ
     cut: Vec<[Biquad; 2]>,
@@ -1691,6 +1742,16 @@ impl Chain {
     }
     /// Réduction de gain du compresseur en ce moment (dB, dosée par le mélange), comme l'aiguille du navigateur
     pub fn comp_gr(&self) -> Option<f32> { self.comp.as_ref().map(|c| (c.red * c.mix) as f32) }
+    /// Afficheurs des fenêtres de plugin (gate, de-esser, multibande, limiteur) : mêmes mesures que les worklets, remises à zéro à la lecture
+    pub fn take_meters(&mut self) -> Option<FxMeters> {
+        let m = FxMeters {
+            gate: self.gate.as_mut().map(|g| g.take_meter()),
+            deess: self.deess2.as_mut().map(|d| d.take_meter()),
+            mband: self.mband.as_mut().map(|b| b.take_meter()),
+            limit: self.limit.as_mut().map(|l| l.take_meter()),
+        };
+        if m.gate.is_none() && m.deess.is_none() && m.mband.is_none() && m.limit.is_none() { None } else { Some(m) }
+    }
     pub fn is_empty(&self) -> bool {
         self.cut.is_empty() && self.filters.is_empty() && self.dyn_eq.is_empty() && self.sat.is_none() && self.gate.is_none() && self.crush.is_none() && self.util.is_none() && self.width.is_none() && self.modfx.is_empty() && self.deess.is_none() && self.deess2.is_none() && self.mband.is_none() && self.msat.is_none() && self.comp.is_none() && self.master.is_none() && self.limit.is_none() && self.delay.is_none() && self.reverb.is_none() && self.pitch.is_none()
     }
@@ -1919,9 +1980,18 @@ pub struct Limiter {
     rm: f64,
     att: f64,
     rel: f64,
+    /// afficheur : crête d'entrée, crête de sortie, gain (min) depuis la dernière lecture
+    m_in: f64,
+    m_out: f64,
+    m_gr: f64,
 }
 
 impl Limiter {
+    fn take_meter(&mut self) -> [f32; 3] {
+        let m = [self.m_in as f32, self.m_out as f32, self.m_gr as f32];
+        self.m_in = 0.0; self.m_out = 0.0; self.m_gr = 1.0;
+        m
+    }
     pub fn new(ceiling_db: f64, sr: f64) -> Self {
         Self::with(&crate::model::LimitParams::default(), ceiling_db, sr)
     }
@@ -1950,6 +2020,7 @@ impl Limiter {
             rm,
             att: 1.0 - (-an / base as f64).exp(),
             rel: 1.0 - (-1.0 / (p.release.unwrap_or(120.0).clamp(1.0, 2000.0) * rm / 1000.0 * sr)).exp(),
+            m_in: 0.0, m_out: 0.0, m_gr: 1.0,
         }
     }
     pub fn tick(&mut self, x: &mut [f64; 2]) {
@@ -1984,6 +2055,10 @@ impl Limiter {
         }
         x[0] = (d[0] * self.gain).clamp(-self.thr, self.thr);
         x[1] = (d[1] * self.gain).clamp(-self.thr, self.thr);
+        if pk > self.m_in { self.m_in = pk; }
+        let o = x[0].abs().max(x[1].abs());
+        if o > self.m_out { self.m_out = o; }
+        if self.gain < self.m_gr { self.m_gr = self.gain; }
     }
 }
 

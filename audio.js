@@ -1331,12 +1331,12 @@ window.PulseAudio = (function() {
     // Gate en lecture : { e: niveau vu par le gate, g: gain appliqué } pour son écran
     const gateLive = new Map();
     const deessLive = new Map(), mbandLive = new Map();
-    function getMbandMeter(key) { const v = mbandLive.get(key); return v && performance.now() - v.ts < 250 ? v : null; }
-    function getDeessMeter(key) { const v = deessLive.get(key); return v && performance.now() - v.ts < 250 ? v : null; }
-    function getGateMeter(key) { const v = gateLive.get(key); return v && performance.now() - v.ts < 250 ? v : null; }
+    function getMbandMeter(key) { if (nativeOn) return nativeFxMeter(key, 'mband'); const v = mbandLive.get(key); return v && performance.now() - v.ts < 250 ? v : null; }
+    function getDeessMeter(key) { if (nativeOn) return nativeFxMeter(key, 'deess'); const v = deessLive.get(key); return v && performance.now() - v.ts < 250 ? v : null; }
+    function getGateMeter(key) { if (nativeOn) return nativeFxMeter(key, 'gate'); const v = gateLive.get(key); return v && performance.now() - v.ts < 250 ? v : null; }
     // Limiteur en lecture : { i: crête d'entrée, o: crête de sortie, gr: gain le plus bas } pour son écran
     const limLive = new Map();
-    function getLimiterMeter(key) { const v = limLive.get(key); return v && performance.now() - v.ts < 250 ? v : null; }
+    function getLimiterMeter(key) { if (nativeOn) return nativeFxMeter(key, 'limit'); const v = limLive.get(key); return v && performance.now() - v.ts < 250 ? v : null; }
     function getCompReduction(key) { if (nativeOn) return nativeCompGR(key); return compGR.has(key) && performance.now() - (compGRts.get(key) || 0) < 250 ? compGR.get(key) : null; }
     function getBusSpectrum(busId) { if (nativeOn) { const i = nativeBusIndex(busId); return i >= 0 ? nativeSpectrum([true, i]) : null; } return liveBusSpec.get(busId) || null; }
     function getTrackSpectrum(trackIdx) { if (nativeOn) return nativeSpectrum([false, trackIdx]); const n = liveNodes.get(trackIdx); return n && n.spec ? n.spec : null; }
@@ -2388,6 +2388,21 @@ window.PulseAudio = (function() {
         const bus = key[0] === 'b', idx = bus ? nativeBusIndex(key.slice(1)) : parseInt(key.slice(1), 10);
         const g = lv.gr.find(x => x[0] === bus && x[1] === idx);
         return g ? g[2] : null;
+    }
+    // Afficheurs des fenêtres de plugin avec le moteur natif : mêmes objets que les messages des worklets
+    function nativeFxMeter(key, kind) {
+        const lv = nativeLive && nativeLive.levels;
+        if (!lv || !lv.fx || performance.now() - nativeLive.at > 1500) return null;
+        const bus = key[0] === 'b', idx = bus ? nativeBusIndex(key.slice(1)) : parseInt(key.slice(1), 10);
+        const f = lv.fx.find(x => x[0] === bus && x[1] === idx);
+        const m = f && f[2] && f[2][kind];
+        if (!m) return null;
+        const ts = performance.now();
+        if (kind === 'gate') return { e: m[0], g: m[1], ts };
+        if (kind === 'deess') return { v: m[0], s: m[1], r: m[2], f: m[3], ts };
+        if (kind === 'mband') return { g: m[0], e: m[1], ts };
+        if (kind === 'limit') return { i: m[0], o: m[1], gr: m[2], ts };
+        return null;
     }
     const nativeTrackLevel = (lv, i) => lv.tracks.find(t => t[0] === i);
     function nativeHasTrack(i) {

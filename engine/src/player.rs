@@ -18,6 +18,9 @@ pub struct Levels {
     pub master: f32,
     /// Réduction des compresseurs : (groupe ?, indice, dB)
     pub gr: Vec<(bool, usize, f32)>,
+    /// Afficheurs des fenêtres de plugin (gate, de-esser, multibande, limiteur) : (groupe ?, indice, mesures)
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub fx: Vec<(bool, usize, crate::fx::FxMeters)>,
     /// Son après les effets de la piste / du groupe choisi pour le spectre (4096 échantillons)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scope: Option<Vec<f32>>,
@@ -280,7 +283,7 @@ fn spawn_feeder(mut renderer: Box<Renderer>, mut media: Arc<Media>, ring: Arc<Ri
                 let (tracks, master) = renderer.levels();
                 let mut sh = shared.lock().unwrap();
                 if n > 0 {
-                    sh.levels.push_back((lin, Levels { tracks: tracks.to_vec(), master, gr: renderer.grs().to_vec(), scope: renderer.scope() }));
+                    sh.levels.push_back((lin, Levels { tracks: tracks.to_vec(), master, gr: renderer.grs().to_vec(), fx: renderer.fx_meters().to_vec(), scope: renderer.scope() }));
                     while sh.levels.len() > 256 { sh.levels.pop_front(); }
                 }
                 lin += n;

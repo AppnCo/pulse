@@ -63,7 +63,13 @@ const f=document.getElementById('f'); const sleep=ms=>new Promise(r=>setTimeout(
     let spMax=-Infinity, gr=null; const bins=new Float32Array(2048); const tq=performance.now();
     for(let k=0;k<20;k++){ const an=w.PulseAudio.getTrackSpectrum(0); if(an){ an.getFloatFrequencyData(bins); for(const v of bins) if(Number.isFinite(v)&&v>spMax) spMax=v; } const g=w.PulseAudio.getCompReduction('t0'); if(g!==null) gr=g; await sleep(50); }
     log('afficheurs plugin: spectre_max='+(Number.isFinite(spMax)?spMax.toFixed(0):'aucun')+' gr='+(gr===null?'aucun':gr.toFixed(1)));
-    tr0.effects=tr0.effects.filter(e=>e!=='reverb'&&e!=='comp');
+    // gate, de-esser, multibande, limiteur : leurs afficheurs aussi alimentés par le moteur natif
+    tr0.effects=tr0.effects.concat(['gate','deess','mband','limit']);
+    Object.assign(tr0.effectParams,{gate:{threshold:-30},deess:{thr:-60,range:10},mband:{bands:[{lo:200,hi:2000,thr:-40,range:-6}]},limit:{ceiling:-6,gain:6}});
+    w.refreshPlaybackSoon();
+    const seen={}; for(let k=0;k<20;k++){ await sleep(60); for(const [n,f] of [['gate','getGateMeter'],['deess','getDeessMeter'],['mband','getMbandMeter'],['limit','getLimiterMeter']]){ const m=w.PulseAudio[f]('t0'); if(m) seen[n]=m; } }
+    log('afficheurs natifs: gate='+(seen.gate?seen.gate.e.toFixed(3)+'/'+seen.gate.g.toFixed(2):'aucun')+' deess='+(seen.deess?seen.deess.v.toFixed(3):'aucun')+' mband='+(seen.mband?seen.mband.e.length:'aucun')+' limit='+(seen.limit?seen.limit.i.toFixed(3)+'/'+seen.limit.gr.toFixed(2):'aucun'));
+    tr0.effects=tr0.effects.filter(e=>e!=='reverb'&&e!=='comp'&&e!=='gate'&&e!=='deess'&&e!=='mband'&&e!=='limit');
     ST.looping=false; ST.project.tracks[0].volume=100; }
   await w.togglePlay(); await sleep(300);
   // page en ligne (appnco.app) : le canal rapide est refusé, les sons partent en morceaux (stage_put) — la lecture native doit démarrer quand même
