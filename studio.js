@@ -1879,8 +1879,22 @@ function handleNumpad(e) {
     if (c === 'NumpadDecimal' || c === 'NumpadComma') { pausePlayback(); return true; }
     if (c === 'NumpadMultiply') { toggleRec(); return true; }
     if (c === 'NumpadDivide') { goToPositionAsk(); return true; }
+    if (c === 'NumpadEqual') { toggleSkipCycle(); return true; }
     if (digit) { goToMarkerNumber(+digit[1]); return true; }
     return false;
+}
+// Boucle normale ou « zone sautée » (Logic : = échange les repères gauche/droite) :
+// la zone sautée n'est pas rejouée en boucle, la lecture passe par-dessus
+const cycleOn = () => !!(state.looping && state.loop && !state.loopSkip);
+const skipOn = () => !!(state.looping && state.loop && state.loopSkip);
+function loopBounds() { return [Math.min(state.loop.start, state.loop.end), Math.max(state.loop.start, state.loop.end)]; }
+function toggleSkipCycle() {
+    if (!state.loop || Math.abs(state.loop.end - state.loop.start) < 0.05) { flash('Pose d\'abord une boucle (glisse dans la règle) : = la transforme en zone sautée'); return; }
+    state.loopSkip = !state.loopSkip;
+    state.looping = true;
+    renderLoopOverlay(); updateLoopButton();
+    if (PulseAudio.setLoop && state.playing) PulseAudio.setLoop(cycleOn() ? state.loop : null);
+    flash(state.loopSkip ? 'Zone sautée : la lecture passe par-dessus (= pour revenir à la boucle)' : 'Boucle normale');
 }
 // Pause (Logic) : le son s'arrête là où il est, et la lecture suivante repart d'ici (pas du point de départ)
 async function pausePlayback() {
@@ -3714,7 +3728,11 @@ async function togglePlay(fromRec = false) {
         // Si une boucle est active et le curseur est hors de la zone → on revient au début de la boucle
         if (fromRec) {
             // rien : la prise démarre exactement là où est le curseur
-        } else if (state.looping && state.loop) {
+        } else if (skipOn()) {
+            // départ dans la zone sautée : on part juste après
+            const [ls, le] = loopBounds();
+            if (state.playhead >= ls && state.playhead < le) { state.playhead = le; updatePlayhead(); updateChrono(); }
+        } else if (cycleOn()) {
             const ls = Math.min(state.loop.start, state.loop.end);
             const le = Math.max(state.loop.start, state.loop.end);
             // Chaque Espace repart du début de la boucle, sauf si tu as posé toi-même un curseur de départ dans la boucle
@@ -3730,7 +3748,7 @@ async function togglePlay(fromRec = false) {
         }
         // Après une pause : le 1er Espace a arrêté le son là où il en était, le 2e relance depuis le point de départ
         if (!fromRec && returnOnStop() && state.paused && state.playOrigin != null
-            && Math.abs(state.playhead - state.paused.pos) < 0.02 && !(state.looping && state.loop)) {
+            && Math.abs(state.playhead - state.paused.pos) < 0.02 && !cycleOn()) {
             state.playhead = state.playOrigin;
             updatePlayhead(); updateChrono();
         }
@@ -3742,7 +3760,7 @@ async function togglePlay(fromRec = false) {
         if (useNative) PulseNative.onError = (err) => flash('Le moteur natif n\'a pas pu jouer (' + (err && err.message || err) + ') : lecture par le moteur habituel');
         PulseAudio.setNativeBackend(useNative ? PulseNative : null);
         // le moteur natif reçoit la boucle dès le départ (il la tient lui-même, sans trou)
-        if (useNative && PulseAudio.setLoop) PulseAudio.setLoop(state.looping && state.loop ? state.loop : null);
+        if (useNative && PulseAudio.setLoop) PulseAudio.setLoop(cycleOn() ? state.loop : null);
         const from0 = state.playhead;
         if (!fromRec) state.playOrigin = state.baseCleared ? null : state.playhead;   // le curseur revient ici à l'arrêt (comme Logic) ; sans base il reste où il s'arrête
         try { await PulseAudio.play(state.project, state.playhead); } catch (err) { console.error(err); }
@@ -4486,8 +4504,20 @@ function tick() {
     // le moteur prépare lui-même le tour suivant (boucle sans trou) ; s'il n'a pas pu (boucle trop courte, changée au dernier moment), on saute avec un fondu
     // pendant une prise : enregistrement en boucle (chaque tour devient une prise A, B, C… à l'arrêt) ; écoute seule avec capture de fond : comme avant
     const loopRec = state.recording && loopRecOn();
-    if (PulseAudio.setLoop) PulseAudio.setLoop(state.looping && state.loop && (state.recording ? loopRec : !state._cap) ? state.loop : null);
-    if (state.looping && state.loop && (!state.recording || loopRec)) {
+    if (PulseAudio.setLoop) PulseAudio.setLoop(cycleOn() && (state.recording ? loopRec : !state._cap) ? state.loop : null);
+    // zone sautée (Logic : repères échangés) : en écoute, la lecture saute par-dessus ; pendant une prise on n'y touche pas
+    if (skipOn() && !state.recording) {
+        const [ls, le] = loopBounds();
+        const prev = state._lastTickPos;
+        if (state.playhead >= ls && state.playhead < le && (prev == null || prev < ls + 0.25)) {
+            state.playhead = le;
+            state.startTime = performance.now() - le * 1000;
+            PulseAudio.play(state.project, le, { smooth: true, jump: true });
+            if (state.metronome) PulseAudio.startMetronome(state.project.bpm, le, state.project);
+        }
+    }
+    state._lastTickPos = state.playhead;
+    if (cycleOn() && (!state.recording || loopRec)) {
         const loopEnd = Math.max(state.loop.start, state.loop.end);
         const loopStart = Math.min(state.loop.start, state.loop.end);
         if (state.playhead >= loopEnd) {
@@ -4861,6 +4891,7 @@ const SHORTCUT_GROUPS = [
             ['. (ou ,)', 'Pause : la lecture suivante repart d\'ici'],
             ['*', 'Enregistrer'],
             ['/', 'Aller à la position (mesure.temps)'],
+            ['=', 'Boucle ↔ zone sautée (la lecture passe par-dessus)'],
             ['1 à 9', 'Aller au marqueur n° 1 à 9'],
             ['Ctrl + 0 à 9', 'Aller au marqueur n° 10 à 19']
         ]
@@ -6145,7 +6176,7 @@ function openMidiEditor(trackIdx, clipIdx, fresh) {
         setLoop: (a, b) => {   // a, b en temps depuis le début de la région ; null = ne change que l'état
             const spb = 60 / (clip.midi.bpm || state.project.bpm), o = clip.start - (clip.offset || 0);
             if (a == null) { state.looping = !state.looping; }
-            else { state.loop = { start: Math.max(0, o + a * spb), end: Math.max(0, o + b * spb) }; state.looping = true; }
+            else { state.loop = { start: Math.max(0, o + a * spb), end: Math.max(0, o + b * spb) }; state.looping = true; state.loopSkip = false; }
             renderLoopOverlay(); updateLoopButton(); saveProject();
         },
         onSeek: (beat, play) => {
@@ -6545,6 +6576,10 @@ function openWarpPanel(trackIdx, clipIdx, x, y) {
     closeTransientPanels();
     const clip = state.project.tracks[trackIdx]?.clips[clipIdx];
     if (!clip || clip.recording) return;
+    // Sélection multiple (comme le reste) : toutes les régions audio choisies sont calées sur le même tempo de départ
+    const group = clipsActedOn(trackIdx, clipIdx).filter(c => !c.midi);
+    const many = group.length > 1;
+    const anyWarp = group.some(c => c.warp);
     const srcId = clip.warp ? clip.warp.src : clip.id;
     let srcBpm = clip.warp ? clip.warp.srcBpm : null;
     const panel = document.createElement('div');
@@ -6552,7 +6587,7 @@ function openWarpPanel(trackIdx, clipIdx, x, y) {
     panel.innerHTML = `
         <div class="fx-panel-header"><span>⏱ Warp</span><button class="fx-panel-close">×</button></div>
         <div class="fx-panel-body">
-            <p class="warp-txt">Cale ce son sur le tempo du projet, <b>sans changer sa hauteur</b>.</p>
+            <p class="warp-txt">${many ? `Cale ces <b>${group.length} régions</b>` : 'Cale ce son'} sur le tempo du projet, <b>sans changer sa hauteur</b>.</p>
             <div class="fx-row"><label class="fx-label">Tempo du son</label>
                 <input type="text" class="set-num warp-bpm" value="…" inputmode="decimal"> <span>BPM</span>
                 <button class="set-btn warp-half" data-tooltip="Le tempo trouvé est le double ou la moitié du vrai ?">÷2</button>
@@ -6561,7 +6596,7 @@ function openWarpPanel(trackIdx, clipIdx, x, y) {
             <div class="warp-note"></div>
         </div>
         <div class="fx-panel-footer">
-            ${clip.warp ? '<button class="warp-remove">Retirer le warp</button>' : '<button class="warp-adopt" data-tooltip="Le projet prend le tempo de ce son, rien n\'est étiré">Garder son tempo</button>'}
+            ${anyWarp ? `<button class="warp-remove">Retirer le warp${many ? ' (toutes)' : ''}</button>` : '<button class="warp-adopt" data-tooltip="Le projet prend le tempo de ce son, rien n\'est étiré">Garder son tempo</button>'}
             <button class="warp-apply">Caler sur le projet</button>
         </div>`;
     document.body.appendChild(panel);
@@ -6585,11 +6620,26 @@ function openWarpPanel(trackIdx, clipIdx, x, y) {
     panel.querySelector('.warp-apply').addEventListener('click', async () => {
         const v = parseFloat(String(inp.value).replace(',', '.'));
         panel.remove();
-        if (Math.abs(v - bpmAtSec(clip.start)) < 0.05) { flash('Déjà au bon tempo'); return; }
-        await applyWarp(clip, v, bpmAtSec(clip.start));
+        if (!many) {
+            if (Math.abs(v - bpmAtSec(clip.start)) < 0.05) { flash('Déjà au bon tempo'); return; }
+            await applyWarp(clip, v, bpmAtSec(clip.start));
+            return;
+        }
+        let ok = 0;
+        await asOneUndo(async () => {
+            for (const c of group) {
+                if (c.tune || Math.abs(v - bpmAtSec(c.start)) < 0.05) continue;
+                if (await applyWarp(c, v, bpmAtSec(c.start))) ok++;
+            }
+        });
+        flash(ok ? `✓ ${ok} région${ok > 1 ? 's' : ''} calée${ok > 1 ? 's' : ''} sur le tempo du projet, même hauteur` : 'Rien à caler');
     });
     const rm = panel.querySelector('.warp-remove');
-    if (rm) rm.addEventListener('click', async () => { panel.remove(); await removeWarp(clip); });
+    if (rm) rm.addEventListener('click', async () => {
+        panel.remove();
+        if (!many) { await removeWarp(clip); return; }
+        await asOneUndo(async () => { for (const c of group) if (c.warp) await removeWarp(c); });
+    });
     const adopt = panel.querySelector('.warp-adopt');
     if (adopt) adopt.addEventListener('click', () => {
         const v = parseFloat(String(inp.value).replace(',', '.'));
@@ -9688,7 +9738,7 @@ function selectAllClipsOnTrack() {
     const starts = t.clips.map(c => c.start);
     const ends   = t.clips.map(c => c.start + c.duration);
     state.selection = { start: Math.min(...starts), end: Math.max(...ends), tracks: [ti, ti] };
-    state.loop = { start: Math.min(...starts), end: Math.max(...ends) };
+    state.loop = { start: Math.min(...starts), end: Math.max(...ends) }; state.loopSkip = false;
     state.looping = false;
     renderTimelineTracks();
     renderLoopOverlay();
@@ -9701,7 +9751,7 @@ function loopFromSelection() {
         : (state.selectedClip ? [`${state.selectedClip.trackIdx}:${state.selectedClip.clipIdx}`] : []);
     const cs = keys.map(k => { const [ti, ci] = k.split(':').map(Number); const t = state.project.tracks[ti]; return t && t.clips[ci]; }).filter(Boolean);
     if (!cs.length) { flash('Choisis une région d\'abord : U cale la boucle dessus'); return; }
-    state.loop = { start: Math.min(...cs.map(c => c.start)), end: Math.max(...cs.map(c => c.start + c.duration)) };
+    state.loop = { start: Math.min(...cs.map(c => c.start)), end: Math.max(...cs.map(c => c.start + c.duration)) }; state.loopSkip = false;
     state.looping = true;
     renderLoopOverlay(); updateLoopButton(); saveProject(); refreshPlaybackSoon();
     flash(cs.length > 1 ? 'Boucle calée sur les régions choisies' : 'Boucle calée sur la région choisie');
@@ -12793,7 +12843,7 @@ function editLoopRegion(startEvent, eventToTime, mode) {
 }
 function startLoopSelection(startEvent, eventToTime) {
     const start = snapTime(eventToTime(startEvent), startEvent.shiftKey);
-    state.loop = { start, end: start };
+    state.loop = { start, end: start }; state.loopSkip = false;
     renderLoopOverlay();
     const onMove = (ev) => {
         state.loop.end = snapTime(eventToTime(ev), ev.shiftKey);
@@ -12851,11 +12901,14 @@ function renderLoopOverlay() {
     rulerOverlay.style.left = left;
     rulerOverlay.style.width = width;
     rulerOverlay.classList.toggle('active', !!state.looping);
+    rulerOverlay.classList.toggle('is-skip', !!state.loopSkip);
+    rulerOverlay.title = state.loopSkip ? 'Zone sautée : la lecture passe par-dessus (= du pavé numérique pour revenir à la boucle)' : '';
 
     if (tracksOverlay) {
         tracksOverlay.style.left = left;
         tracksOverlay.style.width = width;
         tracksOverlay.classList.toggle('active', !!state.looping);
+        tracksOverlay.classList.toggle('is-skip', !!state.loopSkip);
         // Plage prise sur certaines pistes : la zone colorée ne couvre que celles-là (la règle garde la boucle entière)
         const tr = state.selection && state.selection.tracks;
         const rows = [...document.querySelectorAll('.timeline-tracks .timeline-track')];
@@ -13151,7 +13204,7 @@ function startRangeSelection(startEvent, eventToTime) {
         const b = Math.max(state.selection.start, state.selection.end);
         if (b - a > 0.1) {
             state.loop = { start: a, end: b };
-            state.looping = true;
+            state.looping = true; state.loopSkip = false;
             // Placer le curseur au début de la sélection
             state.playhead = a;
             updatePlayhead();
@@ -13202,7 +13255,7 @@ function clearRangeSelection() {
     document.querySelectorAll('.range-selection').forEach(el => el.remove());
     state.selection = null;
     state.loop = null;
-    state.looping = false;
+    state.looping = false; state.loopSkip = false;
     renderLoopOverlay();
     updateLoopButton();
 }

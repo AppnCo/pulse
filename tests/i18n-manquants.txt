@@ -14,6 +14,7 @@ A−
 Back
 Back ▾
 Bitcrusher
+Boucle ↔ zone sautée (la lecture passe par-dessus)
 Chorus
 Ctrl + 0 à 9
 De-esser

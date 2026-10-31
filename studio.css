@@ -3720,3 +3720,7 @@ body[data-left-tool="fade"] .timeline-tracks .clip { cursor: ew-resize; }
 /* 31/10 : dossier (juste pour ranger, sans bus) — même en-tête qu'un groupe, avec une icône et un fond plus discret */
 .group-header.is-folder { background: color-mix(in srgb, var(--group-color) 10%, var(--bg-1, #140d22)); }
 .group-header.is-folder .folder-ico { font-size: 12px; opacity: 0.75; color: var(--group-color); flex-shrink: 0; }
+
+/* Zone sautée (Logic : repères gauche/droite échangés) : rayée, la lecture passe par-dessus */
+.loop-region.is-skip, .timeline-ruler .loop-region.is-skip { background: repeating-linear-gradient(135deg, rgba(148,163,184,0.35) 0 4px, rgba(148,163,184,0.12) 4px 8px); border-color: #94a3b8; animation: none; }
+.loop-region-tracks.is-skip, .loop-region-tracks.is-skip.active { background: repeating-linear-gradient(135deg, rgba(148,163,184,0.10) 0 6px, transparent 6px 12px); border-left-color: rgba(148,163,184,0.5); border-right-color: rgba(148,163,184,0.5); box-shadow: none; }
