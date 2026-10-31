@@ -37,7 +37,7 @@ export default async (c) => {
 
   // 13. Armer une piste Piano : refusé avec un message
   await val(`addTrack('keys')`); await sleep(700);
-  const idx = await val(`return state.project.tracks.length-1`);
+  const idx = await val(`return state.selectedTrack`);   // la nouvelle piste (sous la piste choisie, comme Logic)
   await val(`PulsePianoRoll.close(true); document.querySelector('.t-mini.m-r[data-i="${idx}"]').click()`); await sleep(200);
   ok(await val(`return !state.project.tracks[${idx}].armed`), 'piste Piano : ne peut pas être armée pour la voix');
 

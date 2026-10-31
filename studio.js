@@ -10095,26 +10095,37 @@ function addTrack(type = null, anchorEl = null) {
 function _doAddTrack(type = 'audio') {
     pushUndo();
     const i = state.project.tracks.length;
+    // Comme Logic : la nouvelle piste arrive juste sous la piste choisie, dans son dossier / son groupe s'il y en a un
+    const sel = state.project.tracks[state.selectedTrack];
+    const at = sel && !sel.isCapture ? state.selectedTrack + 1 : i;
+    const home = {};
+    if (sel && !sel.isCapture) {
+        if (sel.folder && folderById(sel.folder)) home.folder = sel.folder;
+        const g = trackGroup(sel);
+        if (g && isVisibleGroup(g)) home.output = sel.output;
+    }
     const typeLabels = { audio: 'Piste', inst: 'Instru', beat: 'Beat', keys: 'Piano', drums: 'Batterie' };
     // Un nom jamais en double (Piste 3 supprimée puis recréée, etc.)
     const labelBase = typeLabels[type] || 'Piste';
     let num = i + 1;
     const usedNames = new Set(state.project.tracks.map(x => x.name));
     while (usedNames.has(`${labelBase} ${num}`)) num++;
-    state.project.tracks.push({
+    state.project.tracks.splice(at, 0, {
         name: `${labelBase} ${num}`,
         type: ['inst', 'beat', 'keys', 'drums'].includes(type) ? type : 'audio',
         color: TYPE_COLORS[type] || COLORS[i % COLORS.length],
         clips: [],
         volume: 100,
+        ...home,
         ...(type === 'keys' ? { midiInst: 'piano' } : type === 'drums' ? { midiInst: 'drums' } : {})
     });
-    state.selectedTrack = state.project.tracks.length - 1;
+    state.selectedTrack = at;
+    state.selectedTracks = new Set();
     renderAll();
     saveProject();
     if (type === 'keys' || type === 'drums') {
         // Piano / batterie : la première région s'ouvre tout de suite, prête à recevoir des notes
-        createMidiClip(state.project.tracks.length - 1, state.playhead || 0, true);
+        createMidiClip(at, state.playhead || 0, true);
         return;
     }
     flash(`${labelBase} ${num} créée`);
