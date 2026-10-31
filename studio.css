@@ -2462,8 +2462,10 @@ body.lyrics-open .workspace { grid-template-columns: var(--tracks-w, 240px) 1fr 
 .group-header { gap: 4px; }
 .group-header .group-name { flex: 1 1 0; min-width: 0; }
 .group-header .g-mini { width: 20px; height: 20px; flex-shrink: 0; padding: 0; }
-.group-header .group-vol { width: 0; opacity: 0; transition: width 0.15s, opacity 0.15s; }
-.group-header:hover .group-vol, .group-header .group-vol:focus { width: 40px; opacity: 1; }
+/* 31/10 : sa place est gardée (rien ne glisse sous la souris, plus de M cliqué par erreur) ; il ne se déroule qu'après
+   un court arrêt de la souris, donc un clic rapide sur la ligne choisit simplement le bus. Caché = les clics passent à l'en-tête. */
+.group-header .group-vol { width: 40px; opacity: 0; visibility: hidden; clip-path: inset(0 0 0 100%); transition: opacity 0.15s, clip-path 0.15s, visibility 0s 0.15s; }
+.group-header:hover .group-vol, .group-header .group-vol:focus, .group-header .group-vol:active { opacity: 1; visibility: visible; clip-path: inset(0); transition: opacity 0.15s 0.3s, clip-path 0.15s 0.3s, visibility 0s 0.3s; }
 
 /* Ligne de bus sous les pistes (premaster) : même taille qu'un groupe, sans flèche ni solo */
 .group-header.is-row .group-toggle, .group-header.is-row .g-s { display: none; }

@@ -17,6 +17,8 @@ pub struct Source {
 enum Samples {
     F32(Vec<Vec<f32>>),
     I16(Vec<Vec<i16>>),
+    /// 24 bits rangés serrés (3 octets par échantillon, petit-boutiste) : la qualité du WAV 24 bits sans le poids du flottant
+    I24(Vec<Vec<u8>>),
 }
 
 impl Source {
@@ -26,8 +28,12 @@ impl Source {
     pub fn from_i16(sample_rate: u32, channels: Vec<Vec<i16>>) -> Self {
         Self { sample_rate, data: std::sync::Arc::new(Samples::I16(channels)) }
     }
+    /// `channels` : 3 octets par échantillon (petit-boutiste, signé)
+    pub fn from_i24(sample_rate: u32, channels: Vec<Vec<u8>>) -> Self {
+        Self { sample_rate, data: std::sync::Arc::new(Samples::I24(channels)) }
+    }
     pub fn n_channels(&self) -> usize {
-        match &*self.data { Samples::F32(c) => c.len(), Samples::I16(c) => c.len() }
+        match &*self.data { Samples::F32(c) => c.len(), Samples::I16(c) => c.len(), Samples::I24(c) => c.len() }
     }
     /// Échantillon `i` du canal `ch` (−1…1)
     #[inline]
@@ -35,14 +41,17 @@ impl Source {
         match &*self.data {
             Samples::F32(c) => c.get(ch).and_then(|d| d.get(i)).copied(),
             Samples::I16(c) => c.get(ch).and_then(|d| d.get(i)).map(|&v| v as f32 * (1.0 / 32768.0)),
+            Samples::I24(c) => c.get(ch).and_then(|d| d.get(i * 3..i * 3 + 3)).map(|b| {
+                (((b[0] as i32) << 8 | (b[1] as i32) << 16 | (b[2] as i32) << 24) >> 8) as f32 * (1.0 / 8_388_608.0)
+            }),
         }
     }
     /// Octets gardés en mémoire
     pub fn bytes(&self) -> usize {
-        match &*self.data { Samples::F32(c) => c.iter().map(|d| d.len() * 4).sum(), Samples::I16(c) => c.iter().map(|d| d.len() * 2).sum() }
+        match &*self.data { Samples::F32(c) => c.iter().map(|d| d.len() * 4).sum(), Samples::I16(c) => c.iter().map(|d| d.len() * 2).sum(), Samples::I24(c) => c.iter().map(Vec::len).sum() }
     }
     pub fn frames(&self) -> usize {
-        match &*self.data { Samples::F32(c) => c.first().map_or(0, Vec::len), Samples::I16(c) => c.first().map_or(0, Vec::len) }
+        match &*self.data { Samples::F32(c) => c.first().map_or(0, Vec::len), Samples::I16(c) => c.first().map_or(0, Vec::len), Samples::I24(c) => c.first().map_or(0, |d| d.len() / 3) }
     }
     pub fn duration(&self) -> f64 {
         self.frames() as f64 / self.sample_rate as f64

@@ -34,7 +34,8 @@ export default async ({ ev, nav, send, sleep, check }) => {
     return JSON.stringify({ varie, fixe, ms, ecart: first < 0 || echo < 0 ? null : Math.round((echo - first) / lr * 100) / 100 });
   })()`));
   console.log(JSON.stringify(r));
-  const near = (v, want) => Math.abs(v - want) < want * 0.01 + 1e-5;
+  // 2e-5 (−94 dB) : depuis le WAV 24 bits (31/10), le reste inaudible d'un écho n'est plus arrondi à zéro comme en 16 bits
+  const near = (v, want) => Math.abs(v - want) < want * 0.01 + 2e-5;
   check('avant le changement : écho 1/8 à 120 BPM (0,25 s)', near(r.varie[0], 0.06249) && near(r.varie[1], 0.02360), r.varie.slice(0, 2).join(' / '));
   check('après le changement : écho 1/8 à 60 BPM (0,5 s), mêmes valeurs que Rust', near(r.varie[2], 0) && near(r.varie[3], 0.06249) && near(r.varie[4], 0.02360), r.varie.slice(2).join(' / '));
   check('sans carte de tempo : écho à 0,25 s partout (comme avant)', near(r.fixe, 0.06249), r.fixe);

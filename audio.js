@@ -2624,7 +2624,7 @@ window.PulseAudio = (function() {
 
     // Geler une piste : rend ses régions et ses effets (automation des effets comprise), avant le fader, depuis 0 s.
     // Retourne { buffer, gain } ou null : buffer mono si le son de la piste l'est (même loi de pan que la piste vivante),
-    // ramené sous 0 dBFS pour le WAV 16 bits ; `gain` est le facteur à réappliquer à la lecture.
+    // ramené sous 0 dBFS pour le WAV ; `gain` est le facteur à réappliquer à la lecture.
     async function renderFreeze(project, trackIdx) {
         const t = project.tracks[trackIdx];
         if (!t || t.frozen) return null;
@@ -2707,26 +2707,28 @@ window.PulseAudio = (function() {
         return audioBufferToWav(rendered);
     }
 
-    function audioBufferToWav(buffer) {
+    // WAV PCM 24 bits par défaut, comme Logic / Pro Tools (16 bits possible : audioBufferToWav(buf, 16))
+    function audioBufferToWav(buffer, bits = 24) {
         const numChannels = buffer.numberOfChannels;
         const sampleRate = buffer.sampleRate;
         const samples = buffer.length;
-        const dataSize = samples * numChannels * 2;
+        const bps = bits === 16 ? 2 : 3;
+        const dataSize = samples * numChannels * bps;
         const header = 44;
-        const arrayBuffer = new ArrayBuffer(header + dataSize);
+        const arrayBuffer = new ArrayBuffer(header + dataSize + (dataSize & 1));
         const view = new DataView(arrayBuffer);
 
         writeStr(view, 0,  'RIFF');
-        view.setUint32(4, 36 + dataSize, true);
+        view.setUint32(4, 36 + dataSize + (dataSize & 1), true);
         writeStr(view, 8,  'WAVE');
         writeStr(view, 12, 'fmt ');
         view.setUint32(16, 16, true);
         view.setUint16(20, 1, true); // PCM
         view.setUint16(22, numChannels, true);
         view.setUint32(24, sampleRate, true);
-        view.setUint32(28, sampleRate * numChannels * 2, true);
-        view.setUint16(32, numChannels * 2, true);
-        view.setUint16(34, 16, true);
+        view.setUint32(28, sampleRate * numChannels * bps, true);
+        view.setUint16(32, numChannels * bps, true);
+        view.setUint16(34, bps * 8, true);
         writeStr(view, 36, 'data');
         view.setUint32(40, dataSize, true);
 
@@ -2734,12 +2736,25 @@ window.PulseAudio = (function() {
         for (let c = 0; c < numChannels; c++) channels.push(buffer.getChannelData(c));
 
         let offset = header;
-        for (let i = 0; i < samples; i++) {
-            for (let c = 0; c < numChannels; c++) {
-                let s = Math.max(-1, Math.min(1, channels[c][i]));
-                s = s < 0 ? s * 0x8000 : s * 0x7FFF;
-                view.setInt16(offset, s, true);
-                offset += 2;
+        if (bps === 2) {
+            for (let i = 0; i < samples; i++) {
+                for (let c = 0; c < numChannels; c++) {
+                    let s = Math.max(-1, Math.min(1, channels[c][i]));
+                    s = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                    view.setInt16(offset, s, true);
+                    offset += 2;
+                }
+            }
+        } else {
+            const out = new Uint8Array(arrayBuffer);
+            for (let i = 0; i < samples; i++) {
+                for (let c = 0; c < numChannels; c++) {
+                    let s = channels[c][i];
+                    s = s >= 1 ? 0x7FFFFF : s <= -1 ? -0x800000 : Math.round(s * 0x800000);
+                    if (s > 0x7FFFFF) s = 0x7FFFFF;
+                    out[offset] = s & 0xFF; out[offset + 1] = (s >> 8) & 0xFF; out[offset + 2] = (s >> 16) & 0xFF;
+                    offset += 3;
+                }
             }
         }
         return new Blob([arrayBuffer], { type: 'audio/wav' });

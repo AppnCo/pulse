@@ -37,13 +37,21 @@ fn decode_wav(bytes: Vec<u8>) -> Result<Source, PulseError> {
     let mut reader = hound::WavReader::new(Cursor::new(bytes))?;
     let spec = reader.spec();
     let n = spec.channels as usize;
-    // 16 bits (tous les sons d'un projet Pulse) : gardés tels quels, moitié moins de mémoire qu'en flottant
+    // 16 bits (sons Pulse d'avant le 31/10) : gardés tels quels, moitié moins de mémoire qu'en flottant
     if spec.sample_format == hound::SampleFormat::Int && spec.bits_per_sample == 16 {
         let mut channels: Vec<Vec<i16>> = (0..n).map(|_| Vec::with_capacity(reader.len() as usize / n.max(1))).collect();
         for (i, s) in reader.samples::<i16>().enumerate() {
             channels[i % n].push(s?);
         }
         return Ok(Source::from_i16(spec.sample_rate, channels));
+    }
+    // 24 bits (format des sons Pulse depuis le 31/10, comme Logic / Pro Tools) : rangés serrés, 3 octets par échantillon
+    if spec.sample_format == hound::SampleFormat::Int && spec.bits_per_sample == 24 {
+        let mut channels: Vec<Vec<u8>> = (0..n).map(|_| Vec::with_capacity(reader.len() as usize / n.max(1) * 3)).collect();
+        for (i, s) in reader.samples::<i32>().enumerate() {
+            channels[i % n].extend_from_slice(&s?.to_le_bytes()[..3]);
+        }
+        return Ok(Source::from_i24(spec.sample_rate, channels));
     }
     let mut channels: Vec<Vec<f32>> = (0..n).map(|_| Vec::with_capacity(reader.len() as usize / n.max(1))).collect();
     match spec.sample_format {
@@ -99,4 +107,28 @@ pub fn write_wav(path: &std::path::Path, left: &[f32], right: &[f32], sample_rat
     }
     w.finalize()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    /// WAV 24 bits : relu à l'identique (au pas du 24 bits près) et rangé serré, 3 octets par échantillon
+    #[test]
+    fn wav_24_bits_relu_et_serre() {
+        let path = std::env::temp_dir().join(format!("pulse-24b-{}.wav", std::process::id()));
+        let l: Vec<f32> = vec![0.0, 0.5, -0.5, 0.999, -1.0, 1e-6, -1e-6, 0.123_456];
+        let r: Vec<f32> = l.iter().map(|v| -v * 0.5).collect();
+        super::write_wav(&path, &l, &r, 48_000).unwrap();
+        let src = super::decode_wav(std::fs::read(&path).unwrap()).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(src.frames(), l.len());
+        assert_eq!(src.n_channels(), 2);
+        assert_eq!(src.bytes(), l.len() * 2 * 3, "3 octets par échantillon");
+        for i in 0..l.len() {
+            for (ch, v) in [(0, l[i]), (1, r[i])] {
+                let got = src.sample(ch, i).unwrap();
+                assert!((got - v).abs() < 2.0 / 8_388_608.0, "canal {ch} n°{i} : {got} au lieu de {v}");
+            }
+        }
+        assert!(src.sample(0, l.len()).is_none());
+    }
 }
