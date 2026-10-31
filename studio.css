@@ -3716,3 +3716,7 @@ body[data-left-tool="fade"] .timeline-tracks .clip { cursor: ew-resize; }
 .track-item .track-info { padding-right: 38px; }
 .track-item .track-buttons { gap: 3px; }
 .track-item .track-buttons .t-mini { min-width: 16px; }
+
+/* 31/10 : dossier (juste pour ranger, sans bus) — même en-tête qu'un groupe, avec une icône et un fond plus discret */
+.group-header.is-folder { background: color-mix(in srgb, var(--group-color) 10%, var(--bg-1, #140d22)); }
+.group-header.is-folder .folder-ico { font-size: 12px; opacity: 0.75; color: var(--group-color); flex-shrink: 0; }

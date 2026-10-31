@@ -337,6 +337,12 @@ function bindTakeToggles() {
 // Un groupe = un bus qui reçoit plusieurs pistes. Dans la liste, il apparaît comme un en-tête
 // repliable au-dessus de ses pistes, avec un volume / mute / solo pour tout le groupe.
 function busById(id) { return (state.project.buses || []).find(x => x.id === id) || null; }
+// Dossier (comme une pile « dossier » de Logic) : juste pour ranger des pistes, sans bus — le son ne change pas.
+// project.folders = [{ id, kind: 'folder', name, color, collapsed }] ; une piste rangée a t.folder = id.
+function folderById(id) { return id ? ((state.project.folders || []).find(f => f.id === id) || null) : null; }
+function isFolder(g) { return !!(g && g.kind === 'folder'); }
+function groupById(id) { return busById(id) || folderById(id); }
+function trackFolder(t) { return folderById(t && t.folder); }
 function trackGroup(t) {
     const b = busById(t.output);
     return b && isVisibleGroup(b) ? b : null;
@@ -350,12 +356,18 @@ function groupMemberIdx(bus) {
 // Groupes rangés directement dans ce groupe (un groupe peut en contenir d'autres : Toutes les voix > Voix 1, Backs…)
 function groupChildren(bus) { return (state.project.buses || []).filter(b => b.output === bus.id && b !== bus); }
 function isVisibleGroup(bus, depth = 0) {
+    if (isFolder(bus)) return true;
     if (bus.locked || bus.noFolder || depth > 8) return false;
     return !!bus.isGroup || groupMemberIdx(bus).length >= 2 || groupChildren(bus).some(c => isVisibleGroup(c, depth + 1));
 }
 function groupParent(bus) {
+    if (isFolder(bus)) return null;
     const p = busById(bus.output);
-    return p && p !== bus && isVisibleGroup(p) ? p : null;
+    if (p && p !== bus && isVisibleGroup(p)) return p;
+    // Groupe le plus haut : il est dans le dossier de ses pistes
+    const reaches = (t) => { let b = busById(t.output); for (let n = 0; b && n < 8; n++) { if (b === bus) return true; b = busById(b.output); } return false; };
+    const t = state.project.tracks.find(x => x.folder && reaches(x));
+    return t ? trackFolder(t) : null;
 }
 // Du groupe lui-même jusqu'au plus grand groupe qui le contient
 function groupChain(bus) {
@@ -363,7 +375,12 @@ function groupChain(bus) {
     for (let g = bus, n = 0; g && n < 8; g = groupParent(g), n++) chain.push(g);
     return chain;
 }
-function trackGroups(t) { const g = trackGroup(t); return g ? groupChain(g) : []; }
+function trackGroups(t) {
+    const g = trackGroup(t), chain = g ? groupChain(g) : [];
+    const f = trackFolder(t);
+    if (f && !chain.includes(f)) chain.push(f);
+    return chain;
+}
 // Toutes les pistes du groupe, y compris celles de ses sous-groupes
 function groupTracksDeep(bus) {
     const out = [];
@@ -386,6 +403,7 @@ function rowBuses() { return (state.project.buses || []).filter(b => (b.row || (
 function groupColor(bus) { return bus.color || '#A855F7'; }
 
 function renderGroupHeader(bus) {
+    if (isFolder(bus)) return renderFolderHeader(bus);
     const members = groupTracksDeep(bus);
     const allSolo = members.length > 0 && members.every(i => state.project.tracks[i].solo);
     const n = members.length;
@@ -403,6 +421,24 @@ function renderGroupHeader(bus) {
         <button class="g-mini g-m ${bus.muted ? 'active' : ''}" data-tooltip="Couper tout le groupe">M</button>
         <button class="g-mini g-s ${allSolo ? 'active' : ''}" data-tooltip="Écouter seulement ce groupe">S</button>
         <input type="range" class="group-vol" min="0" max="100" step="0.5" data-default="${volToPos(100)}" value="${volToPos(bus.volume ?? 100)}" data-tooltip="Volume du groupe">
+    </div>`;
+}
+
+function renderFolderHeader(f) {
+    const members = groupTracksDeep(f).map(i => state.project.tracks[i]);
+    const allSolo = members.length > 0 && members.every(t => t.solo);
+    const allMute = members.length > 0 && members.every(t => t.muted);
+    const depth = groupChain(f).length - 1;
+    return `
+    <div class="group-header is-folder ${f.collapsed ? 'is-collapsed' : ''} ${allMute ? 'is-muted' : ''}" data-bus="${esc(f.id)}" style="--group-color: ${groupColor(f)}; --depth: ${depth}${f.height ? `; --grp-h: ${f.height}px` : ''}">
+        <div class="group-resize" data-bus="${esc(f.id)}" data-tooltip="Tire pour agrandir ou rétrécir ce dossier (double-clic = taille normale)"></div>
+        <button class="group-toggle" data-tooltip="${f.collapsed ? 'Déplier le dossier' : 'Replier le dossier'}" aria-label="Replier ou déplier le dossier">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+        </button>
+        <span class="folder-ico" aria-hidden="true">▤</span>
+        <div class="group-name" contenteditable="true" spellcheck="false" data-tooltip="Dossier : juste pour ranger, le son des pistes ne change pas">${esc(f.name)}</div>
+        <button class="g-mini g-m ${allMute ? 'active' : ''}" data-tooltip="Couper toutes les pistes du dossier">M</button>
+        <button class="g-mini g-s ${allSolo ? 'active' : ''}" data-tooltip="Écouter seulement ce dossier">S</button>
     </div>`;
 }
 
@@ -510,7 +546,7 @@ function renderGroupTimelineRow(bus, widthPx) {
     const n = groupTracksDeep(bus).length;
     if (!isVisibleGroup(bus)) return `<div class="timeline-group-row is-row" data-bus="${esc(bus.id)}" style="width:${widthPx}px; --group-color: ${groupColor(bus)}${bus.height ? `; --grp-h: ${bus.height}px` : ''}"><em class="group-count">${esc(bus.name)} · ${bus.premaster ? 'tout le morceau passe ici avant la sortie' : 'bus de sécurité'}</em>${state.automationMode ? renderBusCurve(bus, widthPx) : ''}</div>`;
     const label = `${esc(bus.name)} · ${n} piste${n > 1 ? 's' : ''}${bus.collapsed ? ' (replié)' : ''}`;
-    return `<div class="timeline-group-row ${bus.collapsed ? 'is-collapsed' : ''} ${isGroupFolded(bus) ? 'is-group-collapsed' : ''}" data-bus="${esc(bus.id)}" style="width:${widthPx}px; --group-color: ${groupColor(bus)}${bus.height ? `; --grp-h: ${bus.height}px` : ''}">${bars}<em class="group-count">${label}</em>${state.automationMode && !bus.collapsed ? renderBusCurve(bus, widthPx) : ''}</div>`;
+    return `<div class="timeline-group-row ${bus.collapsed ? 'is-collapsed' : ''} ${isGroupFolded(bus) ? 'is-group-collapsed' : ''}" data-bus="${esc(bus.id)}" style="width:${widthPx}px; --group-color: ${groupColor(bus)}${bus.height ? `; --grp-h: ${bus.height}px` : ''}">${bars}<em class="group-count">${label}</em>${state.automationMode && !bus.collapsed && !isFolder(bus) ? renderBusCurve(bus, widthPx) : ''}</div>`;
 }
 
 function rerenderTracks() {
@@ -519,8 +555,9 @@ function rerenderTracks() {
 
 function bindGroupEvents() {
     document.querySelectorAll('.group-header').forEach(h => {
-        const bus = (state.project.buses || []).find(b => b.id === h.dataset.bus);
+        const bus = groupById(h.dataset.bus);
         if (!bus) return;
+        if (isFolder(bus)) { bindFolderHeader(h, bus); return; }
         h.querySelector('.group-toggle').addEventListener('click', (e) => {
             e.stopPropagation();
             bus.collapsed = !bus.collapsed;
@@ -606,6 +643,138 @@ function bindGroupEvents() {
             setTimeout(() => document.addEventListener('mousedown', closeAllMenus, { once: true }), 10);
         });
     });
+}
+
+function bindFolderHeader(h, f) {
+    const members = () => groupTracksDeep(f);
+    h.querySelector('.group-toggle').addEventListener('click', (e) => { e.stopPropagation(); f.collapsed = !f.collapsed; rerenderTracks(); saveProject(); });
+    h.querySelector('.g-m').addEventListener('click', (e) => {
+        e.stopPropagation();
+        const m = members(), all = m.length && m.every(i => state.project.tracks[i].muted);
+        m.forEach(i => { if (!!state.project.tracks[i].muted === all) toggleMute(i); });
+        renderTracksPanel(); bindTrackEvents(); saveProject();
+    });
+    h.querySelector('.g-s').addEventListener('click', (e) => {
+        e.stopPropagation();
+        const ts = members().map(i => state.project.tracks[i]), all = ts.length && ts.every(t => t.solo);
+        ts.forEach(t => { t.solo = !all; });
+        PulseAudio.refreshAudibility(state.project);
+        renderTracksPanel(); bindTrackEvents(); saveProject();
+    });
+    // Un clic sur le dossier choisit toutes ses pistes
+    h.addEventListener('click', (e) => {
+        if (e.target.closest('button, input, .group-name.editing, .group-toggle')) return;
+        const m = members(); if (!m.length) return;
+        selectTrack(m[0]); state.selectedTracks = new Set(m); renderAll();
+    });
+    const nameEl = h.querySelector('.group-name');
+    const startEdit = () => { nameEl.classList.add('editing'); nameEl.focus(); document.execCommand('selectAll'); };
+    nameEl.addEventListener('mousedown', (e) => { if (nameEl.classList.contains('editing')) return; e.preventDefault(); if (e.detail >= 2) startEdit(); });
+    nameEl.addEventListener('dblclick', (e) => { e.stopPropagation(); if (!nameEl.classList.contains('editing')) startEdit(); });
+    nameEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); nameEl.blur(); } e.stopPropagation(); });
+    nameEl.addEventListener('blur', () => {
+        nameEl.classList.remove('editing');
+        const v = nameEl.textContent.trim();
+        if (v && v !== f.name) { pushUndo(); f.name = v; saveProject(); } else nameEl.textContent = f.name;
+    });
+    h.addEventListener('contextmenu', (e) => {
+        e.preventDefault(); closeAllMenus();
+        const menu = document.createElement('div');
+        menu.className = 'track-ctx-menu';
+        menu.style.cssText = `position:fixed;left:${e.clientX}px;top:${e.clientY}px;z-index:200;`;
+        [['Renommer le dossier', startEdit], ['Défaire le dossier (les pistes restent)', () => dissolveFolder(f.id)]].forEach(([label, action]) => {
+            const it = document.createElement('div');
+            it.className = 'ctx-item'; it.textContent = label;
+            it.addEventListener('click', () => { closeAllMenus(); action(); });
+            menu.appendChild(it);
+        });
+        document.body.appendChild(menu);
+        setTimeout(() => document.addEventListener('mousedown', closeAllMenus, { once: true }), 10);
+    });
+}
+
+// Les pistes choisies se suivent dans la liste (à la place de la première), comme quand Logic les range ensemble
+function gatherTracks(idxs) {
+    const tracks = state.project.tracks;
+    const list = [...new Set(idxs)].filter(i => tracks[i]).sort((a, b) => a - b);
+    if (list.length < 2) return list;
+    const moving = list.map(i => tracks[i]);
+    const sel = tracks[state.selectedTrack];
+    const at = list[0];
+    const rest = tracks.filter(t => !moving.includes(t));
+    const before = tracks.slice(0, at).filter(t => !moving.includes(t)).length;
+    rest.splice(before, 0, ...moving);
+    state.project.tracks = rest;
+    const ni = rest.indexOf(sel); if (ni >= 0) state.selectedTrack = ni;
+    return moving.map(t => rest.indexOf(t));
+}
+// Pistes visées par un clic droit : toutes les pistes choisies si la piste cliquée en fait partie
+function ctxTargets(idx) {
+    const sel = selectedTrackIdxs();
+    return sel.length > 1 && sel.includes(idx) ? sel : [idx];
+}
+function createGroupFromTracks(idxs) {
+    const list = idxs.filter(i => state.project.tracks[i] && !state.project.tracks[i].isCapture);
+    if (!list.length) { flash('La piste d\'enregistrement ne se range pas dans un groupe'); return; }
+    pushUndo();
+    const ordered = gatherTracks(list);
+    const first = state.project.tracks[ordered[0]];
+    state.project.buses = state.project.buses || [];
+    const n = state.project.buses.filter(b => b.isGroup).length + 1;
+    const id = 'grp_' + Date.now().toString(36);
+    // le groupe sort là où sortait la 1re piste (si elle était déjà dans un groupe, le nouveau s'y range)
+    state.project.buses.push({ id, name: `Groupe ${n}`, isGroup: true, output: first.output || 'master', color: first.color, volume: 100 });
+    ordered.forEach(i => { state.project.tracks[i].output = id; });
+    state.selectedTracks = new Set(ordered);
+    afterGroupChange(ordered.length > 1 ? `Groupe créé avec ${ordered.length} pistes : un seul volume et un même son pour toutes` : 'Groupe créé — clic droit sur une autre piste pour la ranger dedans');
+}
+function createFolderFromTracks(idxs) {
+    const list = idxs.filter(i => state.project.tracks[i]);
+    if (!list.length) return;
+    pushUndo();
+    const ordered = gatherTracks(list);
+    const first = state.project.tracks[ordered[0]];
+    state.project.folders = state.project.folders || [];
+    const n = state.project.folders.length + 1;
+    const id = 'dos_' + Date.now().toString(36);
+    state.project.folders.push({ id, kind: 'folder', name: `Dossier ${n}`, color: first.color || '#A855F7' });
+    ordered.forEach(i => { state.project.tracks[i].folder = id; });
+    state.selectedTracks = new Set(ordered);
+    afterGroupChange(`Dossier créé avec ${ordered.length > 1 ? ordered.length + ' pistes' : 'la piste'} : juste rangées, leur son ne change pas`);
+}
+function moveTracksToFolder(idxs, folderId) {
+    const f = folderById(folderId); if (!f) return;
+    pushUndo();
+    const tracks = state.project.tracks;
+    const moving = idxs.map(i => tracks[i]).filter(Boolean);
+    moving.forEach(t => { t.folder = folderId; });
+    // rangées juste sous les autres pistes du dossier
+    const others = tracks.filter(t => t.folder === folderId && !moving.includes(t));
+    if (others.length) {
+        const sel = tracks[state.selectedTrack];
+        const rest = tracks.filter(t => !moving.includes(t));
+        rest.splice(rest.indexOf(others[others.length - 1]) + 1, 0, ...moving);
+        state.project.tracks = rest;
+        const ni = rest.indexOf(sel); if (ni >= 0) state.selectedTrack = ni;
+    }
+    f.collapsed = false;
+    afterGroupChange(moving.length > 1 ? `${moving.length} pistes rangées dans « ${f.name} »` : `« ${moving[0].name} » rangée dans « ${f.name} »`);
+}
+function pruneFolders() {
+    const used = new Set(state.project.tracks.map(t => t.folder).filter(Boolean));
+    if (state.project.folders) state.project.folders = state.project.folders.filter(f => used.has(f.id));
+}
+function removeTracksFromFolder(idxs) {
+    pushUndo();
+    idxs.forEach(i => { const t = state.project.tracks[i]; if (t) delete t.folder; });
+    pruneFolders();
+    afterGroupChange(idxs.length > 1 ? `${idxs.length} pistes sorties du dossier` : 'Piste sortie du dossier');
+}
+function dissolveFolder(id) {
+    pushUndo();
+    state.project.tracks.forEach(t => { if (t.folder === id) delete t.folder; });
+    pruneFolders();
+    afterGroupChange('Dossier défait — les pistes sont toujours là');
 }
 
 function afterGroupChange(msg) {
@@ -821,11 +990,11 @@ function renderTracksPanel() {
             t.frozen ? 'is-frozen-track' : '',
             t.muted ? 'is-muted' : '',
             t.solo ? 'is-solo' : '',
-            trackGroup(t) ? 'in-group' : '',
+            trackGroups(t).length ? 'in-group' : '',
             isTrackFolded(t) ? 'is-group-collapsed' : ''
         ].filter(Boolean).join(' ');
         return `${groupsStartingAt(i).map(renderGroupHeader).join('')}
-        <div class="${classes}" style="--track-color: ${t.color}; --group-color: ${trackGroup(t) ? groupColor(trackGroup(t)) : 'transparent'}; --depth: ${trackGroups(t).length}${t.height ? `; --track-h: ${t.height}px` : ''}" data-i="${i}">
+        <div class="${classes}" style="--track-color: ${t.color}; --group-color: ${trackGroups(t).length ? groupColor(trackGroups(t)[0]) : 'transparent'}; --depth: ${trackGroups(t).length}${t.height ? `; --track-h: ${t.height}px` : ''}" data-i="${i}">
             <div class="track-resize" data-i="${i}" data-tooltip="Tire pour agrandir ou rétrécir la piste (Alt = toutes les pistes, double-clic = taille normale)"></div>
             ${t.isCapture ? '' : '<div class="track-drag-handle" data-tooltip="Tire la piste pour la déplacer (sous un groupe : elle passe par ce groupe)"><svg viewBox="0 0 10 16" width="10" height="14" fill="currentColor" opacity="0.4"><circle cx="3" cy="2.5" r="1.5"/><circle cx="7" cy="2.5" r="1.5"/><circle cx="3" cy="8" r="1.5"/><circle cx="7" cy="8" r="1.5"/><circle cx="3" cy="13.5" r="1.5"/><circle cx="7" cy="13.5" r="1.5"/></svg></div>'}
             <div class="track-icon">
@@ -1688,6 +1857,62 @@ function renderMarkers() {
         });
         ruler.appendChild(el);
     });
+}
+
+// === Pavé numérique, comme les réglages d'origine de Logic ===
+// Entrée = lecture · 0 = stop (à l'arrêt : retour au début) · , / . = pause · * = enregistrer · / = aller à la position
+// 1 à 9 = marqueur n° 1 à 9 · Ctrl + 0 à 9 = marqueur n° 10 à 19. Renvoie true si la touche a servi.
+function handleNumpad(e) {
+    const c = e.code;
+    const digit = /^Numpad([0-9])$/.exec(c);
+    if (e.ctrlKey) {
+        if (!digit) return false;
+        goToMarkerNumber(10 + +digit[1]);
+        return true;
+    }
+    if (c === 'NumpadEnter') { if (!state.playing) togglePlay(); return true; }
+    if (c === 'Numpad0') {
+        if (state.playing || state.recording) togglePlay();
+        else rewind();
+        return true;
+    }
+    if (c === 'NumpadDecimal' || c === 'NumpadComma') { pausePlayback(); return true; }
+    if (c === 'NumpadMultiply') { toggleRec(); return true; }
+    if (c === 'NumpadDivide') { goToPositionAsk(); return true; }
+    if (digit) { goToMarkerNumber(+digit[1]); return true; }
+    return false;
+}
+// Pause (Logic) : le son s'arrête là où il est, et la lecture suivante repart d'ici (pas du point de départ)
+async function pausePlayback() {
+    if (state.recording) { flash('Pendant une prise : 0 ou Espace pour arrêter'); return; }
+    if (!state.playing) return;
+    state.playOrigin = null;
+    await togglePlay();
+    state.paused = null;
+    updatePlayOrigin();
+}
+// Marqueur n° n (1 = le premier du morceau)
+function goToMarkerNumber(n) {
+    const markers = (state.project.markers || []).slice().sort((a, b) => a.time - b.time);
+    const m = markers[n - 1];
+    if (!m) { flash(markers.length ? `Pas de marqueur n° ${n} (il y en a ${markers.length})` : 'Aucun marqueur : ⌥M pour en poser un'); return; }
+    seekPlayhead(m.time);
+    flash(`→ ${m.name}`);
+}
+// Mesure (1 = la première) et temps (1 = le premier) → secondes
+function secAtBarBeat(bar, beat = 1) {
+    const p = state.project, b0 = Math.max(0, bar - 1);
+    const start = tempoVaries() ? PulseTempo.barToBeats(p, b0) : b0 * bpb();
+    return secAtBeat(start + Math.max(0, beat - 1));
+}
+async function goToPositionAsk() {
+    const bar = barAtSec(state.playhead);
+    const beat = Math.floor(beatAtSec(state.playhead) - (tempoVaries() ? PulseTempo.barToBeats(state.project, bar) : bar * bpb()) + 1e-6) + 1;
+    const v = await pulseAsk('Aller à la position (mesure.temps)', `${bar + 1}.${beat}`);
+    if (v == null) return;
+    const m = /^\s*(\d+)(?:\s*[.,:\s]\s*(\d+))?\s*$/.exec(v);
+    if (!m || +m[1] < 1) { flash('Position à écrire comme 12 ou 12.3 (mesure 12, temps 3)'); return; }
+    seekPlayhead(secAtBarBeat(+m[1], m[2] ? +m[2] : 1));
 }
 
 function navigateMarker(dir) {
@@ -4612,7 +4837,7 @@ const SHORTCUT_GROUPS = [
             ['R', 'Enregistrer — R à nouveau : sortir de la prise, la lecture continue'],
             ['Espace pendant l\'enregistrement', 'Tout arrêter'],
             ['Shift + glisser puis R', 'Enregistrer seulement dans la zone choisie'],
-            ['Entrée (aussi celle du pavé numérique)', 'Retour au début'],
+            ['Entrée', 'Retour au début'],
             ['L ou C', 'Répéter un passage en boucle (oui / non)'],
             ['U', 'Caler la boucle sur la région choisie (ou les régions choisies)'],
             ['Règle (haut) · glisser', 'Dessiner la boucle ; clic dessus = l\'allumer / l\'éteindre ; tirer un bord = l\'étirer ; tirer le milieu = la déplacer'],
@@ -4626,6 +4851,18 @@ const SHORTCUT_GROUPS = [
             ['Shift + ← / →', 'Curseur : une mesure'],
             ['Tab / Maj + Tab', 'Curseur : bord de clip suivant / précédent'],
             ['Début / Fin', 'Curseur au début / à la fin du morceau']
+        ]
+    },
+    {
+        title: 'Pavé numérique (comme Logic)',
+        items: [
+            ['Entrée', 'Lecture'],
+            ['0', 'Stop · à l\'arrêt : retour au début'],
+            ['. (ou ,)', 'Pause : la lecture suivante repart d\'ici'],
+            ['*', 'Enregistrer'],
+            ['/', 'Aller à la position (mesure.temps)'],
+            ['1 à 9', 'Aller au marqueur n° 1 à 9'],
+            ['Ctrl + 0 à 9', 'Aller au marqueur n° 10 à 19']
         ]
     },
     {
@@ -10103,6 +10340,18 @@ function quantizeClipsToGrid(clips) {
     renderTimelineTracks(); saveProject(); refreshPlaybackSoon();
     flash(moved ? `${moved > 1 ? moved + ' régions calées' : 'Région calée'} sur ${label} — ⌘Z pour annuler` : 'Déjà calé sur la grille');
 }
+// Élément affiché d'une région (null s'il n'est pas dessiné)
+function clipElOf(c) {
+    const T = state.project.tracks;
+    for (let ti = 0; ti < T.length; ti++) { const ci = (T[ti].clips || []).indexOf(c); if (ci >= 0) return document.querySelector(`.timeline-track[data-i="${ti}"] .clip[data-ci="${ci}"]`); }
+    return null;
+}
+// Plusieurs changements d'un coup = un seul ⌘Z (les fonctions appelées font chacune leur pushUndo)
+async function asOneUndo(fn) {
+    const d = _undoStack.length;
+    pushUndo();
+    try { await fn(); } finally { if (_undoStack.length > d + 1) _undoStack.length = d + 1; updateUndoBtn(); }
+}
 function clipsActedOn(trackIdx, clipIdx) {
     const key = `${trackIdx}:${clipIdx}`;
     const one = state.project.tracks[trackIdx]?.clips[clipIdx];
@@ -10433,13 +10682,33 @@ function openTrackContextMenu(x, y, idx, t) {
             renderTracksPanel(); bindTrackEvents(); saveProject();
         }},
         { sep: true },
-        { label: 'Groupe', children: [
-        ...(state.project.buses || []).filter(b => isVisibleGroup(b) && b.id !== t.output)
-            .map(b => ({ label: `Ranger dans le groupe « ${b.name} »`, action: () => moveTrackToGroup(state.project.tracks.indexOf(t), b.id) })),
-        (t.takes || []).length ? { label: 'Supprimer les prises mises de côté', action: () => clearTrackTakes(state.project.tracks.indexOf(t)) } : null,
-        { label: 'Nouveau groupe avec cette piste', action: () => createGroupWithTrack(state.project.tracks.indexOf(t)) },
-        trackGroup(t) ? { label: `Sortir du groupe « ${trackGroup(t).name} »`, action: () => removeTrackFromGroup(state.project.tracks.indexOf(t)) } : null
-        ]},
+        { label: 'Groupe', children: (() => {
+            const ti = state.project.tracks.indexOf(t), tg = ctxTargets(ti), n = tg.length;
+            const ts = tg.map(i => state.project.tracks[i]);
+            const pl = n > 1 ? `les ${n} pistes` : 'cette piste';
+            const inGroup = ts.filter(x => trackGroup(x)), inFolder = ts.filter(x => trackFolder(x));
+            return [
+                { label: `Nouveau groupe avec ${pl} (bus : un volume et un même son pour toutes)`, action: () => createGroupFromTracks(tg) },
+                { label: `Nouveau dossier avec ${pl} (juste pour ranger, le son ne change pas)`, action: () => createFolderFromTracks(tg) },
+                ...(state.project.buses || []).filter(b => isVisibleGroup(b) && !ts.every(x => x.output === b.id))
+                    .map(b => ({ label: `Ranger dans le groupe « ${b.name} »`, action: () => {
+                        if (n === 1) { moveTrackToGroup(ti, b.id); return; }
+                        pushUndo(); ts.forEach(x => { if (!x.isCapture) x.output = b.id; }); b.collapsed = false;
+                        afterGroupChange(`${n} pistes rangées dans ${b.name}`);
+                    } })),
+                ...(state.project.folders || []).filter(f => !ts.every(x => x.folder === f.id))
+                    .map(f => ({ label: `Ranger dans le dossier « ${f.name} »`, action: () => moveTracksToFolder(tg, f.id) })),
+                inGroup.length ? { label: n > 1 ? 'Sortir ces pistes de leur groupe' : `Sortir du groupe « ${trackGroup(t).name} »`, action: () => {
+                    if (n === 1) { removeTrackFromGroup(ti); return; }
+                    pushUndo();
+                    inGroup.forEach(x => { const b = busById(x.output); x.output = (b && b.output) || 'master'; });
+                    state.project.buses = (state.project.buses || []).filter(b => !b.isGroup || state.project.tracks.some(x => x.output === b.id) || (state.project.buses || []).some(c => c.output === b.id));
+                    afterGroupChange(`${inGroup.length} pistes sorties de leur groupe`);
+                } } : null,
+                inFolder.length ? { label: n > 1 ? 'Sortir ces pistes de leur dossier' : `Sortir du dossier « ${trackFolder(t).name} »`, action: () => removeTracksFromFolder(tg) } : null,
+                (t.takes || []).length ? { label: 'Supprimer les prises mises de côté', action: () => clearTrackTakes(ti) } : null
+            ].filter(Boolean);
+        })()},
         { label: 'Son', children: [
             (t.clips || []).filter(c => !c.recording).length > 1
             ? { label: 'Fusionner tous les clips de la piste en un seul', action: () => bounceTrack(idx) }
@@ -10520,15 +10789,20 @@ function ownClipFx(clip) {
 }
 function addClipFx(trackIdx, clipIdx, fxName, params, label) {
     const clip = state.project.tracks[trackIdx]?.clips[clipIdx]; if (!clip || clip.midi) return;
+    // Plusieurs régions choisies : l'effet va sur chacune (réglages copiés, chacune les garde pour elle)
+    const all = clipsActedOn(trackIdx, clipIdx).filter(c => !c.midi && !c.recording && !clipIsLocked(c));
+    if (!all.includes(clip)) all.unshift(clip);
     pushUndo();
-    clip.fx = ownClipFx(clip) || { effects: [], effectParams: {} };
-    clip.fx.name = `Région « ${clip.name || 'Clip'} »`;
-    if (!clip.fx.effects.includes(fxName)) clip.fx.effects.push(fxName);
-    clip.fx.effectParams = clip.fx.effectParams || {};
-    clip.fx.effectParams[fxName] = params ? params : (clip.fx.effectParams[fxName] || (FX_START[fxName] ? JSON.parse(JSON.stringify(FX_START[fxName])) : {}));
-    if (label) (clip.fx.labels = clip.fx.labels || {})[fxName] = label; else if (clip.fx.labels) delete clip.fx.labels[fxName];
+    all.forEach(c => {
+        c.fx = ownClipFx(c) || { effects: [], effectParams: {} };
+        c.fx.name = `Région « ${c.name || 'Clip'} »`;
+        if (!c.fx.effects.includes(fxName)) c.fx.effects.push(fxName);
+        c.fx.effectParams = c.fx.effectParams || {};
+        c.fx.effectParams[fxName] = params ? JSON.parse(JSON.stringify(params)) : (c.fx.effectParams[fxName] || (FX_START[fxName] ? JSON.parse(JSON.stringify(FX_START[fxName])) : {}));
+        if (label) (c.fx.labels = c.fx.labels || {})[fxName] = label; else if (c.fx.labels) delete c.fx.labels[fxName];
+    });
     renderTimelineTracks(); saveProject(); refreshPlaybackSoon();
-    flash(`${label || FX_NAMES[fxName] || fxName} posé sur la région (seulement ce passage) — ⌘Z pour annuler`);
+    flash(all.length > 1 ? `${label || FX_NAMES[fxName] || fxName} posé sur les ${all.length} régions choisies — ⌘Z pour annuler` : `${label || FX_NAMES[fxName] || fxName} posé sur la région (seulement ce passage) — ⌘Z pour annuler`);
 }
 function removeClipFx(clip, fxName) {
     if (!clipHasFx(clip)) return;
@@ -10758,6 +11032,23 @@ function normalizeClipTo(trackIdx, clipIdx, db) {
     renderTimelineTracks(); saveProject(); refreshPlaybackSoon();
     flash(`✓ Région normalisée : crête à ${String(db).replace('.', ',')} dB — ⌘Z pour revenir en arrière`);
 }
+// Normaliser plusieurs régions : chacune à sa crête (db non donné = volume maximum)
+function normalizeClipsTo(list, db) {
+    const cs = list.filter(c => c && !c.midi && !c.recording && c.id && !clipIsLocked(c));
+    if (cs.length === 1 && db !== undefined) { const ti = state.project.tracks.findIndex(t => (t.clips || []).includes(cs[0])); normalizeClipTo(ti, state.project.tracks[ti].clips.indexOf(cs[0]), db); return; }
+    if (!cs.length) return;
+    pushUndo();
+    let n = 0;
+    cs.forEach(c => { const g = db === undefined ? PulseAudio.computeNormalizeGain(c.id) : PulseAudio.computeNormalizeGain(c.id, db); if (g !== null) { c.gain = Math.round(g * 1000) / 1000; n++; } });
+    renderTimelineTracks(); saveProject(); refreshPlaybackSoon();
+    flash(`✓ ${n} région${n > 1 ? 's' : ''} ${db === undefined ? 'montée' + (n > 1 ? 's' : '') + ' au volume maximum' : 'normalisée' + (n > 1 ? 's' : '') + ' : crête à ' + String(db).replace('.', ',') + ' dB'} — ⌘Z pour revenir en arrière`);
+}
+// Vitesse sur toutes les régions choisies (un seul ⌘Z)
+async function speedClips(trackIdx, clipIdx, f) {
+    const all = clipsActedOn(trackIdx, clipIdx).filter(c => !c.midi && !c.recording && !clipIsLocked(c));
+    if (all.length <= 1) { await speedClip(trackIdx, clipIdx, f); return; }
+    await asOneUndo(async () => { for (const c of all) { const P = bpmAtSec(c.start); await applyWarp(c, P / f, P); } });
+}
 // Fondu d'entrée / de sortie à une durée donnée (en secondes), au plus la moitié de la région
 function setClipFade(trackIdx, clipIdx, which, sec) {
     const cs = clipsActedOn(trackIdx, clipIdx).filter(c => !c.recording);
@@ -10805,6 +11096,7 @@ function openClipContextMenu(x, y, trackIdx, clipIdx) {
     const prevOv = others.filter(c => c.start < clip.start - 1e-6 && endOf(c) > clip.start + 1e-6 && endOf(c) < endOf(clip) - 1e-6).sort((a, b) => endOf(b) - endOf(a))[0];
     const nextOv = others.filter(c => c.start > clip.start + 1e-6 && c.start < endOf(clip) - 1e-6 && endOf(c) > endOf(clip) + 1e-6).sort((a, b) => a.start - b.start)[0];
     const hasIn = (clip.fadeIn || 0) > 0 || !!prevOv, hasOut = (clip.fadeOut || 0) > 0 || !!nextOv;
+    const acted = () => clipsActedOn(trackIdx, clipIdx);
     const removeFade = (which) => {
         pushUndo();
         if (which === 'in') {
@@ -10817,6 +11109,9 @@ function openClipContextMenu(x, y, trackIdx, clipIdx) {
             delete clip.fadeOut; delete clip.fadeOutCurve;
             if (nextOv) clip.duration = Math.max(0.05, nextOv.start - clip.start);
         }
+        acted().filter(c => c !== clip).forEach(c => {
+            if (which === 'in') { delete c.fadeIn; delete c.fadeInCurve; } else { delete c.fadeOut; delete c.fadeOutCurve; }
+        });
         renderTimelineTracks(); saveProject(); refreshPlaybackSoon();
         flash(which === 'in' ? 'Fondu d\'entrée supprimé' : 'Fondu de sortie supprimé');
     };
@@ -10828,7 +11123,6 @@ function openClipContextMenu(x, y, trackIdx, clipIdx) {
         [first, first === 'in' ? 'out' : 'in'].forEach(w => { if (has[w]) fadeItems.push({ label: label(w), action: () => removeFade(w) }); });
     }
 
-    const acted = () => clipsActedOn(trackIdx, clipIdx);
     const selectThis = () => { if (!(state.selectedClips.size > 1 && state.selectedClips.has(`${trackIdx}:${clipIdx}`))) state.selectedClip = { trackIdx, clipIdx }; };
     const items = [
         clip.midi ? { label: clip.midi.inst === 'drums' ? '🥁 Ouvrir le séquenceur de pas' : '🎹 Ouvrir le piano roll', action: () => openMidiEditor(trackIdx, clipIdx) } : null,
@@ -10853,9 +11147,13 @@ function openClipContextMenu(x, y, trackIdx, clipIdx) {
             }},
             { label: 'Joindre les régions choisies', action: () => joinSelectedClips(trackIdx, clipIdx) },
             clip.midi ? null : { label: 'Convertir en nouvelle prise (effets, fondus, répétitions compris)', action: () => joinSelectedClips(trackIdx, clipIdx, { single: true }) },
-            clip.loopEnd ? null : { label: 'Boucler jusqu\'à la région suivante', action: () => loopClipUntilNext(trackIdx, clipIdx) },
+            clip.loopEnd ? null : { label: 'Boucler jusqu\'à la région suivante', action: () => {
+                const all = acted();
+                if (all.length <= 1) { loopClipUntilNext(trackIdx, clipIdx); return; }
+                asOneUndo(() => all.forEach(c => { const ti = state.project.tracks.findIndex(t => (t.clips || []).includes(c)); if (ti >= 0 && !c.loopEnd) loopClipUntilNext(ti, state.project.tracks[ti].clips.indexOf(c)); }));
+            }},
             { label: 'Répéter une fois de plus  (⌘R)', action: () => { state.selectedClip = { trackIdx, clipIdx }; repeatSelectedClip(); } },
-            clip.loopEnd ? { label: 'Supprimer la répétition', action: () => { pushUndo(); delete clip.loopEnd; renderTimelineTracks(); saveProject(); } } : null,
+            clip.loopEnd ? { label: 'Supprimer la répétition', action: () => { pushUndo(); acted().forEach(c => { delete c.loopEnd; }); renderTimelineTracks(); saveProject(); refreshPlaybackSoon(); } } : null,
             { sep: true },
             { label: 'Couper  (⌘X)', action: () => { selectThis(); cutSelectedClip(); } },
             { label: 'Copier  (⌘C)', action: () => { selectThis(); copySelectedClip(); } },
@@ -10871,6 +11169,8 @@ function openClipContextMenu(x, y, trackIdx, clipIdx) {
         { label: 'Son', children: [
             { label: 'Volume de ce clip…', action: () => openClipGainPanel(trackIdx, clipIdx) },
             { label: 'Monter ce clip au volume maximum', action: () => {
+                const all = acted();
+                if (all.length > 1) { normalizeClipsTo(all, undefined); return; }
                 if (!clip.id) { flash('Le son de ce clip n\'est pas encore chargé — attends une seconde et réessaie'); return; }
                 const gain = PulseAudio.computeNormalizeGain(clip.id);
                 if (gain === null) { flash('Ce clip est silencieux — il n\'y a rien à monter'); return; }
@@ -10879,20 +11179,26 @@ function openClipContextMenu(x, y, trackIdx, clipIdx) {
                 renderTimelineTracks(); saveProject();
                 flash('✓ Clip monté au volume maximum — ⌘Z pour revenir en arrière');
             }},
-            clip.midi ? null : { label: 'Normaliser à −1 dB', action: () => normalizeClipTo(trackIdx, clipIdx, -1) },
-            clip.midi ? null : { label: 'Normaliser à −3 dB', action: () => normalizeClipTo(trackIdx, clipIdx, -3) },
-            clip.midi ? null : { label: 'Normaliser à −6 dB', action: () => normalizeClipTo(trackIdx, clipIdx, -6) },
+            clip.midi ? null : { label: 'Normaliser à −1 dB', action: () => normalizeClipsTo(acted(), -1) },
+            clip.midi ? null : { label: 'Normaliser à −3 dB', action: () => normalizeClipsTo(acted(), -3) },
+            clip.midi ? null : { label: 'Normaliser à −6 dB', action: () => normalizeClipsTo(acted(), -6) },
             { label: 'Remettre le volume d\'origine', action: () => {
-                pushUndo(); delete clip.gain; renderTimelineTracks(); saveProject(); flash('Volume du clip remis comme à l\'origine');
+                const all = acted();
+                pushUndo(); all.forEach(c => { delete c.gain; }); renderTimelineTracks(); saveProject(); refreshPlaybackSoon();
+                flash(all.length > 1 ? `Volume des ${all.length} régions remis comme à l'origine` : 'Volume du clip remis comme à l\'origine');
             }},
-            clip.midi ? null : { label: clip.rev ? '⏪ Remettre à l\'endroit' : '⏪ Inverser le son (à l\'envers)', action: () => toggleReverse(clip) },
+            clip.midi ? null : { label: clip.rev ? '⏪ Remettre à l\'endroit' : '⏪ Inverser le son (à l\'envers)', action: () => {
+                const want = !clip.rev, all = acted().filter(c => !c.midi && !!c.rev !== want);
+                if (all.length <= 1) { toggleReverse(clip); return; }
+                asOneUndo(async () => { for (const c of all) await toggleReverse(c); });
+            }},
             clip.midi ? null : { label: clip.warp ? '⏱ Warp (modifier ou retirer)…' : '⏱ Caler sur le tempo du projet…', action: () => openWarpPanel(trackIdx, clipIdx, x, y) }
         ]},
         clip.midi ? null : { label: 'Hauteur et vitesse', children: [
             ...[-12, -7, -5, -2, -1, 1, 2, 5, 7, 12].map(v => ({ label: `Transposer de ${v > 0 ? '+' : ''}${v} demi-ton${Math.abs(v) > 1 ? 's' : ''}`, action: () => transposeClips(trackIdx, clipIdx, v) })),
             { label: 'Remettre la hauteur d\'origine', action: () => transposeClips(trackIdx, clipIdx, 0) },
             { sep: true },
-            ...[[0.5, '× 0,5 (deux fois plus lent)'], [0.75, '× 0,75'], [0.9, '× 0,9'], [1.1, '× 1,1'], [1.25, '× 1,25'], [1.5, '× 1,5'], [2, '× 2 (deux fois plus vite)']].map(([f, l]) => ({ label: 'Vitesse ' + l, action: () => speedClip(trackIdx, clipIdx, f) }))
+            ...[[0.5, '× 0,5 (deux fois plus lent)'], [0.75, '× 0,75'], [0.9, '× 0,9'], [1.1, '× 1,1'], [1.25, '× 1,25'], [1.5, '× 1,5'], [2, '× 2 (deux fois plus vite)']].map(([f, l]) => ({ label: 'Vitesse ' + l, action: () => speedClips(trackIdx, clipIdx, f) }))
         ]},
         { label: 'Fondus', children: [
             ...fadeItems, ...(fadeItems.length ? [{ sep: true }] : []),
@@ -10901,7 +11207,11 @@ function openClipContextMenu(x, y, trackIdx, clipIdx) {
         ]},
         clip.midi ? null : { label: 'Effets', children: [
             { label: clipHasFx(clip) ? '✦ Effets de la région…' : '✦ Effet sur cette région…', action: () => openClipFxMenu(x, y, trackIdx, clipIdx) },
-            clipHasFx(clip) ? { label: 'Retirer les effets de la région', action: () => removeClipFx(clip, null) } : null
+            acted().some(c => clipHasFx(c)) ? { label: acted().length > 1 ? 'Retirer les effets des régions choisies' : 'Retirer les effets de la région', action: () => {
+                const all = acted().filter(c => clipHasFx(c));
+                if (all.length <= 1) { removeClipFx(all[0] || clip, null); return; }
+                asOneUndo(() => all.forEach(c => removeClipFx(c, null)));
+            } } : null
         ]},
         { label: 'Réglages', children: [
             { label: clip.muted ? 'Remettre le son du clip' : 'Couper le son du clip', action: () => {
@@ -10917,7 +11227,7 @@ function openClipContextMenu(x, y, trackIdx, clipIdx) {
         }, danger: true },
         { sep: true },
         { label: 'Couleur du clip', submenu: COLORS.map(c => ({
-            color: c, action: () => { pushUndo(); clip.color = c; renderTimelineTracks(); saveProject(); }
+            color: c, action: () => { pushUndo(); acted().forEach(x => { x.color = c; }); renderTimelineTracks(); saveProject(); }
         }))},
         { label: 'Plus de couleurs…  (⌥C)', action: () => { state.selectedClip = { trackIdx, clipIdx }; openColorPanel(); } }
     ].filter(Boolean);
@@ -11096,6 +11406,14 @@ function bindTrackEvents() {
                                 state.project.buses = state.project.buses.filter(b2 => b2 !== oldBus);
                             }
                             refreshPlaybackSoon();
+                        }
+                        // Dossier : même règle (posée entre ses pistes ou juste dessous, elle y entre ; ailleurs, elle en sort)
+                        const fd = (next && next.folder) || (prev && prev.folder) || null;
+                        if ((fd || null) !== (moved.folder || null)) {
+                            const was = trackFolder(moved);
+                            if (fd) moved.folder = fd; else delete moved.folder;
+                            pruneFolders();
+                            if (!msg) msg = fd ? `« ${moved.name} » rangée dans le dossier « ${folderById(fd).name} »` : `« ${moved.name} » sortie du dossier « ${was ? was.name : ''} »`;
                         }
                         renderAll();
                         saveProject();
@@ -11899,9 +12217,10 @@ function runClipTool(tool, e, trackIdx, clipIdx, eventToTime, fromRight) {
     const clip = state.project.tracks[trackIdx]?.clips[clipIdx];
     if (!clip || clip.recording) return;
     if (tool === 'mute') {
-        pushUndo(); clip.muted = !clip.muted;
+        const all = clipsActedOn(trackIdx, clipIdx), m = !clip.muted;
+        pushUndo(); all.forEach(c => { c.muted = m; });
         renderTimelineTracks(); saveProject(); refreshPlaybackSoon();
-        flash(clip.muted ? 'Région mutée' : 'Région active');
+        flash(all.length > 1 ? `${all.length} régions ${m ? 'mutées' : 'actives'}` : (m ? 'Région mutée' : 'Région active'));
     } else if (tool === 'cut') {
         splitClipAt(trackIdx, clipIdx, snapTime(eventToTime(e), false));
     } else if (tool === 'gain') {
@@ -11929,7 +12248,7 @@ function runClipTool(tool, e, trackIdx, clipIdx, eventToTime, fromRight) {
     } else if (tool === 'fade') {
         const el = e.target.closest('.clip');
         const r = el ? el.getBoundingClientRect() : null;
-        state.selectedClip = { trackIdx, clipIdx };
+        if (!(state.selectedClips.size > 1 && state.selectedClips.has(`${trackIdx}:${clipIdx}`))) state.selectedClip = { trackIdx, clipIdx };
         startFadeDrag(e, r && e.clientX - r.left > r.width / 2 ? 'out' : 'in', trackIdx, clipIdx);
     } else if (tool === 'marquee') {
         state.selectedClip = null; state.selectedClips = new Set();
@@ -11957,14 +12276,30 @@ function startToolSolo(e, trackIdx) {
 function startClipGainDrag(startEvent, trackIdx, clipIdx, menuIfNoMove) {
     const clip = state.project.tracks[trackIdx]?.clips[clipIdx];
     if (!clip) return;
-    // Option (Alt) + clic droit = remet le volume de la région à 0 dB d'un coup (comme Option + clic sur un fader dans Logic)
+    // Plusieurs régions choisies (dont celle-ci) : elles bougent toutes du même nombre de dB, comme dans Logic
+    const group = clipsActedOn(trackIdx, clipIdx).filter(c => !clipIsLocked(c));
+    if (!group.includes(clip)) group.unshift(clip);
+    const dbOf = (c) => c.gain > 0 ? 20 * Math.log10(c.gain) : (c.gain === 0 ? -24 : 0);
+    const setDb = (c, db) => { db = Math.max(-24, Math.min(12, Math.round(db * 2) / 2)); if (Math.abs(db) < 0.01) delete c.gain; else c.gain = db <= -24 ? 0 : Math.round(Math.pow(10, db / 20) * 1000) / 1000; return db; };
+    const redraw = (c, label) => {
+        const el = clipElOf(c);
+        if (!el) return;
+        const wave = el.querySelector('.clip-wave-svg:not(.loop-wave)');
+        const w = parseFloat(el.style.getPropertyValue('--orig-w'));
+        if (wave && w > 0) wave.outerHTML = renderClipWaveform(c, w);
+        let badge = el.querySelector('.gain-badge');
+        if (!badge) { badge = document.createElement('div'); badge.className = 'fade-badge gain-badge'; el.appendChild(badge); }
+        badge.textContent = label;
+    };
+    const lab = (db) => db <= -24 ? 'muet' : `${db > 0 ? '+' : ''}${db.toFixed(1)} dB`;
+    // Option (Alt) + clic droit = remet le volume à 0 dB d'un coup (comme Option + clic sur un fader dans Logic)
     if (startEvent.altKey) {
         startEvent.preventDefault();
-        if (clip.gain != null && clip.gain !== 1) {
-            pushUndo(); delete clip.gain;
+        if (group.some(c => c.gain != null && c.gain !== 1)) {
+            pushUndo(); group.forEach(c => { delete c.gain; });
             saveProject(); refreshPlaybackSoon(); renderTimelineTracks();
         }
-        flash('Volume de la région remis à 0 dB');
+        flash(group.length > 1 ? `Volume des ${group.length} régions remis à 0 dB` : 'Volume de la région remis à 0 dB');
         // le menu du clic droit ne s'ouvre pas ensuite
         const swallow = (ev) => { ev.preventDefault(); document.removeEventListener('contextmenu', swallow, true); };
         document.addEventListener('contextmenu', swallow, true);
@@ -11973,39 +12308,23 @@ function startClipGainDrag(startEvent, trackIdx, clipIdx, menuIfNoMove) {
     }
     const sx = startEvent.clientX;
     let sy = startEvent.clientY;
-    let db0 = clip.gain > 0 ? 20 * Math.log10(clip.gain) : (clip.gain === 0 ? -24 : 0);
+    let base = group.map(dbOf);
     let moved = false, lastY = sy;
     document.body.classList.add('resizing-row');
     // En tirant : appuyer sur Option remet 0 dB tout de suite, et on continue à tirer depuis là
     const onAlt = (ke) => {
         if (ke.key !== 'Alt' || ke.repeat) return;
         if (!moved) { pushUndo(); moved = true; }
-        db0 = 0; sy = lastY; delete clip.gain;
-        const el = document.querySelector(`.timeline-track[data-i="${trackIdx}"] .clip[data-ci="${clipIdx}"]`);
-        if (el) {
-            const wave = el.querySelector('.clip-wave-svg:not(.loop-wave)');
-            const w = parseFloat(el.style.getPropertyValue('--orig-w'));
-            if (wave && w > 0) wave.outerHTML = renderClipWaveform(clip, w);
-            let badge = el.querySelector('.gain-badge');
-            if (!badge) { badge = document.createElement('div'); badge.className = 'fade-badge gain-badge'; el.appendChild(badge); }
-            badge.textContent = '0.0 dB';
-        }
+        base = group.map(() => 0); sy = lastY;
+        group.forEach(c => { delete c.gain; redraw(c, '0.0 dB'); });
     };
     document.addEventListener('keydown', onAlt);
     const move = (ev) => {
         lastY = ev.clientY;
         if (!moved && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 3) return;
         if (!moved) { pushUndo(); moved = true; }
-        const db = Math.max(-24, Math.min(12, Math.round((db0 - (ev.clientY - sy) * 0.2) * 2) / 2));
-        if (Math.abs(db) < 0.01) delete clip.gain; else clip.gain = db <= -24 ? 0 : Math.round(Math.pow(10, db / 20) * 1000) / 1000;
-        const el = document.querySelector(`.timeline-track[data-i="${trackIdx}"] .clip[data-ci="${clipIdx}"]`);
-        if (!el) return;
-        const wave = el.querySelector('.clip-wave-svg:not(.loop-wave)');
-        const w = parseFloat(el.style.getPropertyValue('--orig-w'));
-        if (wave && w > 0) wave.outerHTML = renderClipWaveform(clip, w);
-        let badge = el.querySelector('.gain-badge');
-        if (!badge) { badge = document.createElement('div'); badge.className = 'fade-badge gain-badge'; el.appendChild(badge); }
-        badge.textContent = db <= -24 ? 'muet' : `${db > 0 ? '+' : ''}${db.toFixed(1)} dB`;
+        const delta = -(ev.clientY - sy) * 0.2;
+        group.forEach((c, k) => { const db = setDb(c, base[k] + delta); redraw(c, lab(db)); });
     };
     const up = (ev) => {
         document.removeEventListener('mousemove', move);
@@ -13054,7 +13373,7 @@ function bindTrackResize() {
 const GROUP_H_MIN = 22, GROUP_H_MAX = 140;
 function bindGroupResize() {
     document.querySelectorAll('.group-resize').forEach(h => {
-        const find = () => (state.project.buses || []).find(b => b.id === h.dataset.bus);
+        const find = () => groupById(h.dataset.bus);
         h.addEventListener('dblclick', (e) => {
             e.stopPropagation();
             const b = find(); if (!b) return;
@@ -13451,6 +13770,8 @@ function startFadeDrag(startEvent, fadeDir, trackIdx, clipIdx) {
         : null;
     const srcDur = (clip.id && PulseAudio.getBufferDuration && PulseAudio.getBufferDuration(clip.id)) || (o0.offset + o0.duration);
     let crossed = 0;
+    // Plusieurs régions choisies : même fondu sur toutes (le fondu enchaîné reste propre à la région tirée)
+    const mates = clipsActedOn(trackIdx, clipIdx).filter(c => c !== clip && !c.recording && !clipIsLocked(c));
 
     const onMove = (ev) => {
         const dx = ev.clientX - startX;
@@ -13461,6 +13782,11 @@ function startFadeDrag(startEvent, fadeDir, trackIdx, clipIdx) {
         // et dans l'autre sens il le raccourcit d'abord (jusqu'à 0), puis seulement ensuite le fondu enchaîné s'étend
         const newFade = Math.max(0, Math.min(clip.duration * 0.9, originalFade + delta));
         if (fadeDir === 'in') clip.fadeIn = newFade; else clip.fadeOut = newFade;
+        mates.forEach(c => {
+            const v = Math.min(newFade, c.duration * 0.9);
+            if (fadeDir === 'in') c.fadeIn = v; else c.fadeOut = v;
+            const el = clipElOf(c); if (el) updateClipFadeVisual(el, c, fadeDir);
+        });
         // Tire dans le sens inverse : fondu enchaîné avec la région voisine
         let ext = 0;
         if (inverse > 0 && (fadeDir === 'in' ? prev : next)) {
@@ -13519,6 +13845,12 @@ function startFadeCurveDrag(startEvent, fadeDir, trackIdx, clipIdx) {
         if (Math.abs(k - 1) < 0.04) delete clip[key]; else clip[key] = Math.round(k * 100) / 100;
         const el = document.querySelector(`.timeline-track[data-i="${trackIdx}"] .clip[data-ci="${clipIdx}"]`);
         if (el) updateClipFadeVisual(el, clip);
+        // Plusieurs régions choisies : même arrondi sur celles qui ont ce fondu
+        clipsActedOn(trackIdx, clipIdx).forEach(c => {
+            if (c === clip || !(fadeDir === 'in' ? c.fadeIn : c.fadeOut) || clipIsLocked(c)) return;
+            if (clip[key] === undefined) delete c[key]; else c[key] = clip[key];
+            const e2 = clipElOf(c); if (e2) updateClipFadeVisual(e2, c);
+        });
     };
     const onUp = () => {
         document.removeEventListener('mousemove', onMove);
@@ -13833,7 +14165,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             else togglePlay();
             return;
         }
-        if (e.code === 'Enter' || e.code === 'NumpadEnter')  { e.preventDefault(); rewind(); return; }
+        // Pavé numérique : les réglages d'origine de Logic (31/10)
+        if (e.code && e.code.startsWith('Numpad') && !e.altKey && !e.metaKey && handleNumpad(e)) { e.preventDefault(); return; }
+        if (e.code === 'Enter')  { e.preventDefault(); rewind(); return; }   // Entrée (grand clavier) = retour au début, comme Logic
         if (k === 'r') { toggleRec(); return; }
 
         // Édition (coupes rapides) : D efface ce qui est à gauche du curseur de base, F ce qui est à droite (Z / E = zoom : tout reste près de R)

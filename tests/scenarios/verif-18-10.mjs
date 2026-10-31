@@ -76,8 +76,8 @@ export default async ({ ev, nav, send, sleep, check }) => {
   const resumed = await R(`togglePlay(); await new Promise(r=>setTimeout(r,250)); const a=state.playhead; togglePlay(); return a`);
   check('relance sans base : reprend là où ça s\'est arrêté', resumed >= stopAt - 0.05 && resumed < stopAt + 1, `arrêt ${stopAt.toFixed(2)} → relance ${resumed.toFixed(2)}`);
   await R(`state.playhead=7; updatePlayhead(); return 1`);
-  await key('Enter', 'NumpadEnter', 13);
-  check('Entrée du pavé numérique : retour au début', (await R(`return state.playhead`)) === 0);
+  await key('Enter', 'Enter', 13);
+  check('Entrée : retour au début (31/10 : Entrée du pavé numérique = lecture, comme Logic, voir entree-pave-num)', (await R(`return state.playhead`)) === 0);
 
   // ---------- 5. Règle : boucle et curseur ----------
   await R(`state.baseCleared=false; return 1`); g = await geo();

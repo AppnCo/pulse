@@ -1,20 +1,28 @@
+. (ou ,)
 0.0 dB
+1 à 9
 2 microphones, clean vocal preset. For an interview or a dialogue.
 21 ms
 A step drum machine and a keyboard bass. To lay a foundation without playing.
 A+
 All Vocal
+Aller au marqueur n° 1 à 9
+Aller au marqueur n° 10 à 19
+Aller à la position (mesure.temps)
 Ambiance
 A−
 Back
 Back ▾
 Bitcrusher
 Chorus
+Ctrl + 0 à 9
 De-esser
 E / Z
+Entrée
 Flanger
 Gate
 IV
+Lecture
 Menu des outils (Pointeur, Crayon, Gomme…) sous la souris
 Mix Bus 1
 New project
@@ -22,6 +30,8 @@ Outil du clic : Outil Pointeur
 Outil du clic droit : Outil Gain
 Outil du ⌘ + clic : Outil Muet
 Outils de la souris
+Pause : la lecture suivante repart d'ici
+Pavé numérique (comme Logic)
 Phaser
 Piano 1 — 2.00s @ 0:00.000
 Pick up where you left off
@@ -33,6 +43,7 @@ Simple Beat
 Simple setup: 1 vocal + 1 instrumental. Perfect for a quick first track.
 Slapback
 Start from scratch
+Stop · à l'arrêt : retour au début
 Studio
 The base model: your beat on top, one track to record, then your vocals sorted by group (lead, backs, ambience). Add or remove whatever you want.
 The simple studio.
