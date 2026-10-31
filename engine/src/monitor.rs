@@ -46,24 +46,59 @@ impl Ring {
     }
 }
 
-/// Tranche de la piste écoutée, appliquée au retour : ses effets, son volume et son pan (comme dans le mix).
-pub struct Strip { chain: Option<crate::fx::Chain>, vol: f32, pan: f64 }
+/// Tranche de la piste écoutée, appliquée au retour : ses effets, son volume et son pan (comme dans le mix),
+/// et ses envois de reverb / écho (on s'entend avec sa reverb pendant la prise, comme dans Logic).
+pub struct Strip { chain: Option<crate::fx::Chain>, vol: f32, pan: f64, sends: Vec<MonSend> }
+/// Un envoi de la piste écoutée : niveau, avant / après le fader, son effet et ses tampons (alloués à l'avance)
+struct MonSend { level: f32, pre: bool, fx: crate::fx::SendFx, l: Vec<f32>, r: Vec<f32> }
+const MAX_BLOCK: usize = 1024;
 
 impl Strip {
     /// Retour sec (aucune piste donnée) : la voix telle quelle des deux côtés
-    pub fn dry() -> Self { Self { chain: None, vol: 1.0, pan: f64::NAN } }
+    pub fn dry() -> Self { Self { chain: None, vol: 1.0, pan: f64::NAN, sends: Vec::new() } }
     /// `json` = { "track": piste du projet, "bpm": tempo } ; `sr` = fréquence du retour
     pub fn from_json(json: &str, sr: f64) -> Result<Self, String> {
         #[derive(serde::Deserialize)]
-        struct Msg { track: crate::model::Track, #[serde(default)] bpm: Option<f64> }
+        struct Msg { track: crate::model::Track, #[serde(default)] bpm: Option<f64>, #[serde(default)] sends: Vec<crate::model::Send> }
         let m: Msg = serde_json::from_str(json).map_err(|e| format!("piste illisible : {e}"))?;
-        let chain = crate::fx::Chain::for_track(&m.track, sr, m.bpm.filter(|b| *b > 0.0).unwrap_or(120.0));
+        let bpm = m.bpm.filter(|b| *b > 0.0).unwrap_or(120.0);
+        let chain = crate::fx::Chain::for_track(&m.track, sr, bpm);
         let vol = (m.track.volume.unwrap_or(100.0) / 100.0).max(0.0) as f32;
         let pan = (m.track.pan.unwrap_or(0.0) / 100.0).clamp(-1.0, 1.0);
-        Ok(Self { chain: if chain.is_empty() { None } else { Some(chain) }, vol, pan })
+        let sends = m.sends.iter()
+            .filter(|sd| !sd.muted)
+            .filter_map(|sd| {
+                let lvl = m.track.sends.get(&sd.id).copied().unwrap_or(0.0);
+                (lvl > 0.0).then(|| MonSend {
+                    level: (lvl / 100.0).min(1.0) as f32,
+                    pre: m.track.pre_sends.get(&format!("send:{}", sd.id)).copied().unwrap_or(false),
+                    fx: crate::fx::SendFx::new(sd, sr, bpm),
+                    l: vec![0.0; MAX_BLOCK], r: vec![0.0; MAX_BLOCK],
+                })
+            })
+            .collect();
+        Ok(Self { chain: if chain.is_empty() { None } else { Some(chain) }, vol, pan, sends })
     }
-    /// `l` = voix (mono) en entrée ; ressort `l` / `r` et les gains gauche / droite à appliquer
+    /// `l` = voix (mono) en entrée ; ressort `l` / `r` prêts à jouer (volume, pan et envois compris)
     fn process(&mut self, l: &mut [f32], r: &mut [f32]) -> (f32, f32) {
+        let (gl, gr) = self.strip(l, r);
+        if self.sends.is_empty() { return (gl, gr); }
+        let n = l.len().min(MAX_BLOCK);
+        let vol = self.vol.max(1e-9);
+        for s in &mut self.sends {
+            // après le fader : la voix telle qu'on l'entend ; avant : sans le volume de la piste
+            let k = s.level * if s.pre { 1.0 / vol } else { 1.0 };
+            for i in 0..n { s.l[i] = l[i] * gl * k; s.r[i] = r[i] * gr * k; }
+            s.fx.process(&mut s.l[..n], &mut s.r[..n]);
+        }
+        for i in 0..n {
+            let (mut a, mut b) = (l[i] * gl, r[i] * gr);
+            for s in &self.sends { a += s.l[i]; b += s.r[i]; }
+            l[i] = a; r[i] = b;
+        }
+        (1.0, 1.0)
+    }
+    fn strip(&mut self, l: &mut [f32], r: &mut [f32]) -> (f32, f32) {
         if self.pan.is_nan() { r.copy_from_slice(l); return (1.0, 1.0); }
         let stereo = match self.chain.as_mut() {
             Some(c) => { r.iter_mut().for_each(|x| *x = 0.0); c.process(l, r, true); c.outputs_stereo() }
@@ -434,6 +469,30 @@ mod tests {
         assert_eq!(st.underruns, 64);
         assert!(!st.primed, "on attend de nouveau la réserve");
     }
+    #[test]
+    fn envoi_reverb_dans_le_retour() {
+        let sr = 48000.0;
+        let run = |json: &str| {
+            let mut st = Strip::from_json(json, sr).unwrap();
+            let (mut l, mut r) = (vec![0.0f32; 512], vec![0.0f32; 512]);
+            l[0] = 1.0;   // un clic, puis le silence : la reverb doit traîner derrière
+            let mut tail = 0.0f32;
+            for b in 0..40 {
+                if b > 0 { l.iter_mut().for_each(|x| *x = 0.0); }
+                let (gl, gr) = st.process(&mut l, &mut r);
+                if b >= 4 { tail += l.iter().chain(r.iter()).map(|x| x.abs()).sum::<f32>() * gl.max(gr); }
+            }
+            tail
+        };
+        let sends = r#""sends":[{"id":"rv","type":"reverb","size":2.0,"volume":100}]"#;
+        let sec = run(&format!(r#"{{"track":{{"volume":100}},{sends}}}"#));
+        let mouille = run(&format!(r#"{{"track":{{"volume":100,"sends":{{"rv":60}}}},{sends}}}"#));
+        let coupe = run(r#"{"track":{"volume":100,"sends":{"rv":60}},"sends":[{"id":"rv","type":"reverb","muted":true}]}"#);
+        assert!(sec < 1e-6, "sans envoi : pas de traîne ({sec})");
+        assert!(mouille > 0.01, "avec envoi : la reverb traîne ({mouille})");
+        assert!(coupe < 1e-6, "envoi coupé : rien ({coupe})");
+    }
+
     #[test]
     fn tranche_de_la_piste_volume_pan_et_effets() {
         let sr = 48000.0;

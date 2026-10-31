@@ -101,6 +101,7 @@ const _undoStack = [];
 const _redoStack = [];
 const _MAX_UNDO = 30;
 function pushUndo() {
+    if (typeof snapClipSelection === 'function') snapClipSelection();   // avant chaque changement : quelles régions sont choisies
     _undoStack.push(JSON.stringify(state.project));
     if (_undoStack.length > _MAX_UNDO) _undoStack.shift();
     _redoStack.length = 0;
@@ -725,10 +726,25 @@ function createGroupFromTracks(idxs) {
     // le groupe sort là où sortait la 1re piste (si elle était déjà dans un groupe, le nouveau s'y range)
     state.project.buses.push({ id, name: `Groupe ${n}`, isGroup: true, output: first.output || 'master', color: first.color, volume: 100 });
     ordered.forEach(i => { state.project.tracks[i].output = id; });
+    setFolderOf(ordered.map(i => state.project.tracks[i]), first.folder);
     state.selectedTracks = new Set(ordered);
     afterGroupChange(ordered.length > 1 ? `Groupe créé avec ${ordered.length} pistes : un seul volume et un même son pour toutes` : 'Groupe créé — clic droit sur une autre piste pour la ranger dedans');
 }
+// Un groupe (bus) est rangé en entier dans un seul dossier : ranger / sortir une de ses pistes emmène tout le groupe
+function withGroupMates(idxs) {
+    const out = new Set(idxs.filter(i => state.project.tracks[i]));
+    idxs.forEach(i => {
+        const g = trackGroup(state.project.tracks[i]);
+        if (!g || !isVisibleGroup(g)) return;
+        const chain = groupChain(g).filter(x => !isFolder(x));
+        groupTracksDeep(chain[chain.length - 1]).forEach(k => out.add(k));
+    });
+    return [...out].sort((a, b) => a - b);
+}
+// Les pistes qui entrent dans un groupe prennent le dossier de ce groupe (ou n'en ont plus)
+function setFolderOf(tracks, folderId) { tracks.forEach(t => { if (folderId) t.folder = folderId; else delete t.folder; }); pruneFolders(); }
 function createFolderFromTracks(idxs) {
+    idxs = withGroupMates(idxs);
     const list = idxs.filter(i => state.project.tracks[i]);
     if (!list.length) return;
     pushUndo();
@@ -744,6 +760,7 @@ function createFolderFromTracks(idxs) {
 }
 function moveTracksToFolder(idxs, folderId) {
     const f = folderById(folderId); if (!f) return;
+    idxs = withGroupMates(idxs);
     pushUndo();
     const tracks = state.project.tracks;
     const moving = idxs.map(i => tracks[i]).filter(Boolean);
@@ -765,6 +782,7 @@ function pruneFolders() {
     if (state.project.folders) state.project.folders = state.project.folders.filter(f => used.has(f.id));
 }
 function removeTracksFromFolder(idxs) {
+    idxs = withGroupMates(idxs);
     pushUndo();
     idxs.forEach(i => { const t = state.project.tracks[i]; if (t) delete t.folder; });
     pruneFolders();
@@ -816,6 +834,7 @@ function moveTrackToGroup(idx, busId) {
     t.output = busId;
     // On range la piste juste sous les autres pistes du groupe
     const others = groupMemberIdx(bus).filter(i => i !== idx);
+    if (others.length) setFolderOf([t], tracks[others[0]].folder);
     if (others.length && !t.isCapture) {
         const anchor = tracks[others[others.length - 1]];
         tracks.splice(idx, 1);
@@ -938,9 +957,12 @@ let _nativeMonTrack = null;
 function nativeMonitorTrackJson() {
     const t = state.project && (state.project.tracks || []).find(x => (x.type || 'audio') === 'audio' && trackMonitored(x));
     if (!t) return '';
-    const track = { name: t.name || '', effects: t.effects || [], effectParams: t.effectParams || {}, fxOrder: t.fxOrder || [], volume: t.volume == null ? 100 : t.volume, pan: t.pan || 0 };
+    const track = { name: t.name || '', effects: t.effects || [], effectParams: t.effectParams || {}, fxOrder: t.fxOrder || [], volume: t.volume == null ? 100 : t.volume, pan: t.pan || 0,
+        sends: t.sends || {}, preSends: t.preSends || {} };
     const bpm = typeof tempoVaries === 'function' && tempoVaries() ? bpmAtSec(Math.max(0, state.playhead || 0)) : state.project.bpm;
-    return JSON.stringify({ track, bpm });
+    // ses envois (reverb, écho) : on s'entend avec pendant la prise, comme dans Logic
+    const sends = (Array.isArray(state.project.sends) ? state.project.sends : []).filter(sd => (track.sends[sd.id] || 0) > 0);
+    return JSON.stringify({ track, bpm, sends });
 }
 function syncNativeMonitorTrack() {
     const nm = PulseAudio.getNativeMonitor && PulseAudio.getNativeMonitor();
@@ -9948,7 +9970,7 @@ function duplicateTrack(idx) {
     pushUndo();
     const copy = {
         ...src,
-        name: src.name + ' copy',
+        name: src.name + ' copie',
         clips: [],           // pas de régions — comportement Logic
         takes: [], takesOpen: false, takeSeq: 0,
         isCapture: false,    // la copie n'est jamais Capture Lane
@@ -9996,6 +10018,7 @@ function flushPendingDeletes() {
     idxs.forEach(i => { state.project.tracks[i].muted = !!state.project.tracks[i]._wasMuted; delete state.project.tracks[i]._wasMuted; });
     pushUndo();   // ⌘Z remet les pistes telles qu'avant (avec la prise déjà rangée)
     for (let k = idxs.length - 1; k >= 0; k--) state.project.tracks.splice(idxs[k], 1);
+    pruneFolders();
     const ni = state.project.tracks.indexOf(sel);
     state.selectedTrack = ni >= 0 ? ni : Math.max(0, Math.min(state.selectedTrack, state.project.tracks.length - 1));
     state.selectedClip = null;
@@ -10010,6 +10033,7 @@ function deleteSelectedTrack() {
     if (many.length > 1) {
         pushUndo();
         for (let k = many.length - 1; k >= 0; k--) state.project.tracks.splice(many[k], 1);
+        pruneFolders();
         state.selectedTrack = Math.max(0, Math.min(many[0], state.project.tracks.length - 1));
         state.selectedTracks = new Set(); state.selectedClip = null;
         renderAll(); saveProject();
@@ -10029,6 +10053,7 @@ function deleteSelectedTrack() {
         /* audio conservé pour Annuler — nettoyé au prochain démarrage (cleanupOrphanAudio) */
     });
     state.project.tracks.splice(idx, 1);
+    pruneFolders();
     state.selectedTrack = Math.min(idx, state.project.tracks.length - 1);
     state.selectedClip = null;
     renderAll();
@@ -10096,7 +10121,46 @@ function _doAddTrack(type = 'audio') {
 }
 
 // --- Rendu complet ---
+// La sélection de régions est notée par position (piste:région). Quand des pistes bougent (rangées, dupliquées,
+// supprimées, glissées), on la recale sur les mêmes régions, sinon Suppr ou un réglage toucherait la région d'à côté.
+var _clipSelSnap = null;
+function clipAtKey(k) { const [ti, ci] = String(k).split(':').map(Number); return state.project.tracks[ti]?.clips?.[ci] || null; }
+function locateClip(c) {
+    const T = state.project.tracks;
+    for (let ti = 0; ti < T.length; ti++) { const ci = (T[ti].clips || []).indexOf(c); if (ci >= 0) return { ti, ci }; }
+    return null;
+}
+function snapClipSelection() {
+    const keys = state.selectedClips ? [...state.selectedClips] : [];
+    const map = new Map();
+    keys.forEach(k => { const c = clipAtKey(k); if (c) map.set(k, c); });
+    const one = state.selectedClip, oneKey = one ? one.trackIdx + ':' + one.clipIdx : null;
+    _clipSelSnap = { proj: state.project, keys: keys.join('|'), map, oneKey, one: oneKey ? clipAtKey(oneKey) : null };
+}
+function followClipSelection() {
+    const s = _clipSelSnap;
+    if (s && s.proj === state.project) {
+        // seulement si personne n'a choisi d'autres régions entre-temps (ex. coller choisit les régions collées)
+        if (state.selectedClips && state.selectedClips.size && [...state.selectedClips].join('|') === s.keys) {
+            const next = new Set();
+            for (const k of state.selectedClips) {
+                const was = s.map.get(k);
+                if (!was || clipAtKey(k) === was) { next.add(k); continue; }
+                const at = locateClip(was);
+                if (at) next.add(at.ti + ':' + at.ci);
+            }
+            state.selectedClips = next;
+        }
+        const one = state.selectedClip;
+        if (one && s.one && s.oneKey === one.trackIdx + ':' + one.clipIdx && clipAtKey(s.oneKey) !== s.one) {
+            const at = locateClip(s.one);
+            state.selectedClip = at ? { trackIdx: at.ti, clipIdx: at.ci } : null;
+        }
+    }
+    snapClipSelection();
+}
 function renderAll() {
+    followClipSelection();
     pruneEmptySpots();
     renderTracksPanel();
     renderTimelineTracks();
@@ -10743,7 +10807,9 @@ function openTrackContextMenu(x, y, idx, t) {
                 ...(state.project.buses || []).filter(b => isVisibleGroup(b) && !ts.every(x => x.output === b.id))
                     .map(b => ({ label: `Ranger dans le groupe « ${b.name} »`, action: () => {
                         if (n === 1) { moveTrackToGroup(ti, b.id); return; }
-                        pushUndo(); ts.forEach(x => { if (!x.isCapture) x.output = b.id; }); b.collapsed = false;
+                        pushUndo(); const mate = state.project.tracks[groupTracksDeep(b).find(k => !ts.includes(state.project.tracks[k]))];
+                        ts.forEach(x => { if (!x.isCapture) x.output = b.id; }); b.collapsed = false;
+                        if (mate) setFolderOf(ts.filter(x => !x.isCapture), mate.folder);
                         afterGroupChange(`${n} pistes rangées dans ${b.name}`);
                     } })),
                 ...(state.project.folders || []).filter(f => !ts.every(x => x.folder === f.id))

@@ -29,6 +29,9 @@ export default async ({ ev, nav, send, sleep, check }) => {
     const tk = state.project.tracks[0]; tk.effects = ['reverb']; tk.effectParams = { reverb: { wet: 30 } }; tk.volume = 70; tk.pan = -20;
     await w(400); out.t2 = tracks().slice(-1)[0] || null; out.tn = tracks().length;
     await w(600); out.tn2 = tracks().length;   // rien n'a changé : rien de renvoyé
+    // envoi de reverb de la piste : il part avec la tranche (on s'entend avec sa reverb)
+    projectSends().push({ id: 'rvmon', name: 'Reverb', type: 'reverb', size: 2.5 }); const sd0 = projectSends()[0]; tk.sends = { [sd0.id]: 40 }; await w(400); out.ts = tracks().slice(-1)[0] || null; out.sd0 = sd0.id;
+    tk.sends = {}; await w(400);
     tk.armed = false; await w(400); out.t3 = tracks().slice(-1)[0]; tk.armed = true; await w(400);
     // mémoire tampon grande : retour direct rouvert avec 256
     await PulseAudio.setBufferMode('grand'); await w(500);
@@ -58,6 +61,8 @@ export default async ({ ev, nav, send, sleep, check }) => {
   check('micro ouvert : retour direct lancé (tampon 64, entrée 1) et retour web muet', r.a.starts === 1 && r.a.last[1].buffer === 64 && r.a.last[1].channel === 0 && r.a.active && r.a.web === 0, JSON.stringify(r.a));
   check('le retard affiché est celui du retour direct', r.a.lat && r.a.lat.native && r.a.lat.totalMs <= 8, JSON.stringify(r.a.lat));
   const j1 = r.t1 && JSON.parse(r.t1), j2 = r.t2 && JSON.parse(r.t2);
+  const js = r.ts && JSON.parse(r.ts);
+  check('envoi de la piste : il part au retour casque avec la définition de l\'effet', js && js.track.sends[r.sd0] === 40 && js.sends.length === 1 && js.sends[0].id === r.sd0, r.ts);
   check('la tranche de la piste écoutée part au moteur natif', j1 && j1.track.volume === 100 && j1.bpm === 120, r.t1);
   check('un effet / le volume / le pan changent : la tranche repart (et seulement là)', j2 && j2.track.effects[0] === 'reverb' && j2.track.effectParams.reverb.wet === 30 && j2.track.volume === 70 && j2.track.pan === -20 && r.tn2 === r.tn, `${r.t2} (${r.tn} → ${r.tn2})`);
   check('plus aucune piste écoutée : retour sec', r.t3 === '', JSON.stringify(r.t3));
