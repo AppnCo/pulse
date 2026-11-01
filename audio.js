@@ -432,38 +432,75 @@ window.PulseAudio = (function() {
                 this.bands = (Array.isArray(p.bands) ? p.bands : []).map((b, i) => b && { ...b, _i: i }).filter(b => b && b.on !== false).slice(0, 6).map(b => {
                     const ks = this.mkKs(b.lo, b.hi);
                     return { ks, st: [ks.map(() => [0, 0, 0, 0]), ks.map(() => [0, 0, 0, 0])], env: 0, att: co(b.att ?? 10), rel: co(b.rel ?? 120),
-                        thr: b.thr ?? -30, range: Math.max(-24, Math.min(24, b.range ?? -6)), out: Math.max(-24, Math.min(24, b.out || 0)), solo: !!b.solo, mute: !!b.mute, mg: 0, i: b._i, lo: b.lo || 20, hi: b.hi || 20000 };
+                        thr: b.thr ?? -30, range: Math.max(-24, Math.min(24, b.range ?? -6)), out: Math.max(-24, Math.min(24, b.out || 0)), solo: !!b.solo, mute: !!b.mute, gl: 1, mg: 0, i: b._i, lo: b.lo || 20, hi: b.hi || 20000 };
                 });
                 this.anySolo = this.bands.some(b => b.solo);
+                // Séparation en tranches (Linkwitz-Riley 24 dB/oct aux limites des bandes) : recollées sans réglage, elles redonnent
+                // le son au même volume à toutes les fréquences ; chaque tranche prend le gain des bandes qui la couvrent (une bande muette
+                // disparaît vraiment). Même calcul que Xover dans engine/src/fx.rs.
+                const ap = (f) => { const w = 2 * Math.PI * f / sampleRate, c = Math.cos(w), al = Math.sin(w) / (2 * Math.SQRT1_2), a0 = 1 + al;
+                    return [(1 - al) / a0, -2 * c / a0, (1 + al) / a0, -2 * c / a0, (1 - al) / a0]; };
+                const edgesOf = (b) => { const lo = Math.max(20, Math.min(20000, b.lo || 20)), hi0 = Math.min(20000, b.hi || 20000), hi = Math.max(lo * 1.05, Math.min(20000, sampleRate * 0.45, b.hi || 20000));
+                    return [lo > 20.5 ? lo : null, hi0 < 19999 ? hi : null]; };
+                this.mkXo = (old) => {
+                    const be = this.bands.map(edgesOf), set = [];
+                    be.forEach(([lo, hi]) => { if (lo !== null) set.push(lo); if (hi !== null) set.push(hi); });
+                    const edges = [...new Set(set)].sort((a, b) => a - b);
+                    const keep = old && old.edges.length === edges.length;
+                    const z = () => [[0, 0, 0, 0], [0, 0, 0, 0]];
+                    const xo = { edges, lp: edges.map(f => biq(false, f)), hp: edges.map(f => biq(true, f)), ap: edges.map(ap),
+                        // mémoire : [côté][limite] → [étage 1, étage 2] (passe-bas, passe-haut) et le passe-tout
+                        slp: keep ? old.slp : [edges.map(z), edges.map(z)], shp: keep ? old.shp : [edges.map(z), edges.map(z)], sap: keep ? old.sap : [edges.map(() => [0, 0, 0, 0]), edges.map(() => [0, 0, 0, 0])] };
+                    xo.cover = Array.from({ length: edges.length + 1 }, (_, j) => { const slo = j ? edges[j - 1] : 0, shi = j < edges.length ? edges[j] : Infinity;
+                        return be.map(([lo, hi], i) => ((lo ?? 0) <= slo && shi <= (hi ?? Infinity)) ? i : -1).filter(i => i >= 0); });
+                    xo.g = new Float64Array(edges.length + 1).fill(1);
+                    return xo;
+                };
+                this.xo = this.mkXo(null);
                 this.live = !!p.live; this.cnt = 0;
             }
             process(inputs, outputs) {
                 const inp = inputs[0], out = outputs[0];
                 if (!inp || !inp.length) return true;
                 const n = inp[0].length, nc = Math.min(inp.length, out.length), bs = this.bands, nb = bs.length;
-                const bp = this._bp || (this._bp = [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0]]);
+                const xo = this.xo, E = xo.edges.length, solo = this.anySolo;
                 for (let i = 0; i < n; i++) {
-                    let y0 = nc > 0 ? inp[0][i] : 0, y1 = nc > 1 ? inp[1][i] : 0;
-                    const x0 = y0, x1 = y1;
-                    if (this.anySolo) { y0 = 0; y1 = 0; }
+                    const x0 = nc > 0 ? inp[0][i] : 0, x1 = nc > 1 ? inp[1][i] : 0;
+                    // 1. chaque bande mesure sa zone (filtres de détection) et calcule son gain
                     for (let k = 0; k < nb; k++) {
-                        const b = bs[k], v = bp[k];
+                        const b = bs[k];
                         let pk = 0;
                         for (let ch = 0; ch < nc; ch++) {
                             let s = ch ? x1 : x0;
                             const st = b.st[ch];
                             for (let j = 0; j < b.ks.length; j++) s = biqRun(b.ks[j], st[j], s);
-                            v[ch] = s; const a = s < 0 ? -s : s; if (a > pk) pk = a;
+                            const a = s < 0 ? -s : s; if (a > pk) pk = a;
                         }
                         b.env += (pk - b.env) * (pk > b.env ? b.att : b.rel);
                         const over = 20 * Math.log10(Math.max(b.env, 1e-9)) - b.thr;
                         const gd = b.range * Math.max(0, Math.min(1, over / 12));
-                        const gl = b.mute ? 0 : Math.pow(10, (gd + b.out) / 20);
-                        if (this.anySolo) { if (b.solo) { y0 += v[0] * gl; y1 += v[1] * gl; } }
-                        else { y0 += v[0] * (gl - 1); y1 += v[1] * (gl - 1); }
+                        b.gl = b.mute ? 0 : Math.pow(10, (gd + b.out) / 20);
                         if (this.live && Math.abs(gd) > Math.abs(b.mg)) b.mg = gd;
                     }
-                    out[0][i] = y0; if (nc > 1) out[1][i] = y1;
+                    // 2. chaque tranche prend le gain des bandes qui la couvrent (solo : seulement les tranches d'une bande en solo)
+                    for (let j = 0; j <= E; j++) {
+                        const cv = xo.cover[j];
+                        let g = 1, ok = !solo;
+                        for (let q = 0; q < cv.length; q++) { g *= bs[cv[q]].gl; if (bs[cv[q]].solo) ok = true; }
+                        xo.g[j] = ok ? g : 0;
+                    }
+                    // 3. on découpe et on recolle (ce qui est déjà recollé passe par le passe-tout de la limite suivante)
+                    for (let ch = 0; ch < nc; ch++) {
+                        let rest = ch ? x1 : x0, acc = 0;
+                        const slp = xo.slp[ch], shp = xo.shp[ch], sap = xo.sap[ch];
+                        for (let j = 0; j < E; j++) {
+                            const low = biqRun(xo.lp[j], slp[j][1], biqRun(xo.lp[j], slp[j][0], rest));
+                            rest = biqRun(xo.hp[j], shp[j][1], biqRun(xo.hp[j], shp[j][0], rest));
+                            if (j > 0) acc = biqRun(xo.ap[j], sap[j], acc);
+                            acc += xo.g[j] * low;
+                        }
+                        out[ch][i] = acc + xo.g[E] * rest;
+                    }
                 }
                 if (this.live && (this.cnt += n) >= 1200) { this.cnt = 0; this.port.postMessage({ g: bs.map(b => b.mg), e: bs.map(b => 20 * Math.log10(Math.max(b.env, 1e-9))) }); bs.forEach(b => b.mg = 0); }
                 return true;
@@ -474,7 +511,7 @@ window.PulseAudio = (function() {
             for (const k in v) { const dash = k.indexOf('-'), m = k[0] === 'b' && dash > 1 ? [k, k.slice(1, dash), k.slice(dash + 1)] : null; if (!m) continue; const b = s.bands.find(x => x.i === +m[1]); if (!b) continue; const x = v[k];
                 if (m[2] === 'thr') b.thr = x; else if (m[2] === 'range') b.range = Math.max(-24, Math.min(24, x)); else if (m[2] === 'out') b.out = Math.max(-24, Math.min(24, x));
                 else if (m[2] === 'att') b.att = s.co(x); else if (m[2] === 'rel') b.rel = s.co(x);
-                else if ((m[2] === 'lo' || m[2] === 'hi') && b[m[2]] !== x) { b[m[2]] = x; const ks = s.mkKs(b.lo, b.hi); if (ks.length !== b.ks.length) b.st = [ks.map(() => [0, 0, 0, 0]), ks.map(() => [0, 0, 0, 0])]; b.ks = ks; } }
+                else if ((m[2] === 'lo' || m[2] === 'hi') && b[m[2]] !== x) { b[m[2]] = x; const ks = s.mkKs(b.lo, b.hi); if (ks.length !== b.ks.length) b.st = [ks.map(() => [0, 0, 0, 0]), ks.map(() => [0, 0, 0, 0])]; b.ks = ks; s.xo = s.mkXo(s.xo); } }
         }));
         // Saturation suréchantillonnée ×4 : même calcul que Saturator dans engine/src/fx.rs
         // (filtre de 64 coefficients, Blackman, coupure 0,1125 de la cadence ×4 ; parasites −22 dB → −99 dB)

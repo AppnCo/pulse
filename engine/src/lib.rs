@@ -196,7 +196,7 @@ mod tests {
         check(r#"{"bands":[{"base":true,"sty":"bande","va":1,"heat":50}],"ag":false}"#, [0.523942, 0.240843, 0.028031], "sansag");
     }
 
-    /// Multibande à bandes libres : mêmes chiffres que tests/scenarios/mband-parite.mjs (Chrome).
+    /// Multibande à bandes libres (tranches Linkwitz-Riley depuis le 01/11/2026) : mêmes chiffres que tests/scenarios/mband-parite.mjs (Chrome).
     #[test]
     fn multibande_comme_le_navigateur() {
         let sr = SR as usize;
@@ -215,15 +215,15 @@ mod tests {
         };
         let near = |v: f64, want: f64| assert!((v - want).abs() < want * 0.01 + 2e-5, "{v} au lieu de {want}");
         let l = run(r#"{"bands":[{"lo":60,"hi":200,"thr":0,"range":-8}]}"#);
-        near(rms(&l, 0.2, 0.45), 0.199987); near(rms(&l, 0.55, 0.78), 0.223593);
+        near(rms(&l, 0.2, 0.45), 0.2); near(rms(&l, 0.55, 0.78), 0.223607);
         let b1 = r#"{"lo":60,"hi":200,"thr":-20,"range":-8,"att":5,"rel":80}"#;
         let b2 = r#"{"lo":2000,"hi":5000,"thr":-30,"range":6,"out":-2}"#;
         let l = run(&format!(r#"{{"bands":[{b1},{b2}]}}"#));
-        near(rms(&l, 0.2, 0.45), 0.121393); near(rms(&l, 0.55, 0.78), 0.187453);
+        near(rms(&l, 0.2, 0.45), 0.113224); near(rms(&l, 0.55, 0.78), 0.18307);
         let l = run(&format!(r#"{{"bands":[{b1},{{"lo":2000,"hi":5000,"thr":-30,"range":6,"out":-2,"solo":true}}]}}"#));
-        assert!(rms(&l, 0.2, 0.45) < 1e-4, "solo : rien hors de la bande"); near(rms(&l, 0.55, 0.78), 0.118899);
+        assert!(rms(&l, 0.2, 0.45) < 1e-4, "solo : rien hors de la bande"); near(rms(&l, 0.55, 0.78), 0.118909);
         let l = run(&format!(r#"{{"bands":[{{"lo":60,"hi":200,"thr":-20,"range":-8,"att":5,"rel":80,"mute":true}},{b2}]}}"#));
-        near(rms(&l, 0.2, 0.45), 0.06976); near(rms(&l, 0.55, 0.78), 0.158958);
+        near(rms(&l, 0.2, 0.45), 0.033359); near(rms(&l, 0.55, 0.78), 0.147674);
     }
 
     /// Nouveau De-esser (seuil, plage, zone) : mêmes chiffres que tests/scenarios/deess-parite.mjs (Chrome).
@@ -263,13 +263,15 @@ mod tests {
         near(rms(&l, 0.2, 0.8), 0.377228); near(rms(&l, 1.2, 1.8), 0.377038);
         let lim = r#"{"points":[{"t":0,"v":0.3},{"t":2,"v":0.6}]}"#;
         let l = run("mband", r#"{"bands":[{"lo":200,"hi":2000,"thr":-40,"range":-12}]}"#, &format!(r#"{{"fx:mband:b0-lo":{lim},"fx:mband:b0-hi":{up}}}"#));
-        near(rms(&l, 0.2, 0.8), 0.29141); near(rms(&l, 1.2, 1.8), 0.303305);
+        near(rms(&l, 0.2, 0.8), 0.266145); near(rms(&l, 1.2, 1.8), 0.29527);
         let l = run("msat", r#"{"bands":[{"base":true,"sty":"bande","va":1,"heat":10},{"lo":200,"hi":2000,"sty":"ampli","va":1,"heat":60,"fb":30}]}"#, &format!(r#"{{"fx:msat:b1-lo":{lim},"fx:msat:b1-hi":{up}}}"#));
         near(rms(&l, 0.2, 0.8), 0.281544); near(rms(&l, 1.2, 1.8), 0.278487);
         let l = run("gate", r#"{"threshold":-20,"reduction":40,"ratio":2,"release":150}"#, r#"{"fx:gate:ratio":{"points":[{"t":0,"v":0},{"t":1,"v":0},{"t":1.01,"v":0.6}]},"fx:gate:knee":{"points":[{"t":0,"v":0},{"t":1,"v":0},{"t":1.01,"v":1}]},"fx:gate:attack":{"points":[{"t":0,"v":0},{"t":1,"v":0},{"t":1.01,"v":1}]},"fx:gate:hold":{"points":[{"t":0,"v":0},{"t":1,"v":0},{"t":1.01,"v":1}]}}"#);
         near(rms(&l, 0.2, 0.8), 0.316891); near(rms(&l, 1.2, 1.8), 0.317399);
         let l = run("mband", r#"{"bands":[{"lo":20,"hi":400,"thr":-40,"range":-12},{"lo":400,"hi":20000,"thr":-40,"range":-6}]}"#, r#"{"fx:mband:b0-range":{"points":[{"t":0,"v":0.5},{"t":1,"v":0.5},{"t":1.01,"v":0}]},"fx:mband:b1-out":{"points":[{"t":0,"v":0},{"t":1,"v":0},{"t":1.01,"v":1}]},"fx:mband:b0-att":{"points":[{"t":0,"v":0},{"t":1,"v":0},{"t":1.01,"v":1}]},"fx:mband:b1-thr":{"points":[{"t":0,"v":0},{"t":1,"v":0},{"t":1.01,"v":1}]}}"#);
-        near(rms(&l, 0.2, 0.8), 0.349343); near(rms(&l, 1.2, 1.8), 0.493388);
+        // +24 dB sur la bande haute : le son dépasse 1,0 ; le fichier WAV exporté par le navigateur l'écrête, on fait pareil pour comparer
+        let l: Vec<f32> = l.iter().map(|v| v.clamp(-1.0, 1.0)).collect();
+        near(rms(&l, 0.2, 0.8), 0.23772); near(rms(&l, 1.2, 1.8), 0.495181);
         let l = run("msat", r#"{"bands":[{"base":true,"sty":"bande","va":1,"heat":30},{"lo":200,"hi":2000,"sty":"lampe","va":1,"heat":20}],"mix":100}"#, r#"{"fx:msat:b1-heat":{"points":[{"t":0,"v":0},{"t":1,"v":0},{"t":1.01,"v":1}]},"fx:msat:b0-hi2":{"points":[{"t":0,"v":0},{"t":1,"v":0},{"t":1.01,"v":1}]},"fx:msat:b1-out":{"points":[{"t":0,"v":0.6667},{"t":1,"v":0.6667},{"t":1.01,"v":0.3}]},"fx:msat:mix":{"points":[{"t":0,"v":1},{"t":1.5,"v":0.4}]},"fx:msat:b0-dyn":{"points":[{"t":0,"v":0},{"t":1,"v":0},{"t":1.01,"v":1}]}}"#);
         near(rms(&l, 0.2, 0.8), 0.202777); near(rms(&l, 1.2, 1.8), 0.204685);
     }

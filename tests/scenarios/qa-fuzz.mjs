@@ -11,7 +11,7 @@ export default async (c) => {
   let seed = seed0; const rnd = () => (seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296;
   const W = 1440, H = 860; const Y0 = process.env.QA_ROLL ? 470 : 5;
   const M = (type, x, y, button = 'left', buttons = 1, clickCount = 1, modifiers = 0) => send('Input.dispatchMouseEvent', { type, x, y, button, buttons, clickCount, modifiers });
-  const keys = [' ', 'r', 'k', 'l', 'm', 'q', 's', 'b', 'e', 'z', 'f', 'x', 'a', 'c', 'v', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Enter', 'Escape', 'Delete', 'Backspace', 'Tab', 'Home', 'End', 't', 'Z', '1', '2', '3'];
+  const keys = [' ', 'r', 'k', 'l', 'm', 'q', 's', 'b', 'e', 'z', 'f', 'x', 'a', 'c', 'v', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Enter', 'Escape', 'Delete', 'Backspace', 'Tab', 'Home', 'End', 't', 'Z', '1', '2', '3', 'j', 'd', 'u', 'g', 'y'];
   const N = parseInt(process.env.QA_N || '300');
   let bad = 0;
   for (let i = 0; i < N; i++) {

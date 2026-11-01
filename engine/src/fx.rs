@@ -275,7 +275,7 @@ impl MultiSat {
 }
 
 /// Multibande à bandes libres : même calcul que le worklet `pulse-mband` de audio.js.
-struct MbBand { ks: [Vec<Biquad>; 2], mg: f64, env: f64, att: f64, rel: f64, thr: f64, range: f64, out: f64, solo: bool, mute: bool, idx: usize, lo: f64, hi: f64 }
+struct MbBand { ks: [Vec<Biquad>; 2], gl: f64, mg: f64, env: f64, att: f64, rel: f64, thr: f64, range: f64, out: f64, solo: bool, mute: bool, idx: usize, lo: f64, hi: f64 }
 /// Nouveaux filtres pour une bande : même nombre = on garde leur mémoire, sinon on repart de zéro (comme le navigateur)
 fn retune_all(old: &[Vec<Biquad>; 2], new: Vec<Biquad>) -> [Vec<Biquad>; 2] {
     if old[0].len() != new.len() { return [new.clone(), new]; }
@@ -283,7 +283,77 @@ fn retune_all(old: &[Vec<Biquad>; 2], new: Vec<Biquad>) -> [Vec<Biquad>; 2] {
     for ch in 0..2 { for (j, b) in new.iter().enumerate() { o[ch][j].retune(b.clone()); } }
     o
 }
-pub struct MultiBand { bands: Vec<MbBand>, any_solo: bool, sr: f64 }
+/// Séparation du multibande en tranches (filtres Linkwitz-Riley 24 dB/oct aux limites des bandes) : recollées sans réglage,
+/// les tranches redonnent le son au même volume à toutes les fréquences (seule la phase tourne, comme dans tout multibande).
+/// Chaque tranche reçoit le gain des bandes qui la couvrent : une bande muette disparaît vraiment.
+/// Même calcul que mkXo / le recollage du worklet `pulse-mband` (audio.js).
+struct Xover {
+    edges: Vec<f64>,
+    /// par limite : passe-bas ×2, passe-haut ×2, passe-tout (un jeu par côté)
+    lp: Vec<[[Biquad; 2]; 2]>,
+    hp: Vec<[[Biquad; 2]; 2]>,
+    ap: Vec<[Biquad; 2]>,
+    /// par tranche : les bandes qui la couvrent (leur place dans `bands`), et son gain du moment
+    cover: Vec<Vec<usize>>,
+    gseg: Vec<f64>,
+}
+impl Xover {
+    /// Limites d'une bande vues par la séparation (None = pas de limite de ce côté)
+    fn band_edges(lo0: f64, hi0: f64, sr: f64) -> (Option<f64>, Option<f64>) {
+        let lo = lo0.clamp(20.0, 20000.0);
+        let hi = hi0.min(20000.0).min(sr * 0.45).max(lo * 1.05);
+        ((lo > 20.5).then_some(lo), (hi0.min(20000.0) < 19999.0).then_some(hi))
+    }
+    fn coefs(f: f64, sr: f64) -> (Biquad, Biquad, Biquad) {
+        let w = 2.0 * PI * f / sr;
+        let (c, al) = (w.cos(), w.sin() / (2.0 * std::f64::consts::FRAC_1_SQRT_2));
+        (Biquad::new((1.0 - c) / 2.0, 1.0 - c, (1.0 - c) / 2.0, 1.0 + al, -2.0 * c, 1.0 - al),
+         Biquad::new((1.0 + c) / 2.0, -(1.0 + c), (1.0 + c) / 2.0, 1.0 + al, -2.0 * c, 1.0 - al),
+         Biquad::new(1.0 - al, -2.0 * c, 1.0 + al, 1.0 + al, -2.0 * c, 1.0 - al))
+    }
+    fn new(bands: &[MbBand], sr: f64, old: Option<&Xover>) -> Self {
+        let mut edges: Vec<f64> = Vec::new();
+        let be: Vec<(Option<f64>, Option<f64>)> = bands.iter().map(|b| Self::band_edges(b.lo, b.hi, sr)).collect();
+        for (lo, hi) in &be { if let Some(v) = lo { edges.push(*v); } if let Some(v) = hi { edges.push(*v); } }
+        edges.sort_by(|a, b| a.total_cmp(b));
+        edges.dedup();
+        let (mut lp, mut hp, mut ap) = (Vec::new(), Vec::new(), Vec::new());
+        for (j, f) in edges.iter().enumerate() {
+            let (l, h, a) = Self::coefs(*f, sr);
+            // même nombre de limites : on garde la mémoire des filtres (pas de clic quand une limite est automatisée)
+            match old.filter(|o| o.edges.len() == edges.len()) {
+                Some(o) => {
+                    let (mut l2, mut h2, mut a2) = (o.lp[j], o.hp[j], o.ap[j]);
+                    for ch in 0..2 { for k in 0..2 { l2[ch][k].retune(l); h2[ch][k].retune(h); } a2[ch].retune(a); }
+                    lp.push(l2); hp.push(h2); ap.push(a2);
+                }
+                None => { lp.push([[l; 2]; 2]); hp.push([[h; 2]; 2]); ap.push([a; 2]); }
+            }
+        }
+        let cover = (0..=edges.len()).map(|j| {
+            let (slo, shi) = (if j == 0 { 0.0 } else { edges[j - 1] }, if j == edges.len() { f64::INFINITY } else { edges[j] });
+            be.iter().enumerate().filter(|(_, (lo, hi))| lo.unwrap_or(0.0) <= slo && shi <= hi.unwrap_or(f64::INFINITY)).map(|(i, _)| i).collect()
+        }).collect::<Vec<Vec<usize>>>();
+        let gseg = vec![1.0; edges.len() + 1];
+        Self { edges, lp, hp, ap, cover, gseg }
+    }
+    /// Recolle un côté : tranche j = sous la limite j ; ce qui est déjà recollé passe par le passe-tout de la limite suivante
+    #[inline]
+    fn run(&mut self, ch: usize, x: f64) -> f64 {
+        let (mut rest, mut acc) = (x, 0.0);
+        for j in 0..self.edges.len() {
+            let l1 = self.lp[j][ch][0].tick(rest);
+            let low = self.lp[j][ch][1].tick(l1);
+            let h1 = self.hp[j][ch][0].tick(rest);
+            rest = self.hp[j][ch][1].tick(h1);
+            if j > 0 { acc = self.ap[j][ch].tick(acc); }
+            acc += self.gseg[j] * low;
+        }
+        acc + self.gseg[self.edges.len()] * rest
+    }
+}
+
+pub struct MultiBand { bands: Vec<MbBand>, any_solo: bool, sr: f64, xo: Xover }
 impl MultiBand {
     /// afficheur : par bande, le gain dynamique le plus marqué (dB) et le niveau (dB)
     fn take_meter(&mut self) -> (Vec<f32>, Vec<f32>) {
@@ -311,12 +381,13 @@ impl MultiBand {
         let co = |ms: f64| 1.0 - (-1.0 / (ms.max(0.05) / 1000.0 * sr)).exp();
         let bands: Vec<MbBand> = p.bands.iter().enumerate().filter(|(_, b)| b.on != Some(false)).take(6).map(|(idx, b)| {
             let ks = Self::make_ks(b.lo.unwrap_or(20.0), b.hi.unwrap_or(20000.0), sr);
-            MbBand { lo: b.lo.unwrap_or(20.0), hi: b.hi.unwrap_or(20000.0), ks: [ks.clone(), ks], mg: 0.0, env: 0.0, att: co(b.att.unwrap_or(10.0)), rel: co(b.rel.unwrap_or(120.0)), thr: b.thr.unwrap_or(-30.0),
+            MbBand { lo: b.lo.unwrap_or(20.0), hi: b.hi.unwrap_or(20000.0), ks: [ks.clone(), ks], gl: 1.0, mg: 0.0, env: 0.0, att: co(b.att.unwrap_or(10.0)), rel: co(b.rel.unwrap_or(120.0)), thr: b.thr.unwrap_or(-30.0),
                 range: b.range.unwrap_or(-6.0).clamp(-24.0, 24.0), out: b.out.unwrap_or(0.0).clamp(-24.0, 24.0), solo: b.solo.unwrap_or(false), mute: b.mute.unwrap_or(false), idx }
         }).collect();
         if bands.is_empty() { return None; }
         let any_solo = bands.iter().any(|b| b.solo);
-        Some(Self { bands, any_solo, sr })
+        let xo = Xover::new(&bands, sr, None);
+        Some(Self { bands, any_solo, sr, xo })
     }
     /// Automation d'un réglage de bande (mêmes règles que le worklet pulse-mband)
     fn set(&mut self, idx: usize, field: &str, v: f64) {
@@ -326,31 +397,33 @@ impl MultiBand {
         if (field == "lo" && b.lo != v) || (field == "hi" && b.hi != v) {
             if field == "lo" { b.lo = v } else { b.hi = v }
             b.ks = retune_all(&b.ks, Self::make_ks(b.lo, b.hi, sr));
+            self.xo = Xover::new(&self.bands, sr, Some(&self.xo));
             return;
         }
         match field { "thr" => b.thr = v, "range" => b.range = v.clamp(-24.0, 24.0), "out" => b.out = v.clamp(-24.0, 24.0), "att" => b.att = co(v), "rel" => b.rel = co(v), _ => {} }
     }
     fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
-        let (x0, x1) = (x[0], if nc > 1 { x[1] } else { 0.0 });
-        let (mut y0, mut y1) = if self.any_solo { (0.0, 0.0) } else { (x0, x1) };
+        // 1. chaque bande mesure sa zone (filtres de détection) et calcule son gain
         for b in &mut self.bands {
-            let mut v = [0.0f64; 2];
             let mut pk = 0.0f64;
             for ch in 0..nc {
-                let mut s = if ch == 0 { x0 } else { x1 };
+                let mut s = x[ch];
                 for f in &mut b.ks[ch] { s = f.tick(s); }
-                v[ch] = s; pk = pk.max(s.abs());
+                pk = pk.max(s.abs());
             }
             b.env += (pk - b.env) * if pk > b.env { b.att } else { b.rel };
             let over = 20.0 * b.env.max(1e-9).log10() - b.thr;
             let gd = b.range * (over / 12.0).clamp(0.0, 1.0);
-            let gl = if b.mute { 0.0 } else { 10f64.powf((gd + b.out) / 20.0) };
-            if self.any_solo { if b.solo { y0 += v[0] * gl; y1 += v[1] * gl; } }
-            else { y0 += v[0] * (gl - 1.0); y1 += v[1] * (gl - 1.0); }
+            b.gl = if b.mute { 0.0 } else { 10f64.powf((gd + b.out) / 20.0) };
             if gd.abs() > b.mg.abs() { b.mg = gd; }
         }
-        x[0] = y0;
-        if nc > 1 { x[1] = y1; }
+        // 2. chaque tranche prend le gain des bandes qui la couvrent (solo : seulement les tranches d'une bande en solo)
+        for (j, cv) in self.xo.cover.iter().enumerate() {
+            let solo_ok = !self.any_solo || cv.iter().any(|&i| self.bands[i].solo);
+            self.xo.gseg[j] = if solo_ok { cv.iter().fold(1.0, |g, &i| g * self.bands[i].gl) } else { 0.0 };
+        }
+        // 3. on découpe et on recolle
+        for ch in 0..nc { x[ch] = self.xo.run(ch, x[ch]); }
     }
 }
 
@@ -374,8 +447,31 @@ pub struct DeesserV2 {
     m_v: f64,
     m_s: f64,
     m_r: f64,
+    /// Plugin : « Écouter » (0 = la voix, 1 = seulement la zone des « s ») et Séparé (0) / Large (1), passages en fondu
+    lmix: f64,
+    wmix: f64,
+    glide: Glide,
 }
 impl DeesserV2 {
+    /// Plugin : afficheur (crête du son, niveau dans la zone, réduction en dB, niveau global) depuis la dernière lecture
+    pub fn meter_take(&mut self) -> [f32; 4] { self.take_meter() }
+    /// Plugin : écouter seulement ce qui est détecté (fondu de ~10 ms)
+    pub fn set_listen(&mut self, on: bool) { let t = if on { 1.0 } else { 0.0 }; if t != self.glide.to[0] { self.glide.aim(t, self.glide.to[1]); } }
+    /// Plugin : nouveaux réglages sans repartir de zéro (filtres et enveloppes gardés)
+    pub fn retune(&mut self, p: &crate::model::DeessParams, sr: f64) {
+        let n = Self::new(p, sr);
+        for ch in 0..2 { self.hp[ch].retune(n.hp[ch]); self.lpf[ch].retune(n.lpf[ch]); }
+        self.k = n.k;
+        self.thr = n.thr;
+        self.range = n.range;
+        let w = if n.wide { 1.0 } else { 0.0 };
+        if w != self.glide.to[1] { self.glide.aim(self.glide.to[0], w); }
+        self.wide = n.wide;
+        self.rel = n.rel;
+    }
+    pub fn process(&mut self, x: &mut [f64; 2], nc: usize) { self.tick(x, nc) }
+    /// Fondus terminés tout de suite
+    pub fn settle(&mut self) { self.glide.land(&mut self.lmix, &mut self.wmix); }
     fn take_meter(&mut self) -> [f32; 4] {
         let m = [self.m_v as f32, self.m_s as f32, self.m_r as f32, self.env_f as f32];
         self.m_v = 0.0; self.m_s = 0.0; self.m_r = 0.0;
@@ -398,13 +494,18 @@ impl DeesserV2 {
             wide: p.wide.unwrap_or(false), rel: p.rel.unwrap_or(false),
             env_b: 0.0, env_f: 0.0, gain: 1.0, att: coef(0.001), relc: coef(0.060), smooth: coef(0.002),
             m_v: 0.0, m_s: 0.0, m_r: 0.0,
+            lmix: 0.0, wmix: if p.wide.unwrap_or(false) { 1.0 } else { 0.0 },
+            glide: { let mut g = Glide::new(sr); g.to = [0.0, if p.wide.unwrap_or(false) { 1.0 } else { 0.0 }]; g },
         }
     }
     fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
+        self.glide.step(&mut self.lmix, &mut self.wmix);
+        let mut band = [0.0f64; 2];
         let (mut pk_b, mut pk_f) = (0.0f64, 0.0f64);
         let mut hs = [0.0f64; 2];
         for ch in 0..nc {
             let b = self.lpf[ch].tick(self.hp[ch].tick(x[ch]));
+            band[ch] = b;
             self.lp[ch] = x[ch] + (self.lp[ch] - x[ch]) * self.k;
             hs[ch] = x[ch] - self.lp[ch];
             pk_b = pk_b.max(b.abs());
@@ -420,7 +521,9 @@ impl DeesserV2 {
         let target = 10f64.powf(-red / 20.0);
         self.gain += (target - self.gain) * self.smooth;
         for ch in 0..nc {
-            x[ch] = if self.wide { x[ch] * self.gain } else { x[ch] + hs[ch] * (self.gain - 1.0) };
+            let (large, sep) = (x[ch] * self.gain, x[ch] + hs[ch] * (self.gain - 1.0));
+            let y = if self.wmix >= 1.0 { large } else if self.wmix <= 0.0 { sep } else { sep + (large - sep) * self.wmix };
+            x[ch] = if self.lmix > 0.0 { y + (band[ch] - y) * self.lmix } else { y };
         }
         if pk_f > self.m_v { self.m_v = pk_f; }
         if self.env_b > self.m_s { self.m_s = self.env_b; }
@@ -649,7 +752,7 @@ impl Util {
 }
 
 /// Gate : même calcul que le worklet `pulse-gate` de audio.js. Sans ratio : gate franc ; avec ratio : expandeur à genou doux.
-struct Gate {
+pub struct Gate {
     thr: f64,
     thr_db: f64,
     range: f64,
@@ -671,10 +774,30 @@ struct Gate {
     /// afficheur : niveau vu par le gate (max) et gain appliqué (min) depuis la dernière lecture
     m_env: f64,
     m_gain: f64,
+    /// Plugin : « Écouter » (0 = le son, 1 = ce que le déclencheur entend), passage en fondu
+    lmix: f64,
+    spare: f64,
+    glide: Glide,
 }
 
 impl Gate {
-    fn new(p: &GateParams, sr: f64) -> Self {
+    /// Plugin : afficheur (niveau vu par le gate, gain le plus bas) depuis la dernière lecture
+    pub fn meter_take(&mut self) -> [f32; 2] { self.take_meter() }
+    /// Plugin : écouter le déclencheur (filtré), en fondu
+    pub fn set_listen(&mut self, on: bool) { let t = if on { 1.0 } else { 0.0 }; if t != self.glide.to[0] { self.glide.aim(t, 0.0); } }
+    pub fn settle(&mut self) { self.glide.land(&mut self.lmix, &mut self.spare); }
+    pub fn process(&mut self, x: &mut [f64; 2], nc: usize) { self.tick(x, nc) }
+    /// Plugin : nouveaux réglages sans repartir de zéro (enveloppe, maintien, gain, filtres gardés)
+    pub fn retune(&mut self, p: &GateParams, sr: f64) {
+        let mut n = Self::new(p, sr);
+        n.env = self.env; n.left = self.left; n.gain = self.gain;
+        if n.hp.is_some() == self.hp.is_some() { n.zh = self.zh; }
+        if n.lp.is_some() == self.lp.is_some() { n.zl = self.zl; }
+        n.m_env = self.m_env; n.m_gain = self.m_gain;
+        n.lmix = self.lmix; n.spare = self.spare; n.glide = self.glide;
+        *self = n;
+    }
+    pub fn new(p: &GateParams, sr: f64) -> Self {
         let coef = |sec: f64| 1.0 - (-1.0 / (sec * sr)).exp();
         let bq = |hp: bool, f: f64| {
             let w = 2.0 * PI * f / sr;
@@ -706,6 +829,7 @@ impl Gate {
             zl: [[0.0; 4]; 2],
             m_env: 0.0,
             m_gain: 1.0,
+            lmix: 0.0, spare: 0.0, glide: Glide::new(sr),
         }
     }
     fn take_meter(&mut self) -> [f32; 2] {
@@ -723,11 +847,14 @@ impl Gate {
     }
     fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
         let run = |k: &[f64; 5], z: &mut [f64; 4], v: f64| { let y = k[0] * v + k[1] * z[0] + k[2] * z[1] - k[3] * z[2] - k[4] * z[3]; z[1] = z[0]; z[0] = v; z[3] = z[2]; z[2] = y; y };
+        self.glide.step(&mut self.lmix, &mut self.spare);
         let mut pk = 0.0f64;
+        let mut det = [0.0f64; 2];
         for ch in 0..nc {
             let mut d = x[ch];
             if let Some(k) = &self.hp { d = run(k, &mut self.zh[ch], d); }
             if let Some(k) = &self.lp { d = run(k, &mut self.zl[ch], d); }
+            det[ch] = d;
             pk = pk.max(d.abs());
         }
         self.env += (pk - self.env) * if pk > self.env { self.att } else { self.env_rel };
@@ -738,16 +865,36 @@ impl Gate {
         }
         let target = self.target();
         self.gain += (target - self.gain) * if target > self.gain { self.g_att } else { self.g_rel };
-        for v in &mut x[..nc] {
+        for (ch, v) in x[..nc].iter_mut().enumerate() {
             *v *= self.gain;
+            if self.lmix > 0.0 { *v += (det[ch] - *v) * self.lmix; }
         }
         if self.env > self.m_env { self.m_env = self.env; }
         if self.gain < self.m_gain { self.m_gain = self.gain; }
     }
 }
 
+/// Plugins : un réglage de volume tourné (quantité, mélange…) glisse en ~10 ms vers sa nouvelle valeur au lieu de
+/// sauter (un saut = un clic). Il n'agit qu'après un `retune` : sans changement, le son reste identique à l'échantillon.
+#[derive(Clone, Copy, Debug)]
+struct Glide { to: [f64; 2], k: f64, on: bool }
+impl Glide {
+    fn new(sr: f64) -> Self { Self { to: [0.0; 2], k: 1.0 - (-1.0 / (0.01 * sr)).exp(), on: false } }
+    fn aim(&mut self, a: f64, b: f64) { self.to = [a, b]; self.on = true; }
+    /// Saute directement à la cible
+    fn land(&mut self, a: &mut f64, b: &mut f64) { if self.on { *a = self.to[0]; *b = self.to[1]; self.on = false; } }
+    #[inline]
+    fn step(&mut self, a: &mut f64, b: &mut f64) {
+        if !self.on { return; }
+        *a += (self.to[0] - *a) * self.k;
+        *b += (self.to[1] - *b) * self.k;
+        if (self.to[0] - *a).abs() < 1e-7 && (self.to[1] - *b).abs() < 1e-7 { *a = self.to[0]; *b = self.to[1]; self.on = false; }
+    }
+}
+
 /// Compresseur : même calcul que le worklet `pulse-comp` de audio.js.
 pub struct Compressor {
+    glide: Glide,
     thr: f64,
     slope: f64,
     knee: f64,
@@ -784,8 +931,15 @@ impl Compressor {
         n.dc = self.dc;
         n.penv = self.penv;
         n.hcnt = self.hcnt;
+        let (mix, makeup) = (n.mix, n.makeup);
+        n.mix = self.mix;
+        n.makeup = self.makeup;
+        n.glide = self.glide;
+        n.glide.aim(mix, makeup);
         *self = n;
     }
+    /// Automation de Pulse : la valeur est prise tout de suite (la courbe est déjà progressive)
+    pub fn settle(&mut self) { self.glide.land(&mut self.mix, &mut self.makeup); }
     /// Réduction de gain en cours, en dB (pour l'aiguille)
     pub fn reduction_db(&self) -> f64 {
         self.red
@@ -805,6 +959,7 @@ impl Compressor {
             knee: p.knee.unwrap_or(10.0).max(0.0),
             att: coef(attack_s),
             rel: if auto_rel { coef(0.1) } else { 1.0 - (-1.0 / ((p.release.unwrap_or(50.0) / 1000.0).max(0.005) * sr)).exp() },
+            glide: Glide::new(sr),
             makeup: 10f64.powf(makeup_db / 20.0),
             mix: (p.mix.unwrap_or(100.0) / 100.0).clamp(0.0, 1.0),
             red: 0.0,
@@ -824,6 +979,7 @@ impl Compressor {
         }
     }
     pub fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
+        self.glide.step(&mut self.mix, &mut self.makeup);
         let m = self.mode;
         let pk = x[..nc].iter().fold(0.0f64, |m, v| m.max(v.abs()));
         let mut lvl = pk;
@@ -891,6 +1047,7 @@ impl Ducker {
 }
 
 pub struct Delay {
+    glide: Glide,
     duck: Ducker,
     kh: f64,
     zh: [f64; 2],
@@ -925,6 +1082,8 @@ impl Delay {
         }
         self.i = 0;
     }
+    /// Valeurs de volume prises tout de suite, sans glisser
+    pub fn settle(&mut self) { self.glide.land(&mut self.wet, &mut self.dry); }
     /// Plugin : change les réglages en gardant les échos en cours (la mémoire est recopiée si le temps change)
     pub fn retune(&mut self, p: &DelayParams, sr: f64, bpm: f64) {
         let mut n = Self::new(p, sr, bpm);
@@ -938,6 +1097,13 @@ impl Delay {
             }
         }
         n.lp = self.lp;
+        n.zh = self.zh;
+        n.duck.env = self.duck.env;   // le ducking ne repart pas de zéro à chaque réglage
+        let (wet, dry) = (n.wet, n.dry);
+        n.wet = self.wet;
+        n.dry = self.dry;
+        n.glide = self.glide;
+        n.glide.aim(wet, dry);
         n.i = 0;
         if n.eq[0].len() == self.eq[0].len() {
             for ch in 0..2 { for (j, b) in n.eq[ch].iter_mut().enumerate() { let mut e = self.eq[ch][j]; e.retune(*b); *b = e; } }
@@ -952,6 +1118,7 @@ impl Delay {
         let d = ((time * sr).round() as usize).clamp(1, (4.0 * sr) as usize);
         let eq: Vec<Biquad> = p.eq.as_deref().unwrap_or(&[]).iter().filter(|b| b.on != Some(false)).flat_map(|b| eq_sections(b, sr)).collect();
         Self {
+            glide: Glide::new(sr),
             duck: Ducker::new(p.duck, sr),
             kh: p.hpf.filter(|h| *h > 20.0).map_or(0.0, |h| (-2.0 * PI * h / sr).exp()),
             zh: [0.0; 2],
@@ -981,6 +1148,7 @@ impl Delay {
     }
     /// Renvoie le nombre de canaux en sortie (le ping-pong rend toujours du stéréo).
     pub fn tick(&mut self, x: &mut [f64; 2], nc: usize) -> usize {
+        self.glide.step(&mut self.wet, &mut self.dry);
         if self.pp {
             // Même calcul que le worklet `pulse-delay` : la voix part à gauche, rebondit à droite, et ainsi de suite
             let (inl, inr) = (x[0], if nc > 1 { x[1] } else { x[0] });
@@ -1019,14 +1187,18 @@ pub struct Pitch {
     ph: f64,
     step: f64,
     mix: f64,
+    glide: Glide,
+    spare: f64,
 }
 
 impl Pitch {
+    /// Valeurs de volume prises tout de suite, sans glisser
+    pub fn settle(&mut self) { self.glide.land(&mut self.mix, &mut self.spare); }
     /// Plugin : nouveaux réglages, même mémoire (pas de trou dans le son)
     pub fn retune(&mut self, p: &PitchParams, sr: f64) {
         let n = Self::new(p, sr);
         self.step = n.step;
-        self.mix = n.mix;
+        self.glide.aim(n.mix, 0.0);
     }
     pub fn new(p: &PitchParams, sr: f64) -> Self {
         let semi = p.semi.unwrap_or(0.0).clamp(-12.0, 12.0);
@@ -1039,6 +1211,8 @@ impl Pitch {
             ph: 0.0,
             step: (1.0 - 2f64.powf(semi / 12.0)) / w,
             mix: (p.mix.unwrap_or(100.0) / 100.0).clamp(0.0, 1.0),
+            glide: Glide::new(sr),
+            spare: 0.0,
         }
     }
     fn read(b: &[f64], i: usize, d: f64) -> f64 {
@@ -1053,6 +1227,7 @@ impl Pitch {
         b[i0] + (b[i1] - b[i0]) * f
     }
     pub fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
+        self.glide.step(&mut self.mix, &mut self.spare);
         let p1 = self.ph;
         let p2 = (p1 + 0.5) % 1.0;
         let g1 = (PI * p1).sin().powi(2);
@@ -1084,6 +1259,7 @@ impl Line {
 
 /// Reverb : même calcul que le worklet `pulse-reverb` de audio.js (schéma Freeverb, sans hasard).
 pub struct Reverb {
+    glide: Glide,
     duck: Ducker,
     kl: f64,
     zl: f64,
@@ -1106,11 +1282,16 @@ pub struct Reverb {
 }
 
 impl Reverb {
-    /// Plugin : nouvelle quantité / taille, la queue de reverb continue
+    /// Valeurs de volume prises tout de suite, sans glisser
+    pub fn settle(&mut self) { self.glide.land(&mut self.wet, &mut self.out); }
+    /// Plugin : nouveaux réglages, la queue de reverb continue
     pub fn retune(&mut self, p: &ReverbParams, sr: f64) {
         let n = Self::new(p, sr);
-        self.wet = n.wet;
-        self.out = n.out;
+        self.duck.amt = n.duck.amt;   // l'enveloppe du ducking continue
+        self.kl = n.kl;
+        self.kh = n.kh;
+        if n.pre.len() != self.pre.len() { self.pre = n.pre; self.pi = 0; }
+        self.glide.aim(n.wet, n.out);
         self.fb = n.fb;
         self.damp = n.damp;
         self.width = n.width;
@@ -1125,6 +1306,7 @@ impl Reverb {
         let pre = ((p.pre.unwrap_or(0.0) / 1000.0).clamp(0.0, 0.5) * sr).round() as usize;
         let eq: Vec<Biquad> = p.eq.as_deref().unwrap_or(&[]).iter().filter(|b| b.on != Some(false)).flat_map(|b| eq_sections(b, sr)).collect();
         Self {
+            glide: Glide::new(sr),
             duck: Ducker::new(p.duck, sr),
             kl: p.low.filter(|l| *l > 20.0).map_or(0.0, |l| (-2.0 * PI * l / sr).exp()),
             zl: 0.0,
@@ -1144,6 +1326,7 @@ impl Reverb {
     }
     /// Entrée mono (`nc` = 1) ou stéréo ; la sortie est toujours stéréo.
     pub fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
+        self.glide.step(&mut self.wet, &mut self.out);
         let mono = nc < 2;
         let scale = if mono { std::f64::consts::FRAC_1_SQRT_2 } else { 1.0 };
         let (dry, wet) = ((1.0 - self.wet) * scale, self.wet * 3.0 * self.out * scale);
@@ -1659,82 +1842,89 @@ impl Chain {
     }
     fn apply_auto(&mut self, t: f64) {
         let mut comp_changed = false;
-        let mut cut_changed = false;
         for i in 0..self.auto.len() {
             let a = &self.auto[i];
             let n = a.curve.at(t).clamp(0.0, 1.0);
             let v = if a.log && a.min > 0.0 { a.min * (a.max / a.min).powf(n) } else { a.min + n * (a.max - a.min) };
             let (fx, key) = (a.fx.clone(), a.key.clone());
-            match (fx.as_str(), key.as_str()) {
-                ("comp", k) => {
-                    let p = &mut self.comp_p;
-                    match k { "threshold" => p.threshold = Some(v), "ratio" => p.ratio = Some(v), "mix" => p.mix = Some(v), "attack" => p.attack = Some(v),
-                        "release" => p.release = Some(v), "knee" => p.knee = Some(v), "makeup" => p.makeup = Some(v), _ => {} }
-                    comp_changed = true;
-                }
-                ("delay", k) => if let Some(d) = &mut self.delay {
-                    match k { "wet" => d.wet = (v / 100.0).clamp(0.0, 1.0), "dry" => d.dry = v / 100.0, "feedback" => d.fb = (v / 100.0).clamp(0.0, 0.9), _ => {} }
-                },
-                ("reverb", "wet") => if let Some(r) = &mut self.reverb { r.wet = (v / 100.0).clamp(0.0, 1.0); },
-                ("util", "gain") => if let Some(u) = &mut self.util { let sign = if u.g < 0.0 { -1.0 } else { 1.0 }; u.g = 10f64.powf(v / 20.0) * sign; },
-                ("width", "width") => if let Some(w) = &mut self.width { w.width = v / 100.0; },
-                ("deess", "thr") => if let Some(d) = &mut self.deess2 { d.thr = v; },
-                ("mband", k) => if let Some(m) = &mut self.mband {
-                    if let Some((i, f)) = k.strip_prefix('b').and_then(|r| r.split_once('-')) { if let Ok(i) = i.parse::<usize>() { m.set(i, f, v); } }
-                },
-                ("msat", k) => if let Some(m) = &mut self.msat { m.set(k, v); },
-                ("deess", "range") => if let Some(d) = &mut self.deess2 { d.range = v.clamp(0.0, 30.0); },
-                ("limit", k) => if let Some(l) = &mut self.limit {
-                    match k { "ceiling" => l.thr = 10f64.powf(v / 20.0).min(1.0), "gain" => l.g = 10f64.powf(v / 20.0),
-                        "release" => l.rel = 1.0 - (-1.0 / (v.clamp(1.0, 2000.0) * l.rm / 1000.0 * self.sr)).exp(), _ => {} }
-                },
-                ("deess", "amount") => if let Some(d) = &mut self.deess { let a = v.clamp(0.0, 100.0); d.max_red = a * 0.24; d.slope = a / 100.0 * 3.0; },
-                ("gate", k) => if let Some(g) = &mut self.gate {
-                    let sr = self.sr;
-                    match k { "threshold" => { g.thr = 10f64.powf(v / 20.0); g.thr_db = v; } "reduction" => { g.floor = 10f64.powf(-v / 20.0); g.range = v; }
-                        "release" => g.g_rel = 1.0 - (-1.0 / ((v / 1000.0).max(0.005) * sr)).exp(),
-                        "ratio" => g.ratio = if v >= 99.0 { 0.0 } else { v.max(1.0) }, "knee" => g.knee = v.max(0.0),
-                        "attack" => g.g_att = 1.0 - (-1.0 / ((v / 1000.0).max(0.0001) * sr)).exp(), "hold" => g.hold = (v.max(0.0) / 1000.0 * sr).round() as usize, _ => {} }
-                },
-                ("crush", k) => if let Some(c) = &mut self.crush {
-                    match k { "bits" => c.q = 2f64.powf(v - 1.0), "down" => c.down = (v.round() as usize).max(1), "mix" => c.mix = v / 100.0, _ => {} }
-                },
-                ("pitch", k) => if let Some(p) = &mut self.pitch {
-                    match k { "semi" => p.step = (1.0 - 2f64.powf(v.clamp(-12.0, 12.0) / 12.0)) / p.w, "mix" => p.mix = (v / 100.0).clamp(0.0, 1.0), _ => {} }
-                },
-                (m @ ("tremolo" | "phaser" | "flanger" | "chorus" | "doubler" | "slapback"), k) => {
-                    let st = match m { "tremolo" => Stage::Tremolo, "phaser" => Stage::Phaser, "flanger" => Stage::Flanger, "chorus" => Stage::Chorus, "doubler" => Stage::Doubler, _ => Stage::Slapback };
-                    if let Some((_, f)) = self.modfx.iter_mut().find(|(s2, _)| *s2 == st) {
-                        match k { "rate" => f.rate = v, "depth" => f.depth = v, "width" => f.width = v, "feedback" => f.fb = v / 100.0, "mix" => f.mix = v / 100.0, "time" => f.time = v / 1000.0, _ => {} }
-                    }
-                }
-                ("filter", "hpf") | ("filter", "lpf") => {
-                    let hp = key == "hpf";
-                    for (j, (is_hp, qdb)) in self.cut_kinds.iter().enumerate() {
-                        if *is_hp != hp { continue; }
-                        let b = if hp { Biquad::highpass(self.sr, v.min(20_000.0), *qdb) } else { Biquad::lowpass(self.sr, v.max(20.0), *qdb) };
-                        for ch in 0..2 { self.cut[j][ch].retune(b.clone()); }
-                    }
-                    cut_changed = true;
-                }
-                ("eq", k) => {
-                    let Some((idx, field)) = k.strip_prefix('b').and_then(|r| r.split_once('-')) else { continue };
-                    let Ok(bi) = idx.parse::<usize>() else { continue };
-                    let Some((bd, Some((fi, _)))) = self.eq_bands.get_mut(bi) else { continue };
-                    if field == "freq" { bd.freq = v } else { bd.gain = v }
-                    let fi = *fi;
-                    for (j, b) in eq_sections(bd, self.sr).into_iter().enumerate() {
-                        for ch in 0..2 { self.filters[fi + j][ch].retune(b.clone()); }
-                    }
-                }
-                _ => {}
-            }
+            comp_changed |= self.set_live(&fx, &key, v);
         }
-        let _ = cut_changed;
         if comp_changed {
             let p = self.comp_p.clone();
-            if let Some(c) = &mut self.comp { c.retune(&p, self.sr); }
+            if let Some(c) = &mut self.comp { c.retune(&p, self.sr); c.settle(); }
         }
+    }
+    /// Un réglage d'effet changé en direct (automation de Pulse, ou réglage d'un plugin), en unités du panneau de Pulse.
+    /// Renvoie vrai si le compresseur doit être recalculé (`retune`).
+    pub fn set_live(&mut self, fx: &str, key: &str, v: f64) -> bool {
+        let mut comp_changed = false;
+        let mut cut_changed = false;
+        match (fx, key) {
+            ("comp", k) => {
+                let p = &mut self.comp_p;
+                match k { "threshold" => p.threshold = Some(v), "ratio" => p.ratio = Some(v), "mix" => p.mix = Some(v), "attack" => p.attack = Some(v),
+                    "release" => p.release = Some(v), "knee" => p.knee = Some(v), "makeup" => p.makeup = Some(v), _ => {} }
+                comp_changed = true;
+            }
+            ("delay", k) => if let Some(d) = &mut self.delay {
+                match k { "wet" => d.wet = (v / 100.0).clamp(0.0, 1.0), "dry" => d.dry = v / 100.0, "feedback" => d.fb = (v / 100.0).clamp(0.0, 0.9), _ => {} }
+            },
+            ("reverb", "wet") => if let Some(r) = &mut self.reverb { r.wet = (v / 100.0).clamp(0.0, 1.0); },
+            ("util", "gain") => if let Some(u) = &mut self.util { let sign = if u.g < 0.0 { -1.0 } else { 1.0 }; u.g = 10f64.powf(v / 20.0) * sign; },
+            ("width", "width") => if let Some(w) = &mut self.width { w.width = v / 100.0; },
+            ("deess", "thr") => if let Some(d) = &mut self.deess2 { d.thr = v; },
+            ("mband", k) => if let Some(m) = &mut self.mband {
+                if let Some((i, f)) = k.strip_prefix('b').and_then(|r| r.split_once('-')) { if let Ok(i) = i.parse::<usize>() { m.set(i, f, v); } }
+            },
+            ("msat", k) => if let Some(m) = &mut self.msat { m.set(k, v); },
+            ("deess", "range") => if let Some(d) = &mut self.deess2 { d.range = v.clamp(0.0, 30.0); },
+            ("limit", k) => if let Some(l) = &mut self.limit {
+                match k { "ceiling" => l.thr = 10f64.powf(v / 20.0).min(1.0), "gain" => l.g = 10f64.powf(v / 20.0),
+                    "release" => l.rel = 1.0 - (-1.0 / (v.clamp(1.0, 2000.0) * l.rm / 1000.0 * self.sr)).exp(), _ => {} }
+            },
+            ("deess", "amount") => if let Some(d) = &mut self.deess { let a = v.clamp(0.0, 100.0); d.max_red = a * 0.24; d.slope = a / 100.0 * 3.0; },
+            ("gate", k) => if let Some(g) = &mut self.gate {
+                let sr = self.sr;
+                match k { "threshold" => { g.thr = 10f64.powf(v / 20.0); g.thr_db = v; } "reduction" => { g.floor = 10f64.powf(-v / 20.0); g.range = v; }
+                    "release" => g.g_rel = 1.0 - (-1.0 / ((v / 1000.0).max(0.005) * sr)).exp(),
+                    "ratio" => g.ratio = if v >= 99.0 { 0.0 } else { v.max(1.0) }, "knee" => g.knee = v.max(0.0),
+                    "attack" => g.g_att = 1.0 - (-1.0 / ((v / 1000.0).max(0.0001) * sr)).exp(), "hold" => g.hold = (v.max(0.0) / 1000.0 * sr).round() as usize, _ => {} }
+            },
+            ("crush", k) => if let Some(c) = &mut self.crush {
+                match k { "bits" => c.q = 2f64.powf(v - 1.0), "down" => c.down = (v.round() as usize).max(1), "mix" => c.mix = v / 100.0, _ => {} }
+            },
+            ("pitch", k) => if let Some(p) = &mut self.pitch {
+                match k { "semi" => p.step = (1.0 - 2f64.powf(v.clamp(-12.0, 12.0) / 12.0)) / p.w, "mix" => p.mix = (v / 100.0).clamp(0.0, 1.0), _ => {} }
+            },
+            (m @ ("tremolo" | "phaser" | "flanger" | "chorus" | "doubler" | "slapback"), k) => {
+                let st = match m { "tremolo" => Stage::Tremolo, "phaser" => Stage::Phaser, "flanger" => Stage::Flanger, "chorus" => Stage::Chorus, "doubler" => Stage::Doubler, _ => Stage::Slapback };
+                if let Some((_, f)) = self.modfx.iter_mut().find(|(s2, _)| *s2 == st) {
+                    match k { "rate" => f.rate = v, "depth" => f.depth = v, "width" => f.width = v, "feedback" => f.fb = v / 100.0, "mix" => f.mix = v / 100.0, "time" => f.time = v / 1000.0, _ => {} }
+                }
+            }
+            ("filter", "hpf") | ("filter", "lpf") => {
+                let hp = key == "hpf";
+                for (j, (is_hp, qdb)) in self.cut_kinds.iter().enumerate() {
+                    if *is_hp != hp { continue; }
+                    let b = if hp { Biquad::highpass(self.sr, v.min(20_000.0), *qdb) } else { Biquad::lowpass(self.sr, v.max(20.0), *qdb) };
+                    for ch in 0..2 { self.cut[j][ch].retune(b.clone()); }
+                }
+                cut_changed = true;
+            }
+            ("eq", k) => {
+                let Some((idx, field)) = k.strip_prefix('b').and_then(|r| r.split_once('-')) else { return false };
+                let Ok(bi) = idx.parse::<usize>() else { return false };
+                let Some((bd, Some((fi, _)))) = self.eq_bands.get_mut(bi) else { return false };
+                if field == "freq" { bd.freq = v } else { bd.gain = v }
+                let fi = *fi;
+                for (j, b) in eq_sections(bd, self.sr).into_iter().enumerate() {
+                    for ch in 0..2 { self.filters[fi + j][ch].retune(b.clone()); }
+                }
+            }
+            _ => {}
+        }
+        let _ = cut_changed;
+        comp_changed
     }
     pub fn with_order(mut self, custom: &[String]) -> Self {
         self.order = Stage::order(custom);
@@ -1984,6 +2174,7 @@ pub struct Limiter {
     m_in: f64,
     m_out: f64,
     m_gr: f64,
+    glide: Glide,
 }
 
 impl Limiter {
@@ -2021,9 +2212,37 @@ impl Limiter {
             att: 1.0 - (-an / base as f64).exp(),
             rel: 1.0 - (-1.0 / (p.release.unwrap_or(120.0).clamp(1.0, 2000.0) * rm / 1000.0 * sr)).exp(),
             m_in: 0.0, m_out: 0.0, m_gr: 1.0,
+            glide: Glide::new(sr),
         }
     }
+    /// Plugin : afficheur (crête d'entrée, crête de sortie, gain le plus bas) depuis la dernière lecture
+    pub fn meter_take(&mut self) -> [f32; 3] { self.take_meter() }
+    /// Le son d'origine qui sortira au prochain `tick` (même retard, sans gain ni limitation) : bypass sans décalage
+    pub fn delayed(&self, _x: &[f64; 2]) -> [f64; 2] {
+        let g = if self.g > 0.0 { self.g } else { 1.0 };
+        [self.buf[0][self.i] / g, self.buf[1][self.i] / g]
+    }
+    /// Retard du limiteur (anticipation + pic réel), en échantillons : le logiciel hôte le compense
+    pub fn latency(&self) -> usize { self.buf[0].len() }
+    /// Plugin : nouveaux réglages sans repartir de zéro ; plafond et gain d'entrée glissent en ~10 ms (pas de clic).
+    /// Si l'anticipation change, la mémoire change de taille (le retard aussi).
+    pub fn retune(&mut self, p: &crate::model::LimitParams, ceiling_db: f64, sr: f64) {
+        let mut n = Self::with(p, ceiling_db, sr);
+        let (thr, g) = (n.thr, n.g);
+        n.thr = self.thr;
+        n.g = self.g;
+        n.glide = self.glide;
+        n.glide.aim(thr, g);
+        n.env = self.env;
+        n.gain = self.gain;
+        n.gain1 = self.gain1;
+        n.m_in = self.m_in; n.m_out = self.m_out; n.m_gr = self.m_gr;
+        if n.tp == self.tp { n.hist = self.hist; }
+        if n.buf[0].len() == self.buf[0].len() { n.buf = std::mem::take(&mut self.buf); n.i = self.i; }
+        *self = n;
+    }
     pub fn tick(&mut self, x: &mut [f64; 2]) {
+        self.glide.step(&mut self.thr, &mut self.g);
         x[0] *= self.g;
         x[1] *= self.g;
         let mut pk = x[0].abs().max(x[1].abs());
@@ -2221,6 +2440,225 @@ mod tests_pitch_pingpong {
             if (4_780..4_820).contains(&n) { seen = seen.max(x[0].abs()); }
         }
         assert!(seen > 0.3, "l'écho a disparu au changement de réglage ({seen})");
+    }
+
+    #[test]
+    fn retune_reverb_applique_tout() {
+        // Plugin : chaque réglage tourné (pré-délai, ducking, grave, aigu, brillance, largeur…) doit s'entendre
+        // tout de suite : une reverb « retouchée » au départ sonne comme une reverb neuve avec ces réglages.
+        let sr = 48_000.0;
+        let a = ReverbParams { wet: Some(30.0), ..Default::default() };
+        let b = ReverbParams { wet: Some(40.0), size: Some(3.0), decay: Some(3.5), pre: Some(60.0), duck: Some(70.0), low: Some(300.0),
+            high: Some(6000.0), bright: Some(80.0), width: Some(140.0), ..Default::default() };
+        let mut r1 = Reverb::new(&a, sr);
+        r1.retune(&b, sr);
+        r1.settle();
+        let mut r2 = Reverb::new(&b, sr);
+        for n in 0..24_000 {
+            let v = (2.0 * PI * 220.0 * n as f64 / sr).sin() * if n < 6_000 { 0.8 } else { 0.0 };
+            let (mut x1, mut x2) = ([v, -v * 0.5], [v, -v * 0.5]);
+            r1.tick(&mut x1, 2);
+            r2.tick(&mut x2, 2);
+            assert!((x1[0] - x2[0]).abs() < 1e-12 && (x1[1] - x2[1]).abs() < 1e-12, "échantillon {n} : un réglage n'a pas été pris");
+        }
+    }
+
+    #[test]
+    fn retune_echo_applique_tout() {
+        let sr = 48_000.0;
+        let a = DelayParams { wet: Some(25.0), beats: Some(0.5), ..Default::default() };
+        let b = DelayParams { wet: Some(60.0), feedback: Some(55.0), beats: Some(0.5), dry: Some(70.0), duck: Some(50.0), hpf: Some(400.0), lpf: Some(2500.0), ..Default::default() };
+        let mut d1 = Delay::new(&a, sr, 120.0);
+        d1.retune(&b, sr, 120.0);
+        d1.settle();
+        let mut d2 = Delay::new(&b, sr, 120.0);
+        for n in 0..48_000 {
+            let v = (2.0 * PI * 330.0 * n as f64 / sr).sin() * if n < 4_000 { 0.8 } else { 0.0 };
+            let (mut x1, mut x2) = ([v, v], [v, v]);
+            d1.tick(&mut x1, 2);
+            d2.tick(&mut x2, 2);
+            assert!((x1[0] - x2[0]).abs() < 1e-12 && (x1[1] - x2[1]).abs() < 1e-12, "échantillon {n} : un réglage n'a pas été pris");
+        }
+    }
+
+    #[test]
+    fn retune_comp_et_pitch_appliquent_tout() {
+        let sr = 48_000.0;
+        let ca = CompParams { threshold: Some(-10.0), ..Default::default() };
+        let cb = CompParams { mode: Some(2.0), threshold: Some(-30.0), ratio: Some(8.0), mix: Some(70.0), attack: Some(1.0), release: Some(300.0),
+            auto_rel: Some(0.0), knee: Some(3.0), makeup: Some(4.0) };
+        let (mut c1, mut c2) = (Compressor::new(&ca, sr), Compressor::new(&cb, sr));
+        c1.retune(&cb, sr);
+        c1.settle();
+        let pa = PitchParams { semi: Some(3.0), mix: Some(100.0) };
+        let pb = PitchParams { semi: Some(-5.0), mix: Some(60.0) };
+        let (mut p1, mut p2) = (Pitch::new(&pa, sr), Pitch::new(&pb, sr));
+        p1.retune(&pb, sr);
+        p1.settle();
+        for n in 0..24_000 {
+            let v = (2.0 * PI * 220.0 * n as f64 / sr).sin() * 0.8;
+            let (mut a, mut b) = ([v, v * 0.3], [v, v * 0.3]);
+            c1.tick(&mut a, 2); c2.tick(&mut b, 2);
+            assert!((a[0] - b[0]).abs() < 1e-12 && (a[1] - b[1]).abs() < 1e-12, "compresseur, échantillon {n}");
+            let (mut a, mut b) = ([v, v], [v, v]);
+            p1.tick(&mut a, 2); p2.tick(&mut b, 2);
+            assert!((a[0] - b[0]).abs() < 1e-12 && (a[1] - b[1]).abs() < 1e-12, "pitch, échantillon {n}");
+        }
+    }
+
+    #[test]
+    fn reglage_tourne_sans_clic() {
+        // Plugin : Quantité / Mélange poussés d'un coup en pleine note : le son glisse, il ne saute pas
+        let sr = 48_000.0;
+        let note = |n: usize| 0.5 * (2.0 * PI * 220.0 * n as f64 / sr).sin();
+        let max_jump = |f: &mut dyn FnMut(usize, &mut [f64; 2])| {
+            let (mut prev, mut j) = (0.0f64, 0.0f64);
+            for n in 0..48_000 { let mut x = [note(n), note(n)]; f(n, &mut x); if n > 0 { j = j.max((x[0] - prev).abs()); } prev = x[0]; }
+            j
+        };
+        let calm = 2.0 * PI * 220.0 / sr * 0.5 * 1.6;   // pente de la note elle-même (avec un peu de marge pour l'effet)
+        let mut d = Delay::new(&DelayParams { wet: Some(0.0), beats: Some(0.5), ..Default::default() }, sr, 120.0);
+        let j = max_jump(&mut |n, x| { if n == 24_000 { d.retune(&DelayParams { wet: Some(100.0), dry: Some(0.0), beats: Some(0.5), ..Default::default() }, sr, 120.0); } d.tick(x, 2); });
+        assert!(j < calm * 1.5, "écho : saut de {j:.3}");
+        let mut c = Compressor::new(&CompParams { mix: Some(0.0), ..Default::default() }, sr);
+        let j = max_jump(&mut |n, x| { if n == 24_000 { c.retune(&CompParams { mix: Some(100.0), threshold: Some(-30.0), ..Default::default() }, sr); } c.tick(x, 2); });
+        assert!(j < calm * 1.5, "compresseur : saut de {j:.3}");
+        let mut p = Pitch::new(&PitchParams { semi: Some(5.0), mix: Some(0.0) }, sr);
+        let j = max_jump(&mut |n, x| { if n == 24_000 { p.retune(&PitchParams { semi: Some(5.0), mix: Some(100.0) }, sr); } p.tick(x, 2); });
+        assert!(j < calm * 1.5, "pitch : saut de {j:.3}");
+        let mut r = Reverb::new(&ReverbParams { wet: Some(0.0), ..Default::default() }, sr);
+        let j = max_jump(&mut |n, x| { if n == 24_000 { r.retune(&ReverbParams { wet: Some(100.0), ..Default::default() }, sr); } r.tick(x, 2); });
+        assert!(j < calm * 3.0, "reverb : saut de {j:.3}");
+    }
+
+    #[test]
+    fn limiteur_retune() {
+        // Plugin : changer le relâchement ou le style garde la mémoire (même son qu'un limiteur neuf, une fois posé),
+        // et monter le gain d'entrée d'un coup ne claque pas
+        let sr = 48_000.0;
+        let a = crate::model::LimitParams { tp: Some(1.0), ..Default::default() };
+        let b = crate::model::LimitParams { tp: Some(1.0), release: Some(400.0), style: Some(1.0), ..Default::default() };
+        let (mut l1, mut l2) = (Limiter::with(&a, -1.0, sr), Limiter::with(&b, -1.0, sr));
+        l1.retune(&b, -1.0, sr);
+        assert_eq!(l1.latency(), l2.latency());
+        for n in 0..24_000 {
+            let v = (2.0 * PI * 110.0 * n as f64 / sr).sin() * 1.4;
+            let (mut x1, mut x2) = ([v, v], [v, v]);
+            l1.tick(&mut x1); l2.tick(&mut x2);
+            assert!((x1[0] - x2[0]).abs() < 1e-12, "échantillon {n}");
+        }
+        let mut l = Limiter::with(&a, -1.0, sr);
+        let (mut prev, mut jump) = (0.0f64, 0.0f64);
+        for n in 0..48_000 {
+            if n == 24_000 { l.retune(&crate::model::LimitParams { tp: Some(1.0), gain: Some(12.0), ..Default::default() }, -1.0, sr); }
+            let mut x = [(2.0 * PI * 220.0 * n as f64 / sr).sin() * 0.2; 2];
+            l.tick(&mut x);
+            if n > 200 { jump = jump.max((x[0] - prev).abs()); }
+            prev = x[0];
+        }
+        assert!(jump < 0.05, "saut de {jump:.3} quand le gain d'entrée monte");
+    }
+
+    #[test]
+    fn deesser_retune_et_ecoute() {
+        use crate::model::DeessParams;
+        let sr = 48_000.0;
+        // une voix simplifiée : grave + « s » (bruit aigu) qui revient
+        let mut seed = 1u32;
+        let mut sig = |n: usize| {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let s = if (n / 6000) % 2 == 1 { (seed as f64 / u32::MAX as f64 - 0.5) * 0.6 } else { 0.0 };
+            0.3 * (2.0 * PI * 180.0 * n as f64 / sr).sin() + s
+        };
+        let a = DeessParams { thr: Some(-26.0), ..Default::default() };
+        let b = DeessParams { thr: Some(-40.0), range: Some(18.0), lo: Some(4000.0), hi: Some(12000.0), rel: Some(true), wide: Some(true), ..Default::default() };
+        let (mut d1, mut d2) = (DeesserV2::new(&a, sr), DeesserV2::new(&b, sr));
+        d1.retune(&b, sr);
+        d1.settle();
+        let input: Vec<f64> = (0..48_000).map(&mut sig).collect();
+        for (n, v) in input.iter().enumerate() {
+            let (mut x1, mut x2) = ([*v, *v], [*v, *v]);
+            d1.process(&mut x1, 2); d2.process(&mut x2, 2);
+            assert!((x1[0] - x2[0]).abs() < 1e-12, "échantillon {n} : un réglage n'a pas été pris");
+        }
+        // « Écouter » : on n'entend plus le grave (180 Hz), et le passage glisse
+        let mut d = DeesserV2::new(&a, sr);
+        let (mut lo_after, mut prev, mut jump) = (0.0f64, 0.0f64, 0.0f64);
+        for n in 0..24_000 {
+            if n == 12_000 { d.set_listen(true); }
+            let v = 0.3 * (2.0 * PI * 180.0 * n as f64 / sr).sin();
+            let mut x = [v, v];
+            d.process(&mut x, 2);
+            if n > 0 { jump = jump.max((x[0] - prev).abs()); }
+            prev = x[0];
+            if n > 18_000 { lo_after = lo_after.max(x[0].abs()); }
+        }
+        assert!(lo_after < 0.01, "en écoute, la voix reste : {lo_after}");
+        assert!(jump < 0.02, "saut de {jump}");
+    }
+
+    #[test]
+    fn gate_retune_et_ecoute() {
+        let sr = 48_000.0;
+        let a = GateParams { threshold: Some(-45.0), ..Default::default() };
+        let b = GateParams { threshold: Some(-30.0), reduction: Some(20.0), ratio: Some(4.0), knee: Some(6.0), attack: Some(5.0), hold: Some(80.0), release: Some(300.0), hp: Some(120.0), lp: Some(8000.0) };
+        let (mut g1, mut g2) = (Gate::new(&a, sr), Gate::new(&b, sr));
+        g1.retune(&b, sr);
+        for n in 0..48_000 {
+            let v = (2.0 * PI * 200.0 * n as f64 / sr).sin() * if (n / 8000) % 2 == 0 { 0.5 } else { 0.004 };
+            let (mut x1, mut x2) = ([v, v], [v, v]);
+            g1.process(&mut x1, 2); g2.process(&mut x2, 2);
+            assert!((x1[0] - x2[0]).abs() < 1e-12, "échantillon {n}");
+        }
+        // « Écouter » avec un coupe-bas à 1 kHz : le 200 Hz disparaît, en glissant
+        let mut g = Gate::new(&GateParams { hp: Some(1000.0), ..Default::default() }, sr);
+        let (mut prev, mut jump, mut after) = (0.0f64, 0.0f64, 0.0f64);
+        for n in 0..24_000 {
+            if n == 12_000 { g.set_listen(true); }
+            let mut x = [(2.0 * PI * 200.0 * n as f64 / sr).sin() * 0.5; 2];
+            g.process(&mut x, 2);
+            if n > 0 { jump = jump.max((x[0] - prev).abs()); }
+            prev = x[0];
+            if n > 18_000 { after = after.max(x[0].abs()); }
+        }
+        assert!(after < 0.05, "en écoute, le grave reste : {after}");
+        assert!(jump < 0.03, "saut de {jump}");
+    }
+
+    #[test]
+    fn multibande_tranches_justes() {
+        use crate::model::{MbandBand, MbandParams};
+        let sr = 48_000.0;
+        let rms_of = |mb: &mut MultiBand, f: f64| {
+            let (mut si, mut so) = (0.0, 0.0);
+            for n in 0..48_000 {
+                let v = (2.0 * PI * f * n as f64 / sr).sin() * 0.3;
+                let mut x = [v, v];
+                mb.tick(&mut x, 2);
+                if n >= 24_000 { si += v * v; so += x[0] * x[0]; }
+            }
+            20.0 * (so / si).sqrt().log10()
+        };
+        let band = |lo: f64, hi: f64, mute: bool| MbandBand { lo: Some(lo), hi: Some(hi), thr: Some(0.0), range: Some(0.0), mute: Some(mute), ..Default::default() };
+        // bandes au repos : le volume ne bouge à aucune fréquence (tranches recollées)
+        for f in [40.0, 150.0, 700.0, 3000.0, 12_000.0] {
+            let mut mb = MultiBand::new(&MbandParams { bands: vec![band(100.0, 500.0, false), band(500.0, 4000.0, false), band(2000.0, 8000.0, false)] }, sr).unwrap();
+            let d = rms_of(&mut mb, f);
+            assert!(d.abs() < 0.01, "{f} Hz : {d:.3} dB au repos");
+        }
+        // une bande muette disparaît vraiment (et seulement elle)
+        let mut mb = MultiBand::new(&MbandParams { bands: vec![band(1000.0, 20000.0, true)] }, sr).unwrap();
+        let d = rms_of(&mut mb, 5000.0);
+        assert!(d < -50.0, "5 kHz dans une bande muette : {d:.1} dB");
+        let mut mb = MultiBand::new(&MbandParams { bands: vec![band(1000.0, 20000.0, true)] }, sr).unwrap();
+        let d = rms_of(&mut mb, 100.0);
+        assert!(d.abs() < 0.05, "100 Hz hors de la bande muette : {d:.2} dB");
+        // une bande en solo : on n'entend qu'elle
+        let mut solo = band(200.0, 2000.0, false); solo.solo = Some(true);
+        let mut mb = MultiBand::new(&MbandParams { bands: vec![solo.clone()] }, sr).unwrap();
+        assert!(rms_of(&mut mb, 8000.0) < -40.0, "solo : 8 kHz doit disparaître");
+        let mut mb = MultiBand::new(&MbandParams { bands: vec![solo] }, sr).unwrap();
+        assert!(rms_of(&mut mb, 700.0).abs() < 0.3, "solo : 700 Hz doit rester");
     }
 
     #[test]
