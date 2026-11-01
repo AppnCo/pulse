@@ -10578,7 +10578,9 @@ function openClipGainPanel(trackIdx, clipIdx) {
 
     const sl = panel.querySelector('#clipGainSlider');
     const vl = panel.querySelector('#clipGainVal');
+    let gainUndo = false;   // ⌘Z revient au volume d'AVANT le geste
     sl.addEventListener('input', () => {
+        if (!gainUndo) { pushUndo(); gainUndo = true; }
         const db = parseFloat(sl.value);
         vl.textContent = `${db.toFixed(1)} dB`;
         const gain = db <= -24 ? 0 : Math.pow(10, db / 20);
@@ -10598,9 +10600,9 @@ function openClipGainPanel(trackIdx, clipIdx) {
         }
         saveProject();
     });
-    sl.addEventListener('change', () => { pushUndo(); renderTimelineTracks(); });
+    sl.addEventListener('change', () => { gainUndo = false; renderTimelineTracks(); saveProject(); refreshPlaybackSoon(); });
     panel.querySelector('#clipGainReset').addEventListener('click', () => {
-        pushUndo(); acted.forEach(c => { delete c.gain; }); renderTimelineTracks(); saveProject(); panel.remove();
+        pushUndo(); acted.forEach(c => { delete c.gain; }); renderTimelineTracks(); saveProject(); refreshPlaybackSoon(); panel.remove();
         flash('Volume du clip remis comme à l\'origine');
     });
     panel.querySelector('.fx-panel-close').addEventListener('click', () => panel.remove());
@@ -12890,6 +12892,7 @@ function getSnapLine() {
 }
 
 // === Renommer un clip inline ===
+const trackOfClip = (c) => state.project.tracks.findIndex(t => (t.clips || []).includes(c));
 function startClipRename(trackIdx, clipIdx) {
     const t = state.project.tracks[trackIdx];
     const clip = t.clips[clipIdx];
@@ -12907,10 +12910,14 @@ function startClipRename(trackIdx, clipIdx) {
     sel.removeAllRanges();
     sel.addRange(range);
 
+    // Comme Logic : plusieurs régions choisies prennent toutes le nom ; un nom qui finit par un nombre est numéroté dans l'ordre (Couplet 1, Couplet 2…)
+    const group = clipsActedOn(trackIdx, clipIdx).slice().sort((a, b) => a.start - b.start || trackOfClip(a) - trackOfClip(b));
     const commit = () => {
-        const txt = nameEl.textContent.replace(/⚠.*$/, '').trim();
-        clip.name = txt || 'Clip';
+        const txt = nameEl.textContent.replace(/⚠.*$/, '').trim() || 'Clip';
         nameEl.removeAttribute('contenteditable');
+        const m = group.length > 1 && txt.match(/^(.*?)(\d+)$/);
+        const names = group.map((c, k) => m ? m[1] + String(parseInt(m[2], 10) + k).padStart(m[2].length, '0') : txt);
+        if (group.some((c, k) => c.name !== names[k])) { pushUndo(); group.forEach((c, k) => { c.name = names[k]; }); }
         renderTimelineTracks();
         saveProject();
     };
