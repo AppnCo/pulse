@@ -4837,6 +4837,21 @@ function toggleSolo(trackIdx, exclusiveMode = false) {
     saveProject();
 }
 
+// M / S au clavier sur plusieurs pistes choisies : toutes prennent le même état (l'inverse de la piste active), comme Logic
+function setTracksFlag(key) {
+    const idxs = selectedTrackIdxs().filter(i => state.project.tracks[i]);
+    if (!idxs.length) return;
+    const lead = state.project.tracks[state.selectedTrack] || state.project.tracks[idxs[0]];
+    const want = !lead[key];
+    idxs.forEach(i => { state.project.tracks[i][key] = want; });
+    document.querySelectorAll('.track-item').forEach(el => {
+        const t = state.project.tracks[parseInt(el.dataset.i)]; if (!t) return;
+        const b = el.querySelector(key === 'muted' ? '.m-m' : '.m-s'); if (b) b.classList.toggle('active', !!t[key]);
+    });
+    PulseAudio.refreshAudibility(state.project);
+    if (state.mixerOpen) { renderMixer(); bindMixerEvents(); }
+    saveProject();
+}
 function clearAllSolos() {
     state.project.tracks.forEach(t => t.solo = false);
     document.querySelectorAll('.track-item .m-s').forEach(btn => btn.classList.remove('active'));
@@ -10828,13 +10843,29 @@ function openTrackContextMenu(x, y, idx, t) {
     const menu = document.createElement('div');
     menu.className = 'track-ctx-menu';
     menu.style.cssText = `position:fixed;left:${x}px;top:${y}px;z-index:200;`;
+    // Comme Logic : clic droit sur une des pistes choisies = la commande vaut pour toutes les pistes choisies
+    const mtg = ctxTargets(state.project.tracks.indexOf(t)), mts = mtg.map(i => state.project.tracks[i]).filter(Boolean), mn = mts.length;
+    const plural = (one, many) => mn > 1 ? `${many} (${mn} pistes)` : one;
+    const onAll = (fn) => asOneUndo(() => { mts.forEach(fn); });
+    const phaseOn = (x) => !!(x.effectParams && x.effectParams.util && x.effectParams.util.invert);
     const items = [
         { label: 'Renommer',          action: () => { const el = document.querySelector(`.track-name[data-i="${idx}"]`); if (el) { el.classList.add('editing'); el.focus(); document.execCommand('selectAll'); } } },
-        { label: 'Dupliquer (sans clips)', action: () => duplicateTrack(idx) },
-        t.isCapture ? null : { label: 'Supprimer la piste', action: () => { state.selectedTrack = idx; deleteSelectedTrack(); }, danger: true },
+        { label: plural('Dupliquer (sans clips)', 'Dupliquer (sans clips)'), action: () => {
+            if (mn === 1) { duplicateTrack(idx); return; }
+            asOneUndo(() => { [...mtg].sort((a, b) => b - a).forEach(i => duplicateTrack(i)); });
+        } },
+        t.isCapture ? null : { label: plural('Supprimer la piste', 'Supprimer les pistes'), action: () => {
+            state.selectedTrack = idx;
+            if (mn === 1) state.selectedTracks = new Set();   // piste hors sélection : elle seule (jamais les autres pistes choisies avant)
+            deleteSelectedTrack();
+        }, danger: true },
         { sep: true },
-        { label: t.muted ? 'Désactiver Mute'  : 'Mute',  action: () => toggleMute(idx) },
-        { label: t.solo  ? 'Désactiver Solo'  : 'Solo',  action: () => toggleSolo(idx) },
+        { label: plural(t.muted ? 'Désactiver Mute' : 'Mute', t.muted ? 'Désactiver Mute' : 'Mute'), action: () => {
+            const want = !t.muted; mts.forEach(x => { x.muted = want; }); PulseAudio.refreshAudibility(state.project); renderTracksPanel(); bindTrackEvents(); saveProject();
+        } },
+        { label: plural(t.solo ? 'Désactiver Solo' : 'Solo', t.solo ? 'Désactiver Solo' : 'Solo'), action: () => {
+            const want = !t.solo; mts.forEach(x => { x.solo = want; }); PulseAudio.refreshAudibility(state.project); renderTracksPanel(); bindTrackEvents(); saveProject();
+        } },
         { label: t.armed ? 'Ne plus enregistrer ici': 'Enregistrer sur cette piste', action: () => {
             if (t.type === 'keys' || t.type === 'drums') { flash('Cette piste joue des notes : pour enregistrer ta voix, ajoute une piste « Ma voix » avec le bouton +'); return; }
             if (t.armed) t.armed = false; else armTrackExclusive(state.project.tracks.indexOf(t));
@@ -10879,17 +10910,29 @@ function openTrackContextMenu(x, y, idx, t) {
         (t.type === 'audio' || !t.type) && !t.isCapture && !isInstruTrack(t)
             ? { label: t.autotune && t.autotune.on ? 'Auto-Tune de la piste (modifier ou retirer)…' : 'Auto-Tune de la piste…', action: () => { const ti = state.project.tracks.indexOf(t); const el = document.querySelector(`.track-item[data-i="${ti}"]`); const r = el ? el.getBoundingClientRect() : { right: 300, top: 120 }; openTunePanel(ti, -1, r.right + 8, r.top, true); } }
             : null,
-            { label: (t.effectParams && t.effectParams.util && t.effectParams.util.invert) ? 'Phase : remettre normale (Ø)' : 'Inverser la phase (Ø)', action: () => toggleTrackPhase(t) },
-            t.frozen ? { label: '❄ Dégeler la piste', action: () => unfreezeTrack(t) }
-            : !t.isCapture && (t.clips || []).some(c => !c.recording) ? { label: '❄ Geler la piste (soulage l\'ordinateur)', action: () => freezeTrack(t) } : null
+            { label: plural(phaseOn(t) ? 'Phase : remettre normale (Ø)' : 'Inverser la phase (Ø)', phaseOn(t) ? 'Phase : remettre normale (Ø)' : 'Inverser la phase (Ø)'), action: () => {
+                if (mn === 1) { toggleTrackPhase(t); return; }
+                const want = !phaseOn(t); onAll(x => { if (phaseOn(x) !== want) toggleTrackPhase(x); });
+            } },
+            t.frozen ? { label: plural('❄ Dégeler la piste', '❄ Dégeler les pistes'), action: () => { if (mn === 1) unfreezeTrack(t); else onAll(x => { if (x.frozen) unfreezeTrack(x); }); } }
+            : !t.isCapture && (t.clips || []).some(c => !c.recording) ? { label: plural('❄ Geler la piste (soulage l\'ordinateur)', '❄ Geler les pistes (soulage l\'ordinateur)'), action: async () => {
+                if (mn === 1) { freezeTrack(t); return; }
+                await asOneUndo(async () => { for (const x of mts) if (!x.frozen && !x.isCapture && (x.clips || []).some(c => !c.muted && !c.recording)) await freezeTrack(x); });
+            } } : null
         ]},
         { label: 'Réglages', children: [
-            { label: t.locked ? 'Déverrouiller la piste' : 'Verrouiller la piste', action: () => toggleTrackLocked(t) },
-            { label: t.hidden ? 'Afficher la piste' : 'Masquer la piste', action: () => toggleTrackHidden(t) },
+            { label: plural(t.locked ? 'Déverrouiller la piste' : 'Verrouiller la piste', t.locked ? 'Déverrouiller les pistes' : 'Verrouiller les pistes'), action: () => {
+                if (mn === 1) { toggleTrackLocked(t); return; }
+                const want = !t.locked; onAll(x => { if (!x.frozen && !!x.locked !== want) toggleTrackLocked(x); });
+            } },
+            { label: plural(t.hidden ? 'Afficher la piste' : 'Masquer la piste', t.hidden ? 'Afficher les pistes' : 'Masquer les pistes'), action: () => {
+                if (mn === 1) { toggleTrackHidden(t); return; }
+                const want = !t.hidden; onAll(x => { if (!!x.hidden !== want) toggleTrackHidden(x); });
+            } },
             { label: t.notes ? 'Notes de la piste (modifier)…' : 'Notes de la piste…', action: () => openTrackNotesPanel(t, x, y) },
             { label: t.delayMs ? `Délai de piste : ${t.delayMs > 0 ? '+' : ''}${String(t.delayMs).replace('.', ',')} ms…` : 'Délai de piste…', action: () => openTrackDelayPanel(t, x, y) }
         ]},
-        { label: 'Changer la couleur', submenu: COLORS.map(c => ({ color: c, action: () => { pushUndo(); t.color = c; renderAll(); saveProject(); } })) }
+        { label: plural('Changer la couleur', 'Changer la couleur'), submenu: COLORS.map(c => ({ color: c, action: () => { pushUndo(); mts.forEach(x => { x.color = c; }); renderAll(); saveProject(); } })) }
     ].filter(Boolean);
 
     items.forEach(item => {
@@ -11677,6 +11720,7 @@ function bindTrackEvents() {
         btn.addEventListener('click', e => {
             e.stopPropagation();
             const i = parseInt(btn.dataset.del);
+            if (ctxTargets(i).length === 1) state.selectedTracks = new Set();   // piste hors sélection : elle seule
             state.selectedTrack = i;
             deleteSelectedTrack();
         });
@@ -11715,9 +11759,17 @@ function bindTrackEvents() {
         const apply = (v, persist) => {
             const t = state.project.tracks[i]; if (!t) return;
             v = Math.max(-100, Math.min(100, Math.round(v)));
+            const prev = t.pan || 0;
             t.pan = v; paint(v);
             PulseAudio.updateTrackPan(i, v);
             syncTrackPan(i);
+            // pistes choisies : elles bougent du même écart (comme Logic et l'inspecteur)
+            const sel = selectedTrackIdxs();
+            if (sel.length > 1 && sel.includes(i) && v !== prev) sel.filter(j => j !== i).forEach(j => {
+                const o = state.project.tracks[j]; if (!o || o.locked) return;
+                o.pan = Math.max(-100, Math.min(100, (o.pan || 0) + (v - prev)));
+                PulseAudio.updateTrackPan(j, o.pan); syncTrackPan(j);
+            });
             if (persist) {
                 saveProject();
                 if (state.mixerOpen) { renderMixer(); bindMixerEvents(); }   // même réglage dans le mixer
@@ -14396,10 +14448,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (mod && k === 'q') { e.preventDefault(); quitApp(); return; }
 
         // Piste sélectionnée
-        if (k === 's' && !mod && !e.altKey) { e.preventDefault(); selectedTrackIdxs().forEach(i => toggleSolo(i)); return; }   // S = solo / désolo de la piste choisie (M = mute)
+        if (k === 's' && !mod && !e.altKey) { e.preventDefault(); setTracksFlag('solo'); return; }   // S = solo / désolo de la piste choisie (M = mute)
         if (e.altKey && e.code === 'KeyC' && !mod) { e.preventDefault(); openColorPanel(); return; }   // ⌥C = panneau de couleurs (⌥+C donne « ç » sur Mac)
-        if (e.altKey && e.code === 'KeyS' && !mod) { e.preventDefault(); selectedTrackIdxs().forEach(i => toggleSolo(i)); return; }  // ⌥S = solo (⌥+S donne « ß » sur Mac)
-        if (k === 'm') { selectedTrackIdxs().forEach(i => toggleMute(i)); return; }
+        if (e.altKey && e.code === 'KeyS' && !mod) { e.preventDefault(); setTracksFlag('solo'); return; }  // ⌥S = solo (⌥+S donne « ß » sur Mac)
+        if (k === 'm') { setTracksFlag('muted'); return; }
 
         // Transport secondaires
         if (k === 'u' && !mod && !shift && !e.altKey) { e.preventDefault(); loopFromSelection(); return; }
