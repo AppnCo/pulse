@@ -611,7 +611,7 @@ function bindGroupEvents() {
         });
         nameEl.addEventListener('dblclick', (e) => { e.stopPropagation(); if (!nameEl.classList.contains('editing')) startGroupEdit(); });
         nameEl.addEventListener('blur', () => nameEl.classList.remove('editing'));
-        nameEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); nameEl.blur(); } e.stopPropagation(); });
+        nameEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); nameEl.blur(); } if (e.key === 'Escape') { e.preventDefault(); nameEl.textContent = bus.name; nameEl.blur(); } e.stopPropagation(); });
         nameEl.addEventListener('blur', () => {
             const v = nameEl.textContent.trim();
             if (v && v !== bus.name) { pushUndo(); bus.name = v; renderMixer(); bindMixerEvents(); saveProject(); }
@@ -672,7 +672,7 @@ function bindFolderHeader(h, f) {
     const startEdit = () => { nameEl.classList.add('editing'); nameEl.focus(); document.execCommand('selectAll'); };
     nameEl.addEventListener('mousedown', (e) => { if (nameEl.classList.contains('editing')) return; e.preventDefault(); if (e.detail >= 2) startEdit(); });
     nameEl.addEventListener('dblclick', (e) => { e.stopPropagation(); if (!nameEl.classList.contains('editing')) startEdit(); });
-    nameEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); nameEl.blur(); } e.stopPropagation(); });
+    nameEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); nameEl.blur(); } if (e.key === 'Escape') { e.preventDefault(); nameEl.textContent = f.name; nameEl.blur(); } e.stopPropagation(); });
     nameEl.addEventListener('blur', () => {
         nameEl.classList.remove('editing');
         const v = nameEl.textContent.trim();
@@ -11725,7 +11725,8 @@ function bindTrackEvents() {
                 if (n.nodeType === Node.TEXT_NODE) txt += n.textContent;
             });
             txt = txt.replace(/\s+LIVE\s*$/i, '').trim();
-            const newName = txt || `Piste ${i + 1}`;
+            let newName = txt || `Piste ${i + 1}`;
+            if (el._cancelEdit) { el._cancelEdit = false; newName = state.project.tracks[i].name; }   // Échap : on garde l'ancien nom
             if (state.project.tracks[i].name !== newName) pushUndo();
             state.project.tracks[i].name = newName;
             saveProject();
@@ -11735,6 +11736,7 @@ function bindTrackEvents() {
         });
         el.addEventListener('keydown', e => {
             if (e.key === 'Enter') { e.preventDefault(); el.blur(); }
+            if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); el._cancelEdit = true; el.blur(); }
         });
     });
 
@@ -12911,10 +12913,12 @@ function startClipRename(trackIdx, clipIdx) {
     sel.addRange(range);
 
     // Comme Logic : plusieurs régions choisies prennent toutes le nom ; un nom qui finit par un nombre est numéroté dans l'ordre (Couplet 1, Couplet 2…)
+    let cancelled = false;
     const group = clipsActedOn(trackIdx, clipIdx).slice().sort((a, b) => a.start - b.start || trackOfClip(a) - trackOfClip(b));
     const commit = () => {
         const txt = nameEl.textContent.replace(/⚠.*$/, '').trim() || 'Clip';
         nameEl.removeAttribute('contenteditable');
+        if (cancelled) { renderTimelineTracks(); return; }   // Échap : rien ne change
         const m = group.length > 1 && txt.match(/^(.*?)(\d+)$/);
         const names = group.map((c, k) => m ? m[1] + String(parseInt(m[2], 10) + k).padStart(m[2].length, '0') : txt);
         if (group.some((c, k) => c.name !== names[k])) { pushUndo(); group.forEach((c, k) => { c.name = names[k]; }); }
@@ -12924,7 +12928,7 @@ function startClipRename(trackIdx, clipIdx) {
     nameEl.addEventListener('blur', commit, { once: true });
     nameEl.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') { e.preventDefault(); nameEl.blur(); }
-        if (e.key === 'Escape') { nameEl.textContent = clip.name; nameEl.blur(); }
+        if (e.key === 'Escape') { cancelled = true; nameEl.blur(); }
         e.stopPropagation();
     });
 }

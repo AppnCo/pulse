@@ -18,4 +18,10 @@ export default async ({ ev, nav, send, sleep, check }) => {
   await R(`state.selectedClips=new Set(); state.selectedClip={trackIdx:1,clipIdx:0}; renderAll(); return 1`);
   n = await ren(1, 0, 'Pont');
   check('une seule région : elle seule', n === 'Couplet 01/Couplet 03 | Pont', n);
+  // Échap avec plusieurs régions : aucun nom ne change
+  n = await R(`state.selectedClips=new Set(['0:0','0:1','1:0']); state.selectedClip={trackIdx:0,clipIdx:0}; renderAll(); startClipRename(0,0); await new Promise(r=>setTimeout(r,50)); const el=document.querySelector('.clip-name[contenteditable]'); el.textContent='Zut'; el.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})); if (el.getAttribute('contenteditable')) el.dispatchEvent(new FocusEvent('blur')); await new Promise(r=>setTimeout(r,100)); return state.project.tracks.map(t=>t.clips.map(c=>c.name).join('/')).join(' | ')`);
+  check('Échap : aucun nom ne change', n === 'Couplet 01/Couplet 03 | Pont', n);
+  // Échap sur le nom d'une piste : ancien nom gardé
+  n = await R(`renderAll(); const el=document.querySelector('.track-name[data-i="0"]'); el.classList.add('editing'); el.focus(); el.childNodes.forEach(x=>{ if(x.nodeType===3) x.textContent='Zut'; }); el.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})); if (el.classList.contains('editing')) el.dispatchEvent(new FocusEvent('blur')); await new Promise(r=>setTimeout(r,100)); return state.project.tracks[0].name`);
+  check('Échap sur le nom de piste : ancien nom gardé', n === 'A', n);
 };
