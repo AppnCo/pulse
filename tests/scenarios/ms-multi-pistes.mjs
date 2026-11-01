@@ -1,0 +1,31 @@
+// 01/11 : M / S comme Logic — clic sur une des pistes choisies = toutes les choisies ; ⌥ + clic = toutes les pistes ; ⌘ + clic S = exclusif
+export default async ({ ev, nav, send, sleep, check }) => {
+  await send('Network.enable'); await send('Network.setCacheDisabled', { cacheDisabled: true });
+  await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 860, deviceScaleFactor: 1, mobile: false });
+  await nav('http://localhost:8765/index.html');
+  await ev(`localStorage.clear(); localStorage.setItem('pulse_onboarded_v1','1'); localStorage.setItem('pulse_tip_headphones','1'); localStorage.setItem('pulse_current_project', JSON.stringify({id:'msm',name:'MS',bpm:120,buses:[],tracks:['A','B','C','D'].map(n=>({name:n,type:'audio',color:'#A855F7'}))}))`);
+  await nav('http://localhost:8765/studio.html'); await sleep(800);
+  const R = (c) => ev(`(async()=>{${c}})()`);
+  const click = async (sel, mods = 0) => { const r = JSON.parse(await ev(`JSON.stringify((()=>{const el=document.querySelector(${JSON.stringify(sel)}); if(!el) return null; const b=el.getBoundingClientRect(); return {x:b.x+b.width/2,y:b.y+b.height/2}})())`)); if (!r) return false; for (const type of ['mouseMoved','mousePressed','mouseReleased']) await send('Input.dispatchMouseEvent', { type, x: r.x, y: r.y, button: 'left', buttons: type==='mousePressed'?1:0, clickCount: 1, modifiers: mods }); await sleep(250); return true; };
+  const st = async (k) => (await R(`return state.project.tracks.map(t=>t.${k}?1:0).join('')`));
+  await R(`selectTrack(1); state.selectedTracks=new Set([1,3]); renderAll(); return 1`);
+  await click('.track-item[data-i="3"] .m-m');
+  check('M sur une des pistes choisies : B et D muettes', (await st('muted')) === '0101', await st('muted'));
+  await click('.track-item[data-i="1"] .m-m');
+  check('re-clic : B et D rallumées', (await st('muted')) === '0000', await st('muted'));
+  await click('.track-item[data-i="0"] .m-m');
+  check('M sur une piste hors sélection : elle seule', (await st('muted')) === '1000', await st('muted'));
+  await click('.track-item[data-i="2"] .m-m', 1);
+  check('⌥ + clic M : toutes muettes', (await st('muted')) === '1111', await st('muted'));
+  await click('.track-item[data-i="2"] .m-m', 1);
+  check('⌥ + clic M encore : toutes rallumées', (await st('muted')) === '0000', await st('muted'));
+  await R(`selectTrack(0); state.selectedTracks=new Set([0,2]); renderAll(); return 1`);
+  await click('.track-item[data-i="2"] .m-s');
+  check('S sur une des pistes choisies : A et C en solo', (await st('solo')) === '1010', await st('solo'));
+  await click('.track-item[data-i="3"] .m-s', 4);
+  check('⌘ + clic S : D seule en solo', (await st('solo')) === '0001', await st('solo'));
+  await click('.track-item[data-i="1"] .m-s', 1);
+  check('⌥ + clic S sur une piste sans solo : toutes en solo', (await st('solo')) === '1111', await st('solo'));
+  await click('.track-item[data-i="1"] .m-s', 1);
+  check('⌥ + clic S encore : plus aucun solo', (await st('solo')) === '0000', await st('solo'));
+};

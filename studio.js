@@ -1027,8 +1027,8 @@ function renderTracksPanel() {
             <div class="track-info">
                 <div class="track-name" contenteditable="${!t.isCapture}" data-i="${i}">${esc(t.name)}${t.isCapture ? '<span class="chip" contenteditable="false"> LIVE</span>' : ''}</div>
                 <div class="track-buttons">
-                    <button class="t-mini m-m ${t.muted?'active':''}" data-flag="mute" data-i="${i}" data-tooltip="Mute (M)">M</button>
-                    <button class="t-mini m-s ${t.solo?'active':''}" data-flag="solo" data-i="${i}" data-tooltip="Solo (S) — ⌘+clic = exclusif">S</button>
+                    <button class="t-mini m-m ${t.muted?'active':''}" data-flag="mute" data-i="${i}" data-tooltip="Mute (M) — ⌥+clic = toutes les pistes">M</button>
+                    <button class="t-mini m-s ${t.solo?'active':''}" data-flag="solo" data-i="${i}" data-tooltip="Solo (S) — ⌘+clic = exclusif · ⌥+clic = toutes les pistes">S</button>
                     <button class="t-mini m-r ${t.armed?'active':''}" data-flag="rec" data-i="${i}" data-tooltip="${t.armed ? 'Prête à enregistrer : la prochaine prise ira ici (clic pour désarmer)' : 'Prête à enregistrer : clique pour que la prochaine prise aille ici'}">R</button>
                     <button class="t-mini m-i ${trackMonitored(t)?'active':''}" data-flag="mon" data-i="${i}" data-tooltip="${trackMonitored(t) ? 'Retour casque : tu t\'entends (clic pour couper)' : 'Retour casque coupé (clic pour t\'entendre)'}">i</button>
                     ${trackTakeNumbers(t).length ? `<button class="takes-toggle ${t.takesOpen ? 'active' : ''}" data-takes="${i}" data-tooltip="${t.takesOpen ? 'Cacher les prises' : 'Voir les prises mises de côté'}"><svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>${trackTakeNumbers(t).length}</button>` : ''}
@@ -4724,7 +4724,7 @@ function stepPlayOrigin(dir, unit) {
 function cutSelectedClip() {
     if (!state.selectedClip && state.selectedClips.size === 0) { flash('Clique d\'abord sur une région pour la couper'); return; }
     if (state.recording) { flash('Une prise est en cours : arrête-la (Espace) avant de couper'); return; }
-    if (state.selectedClip) copySelectedClip();
+    copySelectedClip();   // toute la sélection : ⌘V la recolle en entier
     deleteSelectedClip();
 }
 // Quitter : dans le logiciel on ferme la fenêtre ; dans un navigateur, c'est le navigateur qui décide
@@ -4927,14 +4927,16 @@ const SHORTCUT_GROUPS = [
             ['B', 'Ciseaux : scinder une région là où tu cliques'],
             ['Y', 'Menu des outils (Pointeur, Crayon, Gomme…) sous la souris'],
             ['Double-clic sur une région', 'La scinder : garde le 2e clic enfoncé, glisse pour choisir l\'endroit, relâche pour couper (Échap annule) — sur son nom : la renommer'],
-            ['⌘C', 'Copier la région choisie'],
-            ['⌘V', 'Coller à la position du curseur'],
-            ['⌘R', 'Répéter la région choisie une fois de plus, juste après (autant de fois que tu appuies)'],
+            ['⌘C', 'Copier la région choisie (ou toutes les régions choisies)'],
+            ['⌘V', 'Coller à la position du curseur (plusieurs pistes : à partir de la piste choisie, l\'écart entre les régions est gardé)'],
+            ['⌘R', 'Répéter la région choisie une fois de plus, juste après (autant de fois que tu appuies) · plusieurs régions : tout le bloc est recopié après lui'],
+            ['⌘T', 'Couper les régions là où est le curseur (les régions choisies, sinon celles de la piste choisie)'],
+            ['⌘J', 'Joindre les régions choisies en une seule (piste par piste)'],
             ['⌘Z / ⌘⇧Z', 'Annuler / Rétablir (30 niveaux) — marche aussi sur une prise ratée'],
             ['Tirer le bord d\'une prise', 'Récupérer ce qui a été dit avant ou après (curseur « barre et flèches » = étirer la région ; curseur « courbe » = fondu, dans le coin du haut)'],
             ['⌘ + clic sur une région', 'La muter / la démuter (réglable)'],
             ['Clic droit + glisser sur une région', 'Volume de la région : vers le haut = plus fort (⌥ + clic droit : remet 0 dB ; un clic sans bouger = menu)'],
-            ['⌘← / ⌘→', 'Décaler la région choisie d\'un cran'],
+            ['⌘← / ⌘→', 'Décaler la région choisie (ou toutes les régions choisies) d\'un cran'],
             ['⌘⇧← / ⌘⇧→', 'Décaler la région très finement'],
             ['Shift (en tenant un clip)', 'Verrou d\'axe : surtout vers le bas = tu changes de piste sans bouger dans le temps ; surtout de côté = tu restes sur la piste · Shift de nouveau = libère'],
             ['Clic dans la moitié BASSE d\'une piste', 'Place le curseur et le point de départ (curseur en croix)'],
@@ -4975,9 +4977,8 @@ const SHORTCUT_GROUPS = [
             ['⌥ + scroll', 'Sur la liste de gauche : seule la piste survolée grandit / rétrécit · sur la timeline : toutes les pistes'],
             ['Maj + molette', 'Défiler la timeline de gauche à droite (Magic Mouse / trackpad : glisser latéralement)'],
                         ['E / Z', 'Zoomer / dézoomer : le curseur (de base si tu as cliqué) se met au milieu de l\'écran'],
-            ['F', 'Zoom sur le clip sélectionné (ou tout le projet)'],
+            ['⇧F', 'Zoom sur le clip sélectionné (ou tout le projet)'],
             ['⌘⇧F', 'Voir tout le morceau'],
-            ['⌘A', 'Sélectionner tous les clips de la piste'],
             ['X', 'Ouvrir / fermer le mixeur']
         ]
     },
@@ -9711,6 +9712,9 @@ function nudgeSelectedClip(dir, fine) {
     const t = state.project.tracks[trackIdx];
     const clip = t?.clips[clipIdx];
     if (!clip) return;
+    // Toute la sélection bouge ensemble (comme Logic) ; une région ou piste verrouillée arrête tout
+    const group = clipsActedOn(trackIdx, clipIdx);
+    if (group.some(c => clipIsLocked(c))) return;
     pushUndo();
     const beatSec = 60 / bpmAtSec(clip.start);
     const snapUnit = fine
@@ -9722,9 +9726,12 @@ function nudgeSelectedClip(dir, fine) {
                  : eff === 'division' ? beatSec / 4
                  : beatSec;
         })();
-    clip.start = Math.max(0, clip.start + dir * snapUnit);
+    // vers la gauche : on s'arrête au début du morceau sans déformer l'écart entre les régions
+    const d = Math.max(dir * snapUnit, -Math.min(...group.map(c => c.start)));
+    if (!d) return;
+    group.forEach(c => { c.start += d; if (c.loopEnd) c.loopEnd += d; });
     renderTimelineTracks();
-    saveProject();
+    saveProject(); refreshPlaybackSoon();
     // Scroll pour garder le clip visible
     const clipCenterPx = (clip.start + clip.duration / 2) * state.pxPerSecond;
     const tl = document.querySelector('.timeline');
@@ -9785,6 +9792,7 @@ function repeatSelectedClip() {
     const { trackIdx, clipIdx } = state.selectedClip;
     const t = state.project.tracks[trackIdx], clip = t && t.clips[clipIdx];
     if (!clip || clip.recording || !clip.duration) return;
+    if (clipsActedOn(trackIdx, clipIdx).length > 1) return repeatClipBlock();
     pushUndo();
     const cur = (clip.loopEnd && clip.loopEnd > clip.start + clip.duration) ? clip.loopEnd : clip.start + clip.duration;
     clip.loopEnd = cur + clip.duration;
@@ -9793,6 +9801,30 @@ function repeatSelectedClip() {
     flash('Région répétée × ' + (((clip.loopEnd - clip.start) / clip.duration)).toFixed(0) + ' (⌘R encore pour ajouter une répétition)');
 }
 
+// ⌘R avec plusieurs régions choisies (comme Logic) : tout le bloc est recopié juste après lui-même, places et pistes gardées ;
+// les copies deviennent la sélection (⌘R encore = une copie de plus)
+function repeatClipBlock() {
+    const refs = selectedClipRefs().filter(r => r.c.duration);
+    if (refs.some(r => clipIsLocked(r.c))) return;
+    const endOf = (c) => (c.loopEnd && c.loopEnd > c.start + c.duration) ? c.loopEnd : c.start + c.duration;
+    const s0 = Math.min(...refs.map(r => r.c.start)), span = Math.max(...refs.map(r => endOf(r.c))) - s0;
+    if (!(span > 0)) return;
+    pushUndo();
+    const made = refs.map(({ ti, c }) => {
+        const tr = state.project.tracks[ti];
+        const nc = { ...JSON.parse(JSON.stringify(c)), start: c.start + span };
+        if (c.loopEnd) nc.loopEnd = c.loopEnd + span;
+        tr.clips.push(nc);
+        return { ti, nc };
+    });
+    made.forEach(({ ti, nc }) => carveBehind(state.project.tracks[ti], nc, nc.start, endOf(nc)));
+    [...new Set(made.map(m => m.ti))].forEach(ti => state.project.tracks[ti].clips.sort((a, b) => a.start - b.start));
+    const live = made.filter(m => state.project.tracks[m.ti].clips.includes(m.nc));
+    state.selectedClips = new Set(live.map(m => `${m.ti}:${state.project.tracks[m.ti].clips.indexOf(m.nc)}`));
+    if (live.length) state.selectedClip = { trackIdx: live[0].ti, clipIdx: state.project.tracks[live[0].ti].clips.indexOf(live[0].nc) };
+    renderAll(); saveProject(); refreshPlaybackSoon();
+    flash(`${live.length} régions répétées juste après (⌘R encore pour une copie de plus)`);
+}
 // Zoom to fit : tout le projet visible d'un coup (Cmd+Shift+F)
 function zoomToFit() {
     const end = computeProjectEndSec();
@@ -9981,6 +10013,8 @@ function duplicateTrack(idx) {
         if (src[k] && typeof src[k] === 'object') copy[k] = JSON.parse(JSON.stringify(src[k]));
     });
     if (src.effects) copy.effects = [...src.effects];
+    // La copie n'a pas de régions : elle ne doit pas rejouer le rendu gelé de l'original
+    if (src.frozen) { delete copy.frozen; if (!src.frozen.wasLocked) delete copy.locked; }
     state.project.tracks.splice(idx + 1, 0, copy);
     state.selectedTrack = idx + 1;
     renderAll();
@@ -10569,6 +10603,7 @@ function openTimelineEmptyContextMenu(x, y, trackIdx, atSec) {
     menu.style.cssText = `position:fixed;left:${x}px;top:${y}px;z-index:200;`;
     const items = [
         state.clipboard ? { label: `Coller ici (${secondsToDuration(atSec)})`, action: () => {
+            if (state.project.tracks[trackIdx]) state.selectedTrack = trackIdx;   // se colle sur la piste cliquée
             state.playhead = atSec; updatePlayhead(); updateChrono(); pasteClip();
         }} : null,
         (['keys', 'drums'].includes(state.project.tracks[trackIdx]?.type)) ? { label: '🎹 Créer une région ici (piano roll / pas)', action: () => createMidiClip(trackIdx, atSec) } : null,
@@ -10989,7 +11024,7 @@ const clipEndOf = (c) => (c.loopEnd && c.loopEnd > c.start + c.duration) ? c.loo
 // Joindre : les régions audio choisies sur la même piste deviennent UNE région (rendu à l'identique, effets de région compris)
 async function joinSelectedClips(trackIdx, clipIdx, opts = {}) {
     const t = state.project.tracks[trackIdx];
-    const cs = (opts.single ? [t.clips[clipIdx]] : clipsActedOn(trackIdx, clipIdx)).filter(c => c && t.clips.includes(c));
+    const cs = (opts.clips || (opts.single ? [t.clips[clipIdx]] : clipsActedOn(trackIdx, clipIdx))).filter(c => c && t.clips.includes(c));
     if (cs.length < (opts.single ? 1 : 2)) { flash('Choisis au moins deux régions de la même piste (Shift + clic, ou ⌘A) puis Joindre'); return; }
     if (cs.some(c => clipIsLocked(c))) return;
     if (cs.every(c => c.midi) && !opts.single) return joinMidiClips(t, cs);
@@ -11022,6 +11057,21 @@ async function joinSelectedClips(trackIdx, clipIdx, opts = {}) {
         console.error(err);
         flash('La jonction n\'a pas marché — rien n\'a été modifié');
     }
+}
+// ⌘J (comme Logic) : joindre les régions choisies, piste par piste (une région jointe par piste), un seul ⌘Z
+async function joinSelectionByTrack() {
+    const byTrack = new Map();
+    const keys = state.selectedClips.size ? [...state.selectedClips] : (state.selectedClip ? [`${state.selectedClip.trackIdx}:${state.selectedClip.clipIdx}`] : []);
+    keys.forEach(k => {
+        const [ti, ci] = k.split(':').map(Number), c = state.project.tracks[ti]?.clips[ci];
+        if (!c || c.recording) return;
+        if (!byTrack.has(ti)) byTrack.set(ti, []);
+        byTrack.get(ti).push(c);
+    });
+    const groups = [...byTrack].filter(([, cs]) => cs.length >= 2);
+    if (!groups.length) { flash('Joindre (⌘J) : choisis au moins deux régions sur une même piste (Shift + clic, ou ⌘A)'); return; }
+    await asOneUndo(async () => { for (const [ti, cs] of groups) await joinSelectedClips(ti, 0, { clips: cs }); });
+    if (groups.length > 1) flash(`✓ Régions jointes sur ${groups.length} pistes (une région par piste) — ⌘Z pour revenir en arrière`);
 }
 // Joindre des régions de notes : une seule région qui contient toutes les notes à leur place (répétitions et coupes comprises)
 async function joinMidiClips(t, cs) {
@@ -11262,6 +11312,8 @@ function openClipContextMenu(x, y, trackIdx, clipIdx) {
         { label: 'Édition', children: [
             { label: 'Scinder ici', action: () => splitClipAt(trackIdx, clipIdx, state.playhead) },
             { label: 'Dupliquer', action: () => {
+                if (acted().length > 1) { selectThis(); repeatClipBlock(); return; }   // plusieurs régions : tout le bloc, comme ⌘R
+                if (clipIsLocked(clip)) return;
                 pushUndo();
                 const fullEnd = (clip.loopEnd && clip.loopEnd > clip.start + clip.duration) ? clip.loopEnd : clip.start + clip.duration;
                 const copy = { ...JSON.parse(JSON.stringify(clip)), start: fullEnd };    // juste après la région (répétition comprise)
@@ -11270,7 +11322,7 @@ function openClipContextMenu(x, y, trackIdx, clipIdx) {
                 carveBehind(state.project.tracks[trackIdx], copy, copy.start, (copy.loopEnd && copy.loopEnd > copy.start + copy.duration) ? copy.loopEnd : copy.start + copy.duration);
                 state.project.tracks[trackIdx].clips.sort((a, b) => a.start - b.start);
                 state.selectedClip = { trackIdx, clipIdx: state.project.tracks[trackIdx].clips.indexOf(copy) };
-                renderTimelineTracks(); saveProject();
+                renderTimelineTracks(); saveProject(); refreshPlaybackSoon();
             }},
             { label: 'Joindre les régions choisies', action: () => joinSelectedClips(trackIdx, clipIdx) },
             clip.midi ? null : { label: 'Convertir en nouvelle prise (effets, fondus, répétitions compris)', action: () => joinSelectedClips(trackIdx, clipIdx, { single: true }) },
@@ -11732,8 +11784,18 @@ function bindTrackEvents() {
                 return;
             }
 
-            if (flag === 'mute') { t.muted = !t.muted; PulseAudio.refreshAudibility(state.project); }
-            if (flag === 'solo') { toggleSolo(i, e.metaKey || e.ctrlKey); return; }
+            // Comme Logic : ⌥ + clic = toutes les pistes ; clic sur une des pistes choisies = toutes les pistes choisies
+            if ((flag === 'mute' || flag === 'solo') && !(flag === 'solo' && (e.metaKey || e.ctrlKey))) {
+                const key = flag === 'mute' ? 'muted' : 'solo', want = !t[key];
+                const sel = selectedTrackIdxs();
+                const idxs = e.altKey ? state.project.tracks.map((_, j) => j) : (sel.length > 1 && sel.includes(i) ? sel : [i]);
+                idxs.forEach(j => { const x = state.project.tracks[j]; if (x) x[key] = want; });
+                PulseAudio.refreshAudibility(state.project);
+                renderTracksPanel(); bindTrackEvents(); saveProject();
+                if (idxs.length > 1) flash(`${flag === 'mute' ? 'Mute' : 'Solo'} ${want ? 'allumé' : 'éteint'} sur ${idxs.length} pistes`);
+                return;
+            }
+            if (flag === 'solo') { toggleSolo(i, true); return; }
             if (flag === 'rec')  { if (t.armed) t.armed = false; else armTrackExclusive(i); }
             if (flag === 'mon') {
                 toggleTrackMonitor(t);
@@ -12849,47 +12911,70 @@ function deleteSelectedClip() {
     flash('Clip supprimé');
 }
 
+// Les régions choisies, avec leur piste (plusieurs = toute la sélection, comme Logic)
+function selectedClipRefs() {
+    const keys = state.selectedClips.size > 1 ? [...state.selectedClips]
+        : (state.selectedClip ? [`${state.selectedClip.trackIdx}:${state.selectedClip.clipIdx}`] : [...state.selectedClips]);
+    return keys.map(k => { const [ti, ci] = k.split(':').map(Number); const c = state.project.tracks[ti]?.clips[ci]; return c && !c.recording ? { ti, c } : null; }).filter(Boolean);
+}
 function copySelectedClip() {
-    if (!state.selectedClip) { flash('Clique d\'abord sur un clip pour le sélectionner'); return; }
-    const { trackIdx, clipIdx } = state.selectedClip;
-    const clip = state.project.tracks[trackIdx]?.clips[clipIdx];
-    if (!clip) return;
-    state.clipboard = { clip: JSON.parse(JSON.stringify(clip)), trackIdx };
-    flash('Clip copié');
+    const refs = selectedClipRefs();
+    if (!refs.length) { flash('Clique d\'abord sur un clip pour le sélectionner'); return; }
+    const top = Math.min(...refs.map(r => r.ti)), t0 = Math.min(...refs.map(r => r.c.start));
+    const items = refs.map(r => ({ clip: JSON.parse(JSON.stringify(r.c)), dTrack: r.ti - top, dt: r.c.start - t0 }));
+    // `clip` / `trackIdx` : la 1re région (anciens usages) ; `items` : toute la sélection, places relatives gardées
+    state.clipboard = { clip: items[0].clip, trackIdx: top, items, srcTracks: [...new Set(refs.map(r => r.ti))] };
+    flash(items.length > 1 ? `${items.length} régions copiées` : 'Clip copié');
 }
 
 function pasteClip() {
     if (!state.clipboard) { flash('Presse-papier vide'); return; }
-    const { clip } = state.clipboard;
-    // Comme Logic : ça se colle sur la piste choisie (sinon sur la piste d'origine)
-    const trackIdx = state.project.tracks[state.selectedTrack] ? state.selectedTrack : state.clipboard.trackIdx;
-    const targetTrack = state.project.tracks[trackIdx];
-    if (!targetTrack) return;
-    if (clip.midi) {
-        const wantDrums = clip.midi.inst === 'drums';
-        if (targetTrack.type !== 'keys' && targetTrack.type !== 'drums') { flash('Une région de notes se colle sur une piste Piano ou Batterie'); return; }
-        if (wantDrums !== (targetTrack.type === 'drums')) {
-            flash(wantDrums ? 'Cette région est une batterie : colle-la sur une piste Batterie' : 'Cette région est un instrument : colle-la sur une piste Piano');
-            return;
+    const cb = state.clipboard, items = cb.items || [{ clip: cb.clip, dTrack: 0, dt: 0 }];
+    // Comme Logic : ça se colle sur la piste choisie (sinon sur la piste d'origine) ; plusieurs pistes copiées :
+    // la piste choisie reçoit la plus haute, les autres suivent en dessous (si la piste choisie est une des pistes copiées : mêmes pistes)
+    let base = state.project.tracks[state.selectedTrack] ? state.selectedTrack : cb.trackIdx;
+    if (items.length > 1 && cb.srcTracks && cb.srcTracks.includes(base) && state.project.tracks[cb.trackIdx]) base = cb.trackIdx;
+    const refuse = (clip, tr) => {
+        if (!tr) return 'Pas assez de pistes en dessous pour tout coller';
+        if (tr.frozen || tr.locked) return tr.frozen ? '❄ Piste gelée : rien n\'y est collé' : '🔒 Piste verrouillée : rien n\'y est collé';
+        if (clip.midi) {
+            const wantDrums = clip.midi.inst === 'drums';
+            if (tr.type !== 'keys' && tr.type !== 'drums') return 'Une région de notes se colle sur une piste Piano ou Batterie';
+            if (wantDrums !== (tr.type === 'drums')) return wantDrums ? 'Cette région est une batterie : colle-la sur une piste Batterie' : 'Cette région est un instrument : colle-la sur une piste Piano';
         }
-    }
+        return null;
+    };
+    const plan = items.map(it => ({ it, ti: base + it.dTrack, why: refuse(it.clip, state.project.tracks[base + it.dTrack]) }));
+    const ok = plan.filter(p => !p.why);
+    if (!ok.length) { flash(plan[0].why); return; }
     pushUndo();
-    targetTrack.clips = targetTrack.clips || [];
     // On garde le même `id` pour partager le buffer audio — un clip copié joue le même audio
-    let start = state.playhead;
+    let at = state.playhead;
+    const span = Math.max(...items.map(it => it.dt + ((it.clip.loopEnd && it.clip.loopEnd > it.clip.start + it.clip.duration) ? it.clip.loopEnd - it.clip.start : it.clip.duration)));
     // Déjà une copie pile ici : la suivante se pose juste après (sinon on empile des clips identiques sans le voir)
-    while (targetTrack.clips.some(o => !o.recording && o.id === clip.id && Math.abs(o.start - start) < 1e-3)) start += clip.duration;
-    const pasted = { ...JSON.parse(JSON.stringify(clip)), start };
-    if (clip.loopEnd) pasted.loopEnd = start + (clip.loopEnd - clip.start);   // la répétition suit la copie
-    targetTrack.clips.push(pasted);
-    carveBehind(targetTrack, pasted, pasted.start, (pasted.loopEnd && pasted.loopEnd > pasted.start + pasted.duration) ? pasted.loopEnd : pasted.start + pasted.duration);   // la copie collée est prioritaire
-    targetTrack.clips.sort((a, b) => a.start - b.start);
-    const newIdx = targetTrack.clips.indexOf(pasted);
-    state.selectedTrack = trackIdx;
-    state.selectedClip = { trackIdx, clipIdx: newIdx };
+    const already = (a) => ok.every(p => (state.project.tracks[p.ti].clips || []).some(o => !o.recording && o.id === p.it.clip.id && Math.abs(o.start - (a + p.it.dt)) < 1e-3));
+    for (let n = 0; n < 64 && already(at); n++) at += items.length > 1 ? span : items[0].clip.duration;
+    const pasted = [];
+    ok.forEach(({ it, ti }) => {
+        const tr = state.project.tracks[ti], clip = it.clip, start = at + it.dt;
+        tr.clips = tr.clips || [];
+        const pc = { ...JSON.parse(JSON.stringify(clip)), start };
+        if (clip.loopEnd) pc.loopEnd = start + (clip.loopEnd - clip.start);   // la répétition suit la copie
+        tr.clips.push(pc);
+        carveBehind(tr, pc, pc.start, (pc.loopEnd && pc.loopEnd > pc.start + pc.duration) ? pc.loopEnd : pc.start + pc.duration);   // la copie collée est prioritaire
+        pasted.push({ ti, pc });
+    });
+    [...new Set(pasted.map(p => p.ti))].forEach(ti => state.project.tracks[ti].clips.sort((a, b) => a.start - b.start));
+    const live = pasted.filter(p => state.project.tracks[p.ti].clips.includes(p.pc));
+    const keys = live.map(p => `${p.ti}:${state.project.tracks[p.ti].clips.indexOf(p.pc)}`);
+    state.selectedTrack = live.length ? live[0].ti : base;
+    state.selectedClip = keys.length ? { trackIdx: live[0].ti, clipIdx: state.project.tracks[live[0].ti].clips.indexOf(live[0].pc) } : null;
+    state.selectedClips = new Set(keys.length > 1 ? keys : []);
     renderAll();
-    saveProject();
-    flash('Clip collé à ' + secondsToDuration(start));
+    saveProject(); refreshPlaybackSoon();
+    const skipped = plan.length - ok.length;
+    flash(items.length > 1 ? `${ok.length} régions collées à ${secondsToDuration(at)}` + (skipped ? ` — ${skipped} non collée${skipped > 1 ? 's' : ''} : ${plan.find(p => p.why).why}` : '')
+        : 'Clip collé à ' + secondsToDuration(at));
 }
 
 // === Loop region (Alt+drag dans le ruler, Logic style) ===
@@ -14283,6 +14368,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (mod && k === 'c')          { e.preventDefault(); copySelectedClip(); return; }
         if (mod && k === 'r' && !shift && !e.altKey) { e.preventDefault(); repeatSelectedClip(); return; }
         if (mod && k === 'v')          { e.preventDefault(); pasteClip(); return; }
+        if (mod && k === 'j' && !shift && !e.altKey) { e.preventDefault(); joinSelectionByTrack(); return; }   // ⌘J = joindre (comme Logic)
 
         // Transport (Espace est détourné en mode tap)
         const onButton = e.target && e.target.closest && e.target.closest('button, [role="button"], select, a[href]');
