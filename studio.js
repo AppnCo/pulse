@@ -4897,6 +4897,36 @@ function dropStaleClipSelection() {
     });
 }
 
+// Clic sur une piste (liste ou tranche du mixeur) : seul = elle ; ⇧ = de la piste choisie jusqu'à elle ; ⌘ = l'ajouter / la retirer
+function clickSelectTrack(idx, e) {
+    const isMac = /Mac/i.test(navigator.platform);
+    const cmd = e.metaKey || (!isMac && e.ctrlKey);
+    if (e.shiftKey) {
+        // Tout, de la piste choisie jusqu'à celle-ci (la piste choisie reste l'ancre)
+        const a = state.selectedTrack, lo = Math.min(a, idx), hi = Math.max(a, idx);
+        state.selectedTracks = new Set();
+        for (let k = lo; k <= hi; k++) state.selectedTracks.add(k);
+    } else if (cmd) {
+        const cur = new Set(selectedTrackIdxs());
+        if (cur.has(idx) && cur.size > 1) {
+            cur.delete(idx);
+            if (state.selectedTrack === idx) state.selectedTrack = [...cur][0];
+        } else { cur.add(idx); state.selectedTrack = idx; }
+        state.selectedTracks = cur;
+    } else {
+        state.selectedTrack = idx;
+        state.selectedTracks = new Set();
+    }
+    dropStaleClipSelection();
+    renderTracksPanel();
+    bindTrackEvents();
+    paintMixerSelection();
+}
+// Tranches du mixeur : les pistes choisies sont marquées (comme Logic)
+function paintMixerSelection() {
+    const sel = new Set(selectedTrackIdxs());
+    document.querySelectorAll('.mixer-strips .strip[data-kind="track"]').forEach(el => el.classList.toggle('is-chosen', sel.has(parseInt(el.dataset.i))));
+}
 function selectTrack(idx) {
     state.deselectedAt = null;
     const max = state.project.tracks.length - 1;
@@ -4905,6 +4935,7 @@ function selectTrack(idx) {
     dropStaleClipSelection();
     renderTracksPanel();
     bindTrackEvents();
+    paintMixerSelection();
 }
 
 // === Cheat sheet raccourcis (? ou bouton help) ===
@@ -10260,6 +10291,17 @@ function syncBpmField() {
 
 // --- Events mixer : automation + faders live + pan ---
 function bindMixerEvents() {
+    // Clic sur une tranche (hors réglages) = choisir la piste ; ⇧ / ⌘ + clic = plusieurs (comme Logic)
+    document.querySelectorAll('.mixer-strips .strip[data-kind="track"]').forEach(strip => {
+        strip.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+            if (e.target.closest('input, button, select, textarea, [contenteditable="true"], .fader, .strip-pan-knob, .insert-slot, .send-slot, .ctx-item, [role="slider"]')) return;
+            const i = parseInt(strip.dataset.i);
+            if (!state.project.tracks[i]) return;
+            clickSelectTrack(i, e);
+        });
+    });
+    paintMixerSelection();
     // Envois : dose par piste, retours, ajout
     document.querySelectorAll('.mixer-strips .send-level').forEach(sl => {
         const st = sl.closest('.strip');
@@ -11678,30 +11720,7 @@ function bindTrackEvents() {
                         saveProject();
                         if (msg) flash(msg);
                     }
-                } else {
-                    const isMac = /Mac/i.test(navigator.platform);
-                    const cmd = e.metaKey || (!isMac && e.ctrlKey);
-                    if (e.shiftKey) {
-                        // Tout, de la piste choisie jusqu'à celle-ci (la piste choisie reste l'ancre)
-                        const a = state.selectedTrack, lo = Math.min(a, fromIdx), hi = Math.max(a, fromIdx);
-                        state.selectedTracks = new Set();
-                        for (let k = lo; k <= hi; k++) state.selectedTracks.add(k);
-                    } else if (cmd) {
-                        // Ajoute (ou retire) cette piste de la sélection
-                        const cur = new Set(selectedTrackIdxs());
-                        if (cur.has(fromIdx) && cur.size > 1) {
-                            cur.delete(fromIdx);
-                            if (state.selectedTrack === fromIdx) state.selectedTrack = [...cur][0];
-                        } else { cur.add(fromIdx); state.selectedTrack = fromIdx; }
-                        state.selectedTracks = cur;
-                    } else {
-                        state.selectedTrack = fromIdx;
-                        state.selectedTracks = new Set();
-                    }
-                    dropStaleClipSelection();
-                    renderTracksPanel();
-                    bindTrackEvents();
-                }
+                } else clickSelectTrack(fromIdx, e);
             };
 
             document.addEventListener('mousemove', onMove);
