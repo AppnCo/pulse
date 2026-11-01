@@ -1498,7 +1498,7 @@ function renderInstruDropzone(trackIdx) {
                     <div class="dz-icon">🎵</div>
                     <div class="dz-title">Dépose ton instru ici</div>
                     <div class="dz-sub">MP3, WAV, FLAC, M4A — ou clique pour choisir</div>
-                    <input type="file" class="dz-input" accept="audio/*,.mp3,.wav,.m4a,.flac,.aif,.aiff,.ogg">
+                    <input type="file" class="dz-input" multiple accept="audio/*,.mp3,.wav,.m4a,.flac,.aif,.aiff,.ogg">
                 </div>
             </div>
             <div class="dz-panel dz-panel-url" data-panel="url">
@@ -1541,9 +1541,14 @@ function bindDropzones() {
             if (e.target === input) return;
             input.click();
         });
-        input.addEventListener('change', (e) => {
-            const f = e.target.files[0];
-            if (f) importAudioFile(f, trackIdx);
+        input.addEventListener('change', async (e) => {
+            const fs = Array.from(e.target.files || []);
+            e.target.value = '';
+            if (fs.length === 1) importAudioFile(fs[0], trackIdx);
+            else if (fs.length > 1) {
+                const mode = await askMultiImport(fs.length);
+                if (mode) await importDroppedFiles(fs, mode, 0, trackIdx);
+            }
         });
 
         // Drag & drop
@@ -1557,10 +1562,14 @@ function bindDropzones() {
             e.stopPropagation();
             bigZone.classList.remove('dragging');
         }));
-        bigZone.addEventListener('drop', (e) => {
-            const f = e.dataTransfer.files[0];
-            if (f && ((f.type || '').startsWith('audio/') || /\.(mp3|wav|m4a|aac|flac|ogg|aif|aiff)$/i.test(f.name))) importAudioFile(f, trackIdx);
-            else flash('Seuls les fichiers audio sont acceptés');
+        const isAudioFile = (f) => (f.type || '').startsWith('audio/') || /\.(mp3|wav|m4a|aac|flac|ogg|aif|aiff)$/i.test(f.name);
+        bigZone.addEventListener('drop', async (e) => {
+            const audio = Array.from(e.dataTransfer.files).filter(isAudioFile);
+            if (!audio.length) { flash('Seuls les fichiers audio sont acceptés'); return; }
+            if (audio.length === 1) { importAudioFile(audio[0], trackIdx); return; }
+            // Plusieurs sons d'un coup : même fenêtre « Ajouter les fichiers » que sur le reste du studio
+            const mode = await askMultiImport(audio.length);
+            if (mode) await importDroppedFiles(audio, mode, 0, trackIdx);
         });
 
         // URL field
