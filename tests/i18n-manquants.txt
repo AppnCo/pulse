@@ -42,6 +42,7 @@ Phaser
 Piano 1 — 2.00s @ 0:00.000
 Pick up where you left off
 PulseTune
+Ranger les pistes choisies : nouveau dossier ou nouveau groupe (bus)
 Rap Studio
 Recent projects
 Reverb
@@ -67,6 +68,7 @@ vii°
 ×2
 ÷2
 ⇧F
+⇧⌘D
 ⌘A · ⌥⌘A
 ⌘C
 ⌘D

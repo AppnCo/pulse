@@ -4980,6 +4980,7 @@ const SHORTCUT_GROUPS = [
             ['⌥ + molette', 'Hauteur des pistes : sur la liste de gauche, celle qu\'on survole (les pistes choisies si elles sont plusieurs) · sur la timeline, toutes les pistes · ⌘ + molette = zoom, le curseur au milieu de l\'écran'],
             ['Croix × sur un effet · clic droit', 'Supprimer l\'effet de la piste (+ Effet pour en ajouter, Auto-Tune compris)'],
             ['⌘D', 'Dupliquer la piste (sans clips)'],
+            ['⇧⌘D', 'Ranger les pistes choisies : nouveau dossier ou nouveau groupe (bus)'],
             ['⌘⌫', 'Supprimer la piste sélectionnée'],
             ['↑ / ↓', 'Changer de piste'],
                         ['A', 'Courbes de volume (poser des points sur la piste)']
@@ -10696,6 +10697,26 @@ function dismissMenuOnOutside(menu) {
         document.addEventListener('mousedown', off);
     }, 10);
 }
+// ⇧⌘D (comme « Créer une pile de pistes » de Logic) : petit menu sous la souris — dossier (juste ranger) ou groupe (bus)
+function openStackMenu() {
+    const idxs = selectedTrackIdxs().filter(i => state.project.tracks[i] && !state.project.tracks[i].isCapture);
+    if (!idxs.length) { flash('Choisis d\'abord une ou plusieurs pistes (Shift / ⌘ + clic)'); return; }
+    closeAllMenus();
+    const n = idxs.length, pl = n > 1 ? `les ${n} pistes` : 'cette piste';
+    const menu = document.createElement('div');
+    menu.className = 'track-ctx-menu stack-menu';
+    menu.style.cssText = `position:fixed;left:${Math.min(_lastMouse.x, innerWidth - 340)}px;top:${Math.min(_lastMouse.y, innerHeight - 120)}px;z-index:200;`;
+    [[`Nouveau dossier avec ${pl} (juste pour ranger, le son ne change pas)`, () => createFolderFromTracks(idxs)],
+     [`Nouveau groupe avec ${pl} (bus : un volume et un même son pour toutes)`, () => createGroupFromTracks(idxs)]].forEach(([label, fn]) => {
+        const el = document.createElement('div');
+        el.className = 'ctx-item'; el.textContent = label;
+        el.addEventListener('click', () => { menu.remove(); fn(); });
+        menu.appendChild(el);
+    });
+    document.body.appendChild(menu);
+    const close = (ev) => { if (!menu.contains(ev.target)) { menu.remove(); document.removeEventListener('mousedown', close); } };
+    setTimeout(() => document.addEventListener('mousedown', close), 50);
+}
 function closeAllMenus() {
     document.querySelectorAll('.track-ctx-menu').forEach(m => m.remove());
 }
@@ -11398,7 +11419,7 @@ function openClipContextMenu(x, y, trackIdx, clipIdx) {
                 if (gain === null) { flash('Ce clip est silencieux — il n\'y a rien à monter'); return; }
                 pushUndo();
                 clip.gain = Math.round(gain * 1000) / 1000;
-                renderTimelineTracks(); saveProject();
+                renderTimelineTracks(); saveProject(); refreshPlaybackSoon();
                 flash('✓ Clip monté au volume maximum — ⌘Z pour revenir en arrière');
             }},
             clip.midi ? null : { label: 'Normaliser à −1 dB', action: () => normalizeClipsTo(acted(), -1) },
@@ -11438,7 +11459,7 @@ function openClipContextMenu(x, y, trackIdx, clipIdx) {
         { label: 'Réglages', children: [
             { label: clip.muted ? 'Remettre le son du clip' : 'Couper le son du clip', action: () => {
                 const all = acted(), m = !clip.muted;
-                pushUndo(); all.forEach(c => { c.muted = m; }); renderTimelineTracks(); saveProject();
+                pushUndo(); all.forEach(c => { c.muted = m; }); renderTimelineTracks(); saveProject(); refreshPlaybackSoon();
             }},
             { label: clip.locked ? 'Déverrouiller la région' : 'Verrouiller la région', action: () => toggleClipsLocked(acted()) }
         ]},
@@ -14415,6 +14436,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (mod && k === 'n')          { e.preventDefault(); window.location.href = 'index.html'; return; }
         if (mod && k === 'a')          { e.preventDefault(); if (e.altKey) selectAllClipsOnTrack(); else selectAllClips(); return; }
         if (mod && shift && k === 'f') { e.preventDefault(); zoomToFit(); return; }
+        if (mod && shift && k === 'd') { e.preventDefault(); openStackMenu(); return; }   // ⇧⌘D = ranger les pistes choisies (pile de pistes de Logic)
         if (mod && k === 'd')          { e.preventDefault(); duplicateTrack(state.selectedTrack); return; }
         if (mod && k === 'g')          { e.preventDefault(); toggleSmartMode(); return; }
         if (mod && k === 'c')          { e.preventDefault(); copySelectedClip(); return; }
