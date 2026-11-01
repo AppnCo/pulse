@@ -2262,6 +2262,18 @@ function followSelectedVolume(idx, prev, v) {
         PulseAudio.updateTrackVolume(i, o.volume); syncInspectorVolume(i);
     });
 }
+// Pan : les autres pistes choisies bougent du même écart (comme Logic)
+function followSelectedPan(idx, prev, v) {
+    const sel = selectedTrackIdxs();
+    if (sel.length < 2 || !sel.includes(idx) || v === prev) return;
+    sel.filter(j => j !== idx).forEach(j => {
+        const o = state.project.tracks[j]; if (!o || o.locked) return;
+        o.pan = Math.max(-100, Math.min(100, (o.pan || 0) + (v - prev)));
+        PulseAudio.updateTrackPan(j, o.pan); syncTrackPan(j);
+        const mk = document.querySelector(`.strip[data-kind="track"][data-i="${j}"] .strip-pan-knob`);
+        if (mk) updatePanKnobVisual(mk, o.pan);
+    });
+}
 function syncInspectorVolume(idx) {
     const t = state.project.tracks[idx]; if (!t) return;
     const f = document.querySelector('#inspector .insp-strip[data-kind="track"] .insp-fader');
@@ -10417,10 +10429,12 @@ function startPanDrag(e, knob, trackIdx) {
         const dx = ev.clientX - startX;
         if (!undone && dx !== 0) { pushUndo(); undone = true; }
         const pan = Math.max(-100, Math.min(100, startPan + dx));
+        const prev = t.pan || 0;
         t.pan = pan;
         updatePanKnobVisual(knob, pan);
         if (window.PulseAudio) PulseAudio.updateTrackPan(trackIdx, pan);
         syncTrackPan(trackIdx);
+        followSelectedPan(trackIdx, prev, pan);
     };
     const onUp = () => {
         document.removeEventListener('mousemove', onMove);
@@ -11788,13 +11802,7 @@ function bindTrackEvents() {
             t.pan = v; paint(v);
             PulseAudio.updateTrackPan(i, v);
             syncTrackPan(i);
-            // pistes choisies : elles bougent du même écart (comme Logic et l'inspecteur)
-            const sel = selectedTrackIdxs();
-            if (sel.length > 1 && sel.includes(i) && v !== prev) sel.filter(j => j !== i).forEach(j => {
-                const o = state.project.tracks[j]; if (!o || o.locked) return;
-                o.pan = Math.max(-100, Math.min(100, (o.pan || 0) + (v - prev)));
-                PulseAudio.updateTrackPan(j, o.pan); syncTrackPan(j);
-            });
+            followSelectedPan(i, prev, v);   // pistes choisies : même écart
             if (persist) {
                 saveProject();
                 if (state.mixerOpen) { renderMixer(); bindMixerEvents(); }   // même réglage dans le mixer

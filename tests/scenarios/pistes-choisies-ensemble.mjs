@@ -32,4 +32,13 @@ export default async ({ ev, nav, send, sleep, check }) => {
   await R(`renderAll(); return 1`);
   await R(`document.querySelector('.m-del[data-del="3"]').click(); await new Promise(r=>setTimeout(r,200)); return 1`);
   check('× sur une piste hors sélection : elle seule', (await R(`return state.project.tracks.map(t=>t.name).join(',')`)) === 'A,B,C', await R(`return state.project.tracks.map(t=>t.name).join(',')`));
+  // pan d'une tranche du mixeur : les pistes choisies suivent aussi
+  await R(`state.project.tracks.forEach(t=>t.pan=0); selectTrack(0); state.selectedTracks=new Set([0,2]); renderAll(); if(!state.mixerOpen) toggleMixer(); await new Promise(r=>setTimeout(r,300)); return 1`);
+  const m = JSON.parse(await ev(`JSON.stringify((()=>{const b=document.querySelector('.strip[data-kind="track"][data-i="0"] .strip-pan-knob').getBoundingClientRect(); return {x:b.x+b.width/2,y:b.y+b.height/2}})())`));
+  await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: m.x, y: m.y, button: 'left', buttons: 1, clickCount: 1 });
+  for (let k = 1; k <= 5; k++) await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: m.x - k * 5, y: m.y, button: 'left', buttons: 1 });
+  await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: m.x - 25, y: m.y, button: 'left', buttons: 0, clickCount: 1 });
+  await sleep(200);
+  const mp = await R(`return state.project.tracks.map(t=>t.pan||0).join(',')`);
+  check('pan du mixeur : A et C bougent ensemble, B non', /^-\d+,0,-\d+$/.test(mp) && mp.split(',')[0] === mp.split(',')[2], mp);
 };
