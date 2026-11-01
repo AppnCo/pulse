@@ -28,7 +28,9 @@ Flanger
 Gate
 IV
 Joindre les régions choisies en une seule (piste par piste)
+Le déplacer (aimanté, Shift = libre) · le renommer (clic droit : supprimer)
 Lecture
+Marqueur · glisser · double-clic
 Menu des outils (Pointeur, Crayon, Gomme…) sous la souris
 Mix Bus 1
 New project

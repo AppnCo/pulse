@@ -664,8 +664,11 @@ body.is-trimming .clip-trim-handle { opacity: 1 !important; }
     color: #f59e0b;
     white-space: nowrap;
     text-shadow: 0 1px 3px rgba(0,0,0,0.7);
-    pointer-events: none;
+    pointer-events: auto;   /* le nom s'attrape : glisser = déplacer, double-clic = renommer */
+    cursor: grab;
+    padding: 0 3px;
 }
+.marker-line::before { content: ''; position: absolute; top: 0; bottom: 0; left: -3px; width: 8px; }   /* trait plus facile à attraper */
 .marker:hover .marker-line { opacity: 1; background: #fbbf24; }
 .marker:hover .marker-label { color: #fbbf24; }
 

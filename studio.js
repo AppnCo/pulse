@@ -1865,13 +1865,33 @@ function renderMarkers() {
         el.style.left = (mk.time * state.pxPerSecond) + 'px';
         el.innerHTML = `<div class="marker-line"></div><div class="marker-label">${esc(mk.name || (idx + 1))}</div>`;
         el.dataset.idx = idx;
-        // Clic gauche → placer le curseur sur le marqueur
+        // Clic gauche → placer le curseur sur le marqueur ; glisser = le déplacer (aimanté, Shift = libre), comme Logic
         el.addEventListener('mousedown', (e) => {
             e.stopPropagation();
             if (e.button === 2) return;
-            state.playhead = mk.time;
-            updatePlayhead(); updateChrono();
+            const sx = e.clientX, t0 = mk.time;
+            let moved = false;
+            const move = (ev) => {
+                if (!moved && Math.abs(ev.clientX - sx) < 4) return;
+                if (!moved) { moved = true; pushUndo(); document.body.classList.add('resizing-col'); }
+                mk.time = Math.max(0, snapTime(t0 + (ev.clientX - sx) / state.pxPerSecond, ev.shiftKey));
+                el.style.left = (mk.time * state.pxPerSecond) + 'px';
+            };
+            const up = () => {
+                document.removeEventListener('mousemove', move);
+                document.removeEventListener('mouseup', up);
+                document.body.classList.remove('resizing-col');
+                if (moved) {
+                    state.project.markers.sort((a, b) => a.time - b.time);
+                    saveProject(); renderMarkers();
+                    flash(`Marqueur « ${mk.name || ''} » déplacé à ${secondsToDuration(mk.time)}`);
+                } else { state.playhead = mk.time; updatePlayhead(); updateChrono(); }
+            };
+            document.addEventListener('mousemove', move);
+            document.addEventListener('mouseup', up);
         });
+        // Double-clic → le renommer
+        el.addEventListener('dblclick', (e) => { e.stopPropagation(); renameMarker(mk); });
         // Clic droit → menu
         el.addEventListener('contextmenu', (e) => {
             e.preventDefault(); e.stopPropagation();
@@ -2066,6 +2086,16 @@ function pulseAsk(title, value = '') {
     });
 }
 
+function renameMarker(mk) {
+    pulseAsk('Nom du marqueur', mk.name).then((newName) => {
+        if (newName === null) return;
+        const v = newName.trim() || mk.name;
+        if (v === mk.name) return;
+        pushUndo();
+        mk.name = v;
+        saveProject(); renderMarkers();
+    });
+}
 function openMarkerContextMenu(x, y, idx) {
     closeAllMenus();
     const mk = state.project.markers[idx];
@@ -2073,14 +2103,7 @@ function openMarkerContextMenu(x, y, idx) {
     menu.className = 'track-ctx-menu';
     menu.style.cssText = `position:fixed;left:${x}px;top:${y}px;z-index:200`;
     const items = [
-        { label: `Renommer "${mk.name}"`, action: () => {
-            pulseAsk('Nom du marqueur', mk.name).then((newName) => {
-                if (newName === null) return;
-                pushUndo();
-                mk.name = newName.trim() || mk.name;
-                saveProject(); renderMarkers();
-            });
-        }},
+        { label: `Renommer « ${esc(mk.name || '')} »  (double-clic)`, action: () => renameMarker(mk) },
         { sep: true },
         { label: 'Supprimer le marqueur', danger: true, action: () => {
             pushUndo();
@@ -4957,6 +4980,7 @@ const SHORTCUT_GROUPS = [
             ['T', 'Trouver le tempo en tapant le rythme (puis Espace)'],
             ['⌥M', 'Poser un marqueur au curseur'],
             ['⌥← / ⌥→', 'Marqueur précédent / suivant'],
+            ['Marqueur · glisser · double-clic', 'Le déplacer (aimanté, Shift = libre) · le renommer (clic droit : supprimer)'],
             ['← / →', 'Curseur : un temps en arrière / en avant (pendant la lecture : déplace le curseur de base, la lecture continue)'],
             ['Shift + ← / →', 'Curseur : une mesure'],
             ['Tab / Maj + Tab', 'Curseur : bord de clip suivant / précédent'],
