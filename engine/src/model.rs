@@ -410,6 +410,14 @@ impl Default for EqBand {
 #[serde(default)]
 pub struct SatParams {
     pub drive: f64,
+    /// famille (« classique » si absent = la saturation d'origine)
+    pub sty: Option<String>,
+    /// Entrée en dB (−12 à +24), Ton (−100 sombre à +100 brillant), Mélange en %, Sortie en dB, Volume égal (oui si absent)
+    pub input: Option<f64>,
+    pub tone: Option<f64>,
+    pub mix: Option<f64>,
+    pub out: Option<f64>,
+    pub ag: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]

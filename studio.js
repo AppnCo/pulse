@@ -9117,6 +9117,126 @@ function openMsatPanel(trackIdx, anchorEl) {
     makePlugWindow(panel, t, 'msat', trackIdx);
 }
 
+// Saturation (la simple) : écran « courbe vivante » (planche docs-planche-saturation.html, choix A).
+// À gauche la courbe (plus elle se couche, plus ça sature) avec un point qui suit le niveau du son ;
+// à droite une note à ce niveau, d'origine (pâle) et saturée (violet). Réglages : famille, Entrée, Chaleur, Ton, Mélange, Sortie, Volume égal.
+const SAT_FAMS = [['classique', 'Classique'], ['bande', 'Bande'], ['lampe', 'Lampe'], ['ampli', 'Ampli'], ['transfo', 'Transfo'], ['repli', 'Repli'], ['lofi', 'Lo-fi']];
+const SAT_TIPS = { classique: 'La saturation d\'origine de Pulse : douce, passe partout', bande: 'Bande magnétique : arrondit et tasse', lampe: 'Lampe : chaude, ajoute des harmoniques paires (rond)',
+    ampli: 'Ampli de guitare : mord plus vite', transfo: 'Transformateur : léger, garde les crêtes', repli: 'Repli : le son se replie sur lui-même, effet radical', lofi: 'Lo-fi : marches d\'escalier, son abîmé' };
+// Même courbe et même volume que le worklet pulse-sat (audio.js) et Saturator (engine/src/fx.rs)
+function satShape(sp) {
+    const drive = Math.max(0, Math.min(100, sp.drive ?? 25)), sty = SAT_FAMS.some(f => f[0] === sp.sty) ? sp.sty : 'classique';
+    const gin = Math.pow(10, Math.max(-12, Math.min(24, sp.input || 0)) / 20), gout = Math.pow(10, Math.max(-24, Math.min(12, sp.out || 0)) / 20);
+    const mix = Math.max(0, Math.min(100, sp.mix ?? 100)) / 100, ag = sp.ag !== false;
+    let curve, trim;
+    if (drive <= 0) { curve = (x) => x; trim = 1; }
+    else if (sty === 'classique') { const k = 1 + drive * 0.05, tk = Math.tanh(k); curve = (x) => Math.tanh(k * Math.max(-1, Math.min(1, x))) / tk; trim = ag ? 1 / Math.sqrt(k / tk) : 1; }
+    else {
+        const k = 1 + drive / 100 * 7; curve = (x) => msatCurveUI(sty, x, k);
+        let e = 0; for (let i = 0; i < 64; i++) { const y = curve(0.25 * Math.sin(2 * Math.PI * i / 64)); e += y * y; }
+        trim = ag ? 0.25 * Math.SQRT1_2 / Math.max(1e-6, Math.sqrt(e / 64)) : 1;
+    }
+    if (ag) trim /= gin;
+    return (x) => (x + (curve(x * gin) * trim - x) * mix) * gout;
+}
+function openSatPanel(trackIdx, anchorEl) {
+    closeTransientPanels();
+    const t = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;
+    if (!t) return;
+    const already = findPlugWin(t, 'sat');
+    if (already) { plugFront(already); return; }
+    t.effectParams = t.effectParams || {};
+    if (!t.effectParams.sat) t.effectParams.sat = { drive: 25 };
+    const P = () => t.effectParams.sat;
+    const W = 900, H = 520, C = { x: 40, y: 50, w: 330, h: 330 }, R = { x: 410, y: 70, w: 450, h: 250 };
+    let undoArmed = false, lvl = 0, demo = 0;
+    const arm = () => { if (!undoArmed) { pushUndo(); undoArmed = true; } };
+    const finish = () => { t.effects = t.effects || []; if (!t.effects.includes('sat')) t.effects.push('sat'); refreshPlaybackSoon(); saveProject(); undoArmed = false; };
+    const step = (fn) => { pushUndo(); fn(); finish(); };
+    const panel = document.createElement('div');
+    panel.className = 'fx-panel lim-panel sat-panel';
+    panel.innerHTML = `
+        <div class="fx-panel-header">
+            <label class="fx-bypass-label fx-power" data-tooltip="Allumer ou éteindre l'effet"><input type="checkbox" class="fx-bypass" ${t.effects?.includes('sat') ? 'checked' : ''}><span class="fx-power-btn">⏻</span></label>
+            <span class="fx-title lim-title">Saturation <i>— ${esc(t.name || '')}</i></span>
+            <button class="lim-tp sat-ag" data-tooltip="Volume égal : quand tu montes la chaleur ou l'entrée, le volume ne grimpe pas — tu juges le grain, pas le niveau">Volume égal</button>
+            <button class="fx-panel-close">×</button>
+        </div>
+        <div class="lim-face"><svg class="lim-svg sat-svg" viewBox="0 0 ${W} ${H}"></svg><div class="lim-fp sat-fp"></div></div>
+        <div class="lim-sb"><span>Glisse un bouton vers le haut / le bas · double-clic = réglage d'origine</span><span class="lim-spacer"></span><span>Niveau <b class="sat-lv">—</b></span></div>`;
+    document.body.appendChild(panel);
+    const svg = panel.querySelector('.sat-svg'), fp = panel.querySelector('.sat-fp');
+    const meterLevel = () => {
+        if (window.__PULSE_PLUGIN__) { const m = PulseAudio.getLimiterMeter(); return m ? m.i : 0; }
+        if (!(state.playing || state.recording) || typeof trackIdx !== 'number') return 0;
+        const an = PulseAudio.getTrackAnalyser(trackIdx); if (!an || !an.getFloatTimeDomainData) return 0;
+        const b = new Float32Array(an.fftSize || 2048); an.getFloatTimeDomainData(b); let pk = 0; for (let i = 0; i < b.length; i++) pk = Math.max(pk, Math.abs(b[i])); return pk;
+    };
+    const draw = () => {
+        const sp = P(), f = satShape(sp), live = lvl > 0.003, a = live ? Math.min(1.2, lvl) : 0.7;
+        const cy = (v) => C.y + C.h / 2 - Math.max(-1.3, Math.min(1.3, v)) / 1.25 * C.h / 2, cx = (v) => C.x + C.w / 2 + v / 1.25 * C.w / 2;
+        let g = `<rect x="${C.x}" y="${C.y}" width="${C.w}" height="${C.h}" rx="14" class="sat-box"/>`;
+        for (let i = 1; i < 4; i++) g += `<line x1="${C.x + C.w * i / 4}" y1="${C.y}" x2="${C.x + C.w * i / 4}" y2="${C.y + C.h}" class="lim-grid"/><line x1="${C.x}" y1="${C.y + C.h * i / 4}" x2="${C.x + C.w}" y2="${C.y + C.h * i / 4}" class="lim-grid"/>`;
+        g += `<line x1="${cx(-1.25)}" y1="${cy(-1.25)}" x2="${cx(1.25)}" y2="${cy(1.25)}" stroke="#ffffff26" stroke-dasharray="4 5"/>`;
+        let d = ''; for (let i = 0; i <= 120; i++) { const x = -1.25 + 2.5 * i / 120; d += (i ? 'L' : 'M') + cx(x).toFixed(1) + ' ' + cy(f(x)).toFixed(1); }
+        g += `<path d="${d}" class="sat-curve"/>`;
+        if (live) g += `<circle cx="${cx(a).toFixed(1)}" cy="${cy(f(a)).toFixed(1)}" r="7" class="sat-dot"/>`;
+        g += `<text x="${C.x + 12}" y="${C.y + 22}" class="lim-txt">courbe${live ? '' : (window.__PULSE_PLUGIN__ ? ' · fais passer du son : un point le suit' : ' · lance la lecture : un point suit ton son')}</text>`;
+        g += `<rect x="${R.x}" y="${R.y}" width="${R.w}" height="${R.h}" rx="14" class="sat-box"/><line x1="${R.x}" y1="${R.y + R.h / 2}" x2="${R.x + R.w}" y2="${R.y + R.h / 2}" class="lim-grid"/>`;
+        let dr = '', wt = ''; const fq = 3.2, ry = (v) => R.y + R.h / 2 - Math.max(-1.3, Math.min(1.3, v)) / 1.3 * R.h / 2;
+        for (let i = 0; i <= 300; i++) { const ph = i / 300, x = Math.sin(2 * Math.PI * fq * ph + demo) * a, X = (R.x + ph * R.w).toFixed(1); dr += (i ? 'L' : 'M') + X + ' ' + ry(x).toFixed(1); wt += (i ? 'L' : 'M') + X + ' ' + ry(f(x)).toFixed(1); }
+        g += `<path d="${dr}" class="sat-dry"/><path d="${wt}" class="sat-wet"/>`;
+        g += `<text x="${R.x + 12}" y="${R.y + 22}" class="lim-txt">${live ? 'ton son' : 'une note'} : d'origine (pâle) · saturé (violet)</text>`;
+        const fam = SAT_FAMS.find(x => x[0] === (sp.sty || 'classique')) || SAT_FAMS[0];
+        g += `<text x="${R.x + R.w / 2}" y="${R.y + R.h + 48}" class="sat-big" text-anchor="middle">${fam[1]} · ${Math.round(sp.drive ?? 25)} %</text>`;
+        g += `<text x="${R.x + R.w / 2}" y="${R.y + R.h + 72}" class="lim-txt" text-anchor="middle">${esc(SAT_TIPS[fam[0]])}</text>`;
+        svg.innerHTML = g;
+        panel.querySelector('.sat-ag').classList.toggle('on', sp.ag !== false);
+        panel.querySelector('.sat-lv').textContent = live ? (20 * Math.log10(Math.max(1e-4, lvl))).toFixed(1).replace('.', ',') + ' dB' : '—';
+    };
+    const buildFp = () => {
+        fp.innerHTML = '';
+        const c0 = document.createElement('div'); c0.className = 'lim-col';
+        c0.innerHTML = `<span class="lim-t">Famille</span><div class="ms-stys sat-fams">${SAT_FAMS.map(([k, n]) => `<button class="ms-sty ${(P().sty || 'classique') === k ? 'on' : ''}" data-k="${k}" data-tooltip="${esc(SAT_TIPS[k])}">${k === 'classique' ? satClassicIcon() : msatIcon(k)}${n}</button>`).join('')}</div>`;
+        fp.appendChild(c0);
+        c0.querySelectorAll('.ms-sty').forEach(x => x.addEventListener('click', () => { step(() => { if (x.dataset.k === 'classique') delete P().sty; else P().sty = x.dataset.k; }); buildFp(); draw(); }));
+        const sep = document.createElement('div'); sep.className = 'lim-sep'; fp.appendChild(sep);
+        const pm = (v) => (v > 0 ? '+' : '') + v.toFixed(1).replace('.', ',');
+        // valeur d'origine = clé absente (projet léger, ancien son)
+        const k = (key, o) => proKnob(fp, { ...o, onEnd: finish, onChange: (v) => { arm(); v = o.round ? o.round(v) : Math.round(v); if (o.def !== undefined && v === o.def) delete P()[key]; else P()[key] = v; draw(); } });
+        k('input', { label: 'Entrée', min: -12, max: 24, val: P().input || 0, def: 0, fmt: (v) => pm(v) + ' dB', round: (v) => Math.round(v * 2) / 2 });
+        k('drive', { label: 'Chaleur', min: 0, max: 100, val: P().drive ?? 25, big: true, fmt: (v) => Math.round(v) + ' %' });
+        k('tone', { label: 'Ton', min: -100, max: 100, val: P().tone || 0, def: 0, fmt: (v) => { v = Math.round(v); return v === 0 ? 'neutre' : (v < 0 ? 'sombre ' : 'brillant ') + Math.abs(v); } });
+        k('mix', { label: 'Mélange', min: 0, max: 100, val: P().mix ?? 100, def: 100, fmt: (v) => Math.round(v) + ' %' });
+        k('out', { label: 'Sortie', min: -12, max: 12, val: P().out || 0, def: 0, fmt: (v) => pm(v) + ' dB', round: (v) => Math.round(v * 2) / 2 });
+    };
+    panel.querySelector('.sat-ag').addEventListener('click', () => { step(() => { if (P().ag === false) delete P().ag; else P().ag = false; }); draw(); });
+    let last = 0;
+    const loop = (ts) => {
+        if (!panel.isConnected) return;
+        if (ts - last > 33) {
+            last = ts; const m = meterLevel(); lvl = Math.max(m, lvl * 0.85); if (lvl < 0.003) lvl = 0;
+            if (lvl > 0) { demo += 0.25; draw(); } else if (demo) { demo = 0; draw(); }
+        }
+        requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+    panel.querySelector('.fx-panel-close').addEventListener('click', () => panel.remove());
+    panel.querySelector('.fx-bypass').addEventListener('change', (e) => {
+        pushUndo(); t.effects = t.effects || [];
+        setFxOn(t, 'sat', e.target.checked);
+        refreshPlaybackSoon(); saveProject(); refreshStrips();
+    });
+    buildFp(); draw();
+    const rect = (anchorEl && anchorEl.getBoundingClientRect) ? anchorEl.getBoundingClientRect() : { left: 80, right: 80, top: 80 };
+    const pw = Math.min(900, window.innerWidth - 16);
+    let left = rect.right + 8; if (left + pw > window.innerWidth) left = Math.max(8, rect.left - pw - 8);
+    panel.style.left = Math.max(8, Math.min(left, window.innerWidth - pw - 8)) + 'px';
+    panel.style.top = Math.max(8, Math.min(rect.top - 20, window.innerHeight - panel.offsetHeight - 8)) + 'px';
+    makePlugWindow(panel, t, 'sat', trackIdx);
+}
+const satClassicIcon = () => { let p = ''; for (let i = 0; i <= 20; i++) { const x = -1 + i / 10, y = Math.tanh(3 * x) / Math.tanh(3); p += (i ? 'L' : 'M') + (1 + (x + 1) / 2 * 20).toFixed(1) + ' ' + (15 - (y + 1) / 2 * 14).toFixed(1); } return `<svg viewBox="0 0 22 16" width="22" height="16"><path d="${p}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>`; };
+
 // Réglages de chaque effet (partagés : fenêtres de plugin et menu d'automation)
 const FX_PANEL_DEFS = {
     eq: [
@@ -9235,6 +9355,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
     if (fxName === 'deess') return openDeessPanel(trackIdx, anchorEl);
     if (fxName === 'mband') return openMbandPanel(trackIdx, anchorEl);
     if (fxName === 'msat') return openMsatPanel(trackIdx, anchorEl);
+    if (fxName === 'sat') return openSatPanel(trackIdx, anchorEl);
     closeTransientPanels();
     // trackIdx : numéro de piste, ou directement un groupe
     const t = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;

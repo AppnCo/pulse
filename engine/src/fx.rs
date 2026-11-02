@@ -1392,35 +1392,129 @@ pub fn sat_fir() -> [f64; 64] {
 }
 /// Saturation suréchantillonnée ×4 (même calcul que le worklet `pulse-sat`) : la courbe tanh est calculée 4 fois plus vite,
 /// puis on revient à la cadence normale à travers le même filtre. Retard : ~16 échantillons.
+#[derive(Clone)]
 pub struct Saturator {
     k: f64,
+    tk: f64,
     trim: f64,
+    /// chaleur 0 : même chemin (même retard, même filtre) mais sans courbe — pour le plugin, dont le retard ne doit jamais changer
+    lin: bool,
+    /// famille : « classique » = la saturation d'origine de Pulse, sinon une courbe de la Saturation multibande
+    sty: &'static str,
+    /// Entrée (gain avant la courbe), Sortie, Mélange (0 à 1)
+    gin: f64,
+    gout: f64,
+    mix: f64,
+    /// Ton (plus sombre / plus brillant), sur le son saturé seulement : étagère grave 300 Hz + étagère aigu 3 kHz
+    tone: [[Biquad; 2]; 2],
+    has_tone: bool,
+    /// son d'origine passé par le même filtre (même retard) : pour le Mélange
+    keep_dry: bool,
     h: [f64; 64],
     xin: [[f64; 16]; 2],
     xs: [[f64; 64]; 2],
     pos: [usize; 2],
+    dxin: [[f64; 16]; 2],
+    dxs: [[f64; 64]; 2],
+    dpos: [usize; 2],
 }
+/// Familles de la Saturation (« classique » d'abord : réglage de départ, celui des anciens projets)
+pub const SAT_FAMILIES: [&str; 7] = ["classique", "bande", "lampe", "ampli", "transfo", "repli", "lofi"];
 impl Saturator {
+    fn blank() -> Self {
+        let b = Biquad::gain(0.0);
+        Self { k: 1.0, tk: 1f64.tanh(), trim: 1.0, lin: true, sty: "classique", gin: 1.0, gout: 1.0, mix: 1.0, tone: [[b; 2]; 2], has_tone: false, keep_dry: false,
+            h: sat_fir(), xin: [[0.0; 16]; 2], xs: [[0.0; 64]; 2], pos: [0; 2], dxin: [[0.0; 16]; 2], dxs: [[0.0; 64]; 2], dpos: [0; 2] }
+    }
     pub fn new(drive: f64) -> Option<Self> {
-        sat_coeffs(drive).map(|(k, trim)| Self { k, trim, h: sat_fir(), xin: [[0.0; 16]; 2], xs: [[0.0; 64]; 2], pos: [0; 2] })
+        (drive > 0.0).then(|| Self::with_drive(drive))
+    }
+    /// Saturation d'une piste (réglages du panneau). Chaleur 0 = pas d'effet (None), comme avant.
+    pub fn from_params(p: &crate::model::SatParams, sr: f64) -> Option<Self> {
+        (p.drive > 0.0).then(|| { let mut s = Self::blank(); s.configure(p, sr); s })
+    }
+    /// Retard en échantillons (mesuré : 15 tout rond) : annoncé au logiciel hôte par le plugin
+    pub const LATENCY: u32 = 15;
+    /// Comme `new`, mais chaleur 0 = le son passe tel quel par le même chemin (même retard)
+    pub fn with_drive(drive: f64) -> Self {
+        let mut s = Self::blank();
+        s.set_drive(drive);
+        s
+    }
+    /// Plugin : garder le son d'origine à jour en permanence (Mélange tourné en plein son sans trou)
+    pub fn keep_dry(&mut self) { self.keep_dry = true; }
+    /// Change la chaleur en gardant la mémoire des filtres (pas de trou dans le son)
+    pub fn set_drive(&mut self, drive: f64) {
+        self.configure(&crate::model::SatParams { drive, sty: Some(self.sty.to_string()), ..Default::default() }, 48_000.0);
+    }
+    /// Tous les réglages d'un coup, en gardant la mémoire des filtres
+    pub fn configure(&mut self, p: &crate::model::SatParams, sr: f64) {
+        let drive = p.drive.clamp(0.0, 100.0);
+        self.sty = SAT_FAMILIES.iter().copied().find(|f| Some(*f) == p.sty.as_deref()).unwrap_or("classique");
+        self.gin = 10f64.powf(p.input.unwrap_or(0.0).clamp(-12.0, 24.0) / 20.0);
+        self.gout = 10f64.powf(p.out.unwrap_or(0.0).clamp(-24.0, 12.0) / 20.0);
+        self.mix = p.mix.unwrap_or(100.0).clamp(0.0, 100.0) / 100.0;
+        let ag = p.ag != Some(false);
+        self.lin = drive <= 0.0;
+        if self.lin {
+            self.k = 1.0; self.trim = if ag { 1.0 / self.gin } else { 1.0 };
+        } else if self.sty == "classique" {
+            let (k, trim) = sat_coeffs(drive).unwrap();
+            self.k = k; self.trim = if ag { trim / self.gin } else { 1.0 };
+        } else {
+            self.k = 1.0 + drive / 100.0 * 7.0;
+            self.trim = if ag { msat_trim(self.sty, self.k) / self.gin } else { 1.0 };
+        }
+        self.tk = self.k.tanh();
+        let t = p.tone.unwrap_or(0.0).clamp(-100.0, 100.0);
+        self.has_tone = t != 0.0;
+        if self.has_tone {
+            let lo = eq_sections(&EqBand { kind: "lowshelf".into(), freq: 300.0, gain: -t * 0.06, q: std::f64::consts::FRAC_1_SQRT_2, ..Default::default() }, sr);
+            let hi = eq_sections(&EqBand { kind: "highshelf".into(), freq: 3000.0, gain: t * 0.06, q: std::f64::consts::FRAC_1_SQRT_2, ..Default::default() }, sr);
+            for ch in 0..2 {
+                // nouveaux coefficients, mémoire du filtre gardée
+                self.tone[0][ch].retune(lo[0]);
+                self.tone[1][ch].retune(hi[0]);
+            }
+        }
+    }
+    #[inline]
+    fn lin_path(h: &[f64; 64], xin: &mut [f64; 16], xs: &mut [f64; 64], pos: &mut usize, v: f64) -> f64 {
+        xin.copy_within(0..15, 1);
+        xin[0] = v;
+        for p in 0..4 {
+            let mut u = 0.0;
+            for j in 0..16 { u += h[p + 4 * j] * xin[j]; }
+            *pos = (*pos + 1) % 64;
+            xs[*pos] = 4.0 * u;
+        }
+        let (mut out, mut idx) = (0.0, *pos);
+        for hi in h.iter() { out += hi * xs[idx]; idx = (idx + 63) % 64; }
+        out
     }
     #[inline]
     pub fn tick(&mut self, v: f64, ch: usize) -> f64 {
         let xin = &mut self.xin[ch];
         xin.copy_within(0..15, 1);
-        xin[0] = v;
-        let (h, k, tk) = (&self.h, self.k, self.k.tanh());
+        xin[0] = v * self.gin;
+        let (h, k, tk) = (&self.h, self.k, self.tk);
         let xs = &mut self.xs[ch];
         for p in 0..4 {
             let mut u = 0.0;
             for j in 0..16 { u += h[p + 4 * j] * xin[j]; }
-            let y = (k * (4.0 * u).clamp(-1.0, 1.0)).tanh() / tk;
+            let y = if self.lin { 4.0 * u } else if self.sty == "classique" { (k * (4.0 * u).clamp(-1.0, 1.0)).tanh() / tk } else { msat_curve(self.sty, 4.0 * u, k) };
             self.pos[ch] = (self.pos[ch] + 1) % 64;
             xs[self.pos[ch]] = y;
         }
         let (mut out, mut idx) = (0.0, self.pos[ch]);
         for hi in h.iter() { out += hi * xs[idx]; idx = (idx + 63) % 64; }
-        out * self.trim
+        out *= self.trim;
+        if self.has_tone { let [a, b] = &mut self.tone; out = b[ch].tick(a[ch].tick(out)); }
+        if self.mix < 1.0 || self.keep_dry {
+            let d = Self::lin_path(&self.h, &mut self.dxin[ch], &mut self.dxs[ch], &mut self.dpos[ch], v);
+            if self.mix < 1.0 { out = d + (out - d) * self.mix; }
+        }
+        out * self.gout
     }
 }
 /// Un échantillon saturé, sans suréchantillonnage (plugin AU de saturation, gardé tel quel)
@@ -1764,8 +1858,7 @@ impl Chain {
                 if let Some(out) = p.out.filter(|o| *o != 0.0) { push(Biquad::gain(out)); }
             }
         }
-        let drive = if has("sat") { effect_params.sat.as_ref().map_or(0.0, |s| s.drive) } else { 0.0 };
-        let sat = Saturator::new(drive);
+        let sat = if has("sat") { effect_params.sat.as_ref().and_then(|p| Saturator::from_params(p, sr)) } else { None };
         let de = effect_params.deess.clone().unwrap_or_default();
         let deess2 = (has("deess") && de.thr.is_some()).then(|| DeesserV2::new(&de, sr));
         let msat = if has("msat") { effect_params.msat.as_ref().and_then(|m| MultiSat::new(m, sr)) } else { None };

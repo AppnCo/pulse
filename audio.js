@@ -525,33 +525,62 @@ window.PulseAudio = (function() {
             for (let i = 0; i < 64; i++) h[i] /= s;
             return h;
         })();
+        // Familles, Entrée, Ton, Mélange, Sortie, Volume égal : même calcul que Saturator::configure (engine/src/fx.rs).
+        // Réglages de départ (Classique, 0 dB, ton neutre, 100 %, 0 dB) = la saturation d'origine, au bit près.
+        const SAT_FAMS = ['classique', 'bande', 'lampe', 'ampli', 'transfo', 'repli', 'lofi'];
         class PulseSat extends AudioWorkletProcessor {
             constructor(o) {
                 super();
                 const p = (o && o.processorOptions) || {};
-                this.k = 1 + (p.drive || 0) * 0.05; this.tk = Math.tanh(this.k);
-                this.trim = 1 / Math.sqrt(this.k / this.tk);
+                const drive = Math.max(0, Math.min(100, p.drive || 0));
+                this.sty = SAT_FAMS.includes(p.sty) ? p.sty : 'classique';
+                this.gin = Math.pow(10, Math.max(-12, Math.min(24, p.input || 0)) / 20);
+                this.gout = Math.pow(10, Math.max(-24, Math.min(12, p.out || 0)) / 20);
+                this.mix = Math.max(0, Math.min(100, p.mix ?? 100)) / 100;
+                const ag = p.ag !== false;
+                if (this.sty === 'classique') {
+                    this.k = 1 + drive * 0.05; this.trim = ag ? 1 / Math.sqrt(this.k / Math.tanh(this.k)) / this.gin : 1;
+                } else {
+                    this.k = 1 + drive / 100 * 7; this.trim = ag ? msatTrim(this.sty, this.k) / this.gin : 1;
+                }
+                this.tk = Math.tanh(this.k);
+                const t = Math.max(-100, Math.min(100, p.tone || 0));
+                this.tone = t ? [...eqBandCoefs({ type: 'lowshelf', freq: 300, gain: -t * 0.06, q: Math.SQRT1_2 }, sampleRate), ...eqBandCoefs({ type: 'highshelf', freq: 3000, gain: t * 0.06, q: Math.SQRT1_2 }, sampleRate)] : [];
+                this.ts = [this.tone.map(() => [0, 0, 0, 0]), this.tone.map(() => [0, 0, 0, 0])];
                 this.xin = [new Float64Array(16), new Float64Array(16)]; this.xs = [new Float64Array(64), new Float64Array(64)]; this.pos = [0, 0];
+                this.dxin = [new Float64Array(16), new Float64Array(16)]; this.dxs = [new Float64Array(64), new Float64Array(64)]; this.dpos = [0, 0];
             }
             process(inputs, outputs) {
                 const inp = inputs[0], out = outputs[0];
                 if (!inp || !inp.length) return true;
-                const n = inp[0].length, nc = Math.min(inp.length, out.length, 2), h = satFir, k = this.k, tk = this.tk;
+                const n = inp[0].length, nc = Math.min(inp.length, out.length, 2), h = satFir, k = this.k, tk = this.tk, sty = this.sty, classic = sty === 'classique', gin = this.gin, mix = this.mix;
                 for (let ch = 0; ch < nc; ch++) {
-                    const xin = this.xin[ch], xs = this.xs[ch], a = inp[ch], o = out[ch];
+                    const xin = this.xin[ch], xs = this.xs[ch], a = inp[ch], o = out[ch], ts = this.ts[ch];
                     let pos = this.pos[ch];
                     for (let i = 0; i < n; i++) {
-                        xin.copyWithin(1, 0, 15); xin[0] = a[i];
+                        xin.copyWithin(1, 0, 15); xin[0] = a[i] * gin;
                         for (let p = 0; p < 4; p++) {
                             let u = 0;
                             for (let j = 0; j < 16; j++) u += h[p + 4 * j] * xin[j];
-                            const v = Math.max(-1, Math.min(1, 4 * u));
                             pos = (pos + 1) % 64;
-                            xs[pos] = Math.tanh(k * v) / tk;
+                            xs[pos] = classic ? Math.tanh(k * Math.max(-1, Math.min(1, 4 * u))) / tk : msatCurve(sty, 4 * u, k);
                         }
                         let y = 0, idx = pos;
                         for (let j = 0; j < 64; j++) { y += h[j] * xs[idx]; idx = (idx + 63) % 64; }
-                        o[i] = y * this.trim;
+                        y *= this.trim;
+                        for (let j = 0; j < this.tone.length; j++) y = biqRun(this.tone[j], ts[j], y);
+                        if (mix < 1) {
+                            // son d'origine par le même filtre (même retard) : mélange aligné
+                            const dx = this.dxin[ch], ds = this.dxs[ch];
+                            dx.copyWithin(1, 0, 15); dx[0] = a[i];
+                            let dp = this.dpos[ch];
+                            for (let p = 0; p < 4; p++) { let u = 0; for (let j = 0; j < 16; j++) u += h[p + 4 * j] * dx[j]; dp = (dp + 1) % 64; ds[dp] = 4 * u; }
+                            let d = 0, di = dp;
+                            for (let j = 0; j < 64; j++) { d += h[j] * ds[di]; di = (di + 63) % 64; }
+                            this.dpos[ch] = dp;
+                            y = d + (y - d) * mix;
+                        }
+                        o[i] = y * this.gout;
                     }
                     this.pos[ch] = pos;
                 }
@@ -2940,9 +2969,9 @@ window.PulseAudio = (function() {
 
         // Saturation douce (« Doux ↔ Agressif »)
         B.sat = () => {
-            const drive = enabled.includes('sat') ? ((params.sat || {}).drive || 0) : 0;
+            const sp = params.sat || {}, drive = enabled.includes('sat') ? (sp.drive || 0) : 0;
             if (drive > 0 && fxReady.has(actx)) {
-                connect(new AudioWorkletNode(actx, 'pulse-sat', { numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max', processorOptions: { drive } }));
+                connect(new AudioWorkletNode(actx, 'pulse-sat', { numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max', processorOptions: { drive, sty: sp.sty, input: sp.input, tone: sp.tone, mix: sp.mix, out: sp.out, ag: sp.ag } }));
             } else if (drive > 0) {
                 const k = 1 + drive * 0.05;
                 const curve = new Float32Array(1024);

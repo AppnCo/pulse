@@ -5,8 +5,10 @@ import fs from 'fs';
 const ROOT = new URL('../../', import.meta.url).pathname;
 const gen = fs.readFileSync(ROOT + 'plugins/new-plugins.py', 'utf8');
 const comp = fs.readFileSync(ROOT + 'plugins/pulse-comp/src/lib.rs', 'utf8');
+const sat = fs.readFileSync(ROOT + 'plugins/pulse-sat/src/lib.rs', 'utf8');
 // clés vues par le plugin : 2e élément de chaque tuple de SPECS (params et bools), par effet
 function pluginKeys(fx) {
+  if (fx === 'sat') return [...sat.matchAll(/link_[bfe]!\(p, "(\w+)"/g)].map(m => m[1]);
   if (fx === 'comp') return [...comp.matchAll(/link_[bfe]!\(p, "(\w+)"/g)].map(m => m[1]).filter(k => k !== "bypass");
   const start = gen.indexOf(`fx='${fx}'`); const end = gen.indexOf('\n \'', start + 1);
   const block = gen.slice(start, end > 0 ? end : undefined);

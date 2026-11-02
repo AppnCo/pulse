@@ -196,6 +196,35 @@ mod tests {
         check(r#"{"bands":[{"base":true,"sty":"bande","va":1,"heat":50}],"ag":false}"#, [0.523942, 0.240843, 0.028031], "sansag");
     }
 
+    /// Saturation : familles, Entrée, Ton, Mélange, Sortie, Volume égal — chiffres de tests/scenarios/sat-familles-parite.mjs
+    #[test]
+    fn saturation_familles_comme_le_navigateur() {
+        let sr = SR as usize;
+        let mut media = Media::new();
+        let v: Vec<f32> = (0..sr).map(|i| { let t = i as f64 / SR as f64; ((0.4 * (2.0 * std::f64::consts::PI * 200.0 * t).sin()
+            + 0.15 * (2.0 * std::f64::consts::PI * 3000.0 * t).sin()) * if t < 0.5 { 1.0 } else { 0.3 }) as f32 }).collect();
+        media.insert("ms".into(), Source::new(SR, vec![v]));
+        let rms = |x: &[f32], a: f64, z: f64| {
+            let (a, z) = ((a * SR as f64).round() as usize, (z * SR as f64).round() as usize);
+            (x[a..z].iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / (z - a) as f64).sqrt()
+        };
+        let check = |mp: &str, want: [f64; 3], nom: &str| {
+            let json = format!(r#"{{"tracks":[{{"volume":100,"clips":[{{"id":"ms","start":0,"duration":1}}],"effects":["sat"],"effectParams":{{"sat":{mp}}}}}]}}"#);
+            let p: Project = serde_json::from_str(&json).unwrap();
+            let l = render(&p, &media, &RenderOptions { only_track: Some(0), ..opts() }).0;
+            let hf = ((4800..19200).map(|i| { let d = l[i] as f64 - 2.0 * l[i - 1] as f64 + l[i - 2] as f64; d * d }).sum::<f64>() / 14400.0).sqrt();
+            let got = [rms(&l, 0.1, 0.4), rms(&l, 0.6, 0.9), hf];
+            for k in 0..3 { assert!((got[k] - want[k]).abs() < want[k] * 0.01 + 2e-5, "{nom} : {got:?} au lieu de {want:?}"); }
+        };
+        check(r#"{"drive":50}"#, [0.263628, 0.113305, 0.013695], "classique");
+        check(r#"{"drive":60,"sty":"bande"}"#, [0.153706, 0.075837, 0.008584], "bande");
+        check(r#"{"drive":40,"sty":"lampe","input":6,"tone":-50}"#, [0.126333, 0.080044, 0.005526], "lampe");
+        check(r#"{"drive":80,"sty":"ampli","mix":60,"out":-3}"#, [0.123503, 0.054677, 0.006851], "ampli");
+        check(r#"{"drive":30,"sty":"transfo","tone":70}"#, [0.157702, 0.04976, 0.013736], "transfo");
+        check(r#"{"drive":50,"sty":"repli","ag":false}"#, [0.455697, 0.165014, 0.0485], "repli");
+        check(r#"{"drive":30,"sty":"lofi","input":-6,"mix":50}"#, [0.217626, 0.070791, 0.019526], "lofi");
+    }
+
     /// Multibande à bandes libres (tranches Linkwitz-Riley depuis le 01/11/2026) : mêmes chiffres que tests/scenarios/mband-parite.mjs (Chrome).
     #[test]
     fn multibande_comme_le_navigateur() {
@@ -781,6 +810,45 @@ mod tests {
         assert!(p13 < -90.0 && p1 < -90.0, "parasites : {p13} / {p1}");
         assert!((h3 + 17.3).abs() < 0.3, "3e harmonique comme le navigateur (−17,3) : {h3}");
         assert!((gain - 4.02).abs() < 0.05, "gain comme le navigateur (4,02) : {gain}");
+    }
+
+    /// Plugin Saturation : même saturateur suréchantillonné que Pulse. Chaleur 0 = son intact (même retard),
+    /// chaleur changée en plein son = pas de saut (la mémoire des filtres est gardée).
+    #[test]
+    fn saturateur_du_plugin() {
+        use crate::fx::Saturator;
+        let sr = SR as f64;
+        let note = |i: usize| 0.5 * (2.0 * std::f64::consts::PI * 1000.0 * i as f64 / sr).sin();
+        // chaleur 0 : même niveau, même forme (retard de 15 échantillons)
+        let mut s0 = Saturator::with_drive(0.0);
+        let mut err: f64 = 0.0;
+        for i in 0..4800 {
+            let y = s0.tick(note(i), 0);
+            if i > 100 {
+                let t = i as f64 - 15.0;
+                let x = 0.5 * (2.0 * std::f64::consts::PI * 1000.0 * t / sr).sin();
+                err = err.max((y - x).abs());
+            }
+        }
+        assert!(err < 2e-3, "chaleur 0 : écart {err}");
+        // même son que Pulse quand la chaleur est posée
+        let (mut a, mut b) = (Saturator::new(60.0).unwrap(), Saturator::with_drive(60.0));
+        for i in 0..2000 { assert_eq!(a.tick(note(i), 0), b.tick(note(i), 0)); }
+        // chaleur 0 → 100 en plein son, avec le fondu du plugin (clone de l'ancien) : aucun saut
+        let mut cur = Saturator::with_drive(0.0);
+        let (mut prev, mut jump, mut slope): (f64, f64, f64) = (0.0, 0.0, 0.0);
+        let mut old: Option<Saturator> = None;
+        for i in 0..9600 {
+            if i == 4800 { old = Some(cur.clone()); cur.set_drive(100.0); }
+            let y = cur.tick(note(i), 0);
+            let a = ((i as f64 - 4800.0) / 480.0).clamp(0.0, 1.0);
+            let out = match &mut old { Some(o) if a < 1.0 => { let z = o.tick(note(i), 0); z + (y - z) * a } _ => y };
+            let d = (out - prev).abs();
+            if i >= 6000 { slope = slope.max(d); }   // pente du son final (presque carré à chaleur 100)
+            if (4800..5400).contains(&i) { jump = jump.max(d); }
+            prev = out;
+        }
+        assert!(jump < slope * 1.05, "saut au changement de chaleur : {jump} (pente du son final {slope})");
     }
 
     /// Compresseur Propre : maintien des crêtes du détecteur — une basse rapide ne se déforme plus.

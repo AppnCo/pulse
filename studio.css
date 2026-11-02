@@ -3734,3 +3734,15 @@ body[data-left-tool="fade"] .timeline-tracks .clip { cursor: ew-resize; }
     background: color-mix(in srgb, var(--track-color, var(--violet-1)) 12%, var(--bg-2) 88%);
     box-shadow: 0 0 0 1px var(--track-color, var(--violet-1));
 }
+
+/* Saturation (la simple) : écran « courbe vivante » (planche docs-planche-saturation.html, A) */
+.sat-panel { width: 900px; max-width: calc(100vw - 16px); }
+.sat-box { fill: #0d0817; stroke: #ffffff12; }
+.sat-curve { fill: none; stroke: #A855F7; stroke-width: 3; filter: drop-shadow(0 0 8px #A855F7); }
+.sat-dot { fill: #fff; filter: drop-shadow(0 0 10px #C084FC); }
+.sat-dry { fill: none; stroke: #ffffff40; stroke-width: 1.5; }
+.sat-wet { fill: none; stroke: #C084FC; stroke-width: 2.4; filter: drop-shadow(0 0 6px #A855F7); }
+.sat-big { fill: #e9e2f5; font-size: 18px; font-weight: 600; }
+.sat-fp { left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100% - 24px); }
+.sat-fams { grid-template-columns: repeat(4, auto); }
+.sat-panel .sat-ag { margin-left: auto; }
