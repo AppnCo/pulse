@@ -3746,3 +3746,49 @@ body[data-left-tool="fade"] .timeline-tracks .clip { cursor: ew-resize; }
 .sat-fp { left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100% - 24px); }
 .sat-fams { grid-template-columns: repeat(4, auto); }
 .sat-panel .sat-ag { margin-left: auto; }
+.sat-needle { stroke: #C084FC; stroke-width: 2.5; filter: drop-shadow(0 0 6px #A855F7); }
+.sat-mini { stroke-width: 2; filter: drop-shadow(0 0 4px #A855F7); }
+
+/* Filtre : écran plein */
+.flt-panel { width: 900px; max-width: calc(100vw - 16px); }
+.flt-curve { fill: none; stroke: #C084FC; stroke-width: 3; filter: drop-shadow(0 0 7px #A855F7); }
+.flt-cut { fill: #05020a; opacity: .45; }
+.flt-dot { fill: #fff; stroke: #A855F7; stroke-width: 3; filter: drop-shadow(0 0 8px #C084FC); }
+.flt-dot.off { fill: #2a1840; }
+.flt-fp { left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100% - 24px); }
+.flt-looks { grid-template-columns: repeat(3, auto); }
+.flt-look.on { background: #2a1840; border-color: #A855F7; color: #fff; }
+.flt-panel .lim-seg span { cursor: pointer; }
+
+/* Pitch : écran plein façon pédale */
+.pit-panel { width: 900px; max-width: calc(100vw - 16px); }
+.pit-dial { fill: #1a1228; stroke: #ffffff1c; stroke-width: 2; }
+.pit-dial2 { fill: #120c1b; stroke: #ffffff10; }
+.pit-big { fill: #fff; font-size: 54px; font-weight: 700; }
+.pit-tick { font-size: 12px; fill: #b9acd6; }
+.pit-key { fill: #e9e2f5; stroke: #0b0712; cursor: pointer; }
+.pit-key.from { fill: #A855F7; }
+.pit-bk { fill: #1a1228; stroke: #0b0712; cursor: pointer; }
+.pit-key.on, .pit-bk.on { filter: drop-shadow(0 0 10px #fff8); }
+.pit-fp { left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100% - 24px); }
+.pit-jumps { grid-template-columns: repeat(5, auto); }
+.pit-jump.on { background: #2a1840; border-color: #A855F7; color: #fff; }
+
+/* Modulations : écran animé commun */
+.mod-panel { width: 900px; max-width: calc(100vw - 16px); }
+.mod-fp { left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100% - 24px); }
+.mod-looks { grid-template-columns: repeat(2, auto); }
+.mod-look.on { background: #2a1840; border-color: #A855F7; color: #fff; }
+
+/* Doubleur, Slapback, Largeur : scène vue de dessus */
+.st-panel { width: 900px; max-width: calc(100vw - 16px); }
+.st-fp { left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100% - 24px); }
+.st-looks { grid-template-columns: repeat(2, auto); }
+.st-look.on { background: #2a1840; border-color: #A855F7; color: #fff; }
+
+/* Bitcrusher et Utilitaire */
+.cu-panel { width: 900px; max-width: calc(100vw - 16px); }
+.cu-fp { left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100% - 24px); }
+.cu-looks { grid-template-columns: repeat(2, auto); }
+.cu-look.on { background: #2a1840; border-color: #A855F7; color: #fff; }
+.cu-tog { padding: 10px 18px; font-size: 13px; }

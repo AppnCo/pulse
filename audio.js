@@ -532,28 +532,35 @@ window.PulseAudio = (function() {
             constructor(o) {
                 super();
                 const p = (o && o.processorOptions) || {};
-                const drive = Math.max(0, Math.min(100, p.drive || 0));
                 this.sty = SAT_FAMS.includes(p.sty) ? p.sty : 'classique';
-                this.gin = Math.pow(10, Math.max(-12, Math.min(24, p.input || 0)) / 20);
-                this.gout = Math.pow(10, Math.max(-24, Math.min(12, p.out || 0)) / 20);
-                this.mix = Math.max(0, Math.min(100, p.mix ?? 100)) / 100;
-                const ag = p.ag !== false;
-                if (this.sty === 'classique') {
-                    this.k = 1 + drive * 0.05; this.trim = ag ? 1 / Math.sqrt(this.k / Math.tanh(this.k)) / this.gin : 1;
-                } else {
-                    this.k = 1 + drive / 100 * 7; this.trim = ag ? msatTrim(this.sty, this.k) / this.gin : 1;
-                }
-                this.tk = Math.tanh(this.k);
-                const t = Math.max(-100, Math.min(100, p.tone || 0));
-                this.tone = t ? [...eqBandCoefs({ type: 'lowshelf', freq: 300, gain: -t * 0.06, q: Math.SQRT1_2 }, sampleRate), ...eqBandCoefs({ type: 'highshelf', freq: 3000, gain: t * 0.06, q: Math.SQRT1_2 }, sampleRate)] : [];
-                this.ts = [this.tone.map(() => [0, 0, 0, 0]), this.tone.map(() => [0, 0, 0, 0])];
+                this.ag = p.ag !== false;
+                this.knobs = { drive: p.drive || 0, input: p.input || 0, tone: p.tone || 0, mix: p.mix ?? 100, out: p.out || 0 };
+                this.ts = [[], []]; this.tone = [];
+                this.cfg();
                 this.xin = [new Float64Array(16), new Float64Array(16)]; this.xs = [new Float64Array(64), new Float64Array(64)]; this.pos = [0, 0];
                 this.dxin = [new Float64Array(16), new Float64Array(16)]; this.dxs = [new Float64Array(64), new Float64Array(64)]; this.dpos = [0, 0];
+            }
+            // Même calcul que Saturator::apply_knobs (engine/src/fx.rs) ; appelé aussi par l'automation
+            cfg() {
+                const kn = this.knobs, drive = Math.max(0, Math.min(100, kn.drive)), ag = this.ag;
+                this.gin = Math.pow(10, Math.max(-12, Math.min(24, kn.input)) / 20);
+                this.gout = Math.pow(10, Math.max(-24, Math.min(12, kn.out)) / 20);
+                this.mix = Math.max(0, Math.min(100, kn.mix)) / 100;
+                this.lin = drive <= 0;
+                if (this.lin) { this.k = 1; this.trim = ag ? 1 / this.gin : 1; }
+                else if (this.sty === 'classique') { this.k = 1 + drive * 0.05; this.trim = ag ? 1 / Math.sqrt(this.k / Math.tanh(this.k)) / this.gin : 1; }
+                else { this.k = 1 + drive / 100 * 7; this.trim = ag ? msatTrim(this.sty, this.k) / this.gin : 1; }
+                this.tk = Math.tanh(this.k);
+                const t = Math.max(-100, Math.min(100, kn.tone));
+                const tone = t ? [...eqBandCoefs({ type: 'lowshelf', freq: 300, gain: -t * 0.06, q: Math.SQRT1_2 }, sampleRate), ...eqBandCoefs({ type: 'highshelf', freq: 3000, gain: t * 0.06, q: Math.SQRT1_2 }, sampleRate)] : [];
+                // mémoire des filtres gardée quand seuls les coefficients changent
+                if (tone.length !== this.tone.length) this.ts = [tone.map(() => [0, 0, 0, 0]), tone.map(() => [0, 0, 0, 0])];
+                this.tone = tone;
             }
             process(inputs, outputs) {
                 const inp = inputs[0], out = outputs[0];
                 if (!inp || !inp.length) return true;
-                const n = inp[0].length, nc = Math.min(inp.length, out.length, 2), h = satFir, k = this.k, tk = this.tk, sty = this.sty, classic = sty === 'classique', gin = this.gin, mix = this.mix;
+                const n = inp[0].length, nc = Math.min(inp.length, out.length, 2), h = satFir, k = this.k, tk = this.tk, sty = this.sty, classic = sty === 'classique', gin = this.gin, mix = this.mix, lin = this.lin;
                 for (let ch = 0; ch < nc; ch++) {
                     const xin = this.xin[ch], xs = this.xs[ch], a = inp[ch], o = out[ch], ts = this.ts[ch];
                     let pos = this.pos[ch];
@@ -563,7 +570,7 @@ window.PulseAudio = (function() {
                             let u = 0;
                             for (let j = 0; j < 16; j++) u += h[p + 4 * j] * xin[j];
                             pos = (pos + 1) % 64;
-                            xs[pos] = classic ? Math.tanh(k * Math.max(-1, Math.min(1, 4 * u))) / tk : msatCurve(sty, 4 * u, k);
+                            xs[pos] = lin ? 4 * u : classic ? Math.tanh(k * Math.max(-1, Math.min(1, 4 * u))) / tk : msatCurve(sty, 4 * u, k);
                         }
                         let y = 0, idx = pos;
                         for (let j = 0; j < 64; j++) { y += h[j] * xs[idx]; idx = (idx + 63) % 64; }
@@ -587,7 +594,10 @@ window.PulseAudio = (function() {
                 return true;
             }
         }
-        registerProcessor('pulse-sat', PulseSat);
+        registerProcessor('pulse-sat', pulseAuto(PulseSat, (s, v) => {
+            let ch = false; for (const k in v) if (k in s.knobs && s.knobs[k] !== v[k]) { s.knobs[k] = v[k]; ch = true; }
+            if (ch) s.cfg();
+        }));
         // EQ « calé sur l'analogique » : mêmes fonctions que la page (copiées ici telles quelles)
         ${eqMatched.toString()}
         ${eqSections.toString()}
@@ -2971,7 +2981,7 @@ window.PulseAudio = (function() {
         B.sat = () => {
             const sp = params.sat || {}, drive = enabled.includes('sat') ? (sp.drive || 0) : 0;
             if (drive > 0 && fxReady.has(actx)) {
-                connect(new AudioWorkletNode(actx, 'pulse-sat', { numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max', processorOptions: { drive, sty: sp.sty, input: sp.input, tone: sp.tone, mix: sp.mix, out: sp.out, ag: sp.ag } }));
+                connect(new AudioWorkletNode(actx, 'pulse-sat', { numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max', processorOptions: { drive, sty: sp.sty, input: sp.input, tone: sp.tone, mix: sp.mix, out: sp.out, ag: sp.ag, ...autoOpts('sat', { drive: null, input: null, tone: null, mix: null, out: null }) } }));
             } else if (drive > 0) {
                 const k = 1 + drive * 0.05;
                 const curve = new Float32Array(1024);

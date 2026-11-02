@@ -16,7 +16,7 @@ function autoOwnerKey(o) { const i = state.project.tracks.indexOf(o); return i >
 function autoOwnerFromKey(k) { return k[0] === 't' ? state.project.tracks[+k.slice(1)] : busById(k.slice(1)); }
 // Réglages d'effet que le moteur sait suivre pendant la lecture (les autres viendront effet par effet)
 const AUTO_FX = { comp: ['threshold', 'ratio', 'mix', 'attack', 'release', 'knee', 'makeup'], delay: ['wet', 'feedback', 'dry'], reverb: ['wet'], filter: ['hpf', 'lpf'],
-    deess: ['amount', 'thr', 'range'], limit: ['ceiling', 'release', 'gain'], msat: ['mix', 'out'], gate: ['threshold', 'release', 'reduction', 'ratio', 'knee', 'attack', 'hold'], crush: ['bits', 'down', 'mix'], util: ['gain'], width: ['width'], pitch: ['semi', 'mix'],
+    deess: ['amount', 'thr', 'range'], limit: ['ceiling', 'release', 'gain'], msat: ['mix', 'out'], sat: ['drive', 'input', 'tone', 'mix', 'out'], gate: ['threshold', 'release', 'reduction', 'ratio', 'knee', 'attack', 'hold'], crush: ['bits', 'down', 'mix'], util: ['gain'], width: ['width'], pitch: ['semi', 'mix'],
     tremolo: ['rate', 'depth'], phaser: ['rate', 'depth', 'feedback', 'mix'], flanger: ['rate', 'depth', 'feedback', 'mix'], chorus: ['rate', 'depth', 'mix'],
     doubler: ['width', 'mix'], slapback: ['time', 'feedback', 'mix'] };
 // EQ libre : fréquence et gain de chaque bande (repérées par leur place dans la liste)
@@ -33,6 +33,8 @@ const AUTO_EXTRA_DEFS = {
     deess: [{ key: 'thr', label: 'Seuil', unit: ' dB', min: -60, max: 0, def: -26 }, { key: 'range', label: 'Plage', unit: ' dB', min: 0, max: 24, def: 10 }],
     gate: [{ key: 'ratio', label: 'Ratio', unit: ' : 1', min: 1, max: 100, def: 100, log: true }, { key: 'knee', label: 'Genou', unit: ' dB', min: 0, max: 24, def: 0 },
         { key: 'attack', label: 'Attaque', unit: ' ms', min: 0.1, max: 50, def: 2, log: true }, { key: 'hold', label: 'Maintien', unit: ' ms', min: 0, max: 500, def: 50 }],
+    sat: [{ key: 'input', label: 'Entrée', unit: ' dB', min: -12, max: 24, def: 0 }, { key: 'tone', label: 'Ton', unit: '', min: -100, max: 100, def: 0 },
+        { key: 'mix', label: 'Mélange', unit: ' %', min: 0, max: 100, def: 100 }, { key: 'out', label: 'Sortie', unit: ' dB', min: -12, max: 12, def: 0 }],
     msat: [{ key: 'mix', label: 'Mélange', unit: ' %', min: 0, max: 100, def: 100 }, { key: 'out', label: 'Sortie', unit: ' dB', min: -12, max: 12, def: 0 }],
     limit: [{ key: 'gain', label: 'Gain d\'entrée', unit: ' dB', min: 0, max: 24, def: 0 }, { key: 'ceiling', label: 'Plafond', unit: ' dB', min: -12, max: 0, def: -0.3 }, { key: 'release', label: 'Relâchement', unit: ' ms', min: 5, max: 2000, def: 120, log: true }]
 };

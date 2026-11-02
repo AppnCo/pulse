@@ -196,6 +196,34 @@ mod tests {
         check(r#"{"bands":[{"base":true,"sty":"bande","va":1,"heat":50}],"ag":false}"#, [0.523942, 0.240843, 0.028031], "sansag");
     }
 
+    /// Saturation : automation de Chaleur, Entrée, Ton, Mélange, Sortie — chiffres de tests/scenarios/sat-automation-parite.mjs
+    #[test]
+    fn automation_saturation_comme_le_navigateur() {
+        let sr = SR as usize;
+        let mut media = Media::new();
+        let v: Vec<f32> = (0..2 * sr).map(|i| { let t = i as f64 / SR as f64; (0.4 * (2.0 * std::f64::consts::PI * 200.0 * t).sin()
+            + 0.15 * (2.0 * std::f64::consts::PI * 3000.0 * t).sin()) as f32 }).collect();
+        media.insert("sa".into(), Source::new(SR, vec![v]));
+        let rms = |x: &[f32], a: f64, z: f64| {
+            let (a, z) = ((a * SR as f64).round() as usize, (z * SR as f64).round() as usize);
+            (x[a..z].iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / (z - a) as f64).sqrt()
+        };
+        let check = |sp: &str, au: &[(&str, f64, f64)], want: [f64; 3], nom: &str| {
+            let auto: Vec<String> = au.iter().map(|(k, a, b)| format!(r#""{k}":{{"points":[{{"t":0,"v":{a}}},{{"t":1,"v":{a}}},{{"t":1.01,"v":{b}}}]}}"#)).collect();
+            let json = format!(r#"{{"tracks":[{{"volume":100,"clips":[{{"id":"sa","start":0,"duration":2}}],"effects":["sat"],"effectParams":{{"sat":{sp}}},"automation":{{{}}}}}]}}"#, auto.join(","));
+            let p: Project = serde_json::from_str(&json).unwrap();
+            let l = render(&p, &media, &RenderOptions { only_track: Some(0), ..opts() }).0;
+            let (i0, i1) = ((1.2 * SR as f64) as usize, (1.8 * SR as f64) as usize);
+            let hf = ((i0..i1).map(|i| { let d = l[i] as f64 - 2.0 * l[i - 1] as f64 + l[i - 2] as f64; d * d }).sum::<f64>() / (i1 - i0) as f64).sqrt();
+            let got = [rms(&l, 0.2, 0.8), rms(&l, 1.2, 1.8), hf];
+            for k in 0..3 { assert!((got[k] - want[k]).abs() < want[k] * 0.01 + 2e-5, "{nom} : {got:?} au lieu de {want:?}"); }
+        };
+        check(r#"{"drive":10,"ag":false}"#, &[("fx:sat:drive", 0.1, 0.9)], [0.317024, 0.57782, 0.034482], "chaleur");
+        check(r#"{"drive":40,"sty":"lampe"}"#, &[("fx:sat:input", 1.0 / 3.0, 0.75)], [0.16218, 0.038063, 0.006772], "entrée");
+        check(r#"{"drive":50,"sty":"bande"}"#, &[("fx:sat:tone", 0.5, 0.1)], [0.159622, 0.24263, 0.006128], "ton");
+        check(r#"{"drive":80,"sty":"ampli"}"#, &[("fx:sat:mix", 1.0, 0.3), ("fx:sat:out", 0.5, 0.25)], [0.150648, 0.097046, 0.005052], "mélange + sortie");
+    }
+
     /// Saturation : familles, Entrée, Ton, Mélange, Sortie, Volume égal — chiffres de tests/scenarios/sat-familles-parite.mjs
     #[test]
     fn saturation_familles_comme_le_navigateur() {

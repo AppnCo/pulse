@@ -8991,10 +8991,22 @@ function openMsatPanel(trackIdx, anchorEl) {
             let d = `M0 ${B}`;
             for (let x = 0; x <= PL; x += 4) { const k = Math.min(bins.length - 1, Math.max(0, Math.round(F(x) / nyq * (bins.length - 1)))); const v = Number.isFinite(bins[k]) ? bins[k] : -120; d += ` L${x} ${YS(v).toFixed(1)}`; }
             g += `<path d="${d} L${PL} ${B} Z" class="ms-spec"/>`;
-        } else g += `<text x="${PL / 2}" y="${B - 16}" class="lim-txt" text-anchor="middle">Lance la lecture : le son de la piste (avec la chaleur ajoutée) s'affiche ici</text>`;
+        } else g += `<text x="${PL / 2}" y="${T + 18}" class="lim-txt" text-anchor="middle">Lance la lecture : le son de la piste (avec la chaleur ajoutée) s'affiche ici</text>`;
         if (!bs) g += `<text x="${PL / 2}" y="${T + 70}" class="lim-txt big" text-anchor="middle">Sans bande de départ : seules tes bandes saturent, le reste du son reste propre</text>`;
         bands.forEach((b, i) => {
             const on = i === sel, c = MSAT_COLORS[i % 7], heat = b.heat ?? 30, x = b.base ? PL * 0.16 : (X(b.lo) + X(b.hi)) / 2, y = B - 20 - (heat / 100) * (B - T - 90);
+            // écran pro : niveau de chaleur qui remplit la bande, limites lumineuses, harmoniques ajoutées en mini-barres
+            {
+                const x0 = b.base ? 0 : X(b.lo), x1 = b.base ? PL : X(b.hi), lvl = b.mute ? 0 : heat / 100, op = b.base ? 0.10 : 0.28;
+                g += `<rect x="${x0.toFixed(1)}" y="${y.toFixed(1)}" width="${(x1 - x0).toFixed(1)}" height="${(B - y).toFixed(1)}" fill="url(#mshot${i})" opacity="${on ? 1 : 0.7}" pointer-events="none"/>`;
+                g += `<defs><linearGradient id="mshot${i}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${c}" stop-opacity="${(op * (0.4 + lvl)).toFixed(3)}"/><stop offset="1" stop-color="${c}" stop-opacity="0.02"/></linearGradient></defs>`;
+                g += `<line x1="${(x0 + 2).toFixed(1)}" x2="${(x1 - 2).toFixed(1)}" y1="${y.toFixed(1)}" y2="${y.toFixed(1)}" stroke="${c}" stroke-width="${on ? 2.5 : 1.5}" opacity="${b.base ? 0.35 : 0.8}" style="filter:drop-shadow(0 0 6px ${c})" pointer-events="none"/>`;
+                if (!b.base) for (const xx of [x0, x1]) g += `<line x1="${xx.toFixed(1)}" x2="${xx.toFixed(1)}" y1="${T}" y2="${B}" stroke="${c}" stroke-width="1.5" opacity=".55" style="filter:drop-shadow(0 0 4px ${c})" pointer-events="none"/>`;
+                const k = (1 + heat / 100 * 7) * VKU[b.va ?? 1], N = 64, H2 = [];
+                let f1 = 0; for (let h = 1; h <= 7; h++) { let re = 0, im = 0; for (let j = 0; j < N; j++) { const ph = 2 * Math.PI * j / N, v = msatCurveUI(b.sty || 'bande', 0.5 * Math.sin(ph), k); re += v * Math.cos(h * ph); im += v * Math.sin(h * ph); } const m = Math.hypot(re, im); if (h === 1) f1 = m || 1e-9; else H2.push(Math.max(0, 1 + 20 * Math.log10(m / f1 + 1e-9) / 60)); }
+                const bw = 6, hx = x - (H2.length * (bw + 2)) / 2;
+                H2.forEach((v, j) => { const hh = Math.max(1, v * 26); g += `<rect x="${(hx + j * (bw + 2)).toFixed(1)}" y="${(y - 44 - hh).toFixed(1)}" width="${bw}" height="${hh.toFixed(1)}" rx="2" fill="${(j + 2) % 2 === 0 ? '#FBBF24' : c}" opacity="${b.mute ? 0.2 : 0.9}" pointer-events="none"/>`; });
+            }
             const sty = MSAT_STY[b.sty || 'bande'] || MSAT_STY.bande;
             g += `<g class="mb-dot" data-i="${i}" style="cursor:${b.base ? 'ns-resize' : 'move'}"><circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="20" fill="transparent"/>${on ? `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="13" fill="none" stroke="#fff" stroke-width="2"/>` : ''}<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${on ? 9 : 7}" fill="${b.mute ? '#3a2c50' : c}" stroke="#0b0712" stroke-width="2"/>
                 <text x="${x.toFixed(1)}" y="${(y - 20).toFixed(1)}" class="mb-lab" text-anchor="middle">${esc(nm(b))} · ${sty.n} ${sty.v[b.va ?? 1] || ''} · ${heat} %</text></g>`;
@@ -9117,12 +9129,14 @@ function openMsatPanel(trackIdx, anchorEl) {
     makePlugWindow(panel, t, 'msat', trackIdx);
 }
 
-// Saturation (la simple) : écran « courbe vivante » (planche docs-planche-saturation.html, choix A).
-// À gauche la courbe (plus elle se couche, plus ça sature) avec un point qui suit le niveau du son ;
-// à droite une note à ce niveau, d'origine (pâle) et saturée (violet). Réglages : famille, Entrée, Chaleur, Ton, Mélange, Sortie, Volume égal.
+// Saturation (la simple) : écran « Lampe » (planche docs-planche-saturation.html, choix B de Ridwane le 02/11).
+// Réglages : famille, Entrée, Chaleur, Ton, Mélange, Sortie, Volume égal.
 const SAT_FAMS = [['classique', 'Classique'], ['bande', 'Bande'], ['lampe', 'Lampe'], ['ampli', 'Ampli'], ['transfo', 'Transfo'], ['repli', 'Repli'], ['lofi', 'Lo-fi']];
 const SAT_TIPS = { classique: 'La saturation d\'origine de Pulse : douce, passe partout', bande: 'Bande magnétique : arrondit et tasse', lampe: 'Lampe : chaude, ajoute des harmoniques paires (rond)',
     ampli: 'Ampli de guitare : mord plus vite', transfo: 'Transformateur : léger, garde les crêtes', repli: 'Repli : le son se replie sur lui-même, effet radical', lofi: 'Lo-fi : marches d\'escalier, son abîmé' };
+// Couleur de la lampe pour chaque famille : [filament, halo]
+const SAT_LAMP = { classique: ['#FDBA74', '#C084FC'], bande: ['#FCD34D', '#F59E0B'], lampe: ['#FB923C', '#EF4444'], ampli: ['#F87171', '#DC2626'],
+    transfo: ['#67E8F9', '#3B82F6'], repli: ['#F9A8D4', '#D946EF'], lofi: ['#86EFAC', '#22C55E'] };
 // Même courbe et même volume que le worklet pulse-sat (audio.js) et Saturator (engine/src/fx.rs)
 function satShape(sp) {
     const drive = Math.max(0, Math.min(100, sp.drive ?? 25)), sty = SAT_FAMS.some(f => f[0] === sp.sty) ? sp.sty : 'classique';
@@ -9172,24 +9186,40 @@ function openSatPanel(trackIdx, anchorEl) {
         const an = PulseAudio.getTrackAnalyser(trackIdx); if (!an || !an.getFloatTimeDomainData) return 0;
         const b = new Float32Array(an.fftSize || 2048); an.getFloatTimeDomainData(b); let pk = 0; for (let i = 0; i < b.length; i++) pk = Math.max(pk, Math.abs(b[i])); return pk;
     };
+    // Écran « Lampe » (planche B, choisi par Ridwane le 02/11) : la lampe rougeoit avec la chaleur et le son qui passe,
+    // l'aiguille montre le grain ajouté (part du son qui n'est plus la note d'origine), la courbe reste visible en petit.
+    const grainOf = (f, a) => { let e = 0, d = 0; for (let i = 0; i < 64; i++) { const x = a * Math.sin(2 * Math.PI * i / 64), y = f(x); e += y * y; } const g = Math.sqrt(e / 64) / (a * Math.SQRT1_2 || 1);
+        for (let i = 0; i < 64; i++) { const x = a * Math.sin(2 * Math.PI * i / 64), z = f(x) - x * g; d += z * z; } return Math.sqrt(d / Math.max(1e-12, e)); };
+    let needle = 0, moving = false;
     const draw = () => {
-        const sp = P(), f = satShape(sp), live = lvl > 0.003, a = live ? Math.min(1.2, lvl) : 0.7;
-        const cy = (v) => C.y + C.h / 2 - Math.max(-1.3, Math.min(1.3, v)) / 1.25 * C.h / 2, cx = (v) => C.x + C.w / 2 + v / 1.25 * C.w / 2;
-        let g = `<rect x="${C.x}" y="${C.y}" width="${C.w}" height="${C.h}" rx="14" class="sat-box"/>`;
-        for (let i = 1; i < 4; i++) g += `<line x1="${C.x + C.w * i / 4}" y1="${C.y}" x2="${C.x + C.w * i / 4}" y2="${C.y + C.h}" class="lim-grid"/><line x1="${C.x}" y1="${C.y + C.h * i / 4}" x2="${C.x + C.w}" y2="${C.y + C.h * i / 4}" class="lim-grid"/>`;
-        g += `<line x1="${cx(-1.25)}" y1="${cy(-1.25)}" x2="${cx(1.25)}" y2="${cy(1.25)}" stroke="#ffffff26" stroke-dasharray="4 5"/>`;
-        let d = ''; for (let i = 0; i <= 120; i++) { const x = -1.25 + 2.5 * i / 120; d += (i ? 'L' : 'M') + cx(x).toFixed(1) + ' ' + cy(f(x)).toFixed(1); }
-        g += `<path d="${d}" class="sat-curve"/>`;
-        if (live) g += `<circle cx="${cx(a).toFixed(1)}" cy="${cy(f(a)).toFixed(1)}" r="7" class="sat-dot"/>`;
-        g += `<text x="${C.x + 12}" y="${C.y + 22}" class="lim-txt">courbe${live ? '' : (window.__PULSE_PLUGIN__ ? ' · fais passer du son : un point le suit' : ' · lance la lecture : un point suit ton son')}</text>`;
-        g += `<rect x="${R.x}" y="${R.y}" width="${R.w}" height="${R.h}" rx="14" class="sat-box"/><line x1="${R.x}" y1="${R.y + R.h / 2}" x2="${R.x + R.w}" y2="${R.y + R.h / 2}" class="lim-grid"/>`;
-        let dr = '', wt = ''; const fq = 3.2, ry = (v) => R.y + R.h / 2 - Math.max(-1.3, Math.min(1.3, v)) / 1.3 * R.h / 2;
-        for (let i = 0; i <= 300; i++) { const ph = i / 300, x = Math.sin(2 * Math.PI * fq * ph + demo) * a, X = (R.x + ph * R.w).toFixed(1); dr += (i ? 'L' : 'M') + X + ' ' + ry(x).toFixed(1); wt += (i ? 'L' : 'M') + X + ' ' + ry(f(x)).toFixed(1); }
-        g += `<path d="${dr}" class="sat-dry"/><path d="${wt}" class="sat-wet"/>`;
-        g += `<text x="${R.x + 12}" y="${R.y + 22}" class="lim-txt">${live ? 'ton son' : 'une note'} : d'origine (pâle) · saturé (violet)</text>`;
+        const sp = P(), f = satShape(sp), live = lvl > 0.003, a = live ? Math.min(1.2, lvl) : 0.5, on = (t.effects || []).includes('sat');
+        const heat = (sp.drive ?? 25) / 100, glow = on ? Math.min(1, heat * (live ? 0.45 + Math.min(1, lvl) * 0.75 : 0.55)) : 0;
+        const target = on ? Math.min(1, Math.sqrt(grainOf(f, a) * ((sp.mix ?? 100) / 100)) * 1.6) : 0;
+        needle += (target - needle) * 0.35; moving = Math.abs(target - needle) > 0.002;
+        const [LC, LH] = SAT_LAMP[sp.sty] || SAT_LAMP.classique, cx = 250, cy = 205, n = (-50 + needle * 100) * Math.PI / 180, VX = 650, VY = 262;
+        let g = `<defs><radialGradient id="satgl"><stop offset="0" stop-color="${LC}" stop-opacity="${(0.12 + glow * 0.88).toFixed(3)}"/><stop offset=".45" stop-color="${LH}" stop-opacity="${(glow * 0.55).toFixed(3)}"/><stop offset="1" stop-color="#7C3AED" stop-opacity="0"/></radialGradient>
+            <linearGradient id="satgv" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#ffffff22"/><stop offset="1" stop-color="#ffffff05"/></linearGradient></defs>`;
+        g += `<circle cx="${cx}" cy="${cy}" r="${(140 + glow * 30).toFixed(1)}" fill="url(#satgl)"/>`;
+        g += `<path d="M${cx - 58} ${cy + 110} L${cx - 58} ${cy - 60} Q${cx - 58} ${cy - 140} ${cx} ${cy - 150} Q${cx + 58} ${cy - 140} ${cx + 58} ${cy - 60} L${cx + 58} ${cy + 110} Z" fill="url(#satgv)" stroke="#ffffff30" stroke-width="2"/>`;
+        g += `<rect x="${cx - 34}" y="${cy - 70}" width="68" height="120" rx="6" fill="none" stroke="#ffffff28"/>`;
+        g += `<path d="M${cx - 18} ${cy + 40} L${cx - 18} ${cy - 50} M${cx} ${cy + 40} L${cx} ${cy - 58} M${cx + 18} ${cy + 40} L${cx + 18} ${cy - 50}" stroke="${LC}" stroke-opacity="${(0.2 + glow * 0.8).toFixed(3)}" stroke-width="3" style="filter:drop-shadow(0 0 ${(3 + glow * 10).toFixed(1)}px ${LH})"/>`;
+        g += `<rect x="${cx - 70}" y="${cy + 110}" width="140" height="34" rx="8" fill="#1a1228" stroke="#ffffff18"/>`;
+        for (let i = 0; i < 7; i++) g += `<circle cx="${cx - 48 + i * 16}" cy="${cy + 127}" r="3" fill="#3a2c50"/>`;
+        // vumètre du grain ajouté
+        g += `<rect x="${VX - 150}" y="${VY - 200}" width="300" height="250" rx="16" class="sat-box"/>`;
+        const P2 = (deg, r) => [VX + r * Math.sin(deg * Math.PI / 180), VY - r * Math.cos(deg * Math.PI / 180)];
+        g += `<path d="M${P2(-50, 130).join(' ')} A130 130 0 0 1 ${P2(50, 130).join(' ')}" stroke="#ffffff20" fill="none"/>`;
+        for (let i = 0; i <= 10; i++) { const d = -50 + i * 10, [x1, y1] = P2(d, 130), [x2, y2] = P2(d, i % 5 ? 140 : 148); g += `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${i > 7 ? '#F87171' : '#d9cfee'}" stroke-width="${i % 5 ? 1.2 : 2}"/>`; }
+        g += `<text x="${P2(-50, 162)[0]}" y="${P2(-50, 162)[1]}" class="lim-txt" text-anchor="middle">propre</text><text x="${P2(50, 162)[0]}" y="${P2(50, 162)[1]}" class="lim-txt" text-anchor="middle">cassé</text>`;
+        g += `<line x1="${VX}" y1="${VY}" x2="${(VX + 136 * Math.sin(n)).toFixed(1)}" y2="${(VY - 136 * Math.cos(n)).toFixed(1)}" class="sat-needle"/><circle cx="${VX}" cy="${VY}" r="7" fill="#21172f" stroke="#ffffff30"/>`;
+        g += `<text x="${VX}" y="${VY + 32}" class="lim-txt" text-anchor="middle">grain ajouté${live ? '' : (window.__PULSE_PLUGIN__ ? ' · fais passer du son' : ' · lance la lecture')}</text>`;
+        // petite courbe dans le coin
+        const QX = VX + 92, QY = VY - 192, QS = 50;
+        let d = ''; for (let i = 0; i <= 40; i++) { const x = -1.25 + 2.5 * i / 40; d += (i ? 'L' : 'M') + (QX + (x + 1.25) / 2.5 * QS).toFixed(1) + ' ' + (QY + QS - (Math.max(-1.25, Math.min(1.25, f(x))) + 1.25) / 2.5 * QS).toFixed(1); }
+        g += `<path d="${d}" class="sat-curve sat-mini"/>`;
         const fam = SAT_FAMS.find(x => x[0] === (sp.sty || 'classique')) || SAT_FAMS[0];
-        g += `<text x="${R.x + R.w / 2}" y="${R.y + R.h + 48}" class="sat-big" text-anchor="middle">${fam[1]} · ${Math.round(sp.drive ?? 25)} %</text>`;
-        g += `<text x="${R.x + R.w / 2}" y="${R.y + R.h + 72}" class="lim-txt" text-anchor="middle">${esc(SAT_TIPS[fam[0]])}</text>`;
+        g += `<text x="${VX}" y="${VY + 76}" class="sat-big" text-anchor="middle">${fam[1]} · ${Math.round(sp.drive ?? 25)} %</text>`;
+        g += `<text x="${VX}" y="${VY + 98}" class="lim-txt" text-anchor="middle">${esc(SAT_TIPS[fam[0]])}</text>`;
         svg.innerHTML = g;
         panel.querySelector('.sat-ag').classList.toggle('on', sp.ag !== false);
         panel.querySelector('.sat-lv').textContent = live ? (20 * Math.log10(Math.max(1e-4, lvl))).toFixed(1).replace('.', ',') + ' dB' : '—';
@@ -9197,13 +9227,13 @@ function openSatPanel(trackIdx, anchorEl) {
     const buildFp = () => {
         fp.innerHTML = '';
         const c0 = document.createElement('div'); c0.className = 'lim-col';
-        c0.innerHTML = `<span class="lim-t">Famille</span><div class="ms-stys sat-fams">${SAT_FAMS.map(([k, n]) => `<button class="ms-sty ${(P().sty || 'classique') === k ? 'on' : ''}" data-k="${k}" data-tooltip="${esc(SAT_TIPS[k])}">${k === 'classique' ? satClassicIcon() : msatIcon(k)}${n}</button>`).join('')}</div>`;
+        c0.innerHTML = `<span class="lim-t">Famille</span><div class="ms-stys sat-fams">${SAT_FAMS.map(([k, n]) => `<button class="ms-sty ${(P().sty || 'classique') === k ? 'on' : ''}" data-k="${k}" style="--c:${SAT_LAMP[k][0]}" data-tooltip="${esc(SAT_TIPS[k])}">${k === 'classique' ? satClassicIcon() : msatIcon(k)}${n}</button>`).join('')}</div>`;
         fp.appendChild(c0);
         c0.querySelectorAll('.ms-sty').forEach(x => x.addEventListener('click', () => { step(() => { if (x.dataset.k === 'classique') delete P().sty; else P().sty = x.dataset.k; }); buildFp(); draw(); }));
         const sep = document.createElement('div'); sep.className = 'lim-sep'; fp.appendChild(sep);
         const pm = (v) => (v > 0 ? '+' : '') + v.toFixed(1).replace('.', ',');
         // valeur d'origine = clé absente (projet léger, ancien son)
-        const k = (key, o) => proKnob(fp, { ...o, onEnd: finish, onChange: (v) => { arm(); v = o.round ? o.round(v) : Math.round(v); if (o.def !== undefined && v === o.def) delete P()[key]; else P()[key] = v; draw(); } });
+        const k = (key, o) => proKnob(fp, { ...o, key, onEnd: finish, onChange: (v) => { arm(); v = o.round ? o.round(v) : Math.round(v); if (o.def !== undefined && v === o.def) delete P()[key]; else P()[key] = v; draw(); } });
         k('input', { label: 'Entrée', min: -12, max: 24, val: P().input || 0, def: 0, fmt: (v) => pm(v) + ' dB', round: (v) => Math.round(v * 2) / 2 });
         k('drive', { label: 'Chaleur', min: 0, max: 100, val: P().drive ?? 25, big: true, fmt: (v) => Math.round(v) + ' %' });
         k('tone', { label: 'Ton', min: -100, max: 100, val: P().tone || 0, def: 0, fmt: (v) => { v = Math.round(v); return v === 0 ? 'neutre' : (v < 0 ? 'sombre ' : 'brillant ') + Math.abs(v); } });
@@ -9216,7 +9246,7 @@ function openSatPanel(trackIdx, anchorEl) {
         if (!panel.isConnected) return;
         if (ts - last > 33) {
             last = ts; const m = meterLevel(); lvl = Math.max(m, lvl * 0.85); if (lvl < 0.003) lvl = 0;
-            if (lvl > 0) { demo += 0.25; draw(); } else if (demo) { demo = 0; draw(); }
+            if (lvl > 0 || moving) { demo += 0.25; draw(); } else if (demo) { demo = 0; draw(); }
         }
         requestAnimationFrame(loop);
     };
@@ -9236,6 +9266,565 @@ function openSatPanel(trackIdx, anchorEl) {
     makePlugWindow(panel, t, 'sat', trackIdx);
 }
 const satClassicIcon = () => { let p = ''; for (let i = 0; i <= 20; i++) { const x = -1 + i / 10, y = Math.tanh(3 * x) / Math.tanh(3); p += (i ? 'L' : 'M') + (1 + (x + 1) / 2 * 20).toFixed(1) + ' ' + (15 - (y + 1) / 2 * 14).toFixed(1); } return `<svg viewBox="0 0 22 16" width="22" height="16"><path d="${p}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>`; };
+
+// Filtre : écran plein (esprit EQ pro) — la courbe du filtre sur le spectre du son, deux poignées à glisser
+// (coupe-bas à gauche, coupe-haut à droite ; glisser la zone entre les deux déplace les deux), pente 12 / 24 dB,
+// et des sons tout faits d'un clic (Téléphone, Radio…). Mêmes réglages qu'avant (hpf, lpf, slope) : le son ne change pas.
+const FILTER_LOOKS = [['Propre', { hpf: 80, lpf: 20000, slope: 12 }, 'retire seulement les graves inutiles'], ['Téléphone', { hpf: 500, lpf: 3000, slope: 24 }, 'voix de téléphone'],
+    ['Radio', { hpf: 300, lpf: 5000, slope: 12 }, 'vieux poste de radio'], ['Mégaphone', { hpf: 900, lpf: 4000, slope: 24 }, 'voix serrée, criée'],
+    ['Sous l\'eau', { hpf: 20, lpf: 1000, slope: 24 }, 'tout est étouffé (fête dans la pièce d\'à côté)'], ['Air', { hpf: 1000, lpf: 20000, slope: 12 }, 'ne garde que le haut du son']];
+function filterGainDb(sp, f) {
+    const n = sp.slope === 24 ? 4 : 2, hpf = sp.hpf ?? 80, lpf = sp.lpf ?? 20000;
+    let g = 1;
+    if (hpf > 20) { const r = Math.pow(f / hpf, n); g *= r / Math.sqrt(1 + r * r); }
+    if (lpf < 20000) { const r = Math.pow(f / lpf, n); g *= 1 / Math.sqrt(1 + r * r); }
+    return 20 * Math.log10(Math.max(1e-6, g));
+}
+function openFilterPanel(trackIdx, anchorEl) {
+    closeTransientPanels();
+    const t = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;
+    if (!t) return;
+    const already = findPlugWin(t, 'filter');
+    if (already) { plugFront(already); return; }
+    t.effectParams = t.effectParams || {};
+    if (!t.effectParams.filter) t.effectParams.filter = { hpf: 80, lpf: 20000, slope: 12 };
+    const P = () => t.effectParams.filter;
+    const W = 900, H = 520, T = 40, B = 380, PL = 860, X0 = 20, F0 = 20, F1 = 20000;
+    const X = (f) => X0 + Math.log(f / F0) / Math.log(F1 / F0) * (PL - X0), F = (x) => F0 * Math.pow(F1 / F0, Math.max(0, Math.min(1, (x - X0) / (PL - X0))));
+    const Y = (db) => T + (6 - Math.max(-54, Math.min(6, db))) / 60 * (B - T);
+    const fmtF = (f) => f >= 1000 ? (f / 1000).toFixed(f >= 10000 ? 1 : 2).replace(/\.?0+$/, '').replace('.', ',') + ' kHz' : Math.round(f) + ' Hz';
+    let undoArmed = false, bins = null, hover = null;
+    const arm = () => { if (!undoArmed) { pushUndo(); undoArmed = true; } };
+    const finish = () => { t.effects = t.effects || []; if (!t.effects.includes('filter')) t.effects.push('filter'); refreshPlaybackSoon(); saveProject(); undoArmed = false; };
+    const step = (fn) => { pushUndo(); fn(); finish(); };
+    const panel = document.createElement('div');
+    panel.className = 'fx-panel lim-panel flt-panel';
+    panel.innerHTML = `
+        <div class="fx-panel-header">
+            <label class="fx-bypass-label fx-power" data-tooltip="Allumer ou éteindre l'effet"><input type="checkbox" class="fx-bypass" ${t.effects?.includes('filter') ? 'checked' : ''}><span class="fx-power-btn">⏻</span></label>
+            <span class="fx-title lim-title">Filtre <i>— ${esc(t.name || '')}</i></span>
+            <button class="fx-panel-close">×</button>
+        </div>
+        <div class="lim-face"><svg class="lim-svg flt-svg" viewBox="0 0 ${W} ${H}"></svg><div class="lim-fp flt-fp"></div></div>
+        <div class="lim-sb"><span>Glisse les poignées (ou la zone entre les deux) · double-clic sur une poignée = la retirer</span><span class="lim-spacer"></span><span>Garde <b class="flt-z">—</b></span></div>`;
+    document.body.appendChild(panel);
+    const svg = panel.querySelector('.flt-svg'), fp = panel.querySelector('.flt-fp');
+    let kH = null, kL = null;
+    const draw = () => {
+        const sp = P(), hpf = sp.hpf ?? 80, lpf = sp.lpf ?? 20000;
+        let g = `<defs><linearGradient id="fltg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#A855F7" stop-opacity=".38"/><stop offset="1" stop-color="#A855F7" stop-opacity="0"/></linearGradient></defs>`;
+        for (const f of [50, 100, 200, 500, 1000, 2000, 5000, 10000]) g += `<line x1="${X(f).toFixed(1)}" x2="${X(f).toFixed(1)}" y1="${T}" y2="${B}" class="lim-grid"/><text x="${(X(f) + 3).toFixed(1)}" y="${B + 14}" class="lim-txt">${fmtF(f)}</text>`;
+        for (const db of [0, -12, -24, -36, -48]) g += `<line x1="${X0}" x2="${PL}" y1="${Y(db)}" y2="${Y(db)}" class="lim-grid"/><text x="${PL - 4}" y="${Y(db) - 3}" class="lim-txt" text-anchor="end">${db} dB</text>`;
+        const an = (state.playing || state.recording || window.__PULSE_PLUGIN__) ? (typeof trackIdx === 'number' ? PulseAudio.getTrackSpectrum(trackIdx) : (t.id && PulseAudio.getBusSpectrum ? PulseAudio.getBusSpectrum(t.id) : null)) : null;
+        if (an) {
+            if (!bins || bins.length !== an.frequencyBinCount) bins = new Float32Array(an.frequencyBinCount);
+            an.getFloatFrequencyData(bins);
+            const nyq = (PulseAudio.getContext() ? PulseAudio.getContext().sampleRate : 48000) / 2;
+            let d = `M${X0} ${B}`;
+            for (let x = X0; x <= PL; x += 4) { const k = Math.min(bins.length - 1, Math.max(0, Math.round(F(x) / nyq * (bins.length - 1)))); const v = Number.isFinite(bins[k]) ? bins[k] : -120; d += ` L${x} ${Y(Math.max(-54, v + 30)).toFixed(1)}`; }
+            g += `<path d="${d} L${PL} ${B} Z" class="ms-spec"/>`;
+        }
+        // zones retirées assombries
+        if (hpf > 20) g += `<rect x="${X0}" y="${T}" width="${(X(hpf) - X0).toFixed(1)}" height="${B - T}" class="flt-cut"/>`;
+        if (lpf < 20000) g += `<rect x="${X(lpf).toFixed(1)}" y="${T}" width="${(PL - X(lpf)).toFixed(1)}" height="${B - T}" class="flt-cut"/>`;
+        let d = ''; for (let x = X0; x <= PL; x += 3) d += (x === X0 ? 'M' : 'L') + x + ' ' + Y(filterGainDb(sp, F(x))).toFixed(1);
+        g += `<path d="${d} L${PL} ${B} L${X0} ${B} Z" fill="url(#fltg)"/><path d="${d}" class="flt-curve"/>`;
+        const handle = (k, f, lab) => { const x = X(f), y = Y(-3), on = (k === 'hpf' ? f > 20 : f < 20000);
+            return `<g class="flt-h" data-k="${k}" style="cursor:ew-resize"><circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="22" fill="transparent"/><circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${hover === k ? 11 : 9}" class="flt-dot ${on ? '' : 'off'}"/>
+                <text x="${x.toFixed(1)}" y="${(y - 18).toFixed(1)}" class="mb-lab" text-anchor="middle">${lab} · ${on ? fmtF(f) : 'aucun'}</text></g>`; };
+        g += handle('hpf', Math.max(20, hpf), 'coupe-bas') + handle('lpf', Math.min(20000, lpf), 'coupe-haut');
+        g += `<g class="flt-slope"><rect x="${X0 + 10}" y="${T + 8}" width="104" height="22" rx="11" fill="#1a1228" stroke="#A855F7aa"/><text x="${X0 + 62}" y="${T + 23}" class="ms-smt" text-anchor="middle">pente ${sp.slope === 24 ? 24 : 12} dB/oct</text></g>`;
+        svg.innerHTML = g;
+        panel.querySelector('.flt-z').textContent = (hpf > 20 ? fmtF(hpf) : '20 Hz') + ' → ' + (lpf < 20000 ? fmtF(lpf) : '20 kHz');
+        panel.querySelectorAll('.flt-look').forEach(b => { const l = FILTER_LOOKS[+b.dataset.i][1]; b.classList.toggle('on', l.hpf === hpf && l.lpf === lpf && l.slope === (sp.slope === 24 ? 24 : 12)); });
+    };
+    const buildFp = () => {
+        fp.innerHTML = '';
+        const c0 = document.createElement('div'); c0.className = 'lim-col';
+        c0.innerHTML = `<span class="lim-t">Sons tout faits</span><div class="ms-stys flt-looks">${FILTER_LOOKS.map(([n, , tip], i) => `<button class="ms-sty flt-look" data-i="${i}" data-tooltip="${esc(tip)}">${n}</button>`).join('')}</div>`;
+        fp.appendChild(c0);
+        c0.querySelectorAll('.flt-look').forEach(b => b.addEventListener('click', () => { step(() => { Object.assign(P(), FILTER_LOOKS[+b.dataset.i][1]); }); buildFp(); draw(); }));
+        const sep = document.createElement('div'); sep.className = 'lim-sep'; fp.appendChild(sep);
+        const k = (key, o) => proKnob(fp, { ...o, key, log: true, onEnd: finish, onChange: (v) => { arm(); P()[key] = Math.round(v); draw(); } });
+        kH = k('hpf', { label: 'Coupe-bas', min: 20, max: 1000, val: P().hpf ?? 80, big: true, fmt: (v) => v <= 20.5 ? 'aucun' : fmtF(v) });
+        kL = k('lpf', { label: 'Coupe-haut', min: 1000, max: 20000, val: P().lpf ?? 20000, big: true, fmt: (v) => v >= 19990 ? 'aucun' : fmtF(v) });
+        const sc = document.createElement('div'); sc.className = 'lim-col';
+        sc.innerHTML = `<span class="lim-t">Pente</span><span class="lim-seg flt-sl"><span data-v="12">12 dB</span><span data-v="24">24 dB</span></span>`;
+        fp.appendChild(sc);
+        const paintSl = () => sc.querySelectorAll('span[data-v]').forEach(x => x.classList.toggle('on', +x.dataset.v === (P().slope === 24 ? 24 : 12)));
+        sc.querySelectorAll('span[data-v]').forEach(x => x.addEventListener('click', () => { step(() => { P().slope = +x.dataset.v; }); paintSl(); draw(); }));
+        paintSl();
+    };
+    const at = (e) => { const r = svg.getBoundingClientRect(); return [(e.clientX - r.left) * W / r.width, (e.clientY - r.top) * H / r.height]; };
+    const clampH = (v) => Math.round(Math.max(20, Math.min(1000, v))), clampL = (v) => Math.round(Math.max(1000, Math.min(20000, v)));
+    svg.addEventListener('mousemove', (e) => { if (e.buttons) return; const h = e.target.closest('.flt-h'); const n = h ? h.dataset.k : null; if (n !== hover) { hover = n; draw(); } });
+    svg.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        if (e.target.closest('.flt-slope')) { step(() => { P().slope = P().slope === 24 ? 12 : 24; }); buildFp(); draw(); return; }
+        const h = e.target.closest('.flt-h'), [x0] = at(e), sp = P(), h0 = sp.hpf ?? 80, l0 = sp.lpf ?? 20000;
+        const inZone = !h && x0 > X(Math.max(20, h0)) && x0 < X(Math.min(20000, l0));
+        if (!h && !inZone) return;
+        e.preventDefault();
+        let moved = false;
+        const mv = (ev) => {
+            const [x] = at(ev); if (!moved && Math.abs(x - x0) < 2) return; if (!moved) arm(); moved = true;
+            if (h && h.dataset.k === 'hpf') { P().hpf = clampH(F(x)); if (kH) kH.set(P().hpf); autoTouch(t, 'fx:filter:hpf'); }
+            else if (h) { P().lpf = clampL(F(x)); if (kL) kL.set(P().lpf); autoTouch(t, 'fx:filter:lpf'); }
+            else { const k = F(X(1000) + (x - x0)) / 1000; P().hpf = clampH(h0 * k); P().lpf = clampL(l0 * k); if (kH) kH.set(P().hpf); if (kL) kL.set(P().lpf); autoTouch(t, 'fx:filter:hpf'); autoTouch(t, 'fx:filter:lpf'); }
+            draw();
+        };
+        const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); if (moved) finish(); };
+        document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
+    });
+    svg.addEventListener('dblclick', (e) => {
+        const h = e.target.closest('.flt-h'); if (!h) return;
+        step(() => { if (h.dataset.k === 'hpf') P().hpf = 20; else P().lpf = 20000; }); buildFp(); draw();
+    });
+    let last = 0;
+    const loop = (ts) => { if (!panel.isConnected) return; if ((state.playing || state.recording || window.__PULSE_PLUGIN__) && ts - last > 50) { last = ts; draw(); } requestAnimationFrame(loop); };
+    requestAnimationFrame(loop);
+    panel.querySelector('.fx-panel-close').addEventListener('click', () => panel.remove());
+    panel.querySelector('.fx-bypass').addEventListener('change', (e) => {
+        pushUndo(); t.effects = t.effects || [];
+        setFxOn(t, 'filter', e.target.checked);
+        refreshPlaybackSoon(); saveProject(); refreshStrips();
+    });
+    buildFp(); draw();
+    const rect = (anchorEl && anchorEl.getBoundingClientRect) ? anchorEl.getBoundingClientRect() : { left: 80, right: 80, top: 80 };
+    const pw = Math.min(900, window.innerWidth - 16);
+    let left = rect.right + 8; if (left + pw > window.innerWidth) left = Math.max(8, rect.left - pw - 8);
+    panel.style.left = Math.max(8, Math.min(left, window.innerWidth - pw - 8)) + 'px';
+    panel.style.top = Math.max(8, Math.min(rect.top - 20, window.innerHeight - panel.offsetHeight - 8)) + 'px';
+    makePlugWindow(panel, t, 'filter', trackIdx);
+}
+
+// Pitch : écran plein façon pédale de voix — un grand cadran en demi-tons (cranté), un clavier qui montre d'où part
+// la voix et où elle arrive, des raccourcis (octave, quinte, quarte…). Mêmes réglages qu'avant (semi, mix).
+const PITCH_JUMPS = [[-12, 'Octave −'], [-7, 'Quinte −'], [-5, 'Quarte −'], [-3, '−3'], [0, '0'], [3, '+3'], [5, 'Quarte +'], [7, 'Quinte +'], [12, 'Octave +']];
+const PITCH_WORDS = { '-12': 'une octave plus grave', '-7': 'une quinte plus grave', '-5': 'une quarte plus grave', '0': 'voix d\'origine', '5': 'une quarte plus aiguë', '7': 'une quinte plus aiguë', '12': 'une octave plus aiguë' };
+function openPitchPanel(trackIdx, anchorEl) {
+    closeTransientPanels();
+    const t = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;
+    if (!t) return;
+    const already = findPlugWin(t, 'pitch');
+    if (already) { plugFront(already); return; }
+    t.effectParams = t.effectParams || {};
+    if (!t.effectParams.pitch) t.effectParams.pitch = { semi: 0, mix: 100 };
+    const P = () => t.effectParams.pitch;
+    const W = 900, H = 520, CX = 250, CY = 215, R = 128;
+    let undoArmed = false;
+    const arm = () => { if (!undoArmed) { pushUndo(); undoArmed = true; } };
+    const finish = () => { t.effects = t.effects || []; if (!t.effects.includes('pitch')) t.effects.push('pitch'); refreshPlaybackSoon(); saveProject(); undoArmed = false; };
+    const step = (fn) => { pushUndo(); fn(); finish(); };
+    const panel = document.createElement('div');
+    panel.className = 'fx-panel lim-panel pit-panel';
+    panel.innerHTML = `
+        <div class="fx-panel-header">
+            <label class="fx-bypass-label fx-power" data-tooltip="Allumer ou éteindre l'effet"><input type="checkbox" class="fx-bypass" ${t.effects?.includes('pitch') ? 'checked' : ''}><span class="fx-power-btn">⏻</span></label>
+            <span class="fx-title lim-title">Pitch <i>— ${esc(t.name || '')}</i></span>
+            <button class="fx-panel-close">×</button>
+        </div>
+        <div class="lim-face"><svg class="lim-svg pit-svg" viewBox="0 0 ${W} ${H}"></svg><div class="lim-fp pit-fp"></div></div>
+        <div class="lim-sb"><span>Tourne le cadran (glisser vers le haut / le bas) ou clique sur une touche · double-clic = voix d'origine</span><span class="lim-spacer"></span><span>Hauteur <b class="pit-v">—</b></span></div>`;
+    document.body.appendChild(panel);
+    const svg = panel.querySelector('.pit-svg'), fp = panel.querySelector('.pit-fp');
+    const ang = (semi) => (semi / 12) * 135;   // −12 … +12 → −135° … +135°
+    const pt = (deg, r) => [CX + r * Math.sin(deg * Math.PI / 180), CY - r * Math.cos(deg * Math.PI / 180)];
+    const label = (v) => (v > 0 ? '+' : '') + v;
+    let kMix = null;
+    const draw = () => {
+        const semi = Math.round(P().semi || 0), on = (t.effects || []).includes('pitch'), a = ang(semi), col = semi > 0 ? '#F0ABFC' : semi < 0 ? '#93C5FD' : '#C084FC';
+        let g = `<defs><radialGradient id="pitg"><stop offset="0" stop-color="${col}" stop-opacity="${on ? 0.32 : 0.1}"/><stop offset="1" stop-color="${col}" stop-opacity="0"/></radialGradient></defs>`;
+        g += `<circle cx="${CX}" cy="${CY}" r="${R + 60}" fill="url(#pitg)"/>`;
+        // graduations : chaque demi-ton, les grands crans tous les 12 / 7 / 5
+        for (let s2 = -12; s2 <= 12; s2++) { const big = [-12, -7, -5, 0, 5, 7, 12].includes(s2), [x1, y1] = pt(ang(s2), R + 14), [x2, y2] = pt(ang(s2), R + (big ? 30 : 22));
+            g += `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${s2 === semi ? col : big ? '#d9cfee' : '#ffffff40'}" stroke-width="${big ? 2.4 : 1.4}"/>`;
+            if (big) { const [tx, ty] = pt(ang(s2), R + 46); g += `<text x="${tx.toFixed(1)}" y="${(ty + 4).toFixed(1)}" class="lim-txt pit-tick" text-anchor="middle">${label(s2)}</text>`; } }
+        // arc allumé depuis 0
+        if (semi !== 0) { const [x0, y0] = pt(0, R + 6), [x1, y1] = pt(a, R + 6); g += `<path d="M${x0.toFixed(1)} ${y0.toFixed(1)} A${R + 6} ${R + 6} 0 0 ${semi > 0 ? 1 : 0} ${x1.toFixed(1)} ${y1.toFixed(1)}" stroke="${col}" stroke-width="6" fill="none" stroke-linecap="round" style="filter:drop-shadow(0 0 8px ${col})"/>`; }
+        g += `<circle cx="${CX}" cy="${CY}" r="${R}" class="pit-dial"/><circle cx="${CX}" cy="${CY}" r="${R - 18}" class="pit-dial2"/>`;
+        const [ix, iy] = pt(a, R - 30); g += `<line x1="${CX}" y1="${CY}" x2="${ix.toFixed(1)}" y2="${iy.toFixed(1)}" stroke="${col}" stroke-width="5" stroke-linecap="round" opacity=".35"/><circle cx="${ix.toFixed(1)}" cy="${iy.toFixed(1)}" r="9" fill="#fff" style="filter:drop-shadow(0 0 8px ${col})"/>`;
+        g += `<text x="${CX}" y="${CY + 14}" class="pit-big" text-anchor="middle">${label(semi)}</text><text x="${CX}" y="${CY + 40}" class="lim-txt" text-anchor="middle">demi-tons</text>`;
+        // clavier : d'où part la voix (do du milieu), où elle arrive
+        const KX = 470, KY = 120, KW = 400, KH = 150, whites = 15, ww = KW / whites, base = 12;   // 0 = do grave, 12 = do du milieu, 24 = do aigu
+        const isBlack = (n) => [1, 3, 6, 8, 10].includes(((n % 12) + 12) % 12), whiteIdx = (n) => { let w = 0; for (let i = 0; i < n; i++) if (!isBlack(i)) w++; return w; };
+        const target = base + semi;
+        g += `<text x="${KX}" y="${KY - 16}" class="lim-txt">la voix part de la touche violette et arrive sur la touche allumée</text>`;
+        for (let n = 0; n <= 24; n++) if (!isBlack(n)) { const x = KX + whiteIdx(n) * ww, cls = n === target ? 'pit-key on' : n === base ? 'pit-key from' : 'pit-key'; g += `<rect x="${x.toFixed(1)}" y="${KY}" width="${(ww - 2).toFixed(1)}" height="${KH}" rx="4" class="${cls}" data-n="${n}" style="${n === target ? `fill:${col}` : ''}"/>`; }
+        for (let n = 0; n <= 24; n++) if (isBlack(n)) { const x = KX + whiteIdx(n) * ww - ww * 0.32, cls = n === target ? 'pit-bk on' : 'pit-bk'; g += `<rect x="${x.toFixed(1)}" y="${KY}" width="${(ww * 0.64).toFixed(1)}" height="${KH * 0.6}" rx="3" class="${cls}" data-n="${n}" style="${n === target ? `fill:${col}` : ''}"/>`; }
+        if (semi !== 0) { const xc = (n) => isBlack(n) ? KX + whiteIdx(n) * ww : KX + whiteIdx(n) * ww + ww / 2 - 1, y = KY + KH + 26, x0 = xc(base), x1 = xc(target);
+            g += `<path d="M${x0.toFixed(1)} ${y} L${x1.toFixed(1)} ${y}" stroke="${col}" stroke-width="3" marker-end="url(#pitar)"/><defs><marker id="pitar" markerWidth="8" markerHeight="8" refX="5" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="${col}"/></marker></defs>`; }
+        g += `<text x="${KX + KW / 2}" y="${KY + KH + 64}" class="sat-big" text-anchor="middle">${PITCH_WORDS[String(semi)] || (Math.abs(semi) + ' demi-ton' + (Math.abs(semi) > 1 ? 's' : '') + (semi > 0 ? ' plus aigu' : ' plus grave'))}</text>`;
+        g += `<text x="${KX + KW / 2}" y="${KY + KH + 86}" class="lim-txt" text-anchor="middle">${(P().mix ?? 100) < 100 ? 'mélangée à la voix d\'origine : ' + Math.round(P().mix) + ' %' : 'seulement la voix transposée'}</text>`;
+        svg.innerHTML = g;
+        panel.querySelector('.pit-v').textContent = label(semi) + ' dt';
+        panel.querySelectorAll('.pit-jump').forEach(b => b.classList.toggle('on', +b.dataset.v === semi));
+    };
+    const setSemi = (v) => { P().semi = Math.max(-12, Math.min(12, Math.round(v))); draw(); };
+    const buildFp = () => {
+        fp.innerHTML = '';
+        const c0 = document.createElement('div'); c0.className = 'lim-col';
+        c0.innerHTML = `<span class="lim-t">Sauts</span><div class="ms-stys pit-jumps">${PITCH_JUMPS.map(([v, n]) => `<button class="ms-sty pit-jump" data-v="${v}">${n}</button>`).join('')}</div>`;
+        fp.appendChild(c0);
+        c0.querySelectorAll('.pit-jump').forEach(b => b.addEventListener('click', () => { step(() => setSemi(+b.dataset.v)); }));
+        const sep = document.createElement('div'); sep.className = 'lim-sep'; fp.appendChild(sep);
+        kMix = proKnob(fp, { key: 'mix', label: 'Mélange', min: 0, max: 100, val: P().mix ?? 100, big: true, fmt: (v) => Math.round(v) + ' %', onEnd: finish, onChange: (v) => { arm(); P().mix = Math.round(v); draw(); } });
+    };
+    const at = (e) => { const r = svg.getBoundingClientRect(); return [(e.clientX - r.left) * W / r.width, (e.clientY - r.top) * H / r.height]; };
+    svg.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        const key = e.target.closest('.pit-key, .pit-bk');
+        if (key) { step(() => setSemi(+key.dataset.n - 12)); return; }
+        const [x, y] = at(e); if (Math.hypot(x - CX, y - CY) > R + 50) return;
+        e.preventDefault();
+        const y0 = e.clientY, v0 = P().semi || 0; let moved = false;
+        const mv = (ev) => { const v = Math.round(v0 + (y0 - ev.clientY) / 12); if (v === Math.round(P().semi || 0)) return; if (!moved) arm(); moved = true; setSemi(v); autoTouch(t, 'fx:pitch:semi'); };
+        const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); if (moved) finish(); };
+        document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
+    });
+    svg.addEventListener('dblclick', (e) => { const [x, y] = at(e); if (Math.hypot(x - CX, y - CY) <= R + 50) step(() => setSemi(0)); });
+    svg.addEventListener('wheel', (e) => { const [x, y] = at(e); if (Math.hypot(x - CX, y - CY) > R + 50) return; e.preventDefault(); step(() => setSemi((P().semi || 0) + (e.deltaY < 0 ? 1 : -1))); }, { passive: false });
+    panel.querySelector('.fx-panel-close').addEventListener('click', () => panel.remove());
+    panel.querySelector('.fx-bypass').addEventListener('change', (e) => {
+        pushUndo(); t.effects = t.effects || [];
+        setFxOn(t, 'pitch', e.target.checked);
+        refreshPlaybackSoon(); saveProject(); refreshStrips(); draw();
+    });
+    buildFp(); draw();
+    const rect = (anchorEl && anchorEl.getBoundingClientRect) ? anchorEl.getBoundingClientRect() : { left: 80, right: 80, top: 80 };
+    const pw = Math.min(900, window.innerWidth - 16);
+    let left = rect.right + 8; if (left + pw > window.innerWidth) left = Math.max(8, rect.left - pw - 8);
+    panel.style.left = Math.max(8, Math.min(left, window.innerWidth - pw - 8)) + 'px';
+    panel.style.top = Math.max(8, Math.min(rect.top - 20, window.innerHeight - panel.offsetHeight - 8)) + 'px';
+    makePlugWindow(panel, t, 'pitch', trackIdx);
+}
+
+// Modulations (Chorus, Flanger, Phaser, Trémolo) : un écran animé commun, esprit pédales d'effet.
+// En haut l'oscillation (sa vitesse et sa profondeur se voient), en dessous ce que l'effet fait au son
+// (voix décalées, peigne qui glisse, creux qui balaient, volume qui pulse). Mêmes réglages qu'avant : le son ne change pas.
+const MOD_LOOKS = {
+    chorus: [['Léger', { rate: 0.5, depth: 3, mix: 30 }], ['Large', { rate: 0.8, depth: 6, mix: 50 }], ['Années 80', { rate: 1.2, depth: 8, mix: 60 }], ['Mer agitée', { rate: 2.5, depth: 10, mix: 55 }]],
+    flanger: [['Doux', { rate: 0.15, depth: 1.5, feedback: 30, mix: 40 }], ['Avion', { rate: 0.1, depth: 4, feedback: 70, mix: 50 }], ['Métal', { rate: 0.5, depth: 2, feedback: 85, mix: 60 }], ['Vibrato', { rate: 1.5, depth: 3, feedback: 0, mix: 100 }]],
+    phaser: [['Lent', { rate: 0.15, depth: 70, feedback: 30, mix: 50 }], ['Rond', { rate: 0.4, depth: 70, feedback: 40, mix: 50 }], ['Rapide', { rate: 2, depth: 60, feedback: 50, mix: 50 }], ['Profond', { rate: 0.3, depth: 100, feedback: 80, mix: 60 }]],
+    tremolo: [['Doux', { rate: 3, depth: 30 }], ['Pulsé', { rate: 6, depth: 60 }], ['Hachoir', { rate: 10, depth: 100 }], ['Hélicoptère', { rate: 15, depth: 90 }]]
+};
+const MOD_HELP = { chorus: 'des copies de la voix, un peu décalées, qui bougent : le son s\'élargit', flanger: 'un peigne qui glisse sur le son : effet « avion », métallique',
+    phaser: 'des creux qui balaient le son : mouvement doux et rond', tremolo: 'le volume monte et descend en rythme' };
+function openModPanel(trackIdx, fx, anchorEl) {
+    closeTransientPanels();
+    const t = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;
+    if (!t) return;
+    const already = findPlugWin(t, fx);
+    if (already) { plugFront(already); return; }
+    t.effectParams = t.effectParams || {};
+    const defs = FX_PANEL_DEFS[fx];
+    if (!t.effectParams[fx]) t.effectParams[fx] = Object.fromEntries(defs.map(d => [d.key, d.def]));
+    const P = () => t.effectParams[fx], V = (k) => P()[k] ?? (defs.find(d => d.key === k) || {}).def;
+    const W = 900, H = 520, name = FX_NAMES[fx] || fx;
+    let undoArmed = false;
+    const arm = () => { if (!undoArmed) { pushUndo(); undoArmed = true; } };
+    const finish = () => { t.effects = t.effects || []; if (!t.effects.includes(fx)) t.effects.push(fx); refreshPlaybackSoon(); saveProject(); undoArmed = false; };
+    const step = (fn) => { pushUndo(); fn(); finish(); };
+    const panel = document.createElement('div');
+    panel.className = 'fx-panel lim-panel mod-panel';
+    panel.innerHTML = `
+        <div class="fx-panel-header">
+            <label class="fx-bypass-label fx-power" data-tooltip="Allumer ou éteindre l'effet"><input type="checkbox" class="fx-bypass" ${t.effects?.includes(fx) ? 'checked' : ''}><span class="fx-power-btn">⏻</span></label>
+            <span class="fx-title lim-title">${esc(name)} <i>— ${esc(t.name || '')}</i></span>
+            <button class="fx-panel-close">×</button>
+        </div>
+        <div class="lim-face"><svg class="lim-svg mod-svg" viewBox="0 0 ${W} ${H}"></svg><div class="lim-fp mod-fp"></div></div>
+        <div class="lim-sb"><span>${esc(MOD_HELP[fx] || '')}</span><span class="lim-spacer"></span><span>Vitesse <b class="mod-v">—</b></span></div>`;
+    document.body.appendChild(panel);
+    const svg = panel.querySelector('.mod-svg'), fp = panel.querySelector('.mod-fp');
+    const t0 = performance.now();
+    const draw = () => {
+        const on = (t.effects || []).includes(fx), now = (performance.now() - t0) / 1000, rate = V('rate'), ph = 2 * Math.PI * rate * now;
+        const d = defs.find(x => x.key === 'depth'), depth = d ? (V('depth') - d.min) / (d.max - d.min) : 0.5;
+        const mix = defs.some(x => x.key === 'mix') ? V('mix') / 100 : 1, fb = defs.some(x => x.key === 'feedback') ? V('feedback') / 100 : 0;
+        const col = on ? '#C084FC' : '#6f6390';
+        // 1) l'oscillation : 3 secondes qui défilent, le point = maintenant
+        const LX = 40, LY = 70, LW = 820, LH = 110;
+        let g = `<rect x="${LX}" y="${LY - 20}" width="${LW}" height="${LH + 40}" rx="14" class="sat-box"/><text x="${LX + 12}" y="${LY - 2}" class="lim-txt">oscillation · ${String(rate).replace('.', ',')} Hz (${rate >= 1 ? String(Math.round(rate * 10) / 10).replace('.', ',') + ' fois par seconde' : 'une fois toutes les ' + String(Math.round(10 / rate) / 10).replace('.', ',') + ' s'})</text>`;
+        let w = ''; for (let i = 0; i <= 300; i++) { const tt = now - 3 + 3 * i / 300, y = LY + LH / 2 + 8 - Math.sin(2 * Math.PI * rate * tt) * depth * (LH / 2 - 6); w += (i ? 'L' : 'M') + (LX + 10 + (LW - 40) * i / 300).toFixed(1) + ' ' + y.toFixed(1); }
+        const yNow = LY + LH / 2 + 8 - Math.sin(ph) * depth * (LH / 2 - 6);
+        g += `<path d="${w}" stroke="${col}" stroke-width="2.5" fill="none" style="filter:drop-shadow(0 0 6px ${col})"/><circle cx="${LX + LW - 30}" cy="${yNow.toFixed(1)}" r="7" fill="#fff" style="filter:drop-shadow(0 0 8px ${col})"/>`;
+        // 2) ce que l'effet fait au son
+        const SX = 40, SY = 215, SW = 820, SH = 150, m = Math.sin(ph) * (on ? 1 : 0);
+        g += `<rect x="${SX}" y="${SY}" width="${SW}" height="${SH}" rx="14" class="sat-box"/>`;
+        if (fx === 'tremolo') {
+            let a = '', b = ''; for (let i = 0; i <= 400; i++) { const tt = now - 2 + 2 * i / 400, env = 1 - depth * (0.5 + 0.5 * Math.sin(2 * Math.PI * rate * tt)) * (on ? 1 : 0), x = SX + 10 + (SW - 20) * i / 400, y = Math.sin(i * 0.9) * env * (SH / 2 - 30) - 8;
+                a += (i ? 'L' : 'M') + x.toFixed(1) + ' ' + (SY + SH / 2 - y).toFixed(1); b += (i ? 'L' : 'M') + x.toFixed(1) + ' ' + (SY + SH / 2 + 8 - env * (SH / 2 - 30)).toFixed(1); }
+            g += `<path d="${a}" stroke="#ffffff55" stroke-width="1" fill="none"/><path d="${b}" stroke="${col}" stroke-width="2.5" fill="none" style="filter:drop-shadow(0 0 6px ${col})"/><text x="${SX + 12}" y="${SY + 20}" class="lim-txt">volume de ta voix dans le temps</text>`;
+        } else if (fx === 'chorus') {
+            const n = 4; for (let k = 0; k < n; k++) { const off = k === 0 ? 0 : (k / n) * depth * 0.9 * Math.sin(ph + k * 2.1) * (on ? 1 : 0), op = k === 0 ? 0.9 : 0.25 + mix * 0.5; let a = '';
+                for (let i = 0; i <= 260; i++) { const x = SX + 10 + (SW - 20) * i / 260, y = Math.sin(i / 260 * Math.PI * 6 + off * 6) * (SH / 2 - 20) * Math.exp(-((i - 130) * (i - 130)) / 9000); a += (i ? 'L' : 'M') + x.toFixed(1) + ' ' + (SY + SH / 2 - y).toFixed(1); }
+                g += `<path d="${a}" stroke="${k === 0 ? '#ffffffaa' : col}" stroke-opacity="${op.toFixed(2)}" stroke-width="${k === 0 ? 1.5 : 2.2}" fill="none"/>`; }
+            g += `<text x="${SX + 12}" y="${SY + 20}" class="lim-txt">ta voix (blanc) et ses copies qui bougent (violet)</text>`;
+        } else {
+            // flanger / phaser : réponse en fréquence qui balaie
+            const F0 = 20, F1 = 20000, X = (f) => SX + 10 + Math.log(f / F0) / Math.log(F1 / F0) * (SW - 20);
+            let a = '';
+            for (let i = 0; i <= 300; i++) { const f = F0 * Math.pow(F1 / F0, i / 300); let gdb;
+                if (fx === 'flanger') { const tau = (0.3 + V('depth') * (0.5 + 0.5 * m)) / 1000, w2 = 2 * Math.PI * f * tau, gF = fb * 0.9, re = 1 - gF * Math.cos(w2), im = gF * Math.sin(w2), wet = 1 / Math.hypot(re, im); const dryRe = 1 - mix + mix * wet * Math.cos(w2) , dryIm = mix * wet * Math.sin(w2); gdb = 20 * Math.log10(Math.max(1e-3, Math.hypot(dryRe, dryIm))); }
+                else { const fc = 200 * Math.pow(25, (0.5 + 0.5 * m) * depth + (1 - depth) * 0.5); let ang = 0; for (const k of [1, 2.3, 5, 9]) ang += 2 * Math.atan(f / (fc * k)); const re = 1 - mix + mix * Math.cos(ang) * (1 + fb * 0.5), im = mix * Math.sin(ang); gdb = 20 * Math.log10(Math.max(1e-3, Math.hypot(re, im))); }
+                const y = SY + 34 + (6 - Math.max(-30, Math.min(12, gdb))) / 42 * (SH - 48); a += (i ? 'L' : 'M') + X(f).toFixed(1) + ' ' + y.toFixed(1); }
+            g += `<path d="${a}" stroke="${col}" stroke-width="2.5" fill="none" style="filter:drop-shadow(0 0 6px ${col})"/><text x="${SX + 12}" y="${SY + 20}" class="lim-txt">${fx === 'flanger' ? 'le peigne qui glisse sur ton son (graves à gauche, aigus à droite)' : 'les creux qui balaient ton son (graves à gauche, aigus à droite)'}</text>`;
+        }
+        svg.innerHTML = g;
+        panel.querySelector('.mod-v').textContent = String(rate).replace('.', ',') + ' Hz';
+        panel.querySelectorAll('.mod-look').forEach(b => { const l = MOD_LOOKS[fx][+b.dataset.i][1]; b.classList.toggle('on', Object.entries(l).every(([k, v]) => Math.abs(V(k) - v) < 1e-6)); });
+    };
+    const knobs = {};
+    const buildFp = () => {
+        fp.innerHTML = '';
+        const c0 = document.createElement('div'); c0.className = 'lim-col';
+        c0.innerHTML = `<span class="lim-t">Styles</span><div class="ms-stys mod-looks">${MOD_LOOKS[fx].map(([n], i) => `<button class="ms-sty mod-look" data-i="${i}">${n}</button>`).join('')}</div>`;
+        fp.appendChild(c0);
+        c0.querySelectorAll('.mod-look').forEach(b => b.addEventListener('click', () => { step(() => Object.assign(P(), MOD_LOOKS[fx][+b.dataset.i][1])); buildFp(); draw(); }));
+        const sep = document.createElement('div'); sep.className = 'lim-sep'; fp.appendChild(sep);
+        for (const d of defs) {
+            const dec = d.step < 1 ? (d.step < 0.1 ? 2 : 1) : 0;
+            knobs[d.key] = proKnob(fp, { key: d.key, label: d.label, min: d.min, max: d.max, val: V(d.key), big: d.key === 'rate', log: d.key === 'rate',
+                fmt: (v) => v.toFixed(dec).replace('.', ',') + (d.unit || ''), onEnd: finish,
+                onChange: (v) => { arm(); P()[d.key] = Math.round(v / d.step) * d.step; P()[d.key] = +P()[d.key].toFixed(4); } });
+        }
+    };
+    let last = 0;
+    const loop = (ts) => { if (!panel.isConnected) return; if (ts - last > 33) { last = ts; draw(); } requestAnimationFrame(loop); };
+    requestAnimationFrame(loop);
+    panel.querySelector('.fx-panel-close').addEventListener('click', () => panel.remove());
+    panel.querySelector('.fx-bypass').addEventListener('change', (e) => {
+        pushUndo(); t.effects = t.effects || [];
+        setFxOn(t, fx, e.target.checked);
+        refreshPlaybackSoon(); saveProject(); refreshStrips();
+    });
+    buildFp(); draw();
+    const rect = (anchorEl && anchorEl.getBoundingClientRect) ? anchorEl.getBoundingClientRect() : { left: 80, right: 80, top: 80 };
+    const pw = Math.min(900, window.innerWidth - 16);
+    let left = rect.right + 8; if (left + pw > window.innerWidth) left = Math.max(8, rect.left - pw - 8);
+    panel.style.left = Math.max(8, Math.min(left, window.innerWidth - pw - 8)) + 'px';
+    panel.style.top = Math.max(8, Math.min(rect.top - 20, window.innerHeight - panel.offsetHeight - 8)) + 'px';
+    makePlugWindow(panel, t, fx, trackIdx);
+}
+
+// Doubleur, Slapback, Largeur : écran « scène vue de dessus » — toi en bas, la voix et ses copies placées devant,
+// de gauche à droite comme dans un casque ; le Slapback montre aussi ses échos sur une ligne de temps.
+// Mêmes réglages qu'avant : le son ne change pas.
+const STEREO_LOOKS = {
+    doubler: [['Léger', { width: 30, mix: 35 }], ['Épais', { width: 60, mix: 50 }], ['Très large', { width: 100, mix: 60 }]],
+    slapback: [['Rap', { time: 110, feedback: 12, mix: 25 }], ['Court', { time: 60, feedback: 0, mix: 20 }], ['Années 50', { time: 140, feedback: 5, mix: 35 }], ['Rebond', { time: 180, feedback: 35, mix: 30 }]],
+    width: [['Mono', { width: 0 }], ['Normal', { width: 100 }], ['Large', { width: 150 }], ['Très large', { width: 200 }]]
+};
+const STEREO_HELP = { doubler: 'deux copies de ta voix, une à gauche, une à droite : comme si tu avais doublé ta prise',
+    slapback: 'un écho très court, juste derrière la voix : le classique du rap', width: 'resserre (vers le mono) ou élargit l\'image gauche / droite du son' };
+function openStereoPanel(trackIdx, fx, anchorEl) {
+    closeTransientPanels();
+    const t = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;
+    if (!t) return;
+    const already = findPlugWin(t, fx);
+    if (already) { plugFront(already); return; }
+    t.effectParams = t.effectParams || {};
+    const defs = FX_PANEL_DEFS[fx];
+    if (!t.effectParams[fx]) t.effectParams[fx] = Object.fromEntries(defs.map(d => [d.key, d.def]));
+    const P = () => t.effectParams[fx], V = (k) => P()[k] ?? (defs.find(d => d.key === k) || {}).def;
+    const W = 900, H = 520, name = FX_NAMES[fx] || fx;
+    let undoArmed = false;
+    const arm = () => { if (!undoArmed) { pushUndo(); undoArmed = true; } };
+    const finish = () => { t.effects = t.effects || []; if (!t.effects.includes(fx)) t.effects.push(fx); refreshPlaybackSoon(); saveProject(); undoArmed = false; };
+    const step = (fn) => { pushUndo(); fn(); finish(); };
+    const panel = document.createElement('div');
+    panel.className = 'fx-panel lim-panel st-panel';
+    panel.innerHTML = `
+        <div class="fx-panel-header">
+            <label class="fx-bypass-label fx-power" data-tooltip="Allumer ou éteindre l'effet"><input type="checkbox" class="fx-bypass" ${t.effects?.includes(fx) ? 'checked' : ''}><span class="fx-power-btn">⏻</span></label>
+            <span class="fx-title lim-title">${esc(name)} <i>— ${esc(t.name || '')}</i></span>
+            <button class="fx-panel-close">×</button>
+        </div>
+        <div class="lim-face"><svg class="lim-svg st-svg" viewBox="0 0 ${W} ${H}"></svg><div class="lim-fp st-fp"></div></div>
+        <div class="lim-sb"><span>${esc(STEREO_HELP[fx] || '')}</span></div>`;
+    document.body.appendChild(panel);
+    const svg = panel.querySelector('.st-svg'), fp = panel.querySelector('.st-fp');
+    const draw = () => {
+        const on = (t.effects || []).includes(fx), col = on ? '#C084FC' : '#6f6390';
+        const CX = fx === 'slapback' ? 240 : 450, CY = 330, R = fx === 'slapback' ? 200 : 250;
+        const pt = (deg, r) => [CX + r * Math.sin(deg * Math.PI / 180), CY - r * Math.cos(deg * Math.PI / 180)];
+        let g = `<defs><radialGradient id="stg" cx="50%" cy="100%" r="100%"><stop offset="0" stop-color="#A855F7" stop-opacity=".18"/><stop offset="1" stop-color="#A855F7" stop-opacity="0"/></radialGradient></defs>`;
+        const [ax, ay] = pt(-90, R), [bx, by] = pt(90, R);
+        g += `<path d="M${ax} ${ay} A${R} ${R} 0 0 1 ${bx} ${by} Z" fill="url(#stg)" stroke="#ffffff14"/>`;
+        for (const r of [R * 0.35, R * 0.7]) { const [x1, y1] = pt(-90, r), [x2, y2] = pt(90, r); g += `<path d="M${x1} ${y1} A${r} ${r} 0 0 1 ${x2} ${y2}" fill="none" class="lim-grid"/>`; }
+        for (const d of [-60, -30, 0, 30, 60]) { const [x, y] = pt(d, R); g += `<line x1="${CX}" y1="${CY}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}" class="lim-grid"/>`; }
+        g += `<text x="${ax + 14}" y="${CY - 6}" class="lim-txt">gauche</text><text x="${bx - 14}" y="${CY - 6}" class="lim-txt" text-anchor="end">droite</text>`;
+        g += `<circle cx="${CX}" cy="${CY}" r="14" fill="#1a1228" stroke="#ffffff30"/><text x="${CX + 22}" y="${CY + 4}" class="lim-txt">toi (au casque)</text>`;
+        const dot = (deg, r, size, lab, op = 1, c = col) => { const [x, y] = pt(deg, r); return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${size}" fill="${c}" fill-opacity="${op}" style="filter:drop-shadow(0 0 10px ${c})"/>${lab ? `<text x="${x.toFixed(1)}" y="${(y - size - 8).toFixed(1)}" class="mb-lab" text-anchor="middle">${lab}</text>` : ''}`; };
+        if (fx === 'doubler') {
+            const w = on ? V('width') / 100 : 0, mix = V('mix') / 100, a = 12 + w * 63;
+            g += dot(0, R * 0.62, 16, 'ta voix', 1, '#ffffff') + dot(-a, R * 0.62, 7 + mix * 9, 'copie', 0.4 + mix * 0.6) + dot(a, R * 0.62, 7 + mix * 9, 'copie', 0.4 + mix * 0.6);
+            g += `<text x="${CX}" y="${48}" class="sat-big" text-anchor="middle">Épaisseur ${Math.round(V('width'))} % · copies à ${Math.round(V('mix'))} %</text>`;
+        } else if (fx === 'width') {
+            const w = on ? V('width') / 100 : 1, a = Math.min(90, 45 * w), [x1, y1] = pt(-a, R * 0.62), [x2, y2] = pt(a, R * 0.62);
+            if (a > 0.5) g += `<path d="M${x1.toFixed(1)} ${y1.toFixed(1)} A${R * 0.62} ${R * 0.62} 0 0 1 ${x2.toFixed(1)} ${y2.toFixed(1)}" stroke="${col}" stroke-width="16" stroke-linecap="round" fill="none" opacity=".85" style="filter:drop-shadow(0 0 12px ${col})"/>`;
+            else g += dot(0, R * 0.62, 12, '', 1);
+            const wv = Math.round(V('width'));
+            g += `<text x="${CX}" y="${48}" class="sat-big" text-anchor="middle">${wv === 0 ? 'Mono : tout au centre' : wv < 100 ? 'Plus serré (' + wv + ' %)' : wv === 100 ? 'Image d\'origine (100 %)' : 'Plus large que nature (' + wv + ' %)'}</text>`;
+            if (wv > 150) g += `<text x="${CX}" y="${72}" class="lim-txt" text-anchor="middle">très large : vérifie que ça sonne encore bien en mono (téléphone, enceinte Bluetooth)</text>`;
+        } else {
+            // slapback : la voix devant, l'écho un peu derrière ; à droite la ligne de temps des échos
+            const mix = V('mix') / 100, fb = V('feedback') / 100, ms = V('time');
+            g += dot(0, R * 0.75, 16, 'ta voix', 1, '#ffffff') + dot(0, R * 0.45, 8 + mix * 10, 'écho', on ? 0.4 + mix * 0.6 : 0.2);
+            const TX = 470, TY = 90, TW = 400, TH = 210, ML = 1000;
+            g += `<rect x="${TX}" y="${TY}" width="${TW}" height="${TH}" rx="14" class="sat-box"/><text x="${TX + 12}" y="${TY + 22}" class="lim-txt">ce que tu entends dans la première seconde</text>`;
+            for (let i = 0; i <= 4; i++) { const x = TX + 20 + (TW - 40) * i / 4; g += `<line x1="${x}" y1="${TY + 36}" x2="${x}" y2="${TY + TH - 26}" class="lim-grid"/><text x="${x}" y="${TY + TH - 10}" class="lim-txt" text-anchor="middle">${i * 250} ms</text>`; }
+            const bar = (tms, h, c, op) => { const x = TX + 20 + (TW - 40) * tms / ML; return `<rect x="${(x - 5).toFixed(1)}" y="${(TY + TH - 26 - h).toFixed(1)}" width="10" height="${h.toFixed(1)}" rx="4" fill="${c}" fill-opacity="${op}" style="filter:drop-shadow(0 0 6px ${c})"/>`; };
+            g += bar(0, TH - 70, '#ffffff', 0.9);
+            let amp = mix; for (let k = 1; k <= 12 && on; k++) { const tms = ms * k; if (tms > ML || amp < 0.01) break; g += bar(tms, (TH - 70) * amp, col, 0.9); amp *= fb; }
+            g += `<text x="${TX + TW / 2}" y="${TY + TH + 34}" class="sat-big" text-anchor="middle">Écho à ${Math.round(ms)} ms${fb > 0.02 ? ' · ' + Math.round(V('feedback')) + ' % de rebonds' : ' · un seul'}</text>`;
+        }
+        svg.innerHTML = g;
+        panel.querySelectorAll('.st-look').forEach(b => { const l = STEREO_LOOKS[fx][+b.dataset.i][1]; b.classList.toggle('on', Object.entries(l).every(([k, v]) => Math.abs(V(k) - v) < 1e-6)); });
+    };
+    const knobs = {};
+    const buildFp = () => {
+        fp.innerHTML = '';
+        const c0 = document.createElement('div'); c0.className = 'lim-col';
+        c0.innerHTML = `<span class="lim-t">Styles</span><div class="ms-stys st-looks">${STEREO_LOOKS[fx].map(([n], i) => `<button class="ms-sty st-look" data-i="${i}">${n}</button>`).join('')}</div>`;
+        fp.appendChild(c0);
+        c0.querySelectorAll('.st-look').forEach(b => b.addEventListener('click', () => { step(() => Object.assign(P(), STEREO_LOOKS[fx][+b.dataset.i][1])); buildFp(); draw(); }));
+        const sep = document.createElement('div'); sep.className = 'lim-sep'; fp.appendChild(sep);
+        defs.forEach((d, i) => {
+            knobs[d.key] = proKnob(fp, { key: d.key, label: d.label, min: d.min, max: d.max, val: V(d.key), big: i === 0,
+                fmt: (v) => Math.round(v) + (d.unit || ''), onEnd: finish,
+                onChange: (v) => { arm(); P()[d.key] = Math.round(v / d.step) * d.step; draw(); } });
+        });
+    };
+    panel.querySelector('.fx-panel-close').addEventListener('click', () => panel.remove());
+    panel.querySelector('.fx-bypass').addEventListener('change', (e) => {
+        pushUndo(); t.effects = t.effects || [];
+        setFxOn(t, fx, e.target.checked);
+        refreshPlaybackSoon(); saveProject(); refreshStrips(); draw();
+    });
+    buildFp(); draw();
+    const rect = (anchorEl && anchorEl.getBoundingClientRect) ? anchorEl.getBoundingClientRect() : { left: 80, right: 80, top: 80 };
+    const pw = Math.min(900, window.innerWidth - 16);
+    let left = rect.right + 8; if (left + pw > window.innerWidth) left = Math.max(8, rect.left - pw - 8);
+    panel.style.left = Math.max(8, Math.min(left, window.innerWidth - pw - 8)) + 'px';
+    panel.style.top = Math.max(8, Math.min(rect.top - 20, window.innerHeight - panel.offsetHeight - 8)) + 'px';
+    makePlugWindow(panel, t, fx, trackIdx);
+}
+
+// Bitcrusher et Utilitaire : écrans pleins. Bitcrusher = la forme d'onde d'origine (pâle) et la version abîmée en escaliers
+// (moins de « finesse » = marches plus hautes, « son haché » = marches plus longues). Utilitaire = grand vumètre,
+// gros boutons Phase / Mono. Mêmes réglages qu'avant : le son ne change pas.
+const CRUSH_LOOKS = [['Léger', { bits: 12, down: 2, mix: 60 }], ['Console 8 bits', { bits: 8, down: 4, mix: 100 }], ['Radio cassée', { bits: 6, down: 8, mix: 70 }], ['Destruction', { bits: 4, down: 16, mix: 100 }]];
+function openCrushUtilPanel(trackIdx, fx, anchorEl) {
+    closeTransientPanels();
+    const t = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;
+    if (!t) return;
+    const already = findPlugWin(t, fx);
+    if (already) { plugFront(already); return; }
+    t.effectParams = t.effectParams || {};
+    const defs = FX_PANEL_DEFS[fx];
+    if (!t.effectParams[fx]) t.effectParams[fx] = Object.fromEntries(defs.map(d => [d.key, d.def]));
+    const P = () => t.effectParams[fx], V = (k) => P()[k] ?? (defs.find(d => d.key === k) || {}).def;
+    const W = 900, H = 520, name = FX_NAMES[fx] || fx;
+    let undoArmed = false, lvl = 0;
+    const arm = () => { if (!undoArmed) { pushUndo(); undoArmed = true; } };
+    const finish = () => { t.effects = t.effects || []; if (!t.effects.includes(fx)) t.effects.push(fx); refreshPlaybackSoon(); saveProject(); undoArmed = false; };
+    const step = (fn) => { pushUndo(); fn(); finish(); };
+    const panel = document.createElement('div');
+    panel.className = 'fx-panel lim-panel cu-panel';
+    panel.innerHTML = `
+        <div class="fx-panel-header">
+            <label class="fx-bypass-label fx-power" data-tooltip="Allumer ou éteindre l'effet"><input type="checkbox" class="fx-bypass" ${t.effects?.includes(fx) ? 'checked' : ''}><span class="fx-power-btn">⏻</span></label>
+            <span class="fx-title lim-title">${esc(name)} <i>— ${esc(t.name || '')}</i></span>
+            <button class="fx-panel-close">×</button>
+        </div>
+        <div class="lim-face"><svg class="lim-svg cu-svg" viewBox="0 0 ${W} ${H}"></svg><div class="lim-fp cu-fp"></div></div>
+        <div class="lim-sb"><span>${fx === 'crush' ? 'son numérique abîmé : moins de finesse = plus de grain, son haché = plus « robot »' : 'volume, phase et passage en mono, sans rien colorer'}</span></div>`;
+    document.body.appendChild(panel);
+    const svg = panel.querySelector('.cu-svg'), fp = panel.querySelector('.cu-fp');
+    const meter = () => {
+        const an = typeof trackIdx === 'number' ? PulseAudio.getTrackAnalyser(trackIdx) : null;
+        if (!an || !an.getFloatTimeDomainData || !(state.playing || state.recording || window.__PULSE_PLUGIN__)) return 0;
+        const b = new Float32Array(an.fftSize || 2048); an.getFloatTimeDomainData(b); let pk = 0; for (let i = 0; i < b.length; i++) pk = Math.max(pk, Math.abs(b[i])); return pk;
+    };
+    const draw = () => {
+        const on = (t.effects || []).includes(fx), col = on ? '#C084FC' : '#6f6390';
+        let g = '';
+        if (fx === 'crush') {
+            const bits = V('bits'), down = Math.max(1, Math.round(V('down'))), mix = V('mix') / 100, X0 = 40, Y0 = 50, WW = 820, HH = 250, N = 192;
+            const q = Math.pow(2, bits - 1);
+            g += `<rect x="${X0}" y="${Y0}" width="${WW}" height="${HH}" rx="14" class="sat-box"/><line x1="${X0}" y1="${Y0 + HH / 2}" x2="${X0 + WW}" y2="${Y0 + HH / 2}" class="lim-grid"/>`;
+            g += `<text x="${X0 + 12}" y="${Y0 + 22}" class="lim-txt">une note : d'origine (pâle) · abîmée (violet)</text>`;
+            const src = (i) => 0.8 * Math.sin(2 * Math.PI * i / N * 2) + 0.15 * Math.sin(2 * Math.PI * i / N * 9);
+            let a = '', b = '', held = 0;
+            for (let i = 0; i <= N; i++) {
+                const x = (X0 + 10 + (WW - 20) * i / N).toFixed(1), v = src(i);
+                if (i % down === 0) held = Math.round(v * q) / q;
+                const y = on ? v + (held - v) * mix : v;
+                a += (i ? 'L' : 'M') + x + ' ' + (Y0 + HH / 2 - v * (HH / 2 - 20)).toFixed(1);
+                b += (i ? 'L' : 'M') + x + ' ' + (Y0 + HH / 2 - y * (HH / 2 - 20)).toFixed(1);
+                if (i < N) { const nx = (X0 + 10 + (WW - 20) * (i + 1) / N).toFixed(1); b += 'L' + nx + ' ' + (Y0 + HH / 2 - y * (HH / 2 - 20)).toFixed(1); }
+            }
+            g += `<path d="${a}" stroke="#ffffff40" stroke-width="1.5" fill="none"/><path d="${b}" stroke="${col}" stroke-width="2.4" fill="none" style="filter:drop-shadow(0 0 6px ${col})"/>`;
+            const look = CRUSH_LOOKS.find(([, l]) => Object.entries(l).every(([k, v]) => Math.abs(V(k) - v) < 1e-6));
+            g += `<text x="${W / 2}" y="${Y0 + HH + 30}" class="sat-big" text-anchor="middle">${look ? look[0] + ' · ' : ''}${bits} bits · haché ×${down}</text>`;
+        } else {
+            // Utilitaire : grand vumètre + état phase / mono
+            const gain = V('gain'), inv = !!V('invert'), mono = !!V('mono'), MX = 120, MY = 60, MH = 300;
+            const db = lvl > 1e-4 ? 20 * Math.log10(lvl) : -60, f = Math.max(0, Math.min(1, (db + 60) / 66));
+            g += `<rect x="${MX - 30}" y="${MY}" width="60" height="${MH}" rx="12" class="sat-box"/>`;
+            for (const d of [0, -6, -12, -24, -48]) { const y = MY + MH - (d + 60) / 66 * MH; g += `<line x1="${MX - 30}" x2="${MX + 30}" y1="${y}" y2="${y}" class="lim-grid"/><text x="${MX + 40}" y="${y + 4}" class="lim-txt">${d}</text>`; }
+            g += `<rect x="${MX - 20}" y="${(MY + MH - f * MH).toFixed(1)}" width="40" height="${(f * MH).toFixed(1)}" rx="8" fill="${db > -1 ? '#F87171' : col}" style="filter:drop-shadow(0 0 8px ${col})"/>`;
+            g += `<text x="${MX}" y="${MY + MH + 28}" class="lim-txt" text-anchor="middle">${lvl > 1e-4 ? db.toFixed(1).replace('.', ',') + ' dB' : 'sortie'}</text>`;
+            g += `<text x="520" y="150" class="pit-big" text-anchor="middle">${(gain > 0 ? '+' : '') + String(gain).replace('.', ',')} dB</text>`;
+            // phase : l'onde à l'endroit ou retournée ; mono : deux ronds qui se rejoignent
+            let w = ''; for (let i = 0; i <= 80; i++) { const y = Math.sin(i / 80 * Math.PI * 2) * (inv ? -1 : 1); w += (i ? 'L' : 'M') + (330 + i * 2.2).toFixed(1) + ' ' + (260 - y * 36).toFixed(1); }
+            g += `<path d="${w}" stroke="${inv ? '#FBBF24' : col}" stroke-width="3" fill="none"/><text x="418" y="320" class="lim-txt" text-anchor="middle">${inv ? 'phase inversée' : 'phase normale'}</text>`;
+            const sep = mono ? 0 : 40;
+            g += `<circle cx="${650 - sep}" cy="260" r="26" fill="${col}" fill-opacity=".55"/><circle cx="${650 + sep}" cy="260" r="26" fill="${col}" fill-opacity=".55"/><text x="650" y="320" class="lim-txt" text-anchor="middle">${mono ? 'mono : gauche = droite' : 'stéréo'}</text>`;
+        }
+        svg.innerHTML = g;
+        panel.querySelectorAll('.cu-look').forEach(b => { const l = CRUSH_LOOKS[+b.dataset.i][1]; b.classList.toggle('on', Object.entries(l).every(([k, v]) => Math.abs(V(k) - v) < 1e-6)); });
+        panel.querySelectorAll('.cu-tog').forEach(b => b.classList.toggle('on', !!V(b.dataset.k)));
+    };
+    const buildFp = () => {
+        fp.innerHTML = '';
+        if (fx === 'crush') {
+            const c0 = document.createElement('div'); c0.className = 'lim-col';
+            c0.innerHTML = `<span class="lim-t">Styles</span><div class="ms-stys cu-looks">${CRUSH_LOOKS.map(([n], i) => `<button class="ms-sty cu-look" data-i="${i}">${n}</button>`).join('')}</div>`;
+            fp.appendChild(c0);
+            c0.querySelectorAll('.cu-look').forEach(b => b.addEventListener('click', () => { step(() => Object.assign(P(), CRUSH_LOOKS[+b.dataset.i][1])); buildFp(); draw(); }));
+            const sep = document.createElement('div'); sep.className = 'lim-sep'; fp.appendChild(sep);
+        }
+        defs.forEach((d, i) => {
+            if (d.toggle) {
+                const b = document.createElement('button'); b.className = 'lim-tp cu-tog'; b.dataset.k = d.key; b.textContent = d.label;
+                b.addEventListener('click', () => { step(() => { P()[d.key] = V(d.key) ? 0 : 1; }); draw(); });
+                const c = document.createElement('div'); c.className = 'lim-col'; c.appendChild(b); fp.appendChild(c); return;
+            }
+            proKnob(fp, { key: d.key, label: d.label, min: d.min, max: d.max, val: V(d.key), big: i === 0,
+                fmt: (v) => (d.step < 1 ? (Math.round(v * 2) / 2).toFixed(1).replace('.', ',') : Math.round(v)) + (d.unit || ''), onEnd: finish,
+                onChange: (v) => { arm(); P()[d.key] = Math.round(v / d.step) * d.step; draw(); } });
+        });
+    };
+    let last = 0;
+    const loop = (ts) => { if (!panel.isConnected) return; if (fx === 'util' && ts - last > 50) { last = ts; const m = meter(); const nl = Math.max(m, lvl * 0.85); if (Math.abs(nl - lvl) > 1e-4 || nl > 0) { lvl = nl < 1e-4 ? 0 : nl; draw(); } } requestAnimationFrame(loop); };
+    requestAnimationFrame(loop);
+    panel.querySelector('.fx-panel-close').addEventListener('click', () => panel.remove());
+    panel.querySelector('.fx-bypass').addEventListener('change', (e) => {
+        pushUndo(); t.effects = t.effects || [];
+        setFxOn(t, fx, e.target.checked);
+        refreshPlaybackSoon(); saveProject(); refreshStrips(); draw();
+    });
+    buildFp(); draw();
+    const rect = (anchorEl && anchorEl.getBoundingClientRect) ? anchorEl.getBoundingClientRect() : { left: 80, right: 80, top: 80 };
+    const pw = Math.min(900, window.innerWidth - 16);
+    let left = rect.right + 8; if (left + pw > window.innerWidth) left = Math.max(8, rect.left - pw - 8);
+    panel.style.left = Math.max(8, Math.min(left, window.innerWidth - pw - 8)) + 'px';
+    panel.style.top = Math.max(8, Math.min(rect.top - 20, window.innerHeight - panel.offsetHeight - 8)) + 'px';
+    makePlugWindow(panel, t, fx, trackIdx);
+}
 
 // Réglages de chaque effet (partagés : fenêtres de plugin et menu d'automation)
 const FX_PANEL_DEFS = {
@@ -9356,6 +9945,11 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
     if (fxName === 'mband') return openMbandPanel(trackIdx, anchorEl);
     if (fxName === 'msat') return openMsatPanel(trackIdx, anchorEl);
     if (fxName === 'sat') return openSatPanel(trackIdx, anchorEl);
+    if (fxName === 'filter') return openFilterPanel(trackIdx, anchorEl);
+    if (fxName === 'pitch') return openPitchPanel(trackIdx, anchorEl);
+    if (['chorus', 'flanger', 'phaser', 'tremolo'].includes(fxName)) return openModPanel(trackIdx, fxName, anchorEl);
+    if (['doubler', 'slapback', 'width'].includes(fxName)) return openStereoPanel(trackIdx, fxName, anchorEl);
+    if (fxName === 'crush' || fxName === 'util') return openCrushUtilPanel(trackIdx, fxName, anchorEl);
     closeTransientPanels();
     // trackIdx : numéro de piste, ou directement un groupe
     const t = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;
@@ -9511,7 +10105,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
     const curP = () => { const o = {}; defs.forEach(d => { const v = (t.effectParams[fxName] || {})[d.key]; o[d.key] = v !== undefined ? v : d.def; }); return o; };
     let analog = false;
     try { analog = localStorage.getItem('pulse_comp_view') === 'analog'; } catch {}
-    let needle = 0;
+    let needle = 0, moving = false;
     const viewBtn = panel.querySelector('.fx-view');
     const drawViz = () => {
         if (viz) {

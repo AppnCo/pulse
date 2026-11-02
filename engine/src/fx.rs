@@ -1410,6 +1410,10 @@ pub struct Saturator {
     has_tone: bool,
     /// son d'origine passé par le même filtre (même retard) : pour le Mélange
     keep_dry: bool,
+    /// réglages en cours [chaleur, entrée, ton, mélange, sortie] + volume égal (automation)
+    knobs: [f64; 5],
+    ag: bool,
+    sr: f64,
     h: [f64; 64],
     xin: [[f64; 16]; 2],
     xs: [[f64; 64]; 2],
@@ -1423,7 +1427,7 @@ pub const SAT_FAMILIES: [&str; 7] = ["classique", "bande", "lampe", "ampli", "tr
 impl Saturator {
     fn blank() -> Self {
         let b = Biquad::gain(0.0);
-        Self { k: 1.0, tk: 1f64.tanh(), trim: 1.0, lin: true, sty: "classique", gin: 1.0, gout: 1.0, mix: 1.0, tone: [[b; 2]; 2], has_tone: false, keep_dry: false,
+        Self { k: 1.0, tk: 1f64.tanh(), trim: 1.0, lin: true, sty: "classique", gin: 1.0, gout: 1.0, mix: 1.0, tone: [[b; 2]; 2], has_tone: false, keep_dry: false, knobs: [0.0, 0.0, 0.0, 100.0, 0.0], ag: true, sr: 48_000.0,
             h: sat_fir(), xin: [[0.0; 16]; 2], xs: [[0.0; 64]; 2], pos: [0; 2], dxin: [[0.0; 16]; 2], dxs: [[0.0; 64]; 2], dpos: [0; 2] }
     }
     pub fn new(drive: f64) -> Option<Self> {
@@ -1445,16 +1449,29 @@ impl Saturator {
     pub fn keep_dry(&mut self) { self.keep_dry = true; }
     /// Change la chaleur en gardant la mémoire des filtres (pas de trou dans le son)
     pub fn set_drive(&mut self, drive: f64) {
-        self.configure(&crate::model::SatParams { drive, sty: Some(self.sty.to_string()), ..Default::default() }, 48_000.0);
+        self.knobs[0] = drive;
+        self.apply_knobs();
     }
     /// Tous les réglages d'un coup, en gardant la mémoire des filtres
     pub fn configure(&mut self, p: &crate::model::SatParams, sr: f64) {
-        let drive = p.drive.clamp(0.0, 100.0);
         self.sty = SAT_FAMILIES.iter().copied().find(|f| Some(*f) == p.sty.as_deref()).unwrap_or("classique");
-        self.gin = 10f64.powf(p.input.unwrap_or(0.0).clamp(-12.0, 24.0) / 20.0);
-        self.gout = 10f64.powf(p.out.unwrap_or(0.0).clamp(-24.0, 12.0) / 20.0);
-        self.mix = p.mix.unwrap_or(100.0).clamp(0.0, 100.0) / 100.0;
-        let ag = p.ag != Some(false);
+        self.knobs = [p.drive, p.input.unwrap_or(0.0), p.tone.unwrap_or(0.0), p.mix.unwrap_or(100.0), p.out.unwrap_or(0.0)];
+        self.ag = p.ag != Some(false);
+        self.sr = sr;
+        self.apply_knobs();
+    }
+    /// Automation : « drive », « input », « tone », « mix », « out » (mêmes noms que le panneau)
+    pub fn set_live(&mut self, key: &str, v: f64) {
+        let i = match key { "drive" => 0, "input" => 1, "tone" => 2, "mix" => 3, "out" => 4, _ => return };
+        if self.knobs[i] != v { self.knobs[i] = v; self.apply_knobs(); }
+    }
+    fn apply_knobs(&mut self) {
+        let [drive, input, tone, mix, out] = self.knobs;
+        let drive = drive.clamp(0.0, 100.0);
+        self.gin = 10f64.powf(input.clamp(-12.0, 24.0) / 20.0);
+        self.gout = 10f64.powf(out.clamp(-24.0, 12.0) / 20.0);
+        self.mix = mix.clamp(0.0, 100.0) / 100.0;
+        let ag = self.ag;
         self.lin = drive <= 0.0;
         if self.lin {
             self.k = 1.0; self.trim = if ag { 1.0 / self.gin } else { 1.0 };
@@ -1466,16 +1483,13 @@ impl Saturator {
             self.trim = if ag { msat_trim(self.sty, self.k) / self.gin } else { 1.0 };
         }
         self.tk = self.k.tanh();
-        let t = p.tone.unwrap_or(0.0).clamp(-100.0, 100.0);
+        let t = tone.clamp(-100.0, 100.0);
         self.has_tone = t != 0.0;
         if self.has_tone {
-            let lo = eq_sections(&EqBand { kind: "lowshelf".into(), freq: 300.0, gain: -t * 0.06, q: std::f64::consts::FRAC_1_SQRT_2, ..Default::default() }, sr);
-            let hi = eq_sections(&EqBand { kind: "highshelf".into(), freq: 3000.0, gain: t * 0.06, q: std::f64::consts::FRAC_1_SQRT_2, ..Default::default() }, sr);
-            for ch in 0..2 {
-                // nouveaux coefficients, mémoire du filtre gardée
-                self.tone[0][ch].retune(lo[0]);
-                self.tone[1][ch].retune(hi[0]);
-            }
+            // mêmes filtres que eq_sections (étagères à Q 0,707), sans liste : rien n'est alloué pendant le son
+            let lo = eq_matched("lowshelf", 300.0, std::f64::consts::FRAC_1_SQRT_2, -t * 0.06, self.sr);
+            let hi = eq_matched("highshelf", 3000.0, std::f64::consts::FRAC_1_SQRT_2, t * 0.06, self.sr);
+            for ch in 0..2 { self.tone[0][ch].retune(lo); self.tone[1][ch].retune(hi); }
         }
     }
     #[inline]
@@ -1615,6 +1629,10 @@ fn auto_range(fx: &str, key: &str) -> Option<(f64, f64, bool)> {
         ("gate", "attack") => (0.1, 50.0, true),
         ("gate", "hold") => (0.0, 500.0, false),
         ("msat", "mix") => (0.0, 100.0, false),
+        ("sat", "drive") | ("sat", "mix") => (0.0, 100.0, false),
+        ("sat", "input") => (-12.0, 24.0, false),
+        ("sat", "tone") => (-100.0, 100.0, false),
+        ("sat", "out") => (-12.0, 12.0, false),
         ("msat", "out") => (-12.0, 12.0, false),
         ("mband", k) | ("msat", k) if k.ends_with("-lo") || k.ends_with("-hi") => (20.0, 20000.0, true),
         ("mband", k) if k.ends_with("-thr") => (-60.0, 0.0, false),
@@ -1970,6 +1988,7 @@ impl Chain {
                 if let Some((i, f)) = k.strip_prefix('b').and_then(|r| r.split_once('-')) { if let Ok(i) = i.parse::<usize>() { m.set(i, f, v); } }
             },
             ("msat", k) => if let Some(m) = &mut self.msat { m.set(k, v); },
+            ("sat", k) => if let Some(m) = &mut self.sat { m.set_live(k, v); },
             ("deess", "range") => if let Some(d) = &mut self.deess2 { d.range = v.clamp(0.0, 30.0); },
             ("limit", k) => if let Some(l) = &mut self.limit {
                 match k { "ceiling" => l.thr = 10f64.powf(v / 20.0).min(1.0), "gain" => l.g = 10f64.powf(v / 20.0),
