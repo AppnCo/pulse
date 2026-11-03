@@ -1258,6 +1258,44 @@ mod tests {
         assert!((t3 - 1.0).abs() < 0.004, "stem : la voix démarre à {t3:.4} s au lieu de 1 s");
     }
 
+    /// Le même effet plusieurs fois (comme des inserts Logic) : chaque exemplaire a ses réglages et son automation,
+    /// joués dans l'ordre affiché
+    #[test]
+    fn effet_plusieurs_fois() {
+        let n = SR as usize;
+        let tone = Media::from([("a".to_owned(), Source::new(SR, vec![(0..n).map(|i| (0.1 * (2.0 * std::f64::consts::PI * 440.0 * i as f64 / SR as f64).sin()) as f32).collect()]))]);
+        let peak = |p: &Project| { let l = render(p, &tone, &RenderOptions { only_track: Some(0), ..opts() }).0; l[n / 2..n - 1000].iter().fold(0f32, |a, v| a.max(v.abs())) as f64 };
+        let mk = |fx: &str| -> Project { serde_json::from_str(&format!(r#"{{"tracks":[{{"volume":100,"clips":[{{"id":"a","start":0,"duration":1,"offset":0}}],{fx}}}]}}"#)).unwrap() };
+        let base = peak(&mk(r#""effects":[]"#));
+        let one = peak(&mk(r#""effects":["util"],"effectParams":{"util":{"gain":6}}"#));
+        let two = peak(&mk(r#""effects":["util","util#2"],"effectParams":{"util":{"gain":6},"util#2":{"gain":6}}"#));
+        let db = |x: f64| 20.0 * (x / base).log10();
+        assert!((db(one) - 6.0).abs() < 0.05, "un Utilitaire : {:.2} dB", db(one));
+        assert!((db(two) - 12.0).abs() < 0.05, "deux Utilitaires : {:.2} dB au lieu de 12", db(two));
+        // le 2e a son propre réglage (ici −6 : on revient au niveau de départ)
+        let back = peak(&mk(r#""effects":["util","util#2"],"effectParams":{"util":{"gain":6},"util#2":{"gain":-6}}"#));
+        assert!(db(back).abs() < 0.05, "6 puis −6 : {:.2} dB", db(back));
+        // automation du 2e seulement (courbe à 0,75 = +12 dB) : le 1er garde ses +6
+        let auto = peak(&mk(r#""effects":["util","util#2"],"effectParams":{"util":{"gain":6},"util#2":{"gain":0}},"automation":{"fx:util#2:gain":{"points":[{"t":0,"v":0.75}]}}"#));
+        assert!((db(auto) - 18.0).abs() < 0.1, "automation du 2e : {:.2} dB au lieu de 18", db(auto));
+        // ordre : saturation forte puis Utilitaire −12 ≠ Utilitaire −12 puis saturation (l'ordre affiché est respecté)
+        let a = peak(&mk(r#""effects":["sat","util","sat#2"],"fxOrder":["sat","util","sat#2"],"effectParams":{"sat":{"drive":0},"util":{"gain":12},"sat#2":{"drive":80}}"#));
+        let b = peak(&mk(r#""effects":["sat","util","sat#2"],"fxOrder":["sat#2","util","sat"],"effectParams":{"sat":{"drive":0},"util":{"gain":12},"sat#2":{"drive":80}}"#));
+        assert!((a - b).abs() > 0.01, "l'ordre des exemplaires doit compter : {a:.3} / {b:.3}");
+    }
+
+    /// Deux Pitch sur la même piste : deux retards, rattrapés tous les deux
+    #[test]
+    fn deux_pitch_retard_compense() {
+        let n = SR as usize * 3;
+        let saw = Media::from([("a".to_owned(), Source::new(SR, vec![(0..n).map(|i| if i < SR as usize { 0.0 } else { (((i as f64 * 220.0 / SR as f64) % 1.0) * 0.6 - 0.3) as f32 }).collect()]))]);
+        let onset = |l: &[f32]| l.iter().position(|v| v.abs() > 0.02).unwrap() as f64 / SR as f64;
+        let t = r#"{"volume":100,"clips":[{"id":"a","start":0,"duration":3,"offset":0}],"effects":["pitch","pitch#2"],"effectParams":{"pitch":{"semi":5},"pitch#2":{"semi":-5}}}"#;
+        let p = Project { tracks: vec![serde_json::from_str(t).unwrap()], ..Default::default() };
+        let t0 = onset(&render(&p, &saw, &opts()).0);
+        assert!((t0 - 1.0).abs() < 0.004, "deux Pitch : la voix démarre à {t0:.4} s au lieu de 1 s");
+    }
+
     /// Pitch « voix fidèle » : mêmes chiffres que le navigateur (tests/scenarios/pitch-parite.mjs)
     #[test]
     fn pitch_comme_le_navigateur() {

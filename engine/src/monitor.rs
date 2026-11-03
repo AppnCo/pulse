@@ -48,7 +48,7 @@ impl Ring {
 
 /// Tranche de la piste écoutée, appliquée au retour : ses effets, son volume et son pan (comme dans le mix),
 /// et ses envois de reverb / écho (on s'entend avec sa reverb pendant la prise, comme dans Logic).
-pub struct Strip { chain: Option<crate::fx::Chain>, vol: f32, pan: f64, sends: Vec<MonSend> }
+pub struct Strip { chain: Option<crate::fx::FxChain>, vol: f32, pan: f64, sends: Vec<MonSend> }
 /// Un envoi de la piste écoutée : niveau, avant / après le fader, son effet et ses tampons (alloués à l'avance)
 struct MonSend { level: f32, pre: bool, fx: crate::fx::SendFx, l: Vec<f32>, r: Vec<f32> }
 const MAX_BLOCK: usize = 1024;
@@ -62,7 +62,7 @@ impl Strip {
         struct Msg { track: crate::model::Track, #[serde(default)] bpm: Option<f64>, #[serde(default)] sends: Vec<crate::model::Send> }
         let m: Msg = serde_json::from_str(json).map_err(|e| format!("piste illisible : {e}"))?;
         let bpm = m.bpm.filter(|b| *b > 0.0).unwrap_or(120.0);
-        let chain = crate::fx::Chain::for_track(&m.track, sr, bpm);
+        let chain = crate::fx::FxChain::for_track(&m.track, sr, bpm);
         let vol = (m.track.volume.unwrap_or(100.0) / 100.0).max(0.0) as f32;
         let pan = (m.track.pan.unwrap_or(0.0) / 100.0).clamp(-1.0, 1.0);
         let sends = m.sends.iter()

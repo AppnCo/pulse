@@ -166,10 +166,14 @@ fn aux_sends(project: &Project, sends: &HashMap<String, f64>, auto: &crate::mode
 
 /// Le Pitch « voix fidèle » retarde le son (`Pitch::latency`) : la piste (ou la région) qui l'utilise est avancée d'autant,
 /// pour que la voix retombe pile en place (comme la compensation de retard de Logic). Même calcul que pitchComp dans audio.js.
-fn pitch_on(effects: &[String], params: &crate::model::EffectParams, auto: Option<&crate::model::Automation>) -> bool {
-    effects.iter().any(|e| e == "pitch")
-        && (params.pitch.as_ref().is_some_and(|p| p.semi.unwrap_or(0.0) != 0.0 || p.formant.unwrap_or(0.0) != 0.0)
-            || auto.is_some_and(|a| a.other.keys().any(|k| k.starts_with("fx:pitch:"))))
+fn pitch_on(effects: &[String], params: &crate::model::EffectParams, auto: Option<&crate::model::Automation>) -> bool { pitch_count(effects, params, auto) > 0 }
+/// Nombre de Pitch actifs (chacun ajoute son retard) : plusieurs exemplaires possibles (« pitch », « pitch#2 »…)
+fn pitch_count(effects: &[String], params: &crate::model::EffectParams, auto: Option<&crate::model::Automation>) -> u32 {
+    effects.iter().filter(|e| crate::model::fx_type(e) == "pitch").filter(|e| {
+        let p = params.instance(e);
+        p.pitch.as_ref().is_some_and(|p| p.semi.unwrap_or(0.0) != 0.0 || p.formant.unwrap_or(0.0) != 0.0)
+            || auto.is_some_and(|a| a.other.keys().any(|k| k.starts_with(&format!("fx:{e}:"))))
+    }).count() as u32
 }
 /// Nombre de groupes avec Pitch sur le trajet de sortie d'une piste (groupe → groupe → master). Même calcul que pitchBuses dans audio.js.
 /// Un stem seul contourne les groupes : 0.
@@ -179,7 +183,7 @@ fn pitch_buses(project: &Project, output: Option<&str>, stem: bool) -> u32 {
     for _ in 0..8 {
         let Some(id) = next.as_deref() else { break };
         let Some(b) = project.buses.iter().find(|b| b.id == id) else { break };
-        if pitch_on(&b.effects, &b.effect_params, Some(&b.automation)) { n += 1; }
+        n += pitch_count(&b.effects, &b.effect_params, Some(&b.automation));
         next = b.output.clone();
     }
     n
@@ -195,9 +199,9 @@ fn with_track_delays(project: &Project, sr: f64, stem: bool) -> Option<Project> 
     let nb: Vec<u32> = project.tracks.iter().map(|t| pitch_buses(project, t.output.as_deref(), stem)).collect();
     let mut p = project.clone();
     for (t, nb) in p.tracks.iter_mut().zip(nb) {
-        let d = t.delay_ms.unwrap_or(0.0) / 1000.0 - if pitch_on(&t.effects, &t.effect_params, Some(&t.automation)) { comp } else { 0.0 } - nb as f64 * comp;
+        let d = t.delay_ms.unwrap_or(0.0) / 1000.0 - pitch_count(&t.effects, &t.effect_params, Some(&t.automation)) as f64 * comp - nb as f64 * comp;
         for c in &mut t.clips {
-            let dc = d - if c.fx.as_ref().is_some_and(|f| pitch_on(&f.effects, &f.effect_params, None)) { comp } else { 0.0 };
+            let dc = d - c.fx.as_ref().map_or(0, |f| pitch_count(&f.effects, &f.effect_params, None)) as f64 * comp;
             if dc == 0.0 { continue; }
             c.start += dc;
             if let Some(le) = c.loop_end.as_mut() { *le += dc; }
@@ -224,7 +228,7 @@ type SendTap = (usize, f32, Option<Curve>, bool);
 type AuxTap = (f32, Option<Curve>, f32, Option<usize>, bool);
 
 /// Une région prête à jouer : fondus enchaînés calculés, chaîne d'effets de région gardée d'un bloc à l'autre
-struct ClipRt { clip: Clip, xin: f64, xout: f64, fx: Option<crate::fx::Chain>, src_stereo: bool, out_stereo: bool, first: usize, last: usize }
+struct ClipRt { clip: Clip, xin: f64, xout: f64, fx: Option<crate::fx::FxChain>, src_stereo: bool, out_stereo: bool, first: usize, last: usize }
 
 struct TrackRt {
     /// Indice de la piste dans le projet
@@ -241,7 +245,7 @@ struct TrackRt {
     stereo_in: bool,
     mono_in: bool,
     stereo: bool,
-    chain: crate::fx::Chain,
+    chain: crate::fx::FxChain,
     vol: f64,
     route_gain: f32,
     dest: Option<usize>,
@@ -255,7 +259,7 @@ struct TrackRt {
 struct BusRt {
     i: usize,
     stage_dest: Option<usize>,
-    chain: crate::fx::Chain,
+    chain: crate::fx::FxChain,
     own: f64,
     up: f64,
     dest: Option<usize>,
@@ -401,7 +405,7 @@ impl Renderer {
             for (clip, src) in &clips {
                 // Effets d'une région (avant ceux de la piste)
                 let fx = clip.fx.as_ref().filter(|f| !f.effects.is_empty())
-                    .map(|f| crate::fx::Chain::new(&f.effects, &f.effect_params, sr, project.bpm_at(clip.start), project.ceiling()).with_order(&f.fx_order));
+                    .map(|f| crate::fx::FxChain::new(&f.effects, &f.effect_params, &f.fx_order, sr, project.bpm_at(clip.start), project.ceiling()));
                 if !force_mono && (src.n_channels() > 1 || fx.as_ref().is_some_and(|c| c.outputs_stereo())) { stereo_in = true; }
                 let (xin, xout) = crossfade_extents(&all, clip);
                 let seg_start = clip.start.max(from);
@@ -416,7 +420,7 @@ impl Renderer {
                 rt_clips.push(ClipRt { clip: (*clip).clone(), xin, xout, fx, src_stereo, out_stereo, first, last });
             }
             // Effets de la piste
-            let chain = crate::fx::Chain::for_track(track, sr, project.bpm).with_auto(&track.automation, from).with_tempo(project.tempo_segments(), from);
+            let chain = crate::fx::FxChain::for_track(track, sr, project.bpm).with_auto(&track.automation, from).with_tempo(project.tempo_segments(), from);
             let mono_in = !stereo_in;
             let stereo = stereo_in || chain.outputs_stereo();   // écho ping-pong aussi : une piste mono en ressort stéréo (comme le navigateur)
             tracks.push(TrackRt {
@@ -448,7 +452,7 @@ impl Renderer {
             BusRt {
                 i, stage_dest: dest, own_s: own, pan_s: pan0,
                 route_s: (up * if dest.is_some() { 1.0 } else { opts.master_volume }) as f32,
-                chain: crate::fx::Chain::new(&bus.effects, &bus.effect_params, sr, project.bpm, project.ceiling()).with_order(&bus.fx_order).with_auto(&bus.automation, from).with_tempo(project.tempo_segments(), from),
+                chain: crate::fx::FxChain::new(&bus.effects, &bus.effect_params, &bus.fx_order, sr, project.bpm, project.ceiling()).with_auto(&bus.automation, from).with_tempo(project.tempo_segments(), from),
                 own,
                 up, dest, muted: bus.muted,
                 curve: bus.automation.curve("volume"), pan_curve: bus.automation.curve("pan"),

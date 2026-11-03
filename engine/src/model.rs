@@ -134,6 +134,25 @@ pub struct EffectParams {
     pub master: Option<MasterParams>,
     pub limit: Option<LimitParams>,
     pub pitch: Option<PitchParams>,
+    /// Exemplaires en plus d'un même effet (« comp#2 », « eq#3»…), réglages bruts : lus par `EffectParams::instance`
+    #[serde(flatten)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
+}
+
+/// Type d'un effet à partir de son nom d'exemplaire : « comp#2 » → « comp »
+pub fn fx_type(id: &str) -> &str { id.split('#').next().unwrap_or(id) }
+
+impl EffectParams {
+    /// Réglages d'un exemplaire, rangés à la place de son type : « comp#2 » → un EffectParams dont `comp` = réglages de comp#2
+    pub fn instance(&self, id: &str) -> EffectParams {
+        let ty = fx_type(id);
+        if ty == id { return self.clone_without_extra(); }
+        let v = self.extra.get(id).cloned().unwrap_or(serde_json::Value::Null);
+        let mut m = serde_json::Map::new();
+        if !v.is_null() { m.insert(ty.to_owned(), v); }
+        serde_json::from_value(serde_json::Value::Object(m)).unwrap_or_default()
+    }
+    fn clone_without_extra(&self) -> EffectParams { let mut c = self.clone(); c.extra.clear(); c }
 }
 
 /// Saturation multibande : bande de départ (`base`, le reste du son) + jusqu'à 6 bandes libres ; mélange (%) et sortie (dB) globaux,

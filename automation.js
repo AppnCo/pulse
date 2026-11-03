@@ -12,7 +12,7 @@ let _autoClip = null;   // courbe copiée (points entre 0 et 1, collables sur n'
 // paramId : 'volume' (v = fraction du niveau du fader), 'pan', 'send:<id>', 'busSend:<id>', 'fx:<effet>:<réglage>'
 // owner.autoParam = le réglage dont la courbe est affichée sur la piste (Volume par défaut)
 const VOL_PAD = 7;
-function autoOwnerKey(o) { const i = state.project.tracks.indexOf(o); return i >= 0 ? 't' + i : 'b' + o.id; }
+function autoOwnerKey(o) { if (o && o.__real) return autoOwnerKey(o.__real) + '~' + o.__fxId; const i = state.project.tracks.indexOf(o); return i >= 0 ? 't' + i : 'b' + o.id; }
 function autoOwnerFromKey(k) { return k[0] === 't' ? state.project.tracks[+k.slice(1)] : busById(k.slice(1)); }
 // Réglages d'effet que le moteur sait suivre pendant la lecture (les autres viendront effet par effet)
 const AUTO_FX = { comp: ['threshold', 'ratio', 'mix', 'attack', 'release', 'knee', 'makeup'], delay: ['wet', 'feedback', 'dry'], reverb: ['wet'], filter: ['hpf', 'lpf'],
@@ -62,12 +62,13 @@ function autoInfo(o, pid) {
     if (kind === 'send') { const sd = projectSends().find(x => x.id === a); return sd ? lin('Envoi · ' + sd.name, 0, 100, () => (o.sends || {})[a] || 0, v => Math.round(v)) : null; }
     if (kind === 'busSend') { const bs = busById(a); return bs ? lin('Envoi → ' + bs.name, 0, 100, () => (o.busSends || {})[a] || 0, v => Math.round(v)) : null; }
     if (kind === 'fx') {
-        const d = fxNumericDefs(a, o).find(x => x.key === b); if (!d) return null;
-        const cur = a === 'eq'
-            ? () => { const bd = eqBandsOf((o.effectParams || {}).eq || {})[d.band]; return bd && bd[d.field] !== undefined ? bd[d.field] : d.def; }
+        const ty = fxType(a);
+        const d = fxNumericDefs(ty, a.includes('#') ? fxInstanceView(o, a, '') : o).find(x => x.key === b); if (!d) return null;
+        const cur = ty === 'eq'
+            ? () => { const bd = eqBandsOf((o.effectParams || {})[a] || {})[d.band]; return bd && bd[d.field] !== undefined ? bd[d.field] : d.def; }
             : d.band !== undefined ? () => { const bd = ((((o.effectParams || {})[a]) || {}).bands || [])[d.band]; return bd && bd[d.field] !== undefined ? bd[d.field] : d.def; }
-            : () => { const v = (o.effectParams || {})[a] ? o.effectParams[a][b] : undefined; if (a === 'gate' && b === 'ratio' && !(v > 0)) return 100; return v !== undefined ? v : d.def; };   // gate : ratio 0 = franc = ∞
-        const label = (FX_NAMES[a] || a) + ' · ' + d.label;
+            : () => { const v = (o.effectParams || {})[a] ? o.effectParams[a][b] : undefined; if (ty === 'gate' && b === 'ratio' && !(v > 0)) return 100; return v !== undefined ? v : d.def; };   // gate : ratio 0 = franc = ∞
+        const label = fxLabel(a) + ' · ' + d.label;
         if (d.log && d.min > 0) return { label, cur, norm: v => Math.max(0, Math.min(1, Math.log(Math.max(v, d.min) / d.min) / Math.log(d.max / d.min))), denorm: n => d.min * Math.pow(d.max / d.min, n), fmt: v => Math.round(v * 10) / 10 + (d.unit || '') };
         return { ...lin(label, d.min, d.max, cur, v => Math.round(v * 10) / 10 + (d.unit || '')) };
     }
@@ -127,8 +128,8 @@ function autoParamGroups(o) {
         const sd = projectSends().map(x => 'send:' + x.id).concat(Object.keys(o.busSends || {}).filter(id => busById(id)).map(id => 'busSend:' + id));
         if (sd.length) groups.push(['Envois', sd]);
         (o.effects || []).filter(n => n !== 'limit' && n !== 'master').forEach(n => {
-            const ids = fxNumericDefs(n, o).map(d => `fx:${n}:${d.key}`);
-            if (ids.length) groups.push([FX_NAMES[n] || n, ids]);
+            const ids = fxNumericDefs(fxType(n), n.includes('#') ? fxInstanceView(o, n, '') : o).map(d => `fx:${n}:${d.key}`);
+            if (ids.length) groups.push([fxLabel(n), ids]);
         });
     }
     return groups;
@@ -191,12 +192,14 @@ function autoSelectParam(o, pid) {
     cancelAnimationFrame(_autoRaf); _autoRaf = requestAnimationFrame(() => { renderTimelineTracks(); refreshAutoChips(); });
 }
 // Un geste sur l'écran d'un plugin (rond, poignée) : comme toucher le bouton du même réglage
-function autoTouch(o, pid) { if (!state.automationMode) return; autoSelectParam(o, pid); autoWriteSample(o, pid); }
+// Fenêtre d'un exemplaire en plus (« comp#2 ») : la courbe est celle de l'exemplaire, sur la vraie piste
+function autoRealOf(o, pid) { if (!o || !o.__fxId) return [o, pid]; const ty = fxType(o.__fxId); return [o.__real, pid.startsWith(`fx:${ty}:`) ? `fx:${o.__fxId}:` + pid.slice(ty.length + 4) : pid]; }
+function autoTouch(o, pid) { if (!state.automationMode) return; [o, pid] = autoRealOf(o, pid); autoSelectParam(o, pid); autoWriteSample(o, pid); }
 function autoTargetOf(el) {
     const fxp = el.closest('.fx-panel.plug-win');
     if (fxp) {
-        const o = fxp._plugT, isOwner = o && (state.project.tracks.includes(o) || (state.project.buses || []).includes(o));   // pas les effets d'une région
-        const c = el.closest('.fx-slider, .fx-knob, .fx-val, .pk[data-key]'); return c && c.dataset.key && isOwner ? { o, pid: `fx:${fxp.dataset.fx}:${c.dataset.key}` } : null;
+        const [o, pid0] = autoRealOf(fxp._plugT, ''), fxn = fxp._plugT && fxp._plugT.__fxId || fxp.dataset.fx, isOwner = o && (state.project.tracks.includes(o) || (state.project.buses || []).includes(o));   // pas les effets d'une région
+        void pid0; const c = el.closest('.fx-slider, .fx-knob, .fx-val, .pk[data-key]'); return c && c.dataset.key && isOwner ? { o, pid: `fx:${fxn}:${c.dataset.key}` } : null;
     }
     let o = null;
     const strip = el.closest('.insp-strip, .strip[data-kind]');

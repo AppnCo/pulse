@@ -1369,6 +1369,8 @@ window.PulseAudio = (function() {
         }
         registerProcessor('pulse-pan', PulsePan);`;
 
+    // Exemplaire d'un effet : « comp#2 » → type « comp » (même calcul que fx_type dans model.rs)
+    const fxType = (id) => String(id).split('#')[0];
     const FX_CHAIN = ['pitch', 'filter', 'gate', 'eq', 'sat', 'msat', 'crush', 'deess', 'comp', 'mband', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'reverb']; // ordre habituel des effets
     const SEND_REVERB_TRIM = 1 / 3; // la reverb seule sort 3 fois trop fort par rapport au son direct : on la ramène à niveau
 
@@ -2109,11 +2111,14 @@ window.PulseAudio = (function() {
         const sd = sr / 4, tmaxD = Math.ceil(sd / 70), winD = 2 * tmaxD + 32;
         return Math.round(0.025 * sr) + winD * 2 + Math.ceil(1.3 * Math.ceil(sr / 70)) + 16;
     }
-    function pitchOn(effects, params, auto) {
-        if (!(effects || []).includes('pitch')) return false;
-        const p = (params || {}).pitch || {};
-        return !!(p.semi || p.formant) || Object.keys(auto || {}).some(k => k.startsWith('fx:pitch:'));
+    // Nombre de Pitch actifs (« pitch », « pitch#2 »… : chacun ajoute son retard). Même calcul que pitch_count (render.rs).
+    function pitchCount(effects, params, auto) {
+        return (effects || []).filter(e => fxType(e) === 'pitch').filter(e => {
+            const p = (params || {})[e] || {};
+            return !!(p.semi || p.formant) || Object.keys(auto || {}).some(k => k.startsWith(`fx:${e}:`));
+        }).length;
     }
+    const pitchOn = (effects, params, auto) => pitchCount(effects, params, auto) > 0;
     // Nombre de groupes avec Pitch sur le trajet de sortie d'une piste (un stem seul contourne les groupes). Même calcul que pitch_buses (render.rs).
     function pitchBuses(project, output, stem) {
         if (stem) return 0;
@@ -2121,7 +2126,7 @@ window.PulseAudio = (function() {
         for (let k = 0; k < 8 && next; k++) {
             const b = (project.buses || []).find(x => x.id === next);
             if (!b) break;
-            if (pitchOn(b.effects, b.effectParams, b.automation)) n++;
+            n += pitchCount(b.effects, b.effectParams, b.automation);
             next = b.output;
         }
         return n;
@@ -2132,9 +2137,9 @@ window.PulseAudio = (function() {
         if (!project || !(project.tracks || []).some(t => t.delayMs || pitchOn(t.effects, t.effectParams, t.automation) || pitchBuses(project, t.output, stem) || (t.clips || []).some(clipPitch))) return project;
         const comp = pitchLatency(sr) / sr;
         return { ...project, tracks: project.tracks.map(t => {
-            const d = (t.delayMs || 0) / 1000 - (pitchOn(t.effects, t.effectParams, t.automation) ? comp : 0) - pitchBuses(project, t.output, stem) * comp;
+            const d = (t.delayMs || 0) / 1000 - pitchCount(t.effects, t.effectParams, t.automation) * comp - pitchBuses(project, t.output, stem) * comp;
             if (!d && !(t.clips || []).some(clipPitch)) return t;
-            return { ...t, clips: (t.clips || []).map(c => { const dc = d - (clipPitch(c) ? comp : 0); return dc ? { ...c, start: c.start + dc, ...(c.loopEnd ? { loopEnd: c.loopEnd + dc } : {}) } : c; }) };
+            return { ...t, clips: (t.clips || []).map(c => { const dc = d - (c.fx ? pitchCount(c.fx.effects, c.fx.effectParams) : 0) * comp; return dc ? { ...c, start: c.start + dc, ...(c.loopEnd ? { loopEnd: c.loopEnd + dc } : {}) } : c; }) };
         }) };
     }
     // Piste gelée (`track.frozen = { id, gain }`, comme « Geler » dans Logic) : elle joue son rendu (régions + effets de piste,
@@ -2971,7 +2976,41 @@ window.PulseAudio = (function() {
     // ===================== EFFETS INTÉGRÉS (presets Pulse) =====================
     // Crée une chaîne EQ -> Comp -> Reverb selon les flags du track.effects
     // Retourne { input, output } pour brancher avant le gain de piste.
+    // Plusieurs exemplaires d'un même effet (« comp », « comp#2 »…) : la liste, dans l'ordre affiché, est coupée en tranches
+    // sans doublon, branchées l'une après l'autre ; chaque tranche voit ses exemplaires sous leur nom de type.
+    // Même calcul que FxChain dans fx.rs. Sans doublon : la chaîne habituelle, telle quelle.
+    function fxOrdered(effects, order) {
+        const out = [];
+        for (const n of order || []) if (effects.includes(n) && !out.includes(n)) out.push(n);
+        for (const ty of FX_CHAIN) for (const n of effects) if (fxType(n) === ty && !out.includes(n)) out.push(n);
+        for (const n of effects) if (!out.includes(n)) out.push(n);
+        return out;
+    }
     function createEffectsChain(actx, enabled = [], params = {}, bpm = 120, ceiling = ceilingDb) {
+        if (!enabled.some(e => String(e).includes('#'))) return createEffectsChain1(actx, enabled, params, bpm, ceiling);
+        const groups = [[]];
+        for (const id of fxOrdered(enabled, params.order)) {
+            if (groups[groups.length - 1].some(g => fxType(g) === fxType(id))) groups.push([]);
+            groups[groups.length - 1].push(id);
+        }
+        const ids = new Set(enabled);
+        const base = Object.fromEntries(Object.entries(params).filter(([k]) => !ids.has(k) && !FX_CHAIN.includes(k) && k !== 'order' && k !== 'auto' && k !== 'grKey'));
+        const parts = groups.filter(g => g.length).map(g => {
+            const p = { ...base, order: g.map(fxType), grKeys: {} };
+            for (const id of g) { if (params[id] !== undefined) p[fxType(id)] = params[id]; if (params.grKey) p.grKeys[fxType(id)] = id.includes('#') ? params.grKey + '~' + id : params.grKey; }
+            if (params.grKey) p.grKey = params.grKey;
+            if (params.auto) {
+                p.auto = {};
+                for (const [k, v] of Object.entries(params.auto)) { const m = /^fx:([^:]+):(.+)$/.exec(k); if (m && g.includes(m[1])) p.auto[`fx:${fxType(m[1])}:${m[2]}`] = v; }
+            }
+            return createEffectsChain1(actx, g.map(fxType), p, bpm, ceiling);
+        });
+        for (let i = 1; i < parts.length; i++) parts[i - 1].output.connect(parts[i].input);
+        return { input: parts[0].input, output: parts[parts.length - 1].output };
+    }
+    function createEffectsChain1(actx, enabled = [], params = {}, bpm = 120, ceiling = ceilingDb) {
+        // clé des afficheurs (réduction, gate…) d'un type d'effet : celle de son exemplaire (« t0~comp#2 ») s'il y en a plusieurs
+        const gk = (ty) => (params.grKeys && params.grKeys[ty]) || params.grKey;
         const input = actx.createGain();
         let prev = input;
         const connect = (n) => { prev.connect(n); prev = n; };
@@ -3039,7 +3078,7 @@ window.PulseAudio = (function() {
                 processorOptions: { threshold: p.threshold ?? -45, release: p.release ?? 150, reduction: p.reduction ?? 40,
                     ratio: p.ratio, knee: p.knee, attack: p.attack, hold: p.hold, hp: p.hp, lp: p.lp, listen: live && !!p.listen, live, ...autoAll('gate') }
             });
-            if (live) { const key = params.grKey; node.port.onmessage = (e) => gateLive.set(key, { ...e.data, ts: performance.now() }); }
+            if (live) { const key = gk('gate'); node.port.onmessage = (e) => gateLive.set(key, { ...e.data, ts: performance.now() }); }
             connect(node);
         };
 
@@ -3095,7 +3134,7 @@ window.PulseAudio = (function() {
                 const live = !!params.grKey && !isOffline;
                 const node = new AudioWorkletNode(actx, 'pulse-dyneq', { numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max',
                     processorOptions: { band: { type: bd.type, freq: bd.freq, gain: bd.gain || 0, q: bd.q || 1, dyn: Number(bd.dyn), thr: bd.thr ?? -30 }, live } });
-                if (live) { const key = params.grKey + ':' + bi; node.port.onmessage = (e) => eqDynLive.set(key, { g: e.data, ts: performance.now() }); }
+                if (live) { const key = gk('eq') + ':' + bi; node.port.onmessage = (e) => eqDynLive.set(key, { g: e.data, ts: performance.now() }); }
                 connect(node);
             }
         };
@@ -3130,7 +3169,7 @@ window.PulseAudio = (function() {
                 const live = !!params.grKey && !(typeof OfflineAudioContext !== 'undefined' && actx instanceof OfflineAudioContext);
                 const node = new AudioWorkletNode(actx, 'pulse-deesser2', { numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max',
                     processorOptions: { thr: dp.thr, range: dp.range, lo: dp.lo, hi: dp.hi, wide: !!dp.wide, rel: !!dp.rel, listen: live && !!dp.listen, live, ...autoAll('deess') } });
-                if (live) { const key = params.grKey; node.port.onmessage = (e) => deessLive.set(key, { ...e.data, ts: performance.now() }); }
+                if (live) { const key = gk('deess'); node.port.onmessage = (e) => deessLive.set(key, { ...e.data, ts: performance.now() }); }
                 connect(node);
                 return;
             }
@@ -3157,7 +3196,7 @@ window.PulseAudio = (function() {
             if (!enabled.includes('mband') || !bands.length || !fxReady.has(actx)) return;
             const live = !!params.grKey && !(typeof OfflineAudioContext !== 'undefined' && actx instanceof OfflineAudioContext);
             const node = new AudioWorkletNode(actx, 'pulse-mband', { numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max', processorOptions: { bands: mp.bands, live, ...autoAll('mband') } });
-            if (live) { const key = params.grKey; node.port.onmessage = (e) => mbandLive.set(key, { ...e.data, ts: performance.now() }); }
+            if (live) { const key = gk('mband'); node.port.onmessage = (e) => mbandLive.set(key, { ...e.data, ts: performance.now() }); }
             connect(node);
         };
 
@@ -3173,9 +3212,9 @@ window.PulseAudio = (function() {
                             ...autoOpts('comp', { threshold: null, ratio: null, attack: null, release: null, knee: null, makeup: null, mix: null }) }
                     });
                     if (live) {
-                        const old = compLive.get(params.grKey); if (old && old !== node) old.port.onmessage = null;   // l'ancien compresseur ne parle plus (sinon l'aiguille saute entre deux)
-                        node.port.onmessage = (e) => { compGR.set(params.grKey, e.data); compGRts.set(params.grKey, performance.now()); };
-                        compLive.set(params.grKey, node);
+                        const old = compLive.get(gk('comp')); if (old && old !== node) old.port.onmessage = null;   // l'ancien compresseur ne parle plus (sinon l'aiguille saute entre deux)
+                        node.port.onmessage = (e) => { compGR.set(gk('comp'), e.data); compGRts.set(gk('comp'), performance.now()); };
+                        compLive.set(gk('comp'), node);
                     }
                     connect(node);
                 } else {
@@ -3222,7 +3261,7 @@ window.PulseAudio = (function() {
                     numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCount: 2, channelCountMode: 'explicit',
                     processorOptions: { ceiling: dbToLin(lp.ceiling ?? ceiling), gain: lp.gain || 0, release: lp.release, lookahead: lp.lookahead, tp: !!lp.tp, style: lp.style || 0, live, ...autoAll('limit') }
                 });
-                if (live) { const key = params.grKey; node.port.onmessage = (e) => limLive.set(key, { ...e.data, ts: performance.now() }); }
+                if (live) { const key = gk('limit'); node.port.onmessage = (e) => limLive.set(key, { ...e.data, ts: performance.now() }); }
                 connect(node);
             }
         };

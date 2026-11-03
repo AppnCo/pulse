@@ -2443,6 +2443,101 @@ pub fn process_send(send: &Send, left: &mut [f32], right: &mut [f32], sr: f64, b
     SendFx::new(send, sr, bpm).process(left, right);
 }
 
+/// Chaîne d'effets d'une piste, d'un groupe ou d'une région, avec plusieurs exemplaires possibles d'un même effet
+/// (« comp », « comp#2 »…, comme des inserts Logic). Sans doublon : une seule `Chain`, exactement comme avant.
+/// Avec doublons : la liste (dans l'ordre affiché, voir chainOf dans studio.js) est coupée en tranches sans doublon,
+/// jouées l'une après l'autre ; chaque tranche ne voit que ses exemplaires, sous leur nom de type.
+pub struct FxChain { parts: Vec<(Chain, Vec<String>)> }
+
+impl FxChain {
+    /// L'ordre de jeu : l'ordre choisi (`fx_order`), puis les autres à leur place habituelle (par type), puis le reste
+    pub fn ordered(effects: &[String], fx_order: &[String]) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for n in fx_order { if effects.contains(n) && !out.contains(n) { out.push(n.clone()); } }
+        for st in Stage::DEFAULT {
+            for n in effects { if Stage::parse(crate::model::fx_type(n)) == Some(st) && !out.contains(n) { out.push(n.clone()); } }
+        }
+        for n in effects { if !out.contains(n) { out.push(n.clone()); } }
+        out
+    }
+    pub fn new(effects: &[String], params: &EffectParams, fx_order: &[String], sr: f64, bpm: f64, ceiling_db: f64) -> Self {
+        let dup = effects.iter().any(|e| e.contains('#'));
+        if !dup { return Self { parts: vec![(Chain::new(effects, params, sr, bpm, ceiling_db).with_order(fx_order), effects.to_vec())] }; }
+        let mut groups: Vec<Vec<String>> = vec![Vec::new()];
+        for id in Self::ordered(effects, fx_order) {
+            let ty = crate::model::fx_type(&id);
+            if groups.last().unwrap().iter().any(|g| crate::model::fx_type(g) == ty) { groups.push(Vec::new()); }
+            groups.last_mut().unwrap().push(id);
+        }
+        let parts = groups.into_iter().filter(|g| !g.is_empty()).map(|ids| {
+            let mut ep = EffectParams::default();
+            for id in &ids {
+                let one = params.instance(id);
+                macro_rules! take { ($($f:ident),*) => { $( if one.$f.is_some() { ep.$f = one.$f; } )* } }
+                take!(filter, gate, chorus, flanger, phaser, tremolo, doubler, slapback, crush, util, width, eq, sat, deess, comp, mband, msat, reverb, delay, master, limit, pitch);
+            }
+            let types: Vec<String> = ids.iter().map(|i| crate::model::fx_type(i).to_owned()).collect();
+            (Chain::new(&types, &ep, sr, bpm, ceiling_db).with_order(&types), ids)
+        }).collect();
+        Self { parts }
+    }
+    pub fn for_track(track: &Track, sr: f64, bpm: f64) -> Self {
+        Self::new(&track.effects, &track.effect_params, &track.fx_order, sr, bpm, -0.3)
+    }
+    /// Courbes d'automation : « fx:comp#2:… » va à la tranche de comp#2, sous le nom « comp »
+    pub fn with_auto(self, automation: &Automation, from: f64) -> Self {
+        if self.parts.len() == 1 && !self.parts[0].1.iter().any(|i| i.contains('#')) {
+            let (c, ids) = self.parts.into_iter().next().unwrap();
+            return Self { parts: vec![(c.with_auto(automation, from), ids)] };
+        }
+        let parts = self.parts.into_iter().map(|(c, ids)| {
+            let mut a = Automation { volume: None, other: Default::default() };
+            for (k, v) in &automation.other {
+                let mut it = k.splitn(3, ':');
+                let (Some("fx"), Some(fx), Some(key)) = (it.next(), it.next(), it.next()) else { continue };
+                if ids.iter().any(|i| i == fx) { a.other.insert(format!("fx:{}:{key}", crate::model::fx_type(fx)), v.clone()); }
+            }
+            (c.with_auto(&a, from), ids)
+        }).collect();
+        Self { parts }
+    }
+    pub fn with_tempo(self, segs: Vec<(f64, f64)>, from: f64) -> Self {
+        Self { parts: self.parts.into_iter().map(|(c, ids)| (c.with_tempo(segs.clone(), from), ids)).collect() }
+    }
+    pub fn seek(&mut self, t: f64) { for (c, _) in &mut self.parts { c.seek(t); } }
+    /// Réglage changé en direct : `fx` = nom d'exemplaire (« comp#2 ») ou de type
+    pub fn set_live(&mut self, fx: &str, key: &str, v: f64) -> bool {
+        let ty = crate::model::fx_type(fx);
+        let mut r = false;
+        for (c, ids) in &mut self.parts { if ids.iter().any(|i| i == fx) { r |= c.set_live(ty, key, v); } }
+        r
+    }
+    pub fn is_empty(&self) -> bool { self.parts.iter().all(|(c, _)| c.is_empty()) }
+    pub fn makes_stereo(&self) -> bool { self.parts.iter().any(|(c, _)| c.makes_stereo()) }
+    pub fn outputs_stereo(&self) -> bool { self.parts.iter().any(|(c, _)| c.outputs_stereo()) }
+    pub fn process(&mut self, left: &mut [f32], right: &mut [f32], mono: bool) {
+        let mut mono = mono;
+        for (c, _) in &mut self.parts {
+            c.process(left, right, mono);
+            // une tranche qui élargit en stéréo (reverb, écho ping-pong…) a rempli `right` : la suite est stéréo
+            if mono && c.outputs_stereo() { mono = false; }
+        }
+    }
+    pub fn comp_gr(&self) -> Option<f32> { self.parts.iter().find_map(|(c, _)| c.comp_gr()) }
+    pub fn take_meters(&mut self) -> Option<FxMeters> {
+        let mut out: Option<FxMeters> = None;
+        for (c, _) in &mut self.parts {
+            if let Some(m) = c.take_meters() {
+                match &mut out {
+                    None => out = Some(m),
+                    Some(o) => { if o.gate.is_none() { o.gate = m.gate; } if o.deess.is_none() { o.deess = m.deess; } if o.mband.is_none() { o.mband = m.mband; } if o.limit.is_none() { o.limit = m.limit; } }
+                }
+            }
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests_pitch_pingpong {
     use super::*;

@@ -2182,8 +2182,58 @@ function initInspector() {
 function chainOf(x) {
     const on = x.effects || [];
     const order = Array.isArray(x.fxOrder) ? [...x.fxOrder, ...FX_ORDER.filter(n => !x.fxOrder.includes(n))] : FX_ORDER;
-    return order.filter(n => on.includes(n));
+    const out = order.filter(n => on.includes(n));
+    return [...out, ...on.filter(n => !out.includes(n))];   // exemplaires en plus pas encore rangés : à la fin
 }
+// Le même effet plusieurs fois (comme des inserts Logic) : « comp », puis « comp#2 », « comp#3 »… Réglages dans effectParams[« comp#2 »],
+// automation « fx:comp#2:… ». Même découpage dans les moteurs (FxChain dans fx.rs, createEffectsChain dans audio.js).
+const fxType = (id) => String(id).split('#')[0];
+const fxInstNum = (id) => { const m = /#(\d+)$/.exec(String(id)); return m ? +m[1] : 1; };
+function fxLabel(id) { const ty = fxType(id); return (FX_NAMES[ty] || ty) + (String(id).includes('#') ? ' ' + fxInstNum(id) : ''); }
+function nextFxInstance(o, ty) { let k = 2; while ((o.effects || []).includes(ty + '#' + k)) k++; return ty + '#' + k; }
+// Vue d'un exemplaire pour les fenêtres d'effet (écrites pour « comp ») : la fenêtre lit et écrit « comp », la vue range dans « comp#2 »
+// (réglages, liste d'effets, automation). `__fxKey` = clé de ses afficheurs dans le moteur (« t0~comp#2 »).
+const _fxViews = new WeakMap();
+function fxInstanceView(t, id, key) {
+    let m = _fxViews.get(t); if (!m) { m = new Map(); _fxViews.set(t, m); }
+    if (m.has(id)) { if (key) m.get(id).__setKey(key); return m.get(id); }
+    const ty = fxType(id), hid = ty + '#1';
+    const toView = (v) => v === id ? ty : v === ty ? hid : v, toReal = (v) => v === ty ? id : v === hid ? ty : v;
+    const aView = (k) => k.startsWith(`fx:${id}:`) ? `fx:${ty}:` + k.slice(id.length + 4) : k.startsWith(`fx:${ty}:`) ? `fx:${hid}:` + k.slice(ty.length + 4) : k;
+    const aReal = (k) => k.startsWith(`fx:${ty}:`) ? `fx:${id}:` + k.slice(ty.length + 4) : k.startsWith(`fx:${hid}:`) ? `fx:${ty}:` + k.slice(hid.length + 4) : k;
+    const isIdx = (p) => typeof p === 'string' && /^\d+$/.test(p);
+    const mapObj = (get, toR, toV) => new Proxy({}, {
+        get: (_, k) => typeof k === 'string' ? (get() || {})[toR(k)] : undefined,
+        set: (_, k, v) => { get(true)[toR(k)] = v; return true; },
+        deleteProperty: (_, k) => { const o = get(); if (o) delete o[toR(k)]; return true; },
+        has: (_, k) => !!get() && toR(k) in get(),
+        ownKeys: () => Object.keys(get() || {}).map(toV),
+        getOwnPropertyDescriptor: (_, k) => { const o = get(); return o && toR(k) in o ? { value: o[toR(k)], enumerable: true, configurable: true, writable: true } : undefined },
+    });
+    const ep = mapObj((mk) => mk ? (t.effectParams = t.effectParams || {}) : t.effectParams, toReal, toView);
+    const au = mapObj((mk) => mk ? (t.automation = t.automation || {}) : t.automation, aReal, aView);
+    let fxKey = key;
+    const view = new Proxy(t, {
+        get(o, p, r) {
+            if (p === '__real') return t; if (p === '__fxId') return id; if (p === '__fxKey') return fxKey; if (p === '__setKey') return (k) => { fxKey = k; };
+            if (p === 'effectParams') return ep;
+            if (p === 'automation') return au;
+            if (p === 'effects') {
+                if (!t.effects) return t.effects;
+                return new Proxy(t.effects, { get: (a, q, rr) => isIdx(q) ? toView(a[q]) : Reflect.get(a, q, rr), set: (a, q, v) => { a[q] = isIdx(q) ? toReal(v) : v; return true; } });
+            }
+            return Reflect.get(o, p, r);
+        },
+        set(o, p, v) {
+            if (p === 'effects') { t.effects = v ? Array.from(v, toReal) : v; return true; }
+            if (p === 'effectParams' || p === 'automation') return true;   // remplacement complet : ignoré (la vue garde le vrai objet)
+            o[p] = v; return true;
+        },
+    });
+    m.set(id, view);
+    return view;
+}
+function fxKeyOf(trackIdx, t) { return t.__fxKey || (typeof trackIdx === 'number' ? 't' + trackIdx : 'b' + t.id); }
 // Format de la piste, façon Logic : stéréo ou mono (les deux côtés mélangés)
 function trackIsMono(t) { return !!t.mono || (PulseAudio.trackChannelCount(t) === 1); }
 function monoButtonHtml(t) {
@@ -2254,7 +2304,7 @@ function slotListsHtml(kind, x) {
             </div>` : ''}
             ${chain.map((n, k) => `
             <div class="insp-fx-row ${x.premaster || n === 'limit' || n === 'master' ? '' : 'can-drag'}" data-fx="${n}" data-tooltip="Clic pour régler · clic maintenu et glisser pour changer l'ordre · clic droit pour copier ou supprimer">
-                <span>${FX_NAMES[n] || n}</span>
+                <span>${fxLabel(n)}</span>
                 ${x.premaster || x.locked || n === 'limit' || n === 'master' ? '' : '<i class="insp-del" data-tooltip="Supprimer cet effet">×</i>'}
             </div>`).join('')}
             ${x.premaster || x.locked ? '' : Array.from({ length: Math.max(4, 8 - chain.length - (kind === 'track' && showTuneSlot(x) ? 1 : 0)) }, (_, i) => `<div class="insp-slot-empty${i === 0 ? ' insp-add-fx' : ''}" data-tooltip="Emplacement libre : clique pour mettre un effet"></div>`).join('')}
@@ -2713,7 +2763,7 @@ function setFxOn(x, fx, on) {
 // Supprime un effet de la chaîne d'une piste ou d'un groupe (Auto-Tune : retire aussi la correction des prises)
 async function removeFx(fx, x) {
     let group = [x];
-    const name = fx === 'tune' ? 'Auto-Tune' : (FX_NAMES[fx] || fx);
+    const name = fx === 'tune' ? 'Auto-Tune' : fxLabel(fx);
     if (fx === 'tune') {
         const ti = state.project.tracks.indexOf(x);
         if (x.autotune && ti >= 0) await untuneWholeTrack(ti); else pushUndo();
@@ -2722,6 +2772,11 @@ async function removeFx(fx, x) {
         pushUndo();
         group = fxGroup(x);
         group.forEach(o => { o.effects = (o.effects || []).filter(n => n !== fx); });
+        if (String(fx).includes('#')) group.forEach(o => {   // un exemplaire en plus part avec ses réglages et ses courbes
+            if (o.effectParams) delete o.effectParams[fx];
+            Object.keys(o.automation || {}).filter(k => k.startsWith(`fx:${fx}:`)).forEach(k => delete o.automation[k]);
+            if (Array.isArray(o.fxOrder)) o.fxOrder = o.fxOrder.filter(n => n !== fx);
+        });
         saveProject(); refreshPlaybackSoon();
     }
     closeTransientPanels(); group.forEach(o => { const fw = findPlugWin(o, fx); if (fw) fw.remove(); });   // seules les fenêtres de l'effet retiré se ferment
@@ -2834,12 +2889,12 @@ function openAddEffectMenu(anchor, target, x) {
     // effets de la catégorie à droite avec une phrase d'explication
     menu.classList.add('fx-add-menu');
     menu.innerHTML = '';
-    const fxLabel = Object.fromEntries(ADD_FX_CHOICES);
-    const nameOf = (n) => (fxLabel[n] || n).replace(/\s*\(.*\)$/, '');
-    const descOf = (n) => FX_DESC[n] || ((fxLabel[n] || '').match(/\((.*)\)$/) || [])[1] || '';
+    const fxChoice = Object.fromEntries(ADD_FX_CHOICES);
+    const nameOf = (n) => (fxChoice[n] || n).replace(/\s*\(.*\)$/, '');
+    const descOf = (n) => FX_DESC[n] || ((fxChoice[n] || '').match(/\((.*)\)$/) || [])[1] || '';
     let recent = [];
-    try { recent = JSON.parse(localStorage.getItem('pulse_fx_recent') || '[]').filter(n => fxLabel[n]); } catch {}
-    const cats = ADD_FX_CATEGORIES.map(([c, names]) => [c, names.filter(n => fxLabel[n])]);
+    try { recent = JSON.parse(localStorage.getItem('pulse_fx_recent') || '[]').filter(n => fxChoice[n]); } catch {}
+    const cats = ADD_FX_CATEGORIES.map(([c, names]) => [c, names.filter(n => fxChoice[n])]);
     const voice = state.project.tracks.includes(x);   // PulseTune : sur toute piste, pas sur un groupe
     if (voice) { const vh = cats.find(([c]) => c === 'Voix et hauteur'); if (vh) vh[1] = ['tune', ...vh[1]]; }   // Auto-Tune en tête : 1er maillon d'une voix
     const left = document.createElement('div'); left.className = 'fam-left';
@@ -2863,6 +2918,20 @@ function openAddEffectMenu(anchor, target, x) {
         }
         // plusieurs pistes choisies : l'effet est posé sur toutes (celles qui ne l'ont pas encore)
         const group = fxGroup(x);
+        // déjà là sur une piste ou un groupe : un exemplaire de plus, à la fin de la chaîne (comme un nouvel insert dans Logic)
+        if (group.length === 1 && (x.effects || []).includes(n) && !['limit', 'master'].includes(n) && (state.project.tracks.includes(x) || (state.project.buses || []).includes(x))) {
+            pushUndo();
+            const id = nextFxInstance(x, n), chain = chainOf(x);
+            x.effects.push(id);
+            x.fxOrder = [...chain, id, ...FX_ORDER.filter(k => !chain.includes(k))];
+            if (FX_START[n]) { x.effectParams = x.effectParams || {}; x.effectParams[id] = JSON.parse(JSON.stringify(FX_START[n])); }
+            saveProject(); refreshPlaybackSoon(); renderInspector();
+            if (state.mixerOpen) { renderMixer(); bindMixerEvents(); }
+            flash(`${fxLabel(id)} ajouté : ses réglages sont à part`);
+            const row = document.querySelector(`#inspector .insp-strip .insp-fx-row[data-fx="${id}"]`);
+            openEffectPanel(target, id, row && row.isConnected ? row : document.body);
+            return;
+        }
         if (group.some(o => !(o.effects || []).includes(n))) {
             pushUndo();
             const added = group.filter(o => addFxTo(o, n)).length;
@@ -2945,7 +3014,7 @@ function moveEffectTo(x, name, to) {
     chain.splice(i, 1); chain.splice(Math.max(0, Math.min(chain.length, to)), 0, name);
     x.fxOrder = [...chain, ...FX_ORDER.filter(n => !chain.includes(n))];
     refreshStrips(); refreshPlaybackSoon(); saveProject();
-    flash(`${FX_NAMES[name]} déplacé : le son passe maintenant par ${chain.map(n => FX_NAMES[n]).join(' → ')}`);
+    flash(`${fxLabel(name)} déplacé : le son passe maintenant par ${chain.map(n => fxLabel(n)).join(' → ')}`);
 }
 // Clic maintenu sur un effet puis glisser vers le haut ou le bas : la ligne suit la souris, un trait montre où elle va tomber
 function bindFxDrag(strip, x) {
@@ -2988,7 +3057,7 @@ function moveEffect(x, name, dir) {
     // On garde l'ordre complet : les effets éteints reprennent leur place habituelle autour
     x.fxOrder = [...chain, ...FX_ORDER.filter(n => !chain.includes(n))];
     refreshStrips(); refreshPlaybackSoon(); saveProject();
-    flash(`${FX_NAMES[name]} déplacé : le son passe maintenant par ${chain.map(n => FX_NAMES[n]).join(' → ')}`);
+    flash(`${fxLabel(name)} déplacé : le son passe maintenant par ${chain.map(n => fxLabel(n)).join(' → ')}`);
 }
 
 // === Finition (premaster) : un seul panneau pour finir le morceau vite ===
@@ -7908,7 +7977,7 @@ function openEqPanel(trackIdx, anchorEl) {
             // points dynamiques : l'anneau orange montre où ils sont à l'instant
             const lv = graph.querySelector('.eq-live');
             if (lv) {
-                const key = typeof trackIdx === 'number' ? 't' + trackIdx : 'b' + t.id;
+                const key = fxKeyOf(trackIdx, t);
                 lv.innerHTML = (state.playing || state.recording) ? bands().map((b, i) => {
                     if (!PulseAudio.eqIsDynamic(b) || b.on === false) return '';
                     const g = PulseAudio.getEqDyn(key + ':' + i); if (g === null) return '';
@@ -8171,10 +8240,14 @@ function plugFront(p) {
 function isFrontPlug(p) { return plugWins().every(x => x === p || (+x.style.zIndex || 0) < (+p.style.zIndex || 0)); }
 // Les autres panneaux (Son, Envoi, Auto-Tune…) restent « un à la fois » mais ne ferment plus les plugs
 function closeTransientPanels() { document.querySelectorAll('.fx-panel:not(.plug-win)').forEach(p => p.remove()); }
-function findPlugWin(t, fxName) { return plugWins().find(p => p._plugT === t && p.dataset.fx === fxName); }
+function findPlugWin(t, fxName) {
+    if (String(fxName).includes('#')) return plugWins().find(p => p._plugT && p._plugT.__real === t && p._plugT.__fxId === fxName);
+    return plugWins().find(p => p._plugT === t && p.dataset.fx === fxName);
+}
 function makePlugWindow(panel, t, fxName, trackIdx) {
     panel.classList.add('plug-win');
     panel._plugT = t; panel.dataset.fx = fxName;
+    if (t && t.__fxId) { const ti = panel.querySelector('.fx-title'); if (ti && !ti.querySelector('.fx-inst')) ti.insertAdjacentHTML('beforeend', ` <b class="fx-inst">${fxInstNum(t.__fxId)}</b>`); }
     if (!panel._autoShow) {
         const pk = (k) => panel.querySelector(`.pk[data-key="${k}"]`);
         panel._autoShow = (k, v) => { const e = pk(k); if (e && e._pkShow) e._pkShow(v); };
@@ -8198,7 +8271,8 @@ function makePlugWindow(panel, t, fxName, trackIdx) {
         document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
     });
     // Si la piste ou le groupe disparaît (suppression, autre projet), sa fenêtre se ferme
-    const alive = () => typeof trackIdx === 'number' ? state.project.tracks[trackIdx] === t : (state.project.buses || []).includes(t);
+    const owner = t && t.__real ? t.__real : t;   // fenêtre d'un exemplaire en plus : sa vraie piste
+    const alive = () => typeof trackIdx === 'number' ? state.project.tracks[trackIdx] === owner : (state.project.tracks.includes(owner) || (state.project.buses || []).includes(owner));
     const watch = setInterval(() => {
         if (!panel.isConnected) return clearInterval(watch);
         if (!alive()) { panel.remove(); clearInterval(watch); }
@@ -8254,7 +8328,7 @@ function openLimiterPanel(trackIdx, anchorEl) {
     if (!t.effectParams.limit) t.effectParams.limit = { ...FX_START.limit };
     const P = () => t.effectParams.limit;
     const ceil0 = () => P().ceiling ?? (state.project.ceilingDb ?? -0.3);
-    const key = typeof trackIdx === 'number' ? 't' + trackIdx : 'b' + t.id;
+    const key = fxKeyOf(trackIdx, t);
     const W = 900, H = 380, T = 14, B = H - 10, PL = 760, N = 240;
     const Y = (d) => T + ((0 - Math.max(-36, Math.min(3, d))) / 36) * (B - T) * 0.92 + 18;
     const db = (v) => 20 * Math.log10(Math.max(v, 1e-5));
@@ -8393,7 +8467,7 @@ function openGatePanel(trackIdx, anchorEl) {
     t.effectParams = t.effectParams || {};
     if (!t.effectParams.gate) t.effectParams.gate = { ...FX_START.gate };
     const P = () => t.effectParams.gate;
-    const key = typeof trackIdx === 'number' ? 't' + trackIdx : 'b' + t.id;
+    const key = fxKeyOf(trackIdx, t);
     const W = 900, H = 400, T = 16, B = H - 128, mid = (T + B) / 2, PL = W - 70, N = 260;
     const db = (v) => 20 * Math.log10(Math.max(v, 1e-6));
     const amp = (d) => Math.max(0, (Math.max(-70, d) + 70) / 70) * (mid - T - 4);
@@ -8583,7 +8657,7 @@ function openDeessPanel(trackIdx, anchorEl) {
     const P = () => t.effectParams.deess;
     const old = () => P().thr === undefined;          // ancien réglage (Force) : il passe au nouveau moteur dès qu'on touche un bouton
     const V = (k) => P()[k] ?? DEESS_V2[k];
-    const key = typeof trackIdx === 'number' ? 't' + trackIdx : 'b' + t.id;
+    const key = fxKeyOf(trackIdx, t);
     const W = 900, H = 400, T = 16, B = H - 128, mid = (T + B) / 2, PL = W - 70, N = 260;
     const db = (v) => 20 * Math.log10(Math.max(v, 1e-6));
     const amp = (d) => Math.max(0, (Math.max(-60, Math.min(0, d)) + 60) / 60) * (mid - T - 4);
@@ -8759,7 +8833,7 @@ function openMbandPanel(trackIdx, anchorEl) {
     t.effectParams = t.effectParams || {};
     if (!t.effectParams.mband) t.effectParams.mband = { bands: [] };
     const P = () => t.effectParams.mband, BS = () => (P().bands = P().bands || []);
-    const key = typeof trackIdx === 'number' ? 't' + trackIdx : 'b' + t.id;
+    const key = fxKeyOf(trackIdx, t);
     const W = 900, H = 520, T = 30, B = H - 130, PL = 850, Y0 = 190, DBK = 7, MAXB = 6, F0 = 20, F1 = 20000;
     const X = (f) => Math.log(f / F0) / Math.log(F1 / F0) * PL, F = (x) => F0 * Math.pow(F1 / F0, Math.max(0, Math.min(PL, x)) / PL);
     const lr = (f, fc, hp) => { const r = Math.pow(f / fc, 4); return hp ? r / (1 + r) : 1 / (1 + r); };
@@ -9953,6 +10027,11 @@ const FX_PANEL_DEFS = {
 };
 
 function openEffectPanel(trackIdx, fxName, anchorEl) {
+    if (String(fxName).includes('#')) {
+        const real = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;
+        if (!real) return;
+        return openEffectPanel(fxInstanceView(real, fxName, fxKeyOf(trackIdx, real) + '~' + fxName), fxType(fxName), anchorEl);
+    }
     if (fxName === 'eq') return openEqPanel(trackIdx, anchorEl);
     if (fxName === 'limit') return openLimiterPanel(trackIdx, anchorEl);
     if (fxName === 'gate') return openGatePanel(trackIdx, anchorEl);
@@ -10169,7 +10248,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
                 let target = 0;
                 // La vraie réduction, envoyée par le compresseur lui-même ; à défaut, une estimation d'après le son qui sort
                 const real = (state.playing || state.recording) && t.effects && t.effects.includes('comp') && PulseAudio.getCompReduction
-                    ? PulseAudio.getCompReduction(typeof trackIdx === 'number' ? 't' + trackIdx : 'b' + t.id) : null;
+                    ? PulseAudio.getCompReduction(fxKeyOf(trackIdx, t)) : null;
                 if (real !== null) target = Math.min(20, real);
                 const an = (real === null && (state.playing || state.recording)) ? (typeof trackIdx === 'number' ? PulseAudio.getTrackSpectrum(trackIdx) : (t.id && PulseAudio.getBusSpectrum ? PulseAudio.getBusSpectrum(t.id) : null)) : null;
                 if (an && t.effects && t.effects.includes('comp')) {
@@ -10264,7 +10343,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
     const commit = () => {
         // Compresseur en lecture : réglage envoyé en direct (pas de coupure) ; sinon on reconstruit comme avant
         const live = fxName === 'comp' && state.playing && PulseAudio.updateComp
-            && PulseAudio.updateComp(typeof trackIdx === 'number' ? 't' + trackIdx : 'b' + t.id, t.effectParams.comp);
+            && PulseAudio.updateComp(fxKeyOf(trackIdx, t), t.effectParams.comp);
         if (!live) refreshPlaybackSoon();
         saveProject();
     };
