@@ -1056,7 +1056,13 @@ window.PulseAudio = (function() {
 
         // Pitch « voix fidèle » : hauteur et formants séparés, la voix garde son timbre (TD-PSOLA en temps réel).
         // Même calcul que engine/src/pitch.rs (Pitch::tick) — voir les explications là-bas. Retard fixe : pitchLatency(sampleRate).
-        const PITCH_DS = 4, PITCH_HOP = 256, PITCH_GATE = 0.003981071705534973;
+        // Au-dessus de 6 kHz (souffle) : grains continus, pas hachés période par période (sinon ça craque en descendant).
+        // Repères calés sur la forme de l'onde (corrélation avec la période d'avant), pas seulement la crête.
+        const PITCH_DS = 4, PITCH_HOP = 256, PITCH_GATE = 0.003981071705534973, PITCH_SPLIT = 6000, PITCH_FH = 64;
+        const pitchFir = (sr) => { const h = PITCH_FH, fc = PITCH_SPLIT / sr, f = new Float64Array(2 * h + 1); let sum = 0;
+            for (let i = 0; i <= 2 * h; i++) { const k = i - h, sinc = k === 0 ? 2 * fc : Math.sin(2 * Math.PI * fc * k) / (Math.PI * k);
+                f[i] = sinc * (0.42 + 0.5 * Math.cos(Math.PI * k / (h + 1)) + 0.08 * Math.cos(2 * Math.PI * k / (h + 1))); sum += f[i]; }
+            for (let i = 0; i <= 2 * h; i++) f[i] /= sum; return f; };
         const pow2 = (n) => { let p = 1; while (p < n) p *= 2; return p; };
         class PulsePitch extends AudioWorkletProcessor {
             constructor(o) {
@@ -1067,7 +1073,8 @@ window.PulseAudio = (function() {
                 this.tmax = Math.ceil(sr / 70); this.g = Math.round(0.025 * sr);
                 this.lat = this.g + this.dla + Math.ceil(1.3 * this.tmax) + 16;
                 this.nb = pow2(4 * this.lat); this.nbd = pow2(this.nb / PITCH_DS); this.unv = Math.round(0.005 * sr);
-                this.buf = [new Float64Array(this.nb), new Float64Array(this.nb)]; this.mono = new Float64Array(this.nb);
+                this.buf = [new Float64Array(this.nb), new Float64Array(this.nb)]; this.bufl = [new Float64Array(this.nb), new Float64Array(this.nb)]; this.fir = pitchFir(sr);
+                this.yh = [new Float64Array(this.nb), new Float64Array(this.nb)]; this.wsh = new Float64Array(this.nb); this.tsh = 0; this.mono = new Float64Array(this.nb);
                 this.ds = new Float64Array(this.nbd); this.acc = 0; this.w = 0;
                 this.f0 = new Float64Array(64); this.hops = 0;
                 this.mk = []; this.nextMark = 0; this.ts = 0;
@@ -1114,6 +1121,8 @@ window.PulseAudio = (function() {
                 this.mono[wi] = m; this.acc += m;
                 if ((this.w + 1) % PITCH_DS === 0) { this.ds[Math.floor(this.w / PITCH_DS) & (this.nbd - 1)] = this.acc / PITCH_DS; this.acc = 0; }
                 this.w++;
+                { const c = this.w - 1 - PITCH_FH; if (c >= 0) for (let ch = 0; ch < 2; ch++) { let a = 0; const b = this.buf[ch], f = this.fir;
+                    for (let j = 0; j < f.length; j++) { const i = c - PITCH_FH + j; if (i >= 0) a += f[j] * b[i & nb1]; } this.bufl[ch][c & nb1] = a; } }
                 while (this.hops * PITCH_HOP + this.dla + PITCH_DS <= this.w) { this.f0[this.hops % 64] = this.yin(this.hops * PITCH_HOP); this.hops++; }
                 for (;;) {
                     const pos = this.nextMark, per = this.periodAt(pos);
@@ -1121,8 +1130,14 @@ window.PulseAudio = (function() {
                     if (pos + 0.3 * t + 1 > this.w - this.dla || Math.round(pos / PITCH_HOP) >= this.hops) break;
                     if (per > 0) {
                         const lo = Math.trunc(pos - 0.3 * t), hi = Math.trunc(pos + 0.3 * t);
-                        let pk = Math.max(lo, 0), best = -1;
-                        for (let k = Math.max(lo, 0); k <= hi; k++) { const v = Math.abs(this.at(this.mono, k)); if (v > best) { best = v; pk = k; } }
+                        let pk = Math.max(lo, 0), best = -Infinity;
+                        const pm = this.mk[this.mk.length - 1];
+                        if (pm && pm.voiced) {
+                            const n = t;
+                            for (let k = Math.max(lo, 0); k <= hi; k++) { let c = 0, ea = 1e-12, eb = 1e-12;
+                                for (let j = -Math.trunc(n / 2); j < Math.trunc(n / 2); j += 2) { const a = this.at(this.mono, pm.pos + j), b = this.at(this.mono, k + j); c += a * b; ea += a * a; eb += b * b; }
+                                const v = c / Math.sqrt(ea * eb); if (v > best) { best = v; pk = k; } }
+                        } else for (let k = Math.max(lo, 0); k <= hi; k++) { const v = Math.abs(this.at(this.mono, k)); if (v > best) { best = v; pk = k; } }
                         if (this.mk.length && pk <= this.mk[this.mk.length - 1].pos) pk = Math.trunc(pos);
                         this.mk.push({ pos: pk, t, voiced: true }); this.nextMark = pk + t;
                     } else { this.mk.push({ pos: Math.trunc(pos), t, voiced: false }); this.nextMark = pos + t; }
@@ -1131,23 +1146,35 @@ window.PulseAudio = (function() {
                 while (this.ts <= o + this.g && this.mk.length) {
                     while (this.mk.length > 1 && Math.abs(this.mk[1].pos - this.ts) <= Math.abs(this.mk[0].pos - this.ts)) this.mk.shift();
                     const mk = this.mk[0], rr = mk.voiced ? this.ratio : 1, fr = this.fratio, q = 1 / rr;
-                    const ext = !mk.voiced ? 1 : q <= 1.4 ? q : Math.max(1, 1.4 - (q - 1.4) * 2);
+                    const ext = (!mk.voiced ? 1 : q <= 1.4 ? q : Math.max(1, 1.4 - (q - 1.4) * 2)) * Math.max(fr, 1);
                     const l = Math.min(Math.max(Math.floor(mk.t * ext / fr), 1), this.g), c = Math.round(this.ts), fl = rr * fr < 1 ? rr * fr : 1;
                     for (let k = -l; k <= l; k++) {
                         const di = c + k; if (di < 0) continue;
                         const si = mk.pos + k * fr; if (si < 0 || si >= this.w - 1) continue;
                         const i0 = Math.floor(si), f = si - i0, wv = 0.5 + 0.5 * Math.cos(Math.PI * k / l), dj = di & nb1;
-                        for (let ch = 0; ch < 2; ch++) { const a = this.buf[ch][i0 & nb1], b = this.buf[ch][(i0 + 1) & nb1]; this.y[ch][dj] += (a + (b - a) * f) * wv; }
+                        for (let ch = 0; ch < 2; ch++) { const a = this.bufl[ch][i0 & nb1], b = this.bufl[ch][(i0 + 1) & nb1]; this.y[ch][dj] += (a + (b - a) * f) * wv; }
                         this.wsum[dj] += wv; this.floor[dj] = fl;
                     }
                     this.ts += mk.t / rr;
+                }
+                const u = this.unv;
+                while (this.tsh <= o + this.g) {
+                    const c = Math.round(this.tsh), fr = this.fratio;
+                    for (let k = -u; k <= u; k++) {
+                        const di = c + k; if (di < 0) continue;
+                        const si = c + k * fr; if (si < 0) continue;
+                        const i0 = Math.floor(si), f = si - i0, wv = 0.5 + 0.5 * Math.cos(Math.PI * k / u), dj = di & nb1, j0 = i0 & nb1, j1 = (i0 + 1) & nb1;
+                        for (let ch = 0; ch < 2; ch++) { const a = this.buf[ch][j0] - this.bufl[ch][j0], b = this.buf[ch][j1] - this.bufl[ch][j1]; this.yh[ch][dj] += (a + (b - a) * f) * wv; }
+                        this.wsh[dj] += wv;
+                    }
+                    this.tsh += u;
                 }
                 this.mix += (this.mixTo - this.mix) * this.mixK;
                 const at = this.actTo(); this.act += (at - this.act) * this.mixK; if (Math.abs(this.act - at) < 1e-7) this.act = at;
                 if (o < 0) { for (let ch = 0; ch < out.length; ch++) out[ch][i] = 0; return; }
                 const oj = o & nb1, den = Math.max(this.wsum[oj], this.floor[oj]);
-                for (let ch = 0; ch < out.length; ch++) { const wet = this.y[ch][oj] / den, dry = this.buf[ch][oj]; out[ch][i] = dry + (wet - dry) * this.mix * this.act; }
-                this.y[0][oj] = 0; this.y[1][oj] = 0; this.wsum[oj] = 0; this.floor[oj] = 1;
+                for (let ch = 0; ch < out.length; ch++) { const wet = this.y[ch][oj] / den + this.yh[ch][oj] / Math.max(this.wsh[oj], 1e-3), dry = this.buf[ch][oj]; out[ch][i] = dry + (wet - dry) * this.mix * this.act; }
+                this.y[0][oj] = 0; this.y[1][oj] = 0; this.wsum[oj] = 0; this.floor[oj] = 1; this.yh[0][oj] = 0; this.yh[1][oj] = 0; this.wsh[oj] = 0;
             }
             process(inputs, outputs) {
                 const inp = inputs[0], out = outputs[0], n = out[0].length, ni = inp ? inp.length : 0, nc = Math.min(2, out.length);

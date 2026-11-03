@@ -2462,7 +2462,10 @@ mod tests_pitch_pingpong {
         // Son riche (dents de scie à 220 Hz, comme une voix) : la note arrive où on l'attend, retard compris.
         // (un son pur n'est pas un bon test : la technique travaille période par période sur les harmoniques)
         let sr = 48_000.0;
+        // la note se lit sous 6 kHz : au-dessus (souffle, air), le Pitch garde le son continu, sans le transposer
+        let smooth = |sig: &[f64]| -> Vec<f64> { (0..sig.len()).map(|i| sig[i.saturating_sub(7)..=i].iter().sum::<f64>() / 8.0).collect() };
         let period = |sig: &[f64]| {
+            let sig = &smooth(sig)[..];
             // autocorrélation : meilleur décalage entre 1 et 15 ms
             let (lo, hi) = ((0.001 * sr) as usize, (0.015 * sr) as usize);
             let n = 4096;
@@ -2481,6 +2484,28 @@ mod tests_pitch_pingpong {
         let out: Vec<f64> = (0..48_000).map(|n| { let mut x = [((n as f64 * 220.0 / sr) % 1.0) - 0.5, 0.0]; p.tick(&mut x, 1); x[0] }).collect();
         let f = period(&out[12_000..]);
         assert!((f - 220.0).abs() / 220.0 < 0.03, "formant seul : {f:.1} Hz au lieu de 220");
+    }
+
+    /// Voix descendue d'une octave : le souffle aigu (au-dessus de 6 kHz) reste continu, il n'est pas haché à chaque période
+    /// (c'est ce hachage qui faisait « craquer » la voix)
+    #[test]
+    fn pitch_souffle_continu() {
+        let sr = 48_000.0;
+        let mut seed = 1u64;
+        let mut noise = move || { seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17; (seed as f64 / u64::MAX as f64) - 0.5 };
+        // voix simplifiée : harmoniques de 200 Hz jusqu'à 5 kHz + souffle (bruit)
+        let x: Vec<f64> = (0..96_000).map(|n| (1..=25).map(|h| (2.0 * PI * 200.0 * h as f64 * n as f64 / sr).sin() / h as f64).sum::<f64>() * 0.3 + 0.05 * noise()).collect();
+        let mut p = Pitch::new(&PitchParams { semi: Some(-12.0), mix: Some(100.0), ..Default::default() }, sr);
+        let out: Vec<f64> = x.iter().map(|v| { let mut s = [*v, 0.0]; p.tick(&mut s, 1); s[0] }).collect();
+        // énergie du souffle par tranche de 1 ms
+        // passe-haut à 7 kHz (sinus cardinal fenêtré) : ne garde que le souffle
+        let (h, fc) = (127i64, 7000.0 / sr);
+        let lp: Vec<f64> = (-h..=h).map(|k| { let k = k as f64; let s = if k == 0.0 { 2.0 * fc } else { (2.0 * PI * fc * k).sin() / (PI * k) }; s * (0.42 + 0.5 * (PI * k / (h as f64 + 1.0)).cos() + 0.08 * (2.0 * PI * k / (h as f64 + 1.0)).cos()) }).collect();
+        let hf: Vec<f64> = (2 * h as usize..out.len()).map(|i| out[i - h as usize] - lp.iter().enumerate().map(|(j, c)| c * out[i - j]).sum::<f64>()).collect();
+        let e: Vec<f64> = hf[24_000..90_000].chunks(48).map(|c| (c.iter().map(|v| v * v).sum::<f64>() / 48.0).sqrt()).collect();
+        let m = e.iter().sum::<f64>() / e.len() as f64;
+        let var = (e.iter().map(|v| (v - m).powi(2)).sum::<f64>() / e.len() as f64).sqrt() / m;
+        assert!(var < 0.25, "souffle haché : variation {var:.2} (attendu < 0,25)");
     }
 
     #[test]
