@@ -9331,7 +9331,7 @@ function openFilterPanel(trackIdx, anchorEl) {
         g += `<path d="${d} L${PL} ${B} L${X0} ${B} Z" fill="url(#fltg)"/><path d="${d}" class="flt-curve"/>`;
         const handle = (k, f, lab) => { const x = X(f), y = Y(-3), on = (k === 'hpf' ? f > 20 : f < 20000);
             return `<g class="flt-h" data-k="${k}" style="cursor:ew-resize"><circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="22" fill="transparent"/><circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${hover === k ? 11 : 9}" class="flt-dot ${on ? '' : 'off'}"/>
-                <text x="${x.toFixed(1)}" y="${(y - 18).toFixed(1)}" class="mb-lab" text-anchor="middle">${lab} · ${on ? fmtF(f) : 'aucun'}</text></g>`; };
+                <text x="${x.toFixed(1)}" y="${(y - 18).toFixed(1)}" class="mb-lab" text-anchor="${x > PL - 90 ? 'end' : x < X0 + 90 ? 'start' : 'middle'}">${lab} · ${on ? fmtF(f) : 'aucun'}</text></g>`; };
         g += handle('hpf', Math.max(20, hpf), 'coupe-bas') + handle('lpf', Math.min(20000, lpf), 'coupe-haut');
         g += `<g class="flt-slope"><rect x="${X0 + 10}" y="${T + 8}" width="104" height="22" rx="11" fill="#1a1228" stroke="#A855F7aa"/><text x="${X0 + 62}" y="${T + 23}" class="ms-smt" text-anchor="middle">pente ${sp.slope === 24 ? 24 : 12} dB/oct</text></g>`;
         svg.innerHTML = g;
