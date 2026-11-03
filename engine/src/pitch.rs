@@ -7,8 +7,8 @@
 //! 3. on rejoue des grains de deux périodes, rapprochés (plus aigu) ou écartés (plus grave) ;
 //!    les formants se règlent en resserrant / étirant chaque grain, sans toucher à la note ;
 //! 4. le volume est recalé par la somme des fenêtres (pas de battement).
-//! 5. au-dessus de 6 kHz (souffle, air de la voix) le son n'est pas haché période par période : il passe en grains continus
-//!    de 5 ms, note inchangée, formant appliqué. Sans ça, en descendant la voix, ce souffle haché « craque ».
+//! 5. au-dessus de 6 kHz (souffle, air de la voix ; jusqu'à 3,5 kHz vers l'octave en dessous) le son n'est pas haché :
+//!    un grain par repère, à sa place (note inchangée, formant appliqué), sans trou. Sans ça, en descendant, ce souffle « craque ».
 //! Les repères suivent la forme de l'onde (le plus ressemblant à la période d'avant), pas seulement la crête :
 //! une crête qui saute d'un côté à l'autre de l'onde faisait aussi craquer.
 //! Retard fixe `latency()` (≈ 59 ms à 48 kHz) : l'hôte (Logic, Pulse) le compense.
@@ -56,10 +56,9 @@ pub struct Pitch {
     /// partie sous 6 kHz de l'entrée (même retard que `buf`, calculée FIR_H échantillons plus tard)
     bufl: [Vec<f64>; 2],
     fir: Vec<f64>,
-    /// souffle aigu : sortie, somme des fenêtres, position des grains
+    /// souffle aigu : sortie, somme des fenêtres
     yh: [Vec<f64>; 2],
     wsh: Vec<f64>,
-    tsh: f64,
     mono: Vec<f64>,
     ds: Vec<f64>,
     acc: f64,
@@ -67,6 +66,10 @@ pub struct Pitch {
     f0: Vec<f64>,
     hops: i64,
     marks: VecDeque<Mark>,
+    /// mêmes repères, pour le souffle aigu (qui garde la note : un grain par période, au même endroit)
+    hmarks: VecDeque<Mark>,
+    /// coupure actuelle voix / souffle (Hz)
+    cut: f64,
     next_mark: f64,
     ts: f64,
     y: [Vec<f64>; 2],
@@ -91,9 +94,9 @@ impl Pitch {
         let mut s = Self {
             sr, ratio: 1.0, fratio: 1.0, mix: 1.0, mix_to: 1.0, mix_k: 1.0 - (-1.0 / (0.01 * sr)).exp(), act: 1.0,
             nb, nbd, tmax_d, tmin_d, win_d, dla, g, lat, unv: (0.005 * sr).round() as usize, tmax,
-            buf: [vec![0.0; nb], vec![0.0; nb]], bufl: [vec![0.0; nb], vec![0.0; nb]], fir: Self::fir(sr),
-            yh: [vec![0.0; nb], vec![0.0; nb]], wsh: vec![0.0; nb], tsh: 0.0, mono: vec![0.0; nb], ds: vec![0.0; nbd], acc: 0.0, w: 0,
-            f0: vec![0.0; 64], hops: 0, marks: VecDeque::with_capacity(256), next_mark: 0.0, ts: 0.0,
+            buf: [vec![0.0; nb], vec![0.0; nb]], bufl: [vec![0.0; nb], vec![0.0; nb]], fir: Self::fir(sr, SPLIT_HZ),
+            yh: [vec![0.0; nb], vec![0.0; nb]], wsh: vec![0.0; nb], mono: vec![0.0; nb], ds: vec![0.0; nbd], acc: 0.0, w: 0,
+            f0: vec![0.0; 64], hops: 0, marks: VecDeque::with_capacity(256), hmarks: VecDeque::with_capacity(256), cut: SPLIT_HZ, next_mark: 0.0, ts: 0.0,
             y: [vec![0.0; nb], vec![0.0; nb]], wsum: vec![0.0; nb], floor: vec![1.0; nb],
             dwin: vec![0.0; win_d], diff: vec![0.0; tmax_d + 1],
         };
@@ -103,8 +106,8 @@ impl Pitch {
         s
     }
     /// Passe-bas à phase linéaire (sinus cardinal fenêtré Blackman, gain 1), même calcul que pitchFir dans audio.js
-    fn fir(sr: f64) -> Vec<f64> {
-        let (h, fc) = (FIR_H as f64, SPLIT_HZ / sr);
+    fn fir(sr: f64, cut: f64) -> Vec<f64> {
+        let (h, fc) = (FIR_H as f64, cut / sr);
         let mut f: Vec<f64> = (0..=2 * FIR_H).map(|i| {
             let k = i as f64 - h;
             let sinc = if k == 0.0 { 2.0 * fc } else { (2.0 * PI * fc * k).sin() / (PI * k) };
@@ -120,6 +123,15 @@ impl Pitch {
         self.ratio = 2f64.powf(semi / 12.0);
         self.fratio = 2f64.powf(form / 12.0);
         self.mix_to = (p.mix.unwrap_or(100.0) / 100.0).clamp(0.0, 1.0);
+        self.split();
+    }
+    /// Coupure voix / souffle : 6 kHz, descendue peu à peu jusqu'à 3,5 kHz quand on descend vers l'octave (grains courts, donc des
+    /// trous entre eux : le souffle du médium aigu doit aussi rester continu). Pas plus bas ailleurs : la note d'origine s'entendrait.
+    /// Même calcul que pitchCut dans audio.js.
+    fn split(&mut self) {
+        let q = 1.0 / self.ratio;
+        let cut = SPLIT_HZ - 2500.0 * ((q - 1.6) / 0.4).clamp(0.0, 1.0);
+        if (cut - self.cut).abs() > 25.0 || self.fir.is_empty() { self.cut = cut; self.fir = Self::fir(self.sr, cut); }
     }
     fn act_to(&self) -> f64 { if (self.ratio - 1.0).abs() < 1e-9 && (self.fratio - 1.0).abs() < 1e-9 { 0.0 } else { 1.0 } }
     /// Retard en échantillons (fixe pour une fréquence d'échantillonnage donnée)
@@ -133,7 +145,7 @@ impl Pitch {
     /// Automation : « semi », « formant », « mix »
     pub fn set_live(&mut self, key: &str, v: f64) {
         match key {
-            "semi" => self.ratio = 2f64.powf(v.clamp(-12.0, 12.0) / 12.0),
+            "semi" => { self.ratio = 2f64.powf(v.clamp(-12.0, 12.0) / 12.0); self.split(); }
             "formant" => self.fratio = 2f64.powf(v.clamp(-12.0, 12.0) / 12.0),
             "mix" => self.mix_to = (v / 100.0).clamp(0.0, 1.0),
             _ => {}
@@ -232,9 +244,11 @@ impl Pitch {
                 }
                 if let Some(last) = self.marks.back() { if pk <= last.pos { pk = pos as i64; } }
                 self.marks.push_back(Mark { pos: pk, t, voiced: true });
+                self.hmarks.push_back(Mark { pos: pk, t, voiced: true });
                 self.next_mark = (pk + t as i64) as f64;
             } else {
                 self.marks.push_back(Mark { pos: pos as i64, t, voiced: false });
+                self.hmarks.push_back(Mark { pos: pos as i64, t, voiced: false });
                 self.next_mark = pos + t as f64;
             }
         }
@@ -246,8 +260,9 @@ impl Pitch {
             let rr = if mk.voiced { self.ratio } else { 1.0 };
             let fr = self.fratio;
             let q = 1.0 / rr;
-            // grain allongé quand on descend un peu (pas trop : il garderait la note d'origine), et quand le formant monte (grain resserré)
-            let ext = (if !mk.voiced { 1.0 } else if q <= 1.4 { q } else { (1.4 - (q - 1.4) * 2.0).max(1.0) }) * fr.max(1.0);
+            // grain allongé quand on descend un peu ; vers l'octave, raccourci (moins d'une période de chaque côté) : sinon la note
+            // d'origine reste dedans et on entend un doublage. Allongé aussi quand le formant monte (grain resserré).
+            let ext = (if !mk.voiced { 1.0 } else if q <= 1.4 { q } else { (1.4 - (q - 1.4) * 2.0).max(0.65) }) * fr.max(1.0);
             let l = (((mk.t as f64 * ext / fr) as usize).max(1)).min(self.g);
             let c = self.ts.round() as i64;
             let fl = if rr * fr < 1.0 { rr * fr } else { 1.0 };
@@ -270,19 +285,19 @@ impl Pitch {
             }
             self.ts += mk.t as f64 / rr;
         }
-        // 4b. souffle aigu : grains continus de 5 ms (note inchangée, formant appliqué)
-        let u = self.unv as i64;
-        while self.tsh <= (o + self.g as i64) as f64 {
-            let c = self.tsh.round() as i64;
+        // 4b. souffle aigu : un grain par repère, au même endroit (note inchangée, formant appliqué), sans trou entre eux
+        while self.hmarks.front().is_some_and(|m| m.pos <= o + self.g as i64) {
+            let m = self.hmarks.pop_front().unwrap();
             let fr = self.fratio;
-            for k in -u..=u {
-                let di = c + k;
+            let l = (((m.t as f64 * fr.max(1.0) / fr) as i64).max(1)).min(self.g as i64);
+            for k in -l..=l {
+                let di = m.pos + k;
                 if di < 0 { continue; }
-                let si = c as f64 + k as f64 * fr;
+                let si = m.pos as f64 + k as f64 * fr;
                 if si < 0.0 { continue; }
                 let i0 = si.floor() as i64;
                 let f = si - i0 as f64;
-                let wv = 0.5 + 0.5 * (PI * k as f64 / u as f64).cos();
+                let wv = 0.5 + 0.5 * (PI * k as f64 / l as f64).cos();
                 let dj = (di as usize) & nb1;
                 for ch in 0..2 {
                     let (j0, j1) = ((i0 as usize) & nb1, ((i0 + 1) as usize) & nb1);
@@ -292,7 +307,6 @@ impl Pitch {
                 }
                 self.wsh[dj] += wv;
             }
-            self.tsh += u as f64;
         }
         // 5. sortie (retard fixe), mélangée au son d'origine au même retard
         self.mix += (self.mix_to - self.mix) * self.mix_k;
@@ -310,4 +324,5 @@ impl Pitch {
         self.y[0][oj] = 0.0; self.y[1][oj] = 0.0; self.wsum[oj] = 0.0; self.floor[oj] = 1.0;
         self.yh[0][oj] = 0.0; self.yh[1][oj] = 0.0; self.wsh[oj] = 0.0;
     }
+
 }

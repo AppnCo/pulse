@@ -1,7 +1,7 @@
 // Pitch « voix fidèle » : mêmes chiffres que le moteur Rust (pitch_comme_le_navigateur), et retard compensé
 // (la voix démarre pile à 1 s). Son riche à 220 Hz qui commence à 1 s.
 import { boot } from './qa-lib.mjs';
-export const CASES = { monte: { semi: 5, mix: 100 }, descend: { semi: -7, mix: 100 }, formant: { semi: 0, formant: 4 }, tout: { semi: 3, formant: -3, mix: 70 } };
+export const CASES = { monte: { semi: 5, mix: 100 }, descend: { semi: -7, mix: 100 }, formant: { semi: 0, formant: 4 }, tout: { semi: 3, formant: -3, mix: 70 }, octave: { semi: -12, formant: 2, mix: 100 } };
 export default async (c) => {
   const { ev, check } = c;
   await boot(c, { id: 'pp1', name: 'PP', bpm: 120, sends: [], tracks: [{ name: 'V', type: 'audio', color: '#A855F7', volume: 100, clips: [] }] }, { mic: false });

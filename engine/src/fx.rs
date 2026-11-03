@@ -2486,6 +2486,25 @@ mod tests_pitch_pingpong {
         assert!((f - 220.0).abs() / 220.0 < 0.03, "formant seul : {f:.1} Hz au lieu de 220");
     }
 
+    /// Voix descendue d'une octave : la nouvelle note (harmoniques impaires de 100 Hz, absentes de la voix d'origine à 200 Hz)
+    /// est aussi forte que les harmoniques communes — sinon on entend la voix d'origine en doublage
+    #[test]
+    fn pitch_octave_sans_doublage() {
+        let sr = 48_000.0;
+        // voix simplifiée à 200 Hz : une impulsion par période (comme la glotte) dans un formant à 700 Hz
+        let (r, th) = ((-PI * 120.0 / sr).exp(), 2.0 * PI * 700.0 / sr);
+        let mut y = [0.0f64; 2];
+        let x: Vec<f64> = (0..96_000).map(|n| { let v = if n % 240 == 0 { 1.0 } else { 0.0 } + 2.0 * r * th.cos() * y[0] - r * r * y[1]; y = [v, y[0]]; v * 0.02 }).collect();
+        let mut p = Pitch::new(&PitchParams { semi: Some(-12.0), mix: Some(100.0), ..Default::default() }, sr);
+        let out: Vec<f64> = x.iter().map(|v| { let mut s = [*v, 0.0]; p.tick(&mut s, 1); s[0] }).collect();
+        let seg = &out[48_000..96_000];
+        let amp = |f: f64| { let (mut c, mut s) = (0.0, 0.0); for (i, v) in seg.iter().enumerate() { let a = 2.0 * PI * f * i as f64 / sr; c += v * a.cos(); s += v * a.sin(); } (c * c + s * s).sqrt() };
+        let odd: f64 = (0..10).map(|k| amp(100.0 * (2 * k + 1) as f64).powi(2)).sum();
+        let even: f64 = (1..=10).map(|k| amp(200.0 * k as f64).powi(2)).sum();
+        let db = 10.0 * (odd / even).log10();
+        assert!(db > -1.5, "doublage à l'octave : impaires {db:.1} dB sous les paires (attendu > −1,5 dB)");
+    }
+
     /// Voix descendue d'une octave : le souffle aigu (au-dessus de 6 kHz) reste continu, il n'est pas haché à chaque période
     /// (c'est ce hachage qui faisait « craquer » la voix)
     #[test]
