@@ -12,7 +12,6 @@ export default async ({ ev, nav, send, sleep }) => {
   await click('.fam-cat', 'Égaliseur'); await sleep(150);   // menu en deux colonnes : la catégorie, puis l'effet
   await click('.fam-fx', 'Filtre'); await sleep(400);
   await R('effets de la piste', `return JSON.stringify(state.project.tracks[0].effects)+' params='+JSON.stringify(state.project.tracks[0].effectParams.filter)`);
-  await R('panneau Filtre', `const p=document.querySelector('.fx-panel'); return p? p.querySelector('.fx-panel-header span').textContent+' | curseurs='+p.querySelectorAll('.fx-slider').length : 'AUCUN PANNEAU'`);
-  await R('réglage Coupe-bas à 300', `const sl=document.querySelector('.fx-slider[data-key=hpf]'); sl.value=300; sl.dispatchEvent(new Event('input',{bubbles:true})); await new Promise(r=>setTimeout(r,300)); return JSON.stringify(state.project.tracks[0].effectParams.filter)`);
+  await R('panneau Filtre', `const p=document.querySelector('.fx-panel'); return p? p.querySelector('.fx-panel-header .fx-title').textContent.trim()+' | écran='+!!p.querySelector('.flt-svg') : 'AUCUN PANNEAU'`);
   await R('ligne dans l\'inspecteur', `return document.querySelector('#inspector .insp-fx-row[data-fx=filter]')? 'présente':'ABSENTE'`);
 };

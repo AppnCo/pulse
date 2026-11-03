@@ -3766,10 +3766,8 @@ body[data-left-tool="fade"] .timeline-tracks .clip { cursor: ew-resize; }
 .pit-dial2 { fill: #120c1b; stroke: #ffffff10; }
 .pit-big { fill: #fff; font-size: 54px; font-weight: 700; }
 .pit-tick { font-size: 12px; fill: #b9acd6; }
-.pit-key { fill: #e9e2f5; stroke: #0b0712; cursor: pointer; }
-.pit-key.from { fill: #A855F7; }
-.pit-bk { fill: #1a1228; stroke: #0b0712; cursor: pointer; }
-.pit-key.on, .pit-bk.on { filter: drop-shadow(0 0 10px #fff8); }
+.pit-dial { cursor: ns-resize; }
+.pit-name { font-size: 12px; letter-spacing: .18em; fill: #b9acd6; font-weight: 600; }
 .pit-fp { left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100% - 24px); }
 .pit-jumps { grid-template-columns: repeat(5, auto); }
 .pit-jump.on { background: #2a1840; border-color: #A855F7; color: #fff; }

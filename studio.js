@@ -9112,7 +9112,7 @@ function openMsatPanel(trackIdx, anchorEl) {
     });
     panel.querySelector('.ms-ag').addEventListener('click', () => { step(() => { if (P().ag === false) delete P().ag; else P().ag = false; }); draw(); });
     let last = 0;
-    const loop = (ts) => { if (!panel.isConnected) return; if ((state.playing || state.recording) && ts - last > 50) { last = ts; draw(); } requestAnimationFrame(loop); };
+    const loop = (ts) => { if (!panel.isConnected) return; if (!P()) { panel.remove(); return; } if ((state.playing || state.recording) && ts - last > 50) { last = ts; draw(); } requestAnimationFrame(loop); };
     requestAnimationFrame(loop);
     panel.querySelector('.fx-panel-close').addEventListener('click', () => panel.remove());
     panel.querySelector('.fx-bypass').addEventListener('change', (e) => {
@@ -9381,7 +9381,7 @@ function openFilterPanel(trackIdx, anchorEl) {
         step(() => { if (h.dataset.k === 'hpf') P().hpf = 20; else P().lpf = 20000; }); buildFp(); draw();
     });
     let last = 0;
-    const loop = (ts) => { if (!panel.isConnected) return; if ((state.playing || state.recording || window.__PULSE_PLUGIN__) && ts - last > 50) { last = ts; draw(); } requestAnimationFrame(loop); };
+    const loop = (ts) => { if (!panel.isConnected) return; if (!P()) { panel.remove(); return; } if ((state.playing || state.recording || window.__PULSE_PLUGIN__) && ts - last > 50) { last = ts; draw(); } requestAnimationFrame(loop); };
     requestAnimationFrame(loop);
     panel.querySelector('.fx-panel-close').addEventListener('click', () => panel.remove());
     panel.querySelector('.fx-bypass').addEventListener('change', (e) => {
@@ -9398,8 +9398,8 @@ function openFilterPanel(trackIdx, anchorEl) {
     makePlugWindow(panel, t, 'filter', trackIdx);
 }
 
-// Pitch : écran plein façon pédale de voix — un grand cadran en demi-tons (cranté), un clavier qui montre d'où part
-// la voix et où elle arrive, des raccourcis (octave, quinte, quarte…). Mêmes réglages qu'avant (semi, mix).
+// Pitch : écran plein façon pédale de voix — deux grands cadrans pareils : Hauteur (demi-tons, cranté) et Formant
+// (timbre : voix plus grosse / plus fine, au dixième), des raccourcis (octave, quinte, quarte…) et le Mélange. Réglages : semi, formant, mix.
 const PITCH_JUMPS = [[-12, 'Octave −'], [-7, 'Quinte −'], [-5, 'Quarte −'], [-3, '−3'], [0, '0'], [3, '+3'], [5, 'Quarte +'], [7, 'Quinte +'], [12, 'Octave +']];
 const PITCH_WORDS = { '-12': 'une octave plus grave', '-7': 'une quinte plus grave', '-5': 'une quarte plus grave', '0': 'voix d\'origine', '5': 'une quarte plus aiguë', '7': 'une quinte plus aiguë', '12': 'une octave plus aiguë' };
 function openPitchPanel(trackIdx, anchorEl) {
@@ -9411,7 +9411,11 @@ function openPitchPanel(trackIdx, anchorEl) {
     t.effectParams = t.effectParams || {};
     if (!t.effectParams.pitch) t.effectParams.pitch = { semi: 0, mix: 100 };
     const P = () => t.effectParams.pitch;
-    const W = 900, H = 520, CX = 250, CY = 215, R = 128;
+    const W = 900, H = 520, CY = 196, R = 112;
+    // les deux cadrans : clé du réglage, centre, pas, crans marqués, couleurs (monte / descend), légende sous la valeur
+    const DIALS = [
+        { key: 'semi', cx: 235, step: 1, big: [-12, -7, -5, 0, 5, 7, 12], up: '#F0ABFC', down: '#93C5FD', unit: 'demi-tons', title: 'HAUTEUR' },
+        { key: 'formant', cx: 665, step: 0.1, big: [-12, -6, 0, 6, 12], up: '#FCD34D', down: '#5EEAD4', unit: 'formant', title: 'FORMANT' }];
     let undoArmed = false;
     const arm = () => { if (!undoArmed) { pushUndo(); undoArmed = true; } };
     const finish = () => { t.effects = t.effects || []; if (!t.effects.includes('pitch')) t.effects.push('pitch'); refreshPlaybackSoon(); saveProject(); undoArmed = false; };
@@ -9425,69 +9429,75 @@ function openPitchPanel(trackIdx, anchorEl) {
             <button class="fx-panel-close">×</button>
         </div>
         <div class="lim-face"><svg class="lim-svg pit-svg" viewBox="0 0 ${W} ${H}"></svg><div class="lim-fp pit-fp"></div></div>
-        <div class="lim-sb"><span>Tourne le cadran (glisser vers le haut / le bas) ou clique sur une touche · double-clic = voix d'origine</span><span class="lim-spacer"></span><span>Hauteur <b class="pit-v">—</b></span></div>`;
+        <div class="lim-sb"><span>Tourne un cadran (glisser vers le haut / le bas, molette) · double-clic = d'origine</span><span class="lim-spacer"></span><span>Hauteur <b class="pit-v">—</b> · Formant <b class="pit-f">—</b></span></div>`;
     document.body.appendChild(panel);
     const svg = panel.querySelector('.pit-svg'), fp = panel.querySelector('.pit-fp');
-    const ang = (semi) => (semi / 12) * 135;   // −12 … +12 → −135° … +135°
-    const pt = (deg, r) => [CX + r * Math.sin(deg * Math.PI / 180), CY - r * Math.cos(deg * Math.PI / 180)];
-    const label = (v) => (v > 0 ? '+' : '') + v;
+    const ang = (v) => (v / 12) * 135;   // −12 … +12 → −135° … +135°
+    const pt = (cx, deg, r) => [cx + r * Math.sin(deg * Math.PI / 180), CY - r * Math.cos(deg * Math.PI / 180)];
+    const label = (v) => (v > 0 ? '+' : '') + String(v).replace('.', ',');
+    const val = (d) => d.key === 'semi' ? Math.round(P().semi || 0) : Math.round((P().formant || 0) * 10) / 10;
+    const words = (d, v) => d.key === 'semi'
+        ? (PITCH_WORDS[String(v)] || (Math.abs(v) + ' demi-ton' + (Math.abs(v) > 1 ? 's' : '') + (v > 0 ? ' plus aigu' : ' plus grave')))
+        : v === 0 ? 'timbre d\'origine' : v > 0 ? 'voix plus fine' : 'voix plus grosse';
     let kMix = null;
     const draw = () => {
-        const semi = Math.round(P().semi || 0), on = (t.effects || []).includes('pitch'), a = ang(semi), col = semi > 0 ? '#F0ABFC' : semi < 0 ? '#93C5FD' : '#C084FC';
-        let g = `<defs><radialGradient id="pitg"><stop offset="0" stop-color="${col}" stop-opacity="${on ? 0.32 : 0.1}"/><stop offset="1" stop-color="${col}" stop-opacity="0"/></radialGradient></defs>`;
-        g += `<circle cx="${CX}" cy="${CY}" r="${R + 60}" fill="url(#pitg)"/>`;
-        // graduations : chaque demi-ton, les grands crans tous les 12 / 7 / 5
-        for (let s2 = -12; s2 <= 12; s2++) { const big = [-12, -7, -5, 0, 5, 7, 12].includes(s2), [x1, y1] = pt(ang(s2), R + 14), [x2, y2] = pt(ang(s2), R + (big ? 30 : 22));
-            g += `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${s2 === semi ? col : big ? '#d9cfee' : '#ffffff40'}" stroke-width="${big ? 2.4 : 1.4}"/>`;
-            if (big) { const [tx, ty] = pt(ang(s2), R + 46); g += `<text x="${tx.toFixed(1)}" y="${(ty + 4).toFixed(1)}" class="lim-txt pit-tick" text-anchor="middle">${label(s2)}</text>`; } }
-        // arc allumé depuis 0
-        if (semi !== 0) { const [x0, y0] = pt(0, R + 6), [x1, y1] = pt(a, R + 6); g += `<path d="M${x0.toFixed(1)} ${y0.toFixed(1)} A${R + 6} ${R + 6} 0 0 ${semi > 0 ? 1 : 0} ${x1.toFixed(1)} ${y1.toFixed(1)}" stroke="${col}" stroke-width="6" fill="none" stroke-linecap="round" style="filter:drop-shadow(0 0 8px ${col})"/>`; }
-        g += `<circle cx="${CX}" cy="${CY}" r="${R}" class="pit-dial"/><circle cx="${CX}" cy="${CY}" r="${R - 18}" class="pit-dial2"/>`;
-        const [ix, iy] = pt(a, R - 30); g += `<line x1="${CX}" y1="${CY}" x2="${ix.toFixed(1)}" y2="${iy.toFixed(1)}" stroke="${col}" stroke-width="5" stroke-linecap="round" opacity=".35"/><circle cx="${ix.toFixed(1)}" cy="${iy.toFixed(1)}" r="9" fill="#fff" style="filter:drop-shadow(0 0 8px ${col})"/>`;
-        g += `<text x="${CX}" y="${CY + 14}" class="pit-big" text-anchor="middle">${label(semi)}</text><text x="${CX}" y="${CY + 40}" class="lim-txt" text-anchor="middle">demi-tons</text>`;
-        // clavier : d'où part la voix (do du milieu), où elle arrive
-        const KX = 470, KY = 120, KW = 400, KH = 150, whites = 15, ww = KW / whites, base = 12;   // 0 = do grave, 12 = do du milieu, 24 = do aigu
-        const isBlack = (n) => [1, 3, 6, 8, 10].includes(((n % 12) + 12) % 12), whiteIdx = (n) => { let w = 0; for (let i = 0; i < n; i++) if (!isBlack(i)) w++; return w; };
-        const target = base + semi;
-        g += `<text x="${KX}" y="${KY - 16}" class="lim-txt">la voix part de la touche violette et arrive sur la touche allumée</text>`;
-        for (let n = 0; n <= 24; n++) if (!isBlack(n)) { const x = KX + whiteIdx(n) * ww, cls = n === target ? 'pit-key on' : n === base ? 'pit-key from' : 'pit-key'; g += `<rect x="${x.toFixed(1)}" y="${KY}" width="${(ww - 2).toFixed(1)}" height="${KH}" rx="4" class="${cls}" data-n="${n}" style="${n === target ? `fill:${col}` : ''}"/>`; }
-        for (let n = 0; n <= 24; n++) if (isBlack(n)) { const x = KX + whiteIdx(n) * ww - ww * 0.32, cls = n === target ? 'pit-bk on' : 'pit-bk'; g += `<rect x="${x.toFixed(1)}" y="${KY}" width="${(ww * 0.64).toFixed(1)}" height="${KH * 0.6}" rx="3" class="${cls}" data-n="${n}" style="${n === target ? `fill:${col}` : ''}"/>`; }
-        if (semi !== 0) { const xc = (n) => isBlack(n) ? KX + whiteIdx(n) * ww : KX + whiteIdx(n) * ww + ww / 2 - 1, y = KY + KH + 26, x0 = xc(base), x1 = xc(target);
-            g += `<path d="M${x0.toFixed(1)} ${y} L${x1.toFixed(1)} ${y}" stroke="${col}" stroke-width="3" marker-end="url(#pitar)"/><defs><marker id="pitar" markerWidth="8" markerHeight="8" refX="5" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="${col}"/></marker></defs>`; }
-        g += `<text x="${KX + KW / 2}" y="${KY + KH + 64}" class="sat-big" text-anchor="middle">${PITCH_WORDS[String(semi)] || (Math.abs(semi) + ' demi-ton' + (Math.abs(semi) > 1 ? 's' : '') + (semi > 0 ? ' plus aigu' : ' plus grave'))}</text>`;
-        const fo = Math.round((P().formant || 0) * 10) / 10;
-        g += `<text x="${KX + KW / 2}" y="${KY + KH + 86}" class="lim-txt" text-anchor="middle">${fo === 0 ? 'timbre d\'origine (la voix reste la tienne)' : 'timbre ' + (fo > 0 ? 'plus fin' : 'plus gros') + ' (formant ' + (fo > 0 ? '+' : '') + String(fo).replace('.', ',') + ')'}${(P().mix ?? 100) < 100 ? ' · mélangée à la voix d\'origine : ' + Math.round(P().mix) + ' %' : ''}</text>`;
+        const on = (t.effects || []).includes('pitch');
+        let g = '<defs>';
+        DIALS.forEach((d, i) => { const v = val(d), col = v > 0 ? d.up : v < 0 ? d.down : '#C084FC'; g += `<radialGradient id="pitg${i}"><stop offset="0" stop-color="${col}" stop-opacity="${on ? 0.3 : 0.1}"/><stop offset="1" stop-color="${col}" stop-opacity="0"/></radialGradient>`; });
+        g += '</defs>';
+        DIALS.forEach((d, i) => {
+            const v = val(d), a = ang(v), cx = d.cx, col = v > 0 ? d.up : v < 0 ? d.down : '#C084FC';
+            g += `<circle cx="${cx}" cy="${CY}" r="${R + 56}" fill="url(#pitg${i})"/>`;
+            g += `<text x="${cx}" y="${CY - R - 58}" class="lim-txt pit-name" text-anchor="middle">${d.title}</text>`;
+            // graduations : chaque demi-ton, les grands crans marqués
+            for (let s2 = -12; s2 <= 12; s2++) { const big = d.big.includes(s2), [x1, y1] = pt(cx, ang(s2), R + 12), [x2, y2] = pt(cx, ang(s2), R + (big ? 27 : 20));
+                g += `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${s2 === Math.round(v) ? col : big ? '#d9cfee' : '#ffffff40'}" stroke-width="${big ? 2.4 : 1.4}"/>`;
+                if (big) { const [tx, ty] = pt(cx, ang(s2), R + 42); g += `<text x="${tx.toFixed(1)}" y="${(ty + 4).toFixed(1)}" class="lim-txt pit-tick" text-anchor="middle">${label(s2)}</text>`; } }
+            // arc allumé depuis 0
+            if (v !== 0) { const [x0, y0] = pt(cx, 0, R + 5), [x1, y1] = pt(cx, a, R + 5); g += `<path d="M${x0.toFixed(1)} ${y0.toFixed(1)} A${R + 5} ${R + 5} 0 0 ${v > 0 ? 1 : 0} ${x1.toFixed(1)} ${y1.toFixed(1)}" stroke="${col}" stroke-width="6" fill="none" stroke-linecap="round" style="filter:drop-shadow(0 0 8px ${col})"/>`; }
+            g += `<circle cx="${cx}" cy="${CY}" r="${R}" class="pit-dial" data-k="${d.key}"/><circle cx="${cx}" cy="${CY}" r="${R - 16}" class="pit-dial2"/>`;
+            const [ix, iy] = pt(cx, a, R - 27); g += `<line x1="${cx}" y1="${CY}" x2="${ix.toFixed(1)}" y2="${iy.toFixed(1)}" stroke="${col}" stroke-width="5" stroke-linecap="round" opacity=".35"/><circle cx="${ix.toFixed(1)}" cy="${iy.toFixed(1)}" r="9" fill="#fff" style="filter:drop-shadow(0 0 8px ${col})"/>`;
+            g += `<text x="${cx}" y="${CY + 14}" class="pit-big" text-anchor="middle">${label(v)}</text><text x="${cx}" y="${CY + 38}" class="lim-txt" text-anchor="middle">${d.unit}</text>`;
+            g += `<text x="${cx}" y="${CY + R + 70}" class="sat-big" text-anchor="middle">${words(d, v)}</text>`;
+        });
+        const mix = P().mix ?? 100;
+        g += `<text x="${W / 2}" y="${CY + R + 94}" class="lim-txt" text-anchor="middle">${val(DIALS[1]) === 0 ? 'la voix garde son timbre, même en changeant la hauteur' : 'timbre changé à part de la hauteur'}${mix < 100 ? ' · mélangée à la voix d\'origine : ' + Math.round(mix) + ' %' : ''}</text>`;
         svg.innerHTML = g;
-        panel.querySelector('.pit-v').textContent = label(semi) + ' dt';
-        panel.querySelectorAll('.pit-jump').forEach(b => b.classList.toggle('on', +b.dataset.v === semi));
+        panel.querySelector('.pit-v').textContent = label(val(DIALS[0])) + ' dt';
+        panel.querySelector('.pit-f').textContent = label(val(DIALS[1]));
+        panel.querySelectorAll('.pit-jump').forEach(b => b.classList.toggle('on', +b.dataset.v === val(DIALS[0])));
     };
-    const setSemi = (v) => { P().semi = Math.max(-12, Math.min(12, Math.round(v))); draw(); };
+    const setVal = (d, v) => {
+        v = Math.max(-12, Math.min(12, Math.round(v / d.step) * d.step));
+        if (d.key === 'semi') P().semi = v;
+        else { v = Math.round(v * 10) / 10; if (Math.abs(v) < 0.05) delete P().formant; else P().formant = v; }
+        draw();
+    };
+    const setSemi = (v) => setVal(DIALS[0], v);
     const buildFp = () => {
         fp.innerHTML = '';
         const c0 = document.createElement('div'); c0.className = 'lim-col';
-        c0.innerHTML = `<span class="lim-t">Sauts</span><div class="ms-stys pit-jumps">${PITCH_JUMPS.map(([v, n]) => `<button class="ms-sty pit-jump" data-v="${v}">${n}</button>`).join('')}</div>`;
+        c0.innerHTML = `<span class="lim-t">Sauts de hauteur</span><div class="ms-stys pit-jumps">${PITCH_JUMPS.map(([v, n]) => `<button class="ms-sty pit-jump" data-v="${v}">${n}</button>`).join('')}</div>`;
         fp.appendChild(c0);
         c0.querySelectorAll('.pit-jump').forEach(b => b.addEventListener('click', () => { step(() => setSemi(+b.dataset.v)); }));
         const sep = document.createElement('div'); sep.className = 'lim-sep'; fp.appendChild(sep);
-        proKnob(fp, { key: 'formant', label: 'Formant', min: -12, max: 12, val: P().formant || 0, big: true, color: '#F0ABFC',
-            fmt: (v) => { v = Math.round(v * 10) / 10; return v === 0 ? 'voix d\'origine' : (v > 0 ? '+' : '') + String(v).replace('.', ',') + (v > 0 ? ' plus fine' : ' plus grosse'); },
-            onEnd: finish, onChange: (v) => { arm(); v = Math.round(v * 10) / 10; if (Math.abs(v) < 0.05) delete P().formant; else P().formant = v; draw(); } });
         kMix = proKnob(fp, { key: 'mix', label: 'Mélange', min: 0, max: 100, val: P().mix ?? 100, fmt: (v) => Math.round(v) + ' %', onEnd: finish, onChange: (v) => { arm(); P().mix = Math.round(v); draw(); } });
     };
     const at = (e) => { const r = svg.getBoundingClientRect(); return [(e.clientX - r.left) * W / r.width, (e.clientY - r.top) * H / r.height]; };
+    const dialAt = (e) => { const [x, y] = at(e); return DIALS.find(d => Math.hypot(x - d.cx, y - CY) <= R + 46); };
     svg.addEventListener('mousedown', (e) => {
         if (e.button !== 0) return;
-        const key = e.target.closest('.pit-key, .pit-bk');
-        if (key) { step(() => setSemi(+key.dataset.n - 12)); return; }
-        const [x, y] = at(e); if (Math.hypot(x - CX, y - CY) > R + 50) return;
+        const d = dialAt(e); if (!d) return;
         e.preventDefault();
-        const y0 = e.clientY, v0 = P().semi || 0; let moved = false;
-        const mv = (ev) => { const v = Math.round(v0 + (y0 - ev.clientY) / 12); if (v === Math.round(P().semi || 0)) return; if (!moved) arm(); moved = true; setSemi(v); autoTouch(t, 'fx:pitch:semi'); };
+        const y0 = e.clientY, v0 = val(d); let moved = false;
+        // 12 px par demi-ton ; Maj = réglage fin (au dixième pour le formant)
+        const mv = (ev) => { const v = v0 + (y0 - ev.clientY) / (ev.shiftKey ? 60 : 12); const before = val(d); if (!moved && Math.abs(Math.round(v / d.step) * d.step - before) < d.step / 2) return;
+            if (!moved) arm(); moved = true; setVal(d, v); autoTouch(t, 'fx:pitch:' + d.key); };
         const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); if (moved) finish(); };
         document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
     });
-    svg.addEventListener('dblclick', (e) => { const [x, y] = at(e); if (Math.hypot(x - CX, y - CY) <= R + 50) step(() => setSemi(0)); });
-    svg.addEventListener('wheel', (e) => { const [x, y] = at(e); if (Math.hypot(x - CX, y - CY) > R + 50) return; e.preventDefault(); step(() => setSemi((P().semi || 0) + (e.deltaY < 0 ? 1 : -1))); }, { passive: false });
+    svg.addEventListener('dblclick', (e) => { const d = dialAt(e); if (d) step(() => setVal(d, 0)); });
+    svg.addEventListener('wheel', (e) => { const d = dialAt(e); if (!d) return; e.preventDefault(); step(() => setVal(d, val(d) + (e.deltaY < 0 ? 1 : -1) * (d.key === 'semi' ? 1 : 0.5))); }, { passive: false });
     panel.querySelector('.fx-panel-close').addEventListener('click', () => panel.remove());
     panel.querySelector('.fx-bypass').addEventListener('change', (e) => {
         pushUndo(); t.effects = t.effects || [];
@@ -9595,7 +9605,7 @@ function openModPanel(trackIdx, fx, anchorEl) {
         }
     };
     let last = 0;
-    const loop = (ts) => { if (!panel.isConnected) return; if (ts - last > 33) { last = ts; draw(); } requestAnimationFrame(loop); };
+    const loop = (ts) => { if (!panel.isConnected) return; if (!P()) { panel.remove(); return; } if (ts - last > 33) { last = ts; draw(); } requestAnimationFrame(loop); };
     requestAnimationFrame(loop);
     panel.querySelector('.fx-panel-close').addEventListener('click', () => panel.remove());
     panel.querySelector('.fx-bypass').addEventListener('change', (e) => {
@@ -9813,7 +9823,7 @@ function openCrushUtilPanel(trackIdx, fx, anchorEl) {
         });
     };
     let last = 0;
-    const loop = (ts) => { if (!panel.isConnected) return; if (fx === 'util' && ts - last > 50) { last = ts; const m = meter(); const nl = Math.max(m, lvl * 0.85); if (Math.abs(nl - lvl) > 1e-4 || nl > 0) { lvl = nl < 1e-4 ? 0 : nl; draw(); } } requestAnimationFrame(loop); };
+    const loop = (ts) => { if (!panel.isConnected) return; if (!P()) { panel.remove(); return; } if (fx === 'util' && ts - last > 50) { last = ts; const m = meter(); const nl = Math.max(m, lvl * 0.85); if (Math.abs(nl - lvl) > 1e-4 || nl > 0) { lvl = nl < 1e-4 ? 0 : nl; draw(); } } requestAnimationFrame(loop); };
     requestAnimationFrame(loop);
     panel.querySelector('.fx-panel-close').addEventListener('click', () => panel.remove());
     panel.querySelector('.fx-bypass').addEventListener('change', (e) => {

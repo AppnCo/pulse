@@ -1248,6 +1248,14 @@ mod tests {
         let p = Project { tracks: vec![serde_json::from_str(region).unwrap()], ..Default::default() };
         let t1 = onset(&render(&p, &saw, &opts()).0);
         assert!((t1 - 1.0).abs() < 0.004, "région : la voix démarre à {t1:.4} s au lieu de 1 s");
+        // Pitch sur un groupe : la piste qui y sort est avancée, une piste seule (stem) contourne le groupe
+        let bus = r#"{"tracks":[{"volume":100,"output":"g","clips":[{"id":"a","start":0,"duration":3,"offset":0}]}],
+            "buses":[{"id":"g","name":"G","effects":["pitch"],"effectParams":{"pitch":{"semi":-4,"mix":100}}}]}"#;
+        let p: Project = serde_json::from_str(bus).unwrap();
+        let t2 = onset(&render(&p, &saw, &opts()).0);
+        assert!((t2 - 1.0).abs() < 0.004, "groupe : la voix démarre à {t2:.4} s au lieu de 1 s");
+        let t3 = onset(&render(&p, &saw, &RenderOptions { only_track: Some(0), ..opts() }).0);
+        assert!((t3 - 1.0).abs() < 0.004, "stem : la voix démarre à {t3:.4} s au lieu de 1 s");
     }
 
     /// Pitch « voix fidèle » : mêmes chiffres que le navigateur (tests/scenarios/pitch-parite.mjs)

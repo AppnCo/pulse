@@ -1,4 +1,4 @@
-// Pitch : écran plein — cadran glissé, touche cliquée, sauts, molette, double-clic = 0, ⌘Z
+// Pitch : écran plein — deux cadrans (Hauteur, Formant) glissés, sauts, molette, double-clic = 0, ⌘Z
 import { boot, J } from './qa-lib.mjs';
 export default async (c) => {
   const { ev, sleep, shot, send } = c;
@@ -7,7 +7,8 @@ export default async (c) => {
   const semi = () => J(ev, `return state.project.tracks[0].effectParams.pitch.semi`);
   await ev(`openEffectPanel(0, 'pitch', document.body)`); await sleep(300);
   ok(await ev(`!!document.querySelector('.pit-panel .pit-dial')`), 'écran ouvert avec son cadran');
-  const d = JSON.parse(await ev(`JSON.stringify((()=>{const e=document.querySelector('.pit-dial').getBoundingClientRect(); return {x:e.left+e.width/2,y:e.top+e.height/2}})())`));
+  const ctr = async (k) => JSON.parse(await ev(`JSON.stringify((()=>{const e=document.querySelector('.pit-dial[data-k="${k}"]').getBoundingClientRect(); return {x:e.left+e.width/2,y:e.top+e.height/2}})())`));
+  const d = await ctr('semi');
   const m = (type, y) => send('Input.dispatchMouseEvent', { type, x: d.x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1 });
   await m('mousePressed', d.y); for (let i = 1; i <= 6; i++) await m('mouseMoved', d.y - i * 10); await m('mouseReleased', d.y - 60); await sleep(150);
   ok(await semi() === 5, 'cadran glissé vers le haut : +5 (' + await semi() + ')');
@@ -16,13 +17,20 @@ export default async (c) => {
   await ev(`openEffectPanel(0, 'pitch', document.body)`); await sleep(250);
   await ev(`document.querySelector('.pit-panel .pit-jump[data-v="-12"]').click()`); await sleep(100);
   ok(await semi() === -12, 'saut Octave −');
-  const k = JSON.parse(await ev(`JSON.stringify((()=>{const e=document.querySelector('.pit-key[data-n="19"]').getBoundingClientRect(); return {x:e.left+e.width/2,y:e.top+e.height*0.85}})())`));
-  await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: k.x, y: k.y, button: 'left', buttons: 1, clickCount: 1 }); await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: k.x, y: k.y, button: 'left', clickCount: 1 }); await sleep(150);
-  ok(await semi() === 7, 'touche sol cliquée : +7');
+  const f = await ctr('formant');
+  const fm = (type, y) => send('Input.dispatchMouseEvent', { type, x: f.x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1 });
+  await fm('mousePressed', f.y); for (let i = 1; i <= 6; i++) await fm('mouseMoved', f.y + i * 6); await fm('mouseReleased', f.y + 36); await sleep(150);
+  const fo = await J(ev, `return state.project.tracks[0].effectParams.pitch.formant`);
+  ok(fo === -3, 'cadran Formant glissé vers le bas : −3 (' + fo + ')');
+  ok(await semi() === -12, 'le Formant ne touche pas la hauteur');
+  await ev(`document.querySelector('.pit-panel .pit-jump[data-v="7"]').click()`); await sleep(100);
+  ok(await semi() === 7, 'saut Quinte +');
   await shot('/private/tmp/claude-501/qa/pitch-1.jpg');
   await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: d.x, y: d.y, deltaX: 0, deltaY: -100 }); await sleep(150);
   ok(await semi() === 8, 'molette : +1');
   await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: d.x, y: d.y, button: 'left', buttons: 1, clickCount: 2 }); await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: d.x, y: d.y, button: 'left', clickCount: 2 }); await sleep(150);
   ok(await semi() === 0, 'double-clic : voix d\'origine');
+  await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: f.x, y: f.y, button: 'left', buttons: 1, clickCount: 2 }); await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: f.x, y: f.y, button: 'left', clickCount: 2 }); await sleep(150);
+  ok(await J(ev, `return state.project.tracks[0].effectParams.pitch.formant`) === undefined, 'double-clic Formant : timbre d\'origine');
   if (fails.length) throw new Error(fails.join(' ; '));
 };

@@ -171,16 +171,31 @@ fn pitch_on(effects: &[String], params: &crate::model::EffectParams, auto: Optio
         && (params.pitch.as_ref().is_some_and(|p| p.semi.unwrap_or(0.0) != 0.0 || p.formant.unwrap_or(0.0) != 0.0)
             || auto.is_some_and(|a| a.other.keys().any(|k| k.starts_with("fx:pitch:"))))
 }
+/// Nombre de groupes avec Pitch sur le trajet de sortie d'une piste (groupe → groupe → master). Même calcul que pitchBuses dans audio.js.
+/// Un stem seul contourne les groupes : 0.
+fn pitch_buses(project: &Project, output: Option<&str>, stem: bool) -> u32 {
+    if stem { return 0; }
+    let (mut n, mut next) = (0, output.map(str::to_owned));
+    for _ in 0..8 {
+        let Some(id) = next.as_deref() else { break };
+        let Some(b) = project.buses.iter().find(|b| b.id == id) else { break };
+        if pitch_on(&b.effects, &b.effect_params, Some(&b.automation)) { n += 1; }
+        next = b.output.clone();
+    }
+    n
+}
 /// Délai de piste : copie du projet où les régions des pistes à délai sont décalées (même calcul que withTrackDelays dans audio.js),
-/// moins la compensation du Pitch (`sr` = fréquence de rendu)
-fn with_track_delays(project: &Project, sr: f64) -> Option<Project> {
+/// moins la compensation du Pitch de la piste, de ses régions et des groupes où elle sort (`sr` = fréquence de rendu, `stem` = piste seule)
+fn with_track_delays(project: &Project, sr: f64, stem: bool) -> Option<Project> {
     let comp = crate::pitch::Pitch::latency_for(sr) as f64 / sr;
     let need = |t: &crate::model::Track| t.delay_ms.unwrap_or(0.0) != 0.0 || pitch_on(&t.effects, &t.effect_params, Some(&t.automation))
+        || pitch_buses(project, t.output.as_deref(), stem) > 0
         || t.clips.iter().any(|c| c.fx.as_ref().is_some_and(|f| pitch_on(&f.effects, &f.effect_params, None)));
     if !project.tracks.iter().any(need) { return None; }
+    let nb: Vec<u32> = project.tracks.iter().map(|t| pitch_buses(project, t.output.as_deref(), stem)).collect();
     let mut p = project.clone();
-    for t in &mut p.tracks {
-        let d = t.delay_ms.unwrap_or(0.0) / 1000.0 - if pitch_on(&t.effects, &t.effect_params, Some(&t.automation)) { comp } else { 0.0 };
+    for (t, nb) in p.tracks.iter_mut().zip(nb) {
+        let d = t.delay_ms.unwrap_or(0.0) / 1000.0 - if pitch_on(&t.effects, &t.effect_params, Some(&t.automation)) { comp } else { 0.0 } - nb as f64 * comp;
         for c in &mut t.clips {
             let dc = d - if c.fx.as_ref().is_some_and(|f| pitch_on(&f.effects, &f.effect_params, None)) { comp } else { 0.0 };
             if dc == 0.0 { continue; }
@@ -328,10 +343,10 @@ fn track_taps(project: &Project, track: &crate::model::Track, idx: usize, opts: 
 fn smooth_k(sr: f64) -> f64 { 1.0 - (-1.0 / (0.01 * sr)).exp() }
 
 /// Le projet tel que le mixeur le voit : pistes gelées remplacées par leur rendu, délais de piste appliqués
-fn prepared(project: &Project, media: &Media, sr: f64) -> Project {
+fn prepared(project: &Project, media: &Media, sr: f64, stem: bool) -> Project {
     let frozen = with_frozen(project, media);
     let p = frozen.as_ref().unwrap_or(project);
-    with_track_delays(p, sr).unwrap_or_else(|| p.clone())
+    with_track_delays(p, sr, stem).unwrap_or_else(|| p.clone())
 }
 
 fn with_fader(project: &Project, opts: &RenderOptions) -> RenderOptions {
@@ -343,7 +358,7 @@ fn with_fader(project: &Project, opts: &RenderOptions) -> RenderOptions {
 impl Renderer {
     pub fn new(project: &Project, media: &Media, opts: &RenderOptions) -> Self {
         let base_opts = RenderOptions { sample_rate: opts.sample_rate, master_volume: opts.master_volume, range: opts.range, only_track: opts.only_track, start: opts.start };
-        let project = &prepared(project, media, opts.sample_rate as f64);
+        let project = &prepared(project, media, opts.sample_rate as f64, opts.only_track.is_some());
         let opts = &with_fader(project, opts);
         let sr = opts.sample_rate as f64;
         let (from, to) = opts.range.unwrap_or((opts.start.max(0.0).min(project.end()), project.end()));
@@ -527,7 +542,7 @@ impl Renderer {
     /// les effets gardent leur état (une queue de reverb continue). La structure (régions, effets, sorties) doit rester la même :
     /// une piste ou un groupe dont la sortie a changé garde l'ancienne (il faut relancer la lecture pour ça).
     pub fn mix_from(&mut self, project: &Project, media: &Media) {
-        let project = &prepared(project, media, self.base.sample_rate as f64);
+        let project = &prepared(project, media, self.base.sample_rate as f64, self.base.only_track.is_some());
         let opts = with_fader(project, &self.base);
         self.master_volume = opts.master_volume;
         for tr in &mut self.tracks {

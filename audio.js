@@ -2082,13 +2082,25 @@ window.PulseAudio = (function() {
         const p = (params || {}).pitch || {};
         return !!(p.semi || p.formant) || Object.keys(auto || {}).some(k => k.startsWith('fx:pitch:'));
     }
+    // Nombre de groupes avec Pitch sur le trajet de sortie d'une piste (un stem seul contourne les groupes). Même calcul que pitch_buses (render.rs).
+    function pitchBuses(project, output, stem) {
+        if (stem) return 0;
+        let n = 0, next = output;
+        for (let k = 0; k < 8 && next; k++) {
+            const b = (project.buses || []).find(x => x.id === next);
+            if (!b) break;
+            if (pitchOn(b.effects, b.effectParams, b.automation)) n++;
+            next = b.output;
+        }
+        return n;
+    }
     let pitchSr = 48000;   // fréquence du rendu en cours (lecture ou export)
-    function withTrackDelays(project, sr = pitchSr) {
+    function withTrackDelays(project, sr = pitchSr, stem = false) {
         const clipPitch = (c) => !!(c.fx && pitchOn(c.fx.effects, c.fx.effectParams));
-        if (!project || !(project.tracks || []).some(t => t.delayMs || pitchOn(t.effects, t.effectParams, t.automation) || (t.clips || []).some(clipPitch))) return project;
+        if (!project || !(project.tracks || []).some(t => t.delayMs || pitchOn(t.effects, t.effectParams, t.automation) || pitchBuses(project, t.output, stem) || (t.clips || []).some(clipPitch))) return project;
         const comp = pitchLatency(sr) / sr;
         return { ...project, tracks: project.tracks.map(t => {
-            const d = (t.delayMs || 0) / 1000 - (pitchOn(t.effects, t.effectParams, t.automation) ? comp : 0);
+            const d = (t.delayMs || 0) / 1000 - (pitchOn(t.effects, t.effectParams, t.automation) ? comp : 0) - pitchBuses(project, t.output, stem) * comp;
             if (!d && !(t.clips || []).some(clipPitch)) return t;
             return { ...t, clips: (t.clips || []).map(c => { const dc = d - (clipPitch(c) ? comp : 0); return dc ? { ...c, start: c.start + dc, ...(c.loopEnd ? { loopEnd: c.loopEnd + dc } : {}) } : c; }) };
         }) };
@@ -2122,7 +2134,7 @@ window.PulseAudio = (function() {
     //   live     = garde les pistes mutées dans le graphe (gain 0) pour mute/solo à chaud + VU-mètres
     //   freeze   = rendu d'une piste à geler : le son est pris juste après ses effets (voir renderFreeze)
     function buildGraph(actx, project, dest, opts) {
-        project = withTrackDelays(withFrozen(project), actx.sampleRate);
+        project = withTrackDelays(withFrozen(project), actx.sampleRate, opts.onlyTrack != null);
         const { fromTime = 0, t0 = 0, endTime = Infinity, onlyTrack = null, live = false, freeze = false } = opts;
         const sources = [];
 

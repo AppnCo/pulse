@@ -18,4 +18,11 @@ export default async (c) => {
     console.log('PARITE', k, JSON.stringify(pp), JSON.stringify(r));
     check(`${k} : la voix démarre à sa place (${r[3]} s)`, Math.abs(r[3] - 1) < 0.004, String(r[3]));
   }
+  // Pitch sur un groupe : la piste qui y sort est avancée (mix complet) ; une piste seule contourne le groupe
+  const g = JSON.parse(await ev(`(async()=>{ const t=state.project.tracks[0]; t.effects=[]; t.effectParams={}; t.output='g';
+    state.project.buses=[{id:'g',name:'G',volume:100,effects:['pitch'],effectParams:{pitch:{semi:-4,mix:100}}}];
+    const on=async(w)=>{ const x=await new OfflineAudioContext(1,1,48000).decodeAudioData(await w.arrayBuffer()); const L=x.getChannelData(0); let i=0; while(i<L.length && Math.abs(L[i])<=0.02) i++; return +(i/48000).toFixed(5); };
+    return JSON.stringify([await on(await PulseAudio.exportWav(state.project)), await on(await PulseAudio.exportTrackWav(state.project,0))]) })()`));
+  check(`groupe : la voix démarre à sa place (${g[0]} s)`, Math.abs(g[0] - 1) < 0.004, String(g[0]));
+  check(`groupe, piste seule : la voix démarre à sa place (${g[1]} s)`, Math.abs(g[1] - 1) < 0.004, String(g[1]));
 };
