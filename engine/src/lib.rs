@@ -3,6 +3,7 @@ pub mod file;
 pub mod fx;
 pub mod model;
 pub mod monitor;
+pub mod pitch;
 pub mod player;
 pub mod render;
 
@@ -1232,6 +1233,41 @@ mod tests {
         assert!(queue > 1.0, "l'écho s'entend après la région : {queue}");
     }
 
+    /// Pitch « voix fidèle » : son retard est compensé (la voix démarre à sa place), pour la piste comme pour une région
+    #[test]
+    fn pitch_retard_compense() {
+        let n = SR as usize * 3;
+        // silence puis son riche à partir de 1 s
+        let saw = Media::from([("a".to_owned(), Source::new(SR, vec![(0..n).map(|i| if i < SR as usize { 0.0 } else { (((i as f64 * 220.0 / SR as f64) % 1.0) * 0.6 - 0.3) as f32 }).collect()]))]);
+        let onset = |l: &[f32]| l.iter().position(|v| v.abs() > 0.02).unwrap() as f64 / SR as f64;
+        let track = r#"{"volume":100,"clips":[{"id":"a","start":0,"duration":3,"offset":0}],"effects":["pitch"],"effectParams":{"pitch":{"semi":5,"mix":100}}}"#;
+        let p = Project { tracks: vec![serde_json::from_str(track).unwrap()], ..Default::default() };
+        let t0 = onset(&render(&p, &saw, &opts()).0);
+        assert!((t0 - 1.0).abs() < 0.004, "piste : la voix démarre à {t0:.4} s au lieu de 1 s");
+        let region = r#"{"volume":100,"clips":[{"id":"a","start":0,"duration":3,"offset":0,"fx":{"effects":["pitch"],"effectParams":{"pitch":{"semi":0,"formant":4}}}}]}"#;
+        let p = Project { tracks: vec![serde_json::from_str(region).unwrap()], ..Default::default() };
+        let t1 = onset(&render(&p, &saw, &opts()).0);
+        assert!((t1 - 1.0).abs() < 0.004, "région : la voix démarre à {t1:.4} s au lieu de 1 s");
+    }
+
+    /// Pitch « voix fidèle » : mêmes chiffres que le navigateur (tests/scenarios/pitch-parite.mjs)
+    #[test]
+    fn pitch_comme_le_navigateur() {
+        let n = SR as usize * 3;
+        let saw = Media::from([("a".to_owned(), Source::new(SR, vec![(0..n).map(|i| if i < SR as usize { 0.0 } else { (((i as f64 * 220.0 / SR as f64) % 1.0) * 0.6 - 0.3) as f32 }).collect()]))]);
+        let rms = |x: &[f32], a: f64, z: f64| { let (a, z) = ((a * SR as f64).round() as usize, (z * SR as f64).round() as usize); (x[a..z].iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / (z - a) as f64).sqrt() };
+        for (pp, want) in [(r#"{"semi":5,"mix":100}"#, [0.129055, 0.129091, 0.046905]), (r#"{"semi":-7,"mix":100}"#, [0.099857, 0.099977, 0.033475]),
+            (r#"{"semi":0,"formant":4}"#, [0.103736, 0.103785, 0.040622]), (r#"{"semi":3,"formant":-3,"mix":70}"#, [0.089701, 0.089821, 0.024511])] {
+            let t = format!(r#"{{"volume":100,"clips":[{{"id":"a","start":0,"duration":3,"offset":0}}],"effects":["pitch"],"effectParams":{{"pitch":{pp}}}}}"#);
+            let p = Project { tracks: vec![serde_json::from_str(&t).unwrap()], ..Default::default() };
+            let l = render(&p, &saw, &RenderOptions { only_track: Some(0), ..opts() }).0;
+            let (i0, i1) = ((1.2 * SR as f64) as usize, (1.8 * SR as f64) as usize);
+            let hf = ((i0..i1).map(|i| { let d = l[i] as f64 - 2.0 * l[i - 1] as f64 + l[i - 2] as f64; d * d }).sum::<f64>() / (i1 - i0) as f64).sqrt();
+            let got = [rms(&l, 1.2, 1.8), rms(&l, 2.0, 2.6), hf];
+            for k in 0..3 { assert!((got[k] - want[k]).abs() < want[k] * 0.01 + 2e-5, "{pp} : {got:?} au lieu de {want:?}"); }
+        }
+    }
+
     #[test]
     fn automation_des_autres_effets() {
         // Trémolo, bitcrusher, pitch : la courbe à 0 = son d'origine, à fond = son changé
@@ -1247,9 +1283,12 @@ mod tests {
             let fort = diff(&mk(fx, params, key, full));
             assert!(zero < 1.0 && fort > 10.0, "{fx} : courbe à zéro {zero} / à fond {fort}");
         }
-        // Pitch (il retarde toujours un peu le son) : 0 demi-ton et +12 ne donnent pas le même son
-        let (a, _) = render(&mk("pitch", r#"{"semi":0,"mix":100}"#, "semi", 0.5), &ramp_media(), &opts());
-        let (b, _) = render(&mk("pitch", r#"{"semi":0,"mix":100}"#, "semi", 1.0), &ramp_media(), &opts());
+        // Pitch (il retarde toujours un peu le son) : 0 demi-ton et +12 ne donnent pas le même son.
+        // Il ne transpose que ce qui a une note : son riche à 220 Hz (une rampe n'a pas de note).
+        let n = SR as usize * 10;
+        let saw = Media::from([("a".to_owned(), Source::new(SR, vec![(0..n).map(|i| (((i as f64 * 220.0 / SR as f64) % 1.0) * 0.6 - 0.3) as f32).collect()]))]);
+        let (a, _) = render(&mk("pitch", r#"{"semi":0,"mix":100}"#, "semi", 0.5), &saw, &opts());
+        let (b, _) = render(&mk("pitch", r#"{"semi":0,"mix":100}"#, "semi", 1.0), &saw, &opts());
         let d: f32 = (SR as usize..3 * SR as usize).map(|n| (a[n] - b[n]).abs()).sum();
         assert!(d > 10.0, "pitch automatisé : {d}");
     }

@@ -1054,44 +1054,108 @@ window.PulseAudio = (function() {
         }
         registerProcessor('pulse-reverb', pulseAuto(PulseReverb, (s, v) => { if (v.wet !== undefined) s.wet = Math.max(0, Math.min(1, v.wet)); }));
 
-        // Pitch −/+ : deux têtes de lecture glissent dans une mémoire de 50 ms, en fondu croisé (sin²)
-        // Même calcul que engine/src/fx.rs (Pitch::tick)
+        // Pitch « voix fidèle » : hauteur et formants séparés, la voix garde son timbre (TD-PSOLA en temps réel).
+        // Même calcul que engine/src/pitch.rs (Pitch::tick) — voir les explications là-bas. Retard fixe : pitchLatency(sampleRate).
+        const PITCH_DS = 4, PITCH_HOP = 256, PITCH_GATE = 0.003981071705534973;
+        const pow2 = (n) => { let p = 1; while (p < n) p *= 2; return p; };
         class PulsePitch extends AudioWorkletProcessor {
             constructor(o) {
                 super();
-                const p = (o && o.processorOptions) || {};
-                const semi = Math.max(-12, Math.min(12, p.semi ?? 0));
-                this.W = Math.round(0.05 * sampleRate);
-                this.L = this.W * 2 + 8;
-                this.step = (1 - Math.pow(2, semi / 12)) / this.W;
-                this.mix = Math.max(0, Math.min(1, (p.mix ?? 100) / 100));
-                this.ph = 0; this.i = 0; this.buf = [];
+                const p = (o && o.processorOptions) || {}, sr = sampleRate, sd = sr / PITCH_DS;
+                this.tmaxD = Math.ceil(sd / 70); this.tminD = Math.max(2, Math.floor(sd / 1000));
+                this.winD = 2 * this.tmaxD + 32; this.dla = this.winD * PITCH_DS / 2;
+                this.tmax = Math.ceil(sr / 70); this.g = Math.round(0.025 * sr);
+                this.lat = this.g + this.dla + Math.ceil(1.3 * this.tmax) + 16;
+                this.nb = pow2(4 * this.lat); this.nbd = pow2(this.nb / PITCH_DS); this.unv = Math.round(0.005 * sr);
+                this.buf = [new Float64Array(this.nb), new Float64Array(this.nb)]; this.mono = new Float64Array(this.nb);
+                this.ds = new Float64Array(this.nbd); this.acc = 0; this.w = 0;
+                this.f0 = new Float64Array(64); this.hops = 0;
+                this.mk = []; this.nextMark = 0; this.ts = 0;
+                this.y = [new Float64Array(this.nb), new Float64Array(this.nb)]; this.wsum = new Float64Array(this.nb); this.floor = new Float64Array(this.nb).fill(1);
+                this.dwin = new Float64Array(this.winD); this.diff = new Float64Array(this.tmaxD + 1);
+                this.mixK = 1 - Math.exp(-1 / (0.01 * sr));
+                this.ratio = 1; this.fratio = 1;
+                this.set(p.semi ?? 0, p.formant ?? 0, p.mix ?? 100);
+                this.mix = this.mixTo; this.act = this.actTo();
             }
-            read(b, d) {
-                let pos = this.i - d - 1; while (pos < 0) pos += this.L;
-                const i0 = Math.floor(pos), f = pos - i0, i1 = (i0 + 1) % this.L;
-                return b[i0] + (b[i1] - b[i0]) * f;
+            set(semi, form, mix) {
+                if (semi !== undefined) this.ratio = Math.pow(2, Math.max(-12, Math.min(12, semi)) / 12);
+                if (form !== undefined) this.fratio = Math.pow(2, Math.max(-12, Math.min(12, form)) / 12);
+                if (mix !== undefined) this.mixTo = Math.max(0, Math.min(1, mix / 100));
+            }
+            actTo() { return Math.abs(this.ratio - 1) < 1e-9 && Math.abs(this.fratio - 1) < 1e-9 ? 0 : 1; }
+            at(b, i) { return i < 0 || i >= this.w ? 0 : b[i & (this.nb - 1)]; }
+            yin(c) {
+                const cd = Math.floor(c / PITCH_DS) - this.winD / 2, nd = Math.floor(this.w / PITCH_DS), dw = this.dwin, df = this.diff;
+                let e = 0;
+                for (let j = 0; j < this.winD; j++) { const k = cd + j, v = k < 0 || k >= nd ? 0 : this.ds[k & (this.nbd - 1)]; dw[j] = v; e += v * v; }
+                if (Math.sqrt(e / this.winD) < PITCH_GATE) return 0;
+                const ww = this.winD - this.tmaxD;
+                for (let t = 0; t <= this.tmaxD; t++) { let s = 0; for (let j = 0; j < ww; j++) { const d = dw[j] - dw[j + t]; s += d * d; } df[t] = s; }
+                let cs = 0; df[0] = 1;
+                for (let t = 1; t <= this.tmaxD; t++) { cs += df[t]; df[t] = cs > 1e-12 ? df[t] * t / cs : 1; }
+                const tm = this.tmaxD; let t = this.tminD;
+                while (t < tm && df[t] >= 0.15) t++;
+                if (t >= tm) return 0;
+                while (t + 1 < tm && df[t + 1] < df[t]) t++;
+                const den = 2 * (df[t - 1] - 2 * df[t] + df[t + 1]);
+                return (t + (Math.abs(den) > 1e-12 ? (df[t - 1] - df[t + 1]) / den : 0)) * PITCH_DS;
+            }
+            periodAt(pos) {
+                if (this.hops === 0) return 0;
+                const h = Math.max(0, Math.min(Math.max(this.hops - 1, 0), Math.round(pos / PITCH_HOP)));
+                return this.f0[h % 64];
+            }
+            tick(x0, x1, nc, out, i) {
+                const nb1 = this.nb - 1, wi = this.w & nb1;
+                const v1 = nc > 1 ? x1 : x0;
+                this.buf[0][wi] = x0; this.buf[1][wi] = v1;
+                const m = (x0 + v1) * 0.5;
+                this.mono[wi] = m; this.acc += m;
+                if ((this.w + 1) % PITCH_DS === 0) { this.ds[Math.floor(this.w / PITCH_DS) & (this.nbd - 1)] = this.acc / PITCH_DS; this.acc = 0; }
+                this.w++;
+                while (this.hops * PITCH_HOP + this.dla + PITCH_DS <= this.w) { this.f0[this.hops % 64] = this.yin(this.hops * PITCH_HOP); this.hops++; }
+                for (;;) {
+                    const pos = this.nextMark, per = this.periodAt(pos);
+                    const t = per > 0 ? Math.max(8, Math.round(per)) : this.unv;
+                    if (pos + 0.3 * t + 1 > this.w - this.dla || Math.round(pos / PITCH_HOP) >= this.hops) break;
+                    if (per > 0) {
+                        const lo = Math.trunc(pos - 0.3 * t), hi = Math.trunc(pos + 0.3 * t);
+                        let pk = Math.max(lo, 0), best = -1;
+                        for (let k = Math.max(lo, 0); k <= hi; k++) { const v = Math.abs(this.at(this.mono, k)); if (v > best) { best = v; pk = k; } }
+                        if (this.mk.length && pk <= this.mk[this.mk.length - 1].pos) pk = Math.trunc(pos);
+                        this.mk.push({ pos: pk, t, voiced: true }); this.nextMark = pk + t;
+                    } else { this.mk.push({ pos: Math.trunc(pos), t, voiced: false }); this.nextMark = pos + t; }
+                }
+                const o = this.w - 1 - this.lat;
+                while (this.ts <= o + this.g && this.mk.length) {
+                    while (this.mk.length > 1 && Math.abs(this.mk[1].pos - this.ts) <= Math.abs(this.mk[0].pos - this.ts)) this.mk.shift();
+                    const mk = this.mk[0], rr = mk.voiced ? this.ratio : 1, fr = this.fratio, q = 1 / rr;
+                    const ext = !mk.voiced ? 1 : q <= 1.4 ? q : Math.max(1, 1.4 - (q - 1.4) * 2);
+                    const l = Math.min(Math.max(Math.floor(mk.t * ext / fr), 1), this.g), c = Math.round(this.ts), fl = rr * fr < 1 ? rr * fr : 1;
+                    for (let k = -l; k <= l; k++) {
+                        const di = c + k; if (di < 0) continue;
+                        const si = mk.pos + k * fr; if (si < 0 || si >= this.w - 1) continue;
+                        const i0 = Math.floor(si), f = si - i0, wv = 0.5 + 0.5 * Math.cos(Math.PI * k / l), dj = di & nb1;
+                        for (let ch = 0; ch < 2; ch++) { const a = this.buf[ch][i0 & nb1], b = this.buf[ch][(i0 + 1) & nb1]; this.y[ch][dj] += (a + (b - a) * f) * wv; }
+                        this.wsum[dj] += wv; this.floor[dj] = fl;
+                    }
+                    this.ts += mk.t / rr;
+                }
+                this.mix += (this.mixTo - this.mix) * this.mixK;
+                const at = this.actTo(); this.act += (at - this.act) * this.mixK; if (Math.abs(this.act - at) < 1e-7) this.act = at;
+                if (o < 0) { for (let ch = 0; ch < out.length; ch++) out[ch][i] = 0; return; }
+                const oj = o & nb1, den = Math.max(this.wsum[oj], this.floor[oj]);
+                for (let ch = 0; ch < out.length; ch++) { const wet = this.y[ch][oj] / den, dry = this.buf[ch][oj]; out[ch][i] = dry + (wet - dry) * this.mix * this.act; }
+                this.y[0][oj] = 0; this.y[1][oj] = 0; this.wsum[oj] = 0; this.floor[oj] = 1;
             }
             process(inputs, outputs) {
-                const inp = inputs[0], out = outputs[0];
-                const n = out[0].length, nc = out.length, ni = inp ? inp.length : 0;
-                while (this.buf.length < nc) this.buf.push(new Float64Array(this.L));
-                for (let i = 0; i < n; i++) {
-                    const p1 = this.ph, p2 = (p1 + 0.5) % 1;
-                    const g1 = Math.sin(Math.PI * p1) ** 2, g2 = Math.sin(Math.PI * p2) ** 2;
-                    for (let ch = 0; ch < nc; ch++) {
-                        const x = ch < ni ? inp[ch][i] : (ni ? inp[0][i] : 0), b = this.buf[ch];
-                        b[this.i] = x;
-                        const wet = this.read(b, p1 * this.W) * g1 + this.read(b, p2 * this.W) * g2;
-                        out[ch][i] = x * (1 - this.mix) + wet * this.mix;
-                    }
-                    this.ph += this.step; this.ph -= Math.floor(this.ph);
-                    if (++this.i >= this.L) this.i = 0;
-                }
+                const inp = inputs[0], out = outputs[0], n = out[0].length, ni = inp ? inp.length : 0, nc = Math.min(2, out.length);
+                for (let i = 0; i < n; i++) this.tick(ni ? inp[0][i] : 0, ni > 1 ? inp[1][i] : (ni ? inp[0][i] : 0), nc, out, i);
                 return true;
             }
         }
-        registerProcessor('pulse-pitch', pulseAuto(PulsePitch, (s, v) => { if (v.semi !== undefined) s.step = (1 - Math.pow(2, Math.max(-12, Math.min(12, v.semi)) / 12)) / s.W; if (v.mix !== undefined) s.mix = Math.max(0, Math.min(1, v.mix / 100)); }));
+        registerProcessor('pulse-pitch', pulseAuto(PulsePitch, (s, v) => s.set(v.semi, v.formant, v.mix)));
 
         // Limiteur de sécurité du master : ne touche à rien sous -1 dB, retient seulement les crêtes qui satureraient.
         // Il « voit venir » la crête 1,5 ms à l'avance, donc il baisse en douceur au lieu d'écraser.
@@ -2007,11 +2071,26 @@ window.PulseAudio = (function() {
 
     // Délai de piste (`track.delayMs`, + = plus tard, − = plus tôt, comme le réglage « Délai » de Logic) : le son de la piste est décalé,
     // pas ses régions à l'écran ni son automation. Même calcul dans render.rs (with_track_delays).
-    function withTrackDelays(project) {
-        if (!project || !(project.tracks || []).some(t => t.delayMs)) return project;
+    // Le Pitch « voix fidèle » retarde le son de pitchLatency(sr) échantillons : la piste (ou la région) qui l'utilise est avancée
+    // d'autant, la voix retombe pile en place (compensation comme dans Logic). Même calcul dans render.rs (with_track_delays, pitch_on).
+    function pitchLatency(sr) {
+        const sd = sr / 4, tmaxD = Math.ceil(sd / 70), winD = 2 * tmaxD + 32;
+        return Math.round(0.025 * sr) + winD * 2 + Math.ceil(1.3 * Math.ceil(sr / 70)) + 16;
+    }
+    function pitchOn(effects, params, auto) {
+        if (!(effects || []).includes('pitch')) return false;
+        const p = (params || {}).pitch || {};
+        return !!(p.semi || p.formant) || Object.keys(auto || {}).some(k => k.startsWith('fx:pitch:'));
+    }
+    let pitchSr = 48000;   // fréquence du rendu en cours (lecture ou export)
+    function withTrackDelays(project, sr = pitchSr) {
+        const clipPitch = (c) => !!(c.fx && pitchOn(c.fx.effects, c.fx.effectParams));
+        if (!project || !(project.tracks || []).some(t => t.delayMs || pitchOn(t.effects, t.effectParams, t.automation) || (t.clips || []).some(clipPitch))) return project;
+        const comp = pitchLatency(sr) / sr;
         return { ...project, tracks: project.tracks.map(t => {
-            const d = (t.delayMs || 0) / 1000; if (!d) return t;
-            return { ...t, clips: (t.clips || []).map(c => ({ ...c, start: c.start + d, ...(c.loopEnd ? { loopEnd: c.loopEnd + d } : {}) })) };
+            const d = (t.delayMs || 0) / 1000 - (pitchOn(t.effects, t.effectParams, t.automation) ? comp : 0);
+            if (!d && !(t.clips || []).some(clipPitch)) return t;
+            return { ...t, clips: (t.clips || []).map(c => { const dc = d - (clipPitch(c) ? comp : 0); return dc ? { ...c, start: c.start + dc, ...(c.loopEnd ? { loopEnd: c.loopEnd + dc } : {}) } : c; }) };
         }) };
     }
     // Piste gelée (`track.frozen = { id, gain }`, comme « Geler » dans Logic) : elle joue son rendu (régions + effets de piste,
@@ -2043,7 +2122,7 @@ window.PulseAudio = (function() {
     //   live     = garde les pistes mutées dans le graphe (gain 0) pour mute/solo à chaud + VU-mètres
     //   freeze   = rendu d'une piste à geler : le son est pris juste après ses effets (voir renderFreeze)
     function buildGraph(actx, project, dest, opts) {
-        project = withTrackDelays(withFrozen(project));
+        project = withTrackDelays(withFrozen(project), actx.sampleRate);
         const { fromTime = 0, t0 = 0, endTime = Infinity, onlyTrack = null, live = false, freeze = false } = opts;
         const sources = [];
 
@@ -2902,7 +2981,7 @@ window.PulseAudio = (function() {
         };
         ['chorus', 'flanger', 'phaser', 'tremolo', 'doubler', 'slapback'].forEach((k) => { B[k] = () => node('pulse-mod', k); });
         B.crush = () => node('pulse-crush', 'crush');
-        B.pitch = () => { if ((params.pitch || {}).semi || hasAuto('pitch')) node('pulse-pitch', 'pitch'); };
+        B.pitch = () => { const pp = params.pitch || {}; if (pp.semi || pp.formant || hasAuto('pitch')) node('pulse-pitch', 'pitch'); };
         B.util = () => node('pulse-util', 'util');
         B.width = () => node('pulse-util', 'width');
 

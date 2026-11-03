@@ -1178,70 +1178,8 @@ impl Delay {
     }
 }
 
-/// Pitch −/+ : même calcul que le worklet `pulse-pitch` de audio.js
-/// (deux têtes de lecture dans une mémoire de 50 ms, fondu croisé sin²).
-pub struct Pitch {
-    buf: [Vec<f64>; 2],
-    w: f64,
-    i: usize,
-    ph: f64,
-    step: f64,
-    mix: f64,
-    glide: Glide,
-    spare: f64,
-}
-
-impl Pitch {
-    /// Valeurs de volume prises tout de suite, sans glisser
-    pub fn settle(&mut self) { self.glide.land(&mut self.mix, &mut self.spare); }
-    /// Plugin : nouveaux réglages, même mémoire (pas de trou dans le son)
-    pub fn retune(&mut self, p: &PitchParams, sr: f64) {
-        let n = Self::new(p, sr);
-        self.step = n.step;
-        self.glide.aim(n.mix, 0.0);
-    }
-    pub fn new(p: &PitchParams, sr: f64) -> Self {
-        let semi = p.semi.unwrap_or(0.0).clamp(-12.0, 12.0);
-        let w = (0.05 * sr).round();
-        let len = w as usize * 2 + 8;
-        Self {
-            buf: [vec![0.0; len], vec![0.0; len]],
-            w,
-            i: 0,
-            ph: 0.0,
-            step: (1.0 - 2f64.powf(semi / 12.0)) / w,
-            mix: (p.mix.unwrap_or(100.0) / 100.0).clamp(0.0, 1.0),
-            glide: Glide::new(sr),
-            spare: 0.0,
-        }
-    }
-    fn read(b: &[f64], i: usize, d: f64) -> f64 {
-        let l = b.len() as f64;
-        let mut pos = i as f64 - d - 1.0;
-        while pos < 0.0 {
-            pos += l;
-        }
-        let i0 = pos.floor() as usize;
-        let f = pos - i0 as f64;
-        let i1 = (i0 + 1) % b.len();
-        b[i0] + (b[i1] - b[i0]) * f
-    }
-    pub fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
-        self.glide.step(&mut self.mix, &mut self.spare);
-        let p1 = self.ph;
-        let p2 = (p1 + 0.5) % 1.0;
-        let g1 = (PI * p1).sin().powi(2);
-        let g2 = (PI * p2).sin().powi(2);
-        for ch in 0..nc {
-            self.buf[ch][self.i] = x[ch];
-            let wet = Self::read(&self.buf[ch], self.i, p1 * self.w) * g1 + Self::read(&self.buf[ch], self.i, p2 * self.w) * g2;
-            x[ch] = x[ch] * (1.0 - self.mix) + wet * self.mix;
-        }
-        self.ph += self.step;
-        self.ph -= self.ph.floor();
-        self.i = (self.i + 1) % self.buf[0].len();
-    }
-}
+/// Pitch « voix fidèle » (hauteur et formants séparés) : voir pitch.rs
+pub use crate::pitch::Pitch;
 
 /// Ligne à retard en boucle (un écho ou un diffuseur de la reverb).
 #[derive(Clone)]
@@ -1654,7 +1592,7 @@ fn auto_range(fx: &str, key: &str) -> Option<(f64, f64, bool)> {
         ("crush", "bits") => (4.0, 16.0, false),
         ("crush", "down") => (1.0, 32.0, false),
         ("crush", "mix") | ("pitch", "mix") => (0.0, 100.0, false),
-        ("pitch", "semi") => (-12.0, 12.0, false),
+        ("pitch", "semi") | ("pitch", "formant") => (-12.0, 12.0, false),
         ("tremolo", "rate") => (0.5, 15.0, false),
         ("tremolo", "depth") | ("phaser", "depth") => (0.0, 100.0, false),
         ("phaser", "rate") => (0.05, 3.0, false),
@@ -1907,7 +1845,7 @@ impl Chain {
         let delay = has("delay").then(|| Delay::new(&effect_params.delay.clone().unwrap_or_default(), sr, bpm));
         let master = has("master").then(|| Master::new(&effect_params.master.clone().unwrap_or_default(), sr));
         let limit = has("limit").then(|| Limiter::with(&effect_params.limit.clone().unwrap_or_default(), ceiling_db, sr));
-        let pitch = (has("pitch") && effect_params.pitch.as_ref().and_then(|p| p.semi).unwrap_or(0.0) != 0.0)
+        let pitch = (has("pitch") && effect_params.pitch.as_ref().is_some_and(|p| p.semi.unwrap_or(0.0) != 0.0 || p.formant.unwrap_or(0.0) != 0.0))
             .then(|| Pitch::new(&effect_params.pitch.clone().unwrap_or_default(), sr));
         let comp_p = effect_params.comp.clone().unwrap_or_default();
         Self { cut, filters, dyn_eq, sat, gate, crush, util, width, modfx, deess, deess2, mband, msat, comp, master, limit, delay, reverb, pitch, order: Stage::DEFAULT.to_vec(),
@@ -2005,9 +1943,7 @@ impl Chain {
             ("crush", k) => if let Some(c) = &mut self.crush {
                 match k { "bits" => c.q = 2f64.powf(v - 1.0), "down" => c.down = (v.round() as usize).max(1), "mix" => c.mix = v / 100.0, _ => {} }
             },
-            ("pitch", k) => if let Some(p) = &mut self.pitch {
-                match k { "semi" => p.step = (1.0 - 2f64.powf(v.clamp(-12.0, 12.0) / 12.0)) / p.w, "mix" => p.mix = (v / 100.0).clamp(0.0, 1.0), _ => {} }
-            },
+            ("pitch", k) => if let Some(p) = &mut self.pitch { p.set_live(k, v); },
             (m @ ("tremolo" | "phaser" | "flanger" | "chorus" | "doubler" | "slapback"), k) => {
                 let st = match m { "tremolo" => Stage::Tremolo, "phaser" => Stage::Phaser, "flanger" => Stage::Flanger, "chorus" => Stage::Chorus, "doubler" => Stage::Doubler, _ => Stage::Slapback };
                 if let Some((_, f)) = self.modfx.iter_mut().find(|(s2, _)| *s2 == st) {
@@ -2523,19 +2459,28 @@ mod tests_pitch_pingpong {
 
     #[test]
     fn pitch_monte_et_descend() {
+        // Son riche (dents de scie à 220 Hz, comme une voix) : la note arrive où on l'attend, retard compris.
+        // (un son pur n'est pas un bon test : la technique travaille période par période sur les harmoniques)
         let sr = 48_000.0;
-        for (semi, want) in [(12.0, 880.0), (-12.0, 220.0), (5.0, 440.0 * 2f64.powf(5.0 / 12.0))] {
-            let mut p = Pitch::new(&PitchParams { semi: Some(semi), mix: Some(100.0) }, sr);
-            let out: Vec<f64> = (0..48_000)
-                .map(|n| {
-                    let mut x = [(2.0 * PI * 440.0 * n as f64 / sr).sin(), 0.0];
-                    p.tick(&mut x, 1);
-                    x[0]
-                })
-                .collect();
-            let f = freq(&out[4_800..], sr);
+        let period = |sig: &[f64]| {
+            // autocorrélation : meilleur décalage entre 1 et 15 ms
+            let (lo, hi) = ((0.001 * sr) as usize, (0.015 * sr) as usize);
+            let n = 4096;
+            let best = (lo..hi).map(|t| (t, (0..n).map(|i| sig[i] * sig[i + t]).sum::<f64>() / (0..n).map(|i| sig[i + t] * sig[i + t]).sum::<f64>().sqrt()))
+                .fold((lo, f64::MIN), |a, b| if b.1 > a.1 * 1.05 { b } else { a }).0;
+            sr / best as f64
+        };
+        for (semi, want) in [(12.0, 440.0), (-12.0, 110.0), (5.0, 220.0 * 2f64.powf(5.0 / 12.0)), (-5.0, 220.0 * 2f64.powf(-5.0 / 12.0))] {
+            let mut p = Pitch::new(&PitchParams { semi: Some(semi), mix: Some(100.0), ..Default::default() }, sr);
+            let out: Vec<f64> = (0..48_000).map(|n| { let mut x = [((n as f64 * 220.0 / sr) % 1.0) - 0.5, 0.0]; p.tick(&mut x, 1); x[0] }).collect();
+            let f = period(&out[12_000..]);
             assert!((f - want).abs() / want < 0.03, "{semi} demi-tons : {f:.1} Hz au lieu de {want:.1}");
         }
+        // formant seul : la note ne bouge pas
+        let mut p = Pitch::new(&PitchParams { semi: Some(0.0), formant: Some(5.0), mix: Some(100.0) }, sr);
+        let out: Vec<f64> = (0..48_000).map(|n| { let mut x = [((n as f64 * 220.0 / sr) % 1.0) - 0.5, 0.0]; p.tick(&mut x, 1); x[0] }).collect();
+        let f = period(&out[12_000..]);
+        assert!((f - 220.0).abs() / 220.0 < 0.03, "formant seul : {f:.1} Hz au lieu de 220");
     }
 
     #[test]
@@ -2602,8 +2547,8 @@ mod tests_pitch_pingpong {
         let (mut c1, mut c2) = (Compressor::new(&ca, sr), Compressor::new(&cb, sr));
         c1.retune(&cb, sr);
         c1.settle();
-        let pa = PitchParams { semi: Some(3.0), mix: Some(100.0) };
-        let pb = PitchParams { semi: Some(-5.0), mix: Some(60.0) };
+        let pa = PitchParams { semi: Some(3.0), mix: Some(100.0), ..Default::default() };
+        let pb = PitchParams { semi: Some(-5.0), mix: Some(60.0), ..Default::default() };
         let (mut p1, mut p2) = (Pitch::new(&pa, sr), Pitch::new(&pb, sr));
         p1.retune(&pb, sr);
         p1.settle();
@@ -2635,8 +2580,8 @@ mod tests_pitch_pingpong {
         let mut c = Compressor::new(&CompParams { mix: Some(0.0), ..Default::default() }, sr);
         let j = max_jump(&mut |n, x| { if n == 24_000 { c.retune(&CompParams { mix: Some(100.0), threshold: Some(-30.0), ..Default::default() }, sr); } c.tick(x, 2); });
         assert!(j < calm * 1.5, "compresseur : saut de {j:.3}");
-        let mut p = Pitch::new(&PitchParams { semi: Some(5.0), mix: Some(0.0) }, sr);
-        let j = max_jump(&mut |n, x| { if n == 24_000 { p.retune(&PitchParams { semi: Some(5.0), mix: Some(100.0) }, sr); } p.tick(x, 2); });
+        let mut p = Pitch::new(&PitchParams { semi: Some(5.0), mix: Some(0.0), ..Default::default() }, sr);
+        let j = max_jump(&mut |n, x| { if n == 24_000 { p.retune(&PitchParams { semi: Some(5.0), mix: Some(100.0), ..Default::default() }, sr); } p.tick(x, 2); });
         assert!(j < calm * 1.5, "pitch : saut de {j:.3}");
         let mut r = Reverb::new(&ReverbParams { wet: Some(0.0), ..Default::default() }, sr);
         let j = max_jump(&mut |n, x| { if n == 24_000 { r.retune(&ReverbParams { wet: Some(100.0), ..Default::default() }, sr); } r.tick(x, 2); });

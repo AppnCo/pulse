@@ -201,6 +201,8 @@ pub struct MbandBand {
 pub struct PitchParams {
     pub semi: Option<f64>,
     pub mix: Option<f64>,
+    /// formants en demi-tons (−12 à +12) : timbre plus grave / plus fin, sans changer la note
+    pub formant: Option<f64>,
 }
 
 /// Filtre : coupe-bas `hpf` et coupe-haut `lpf` en Hz (≤ 20 et ≥ 20 000 = éteint), pente 12 ou 24 dB par octave.

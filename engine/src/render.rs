@@ -164,16 +164,28 @@ fn aux_sends(project: &Project, sends: &HashMap<String, f64>, auto: &crate::mode
         .collect()
 }
 
-/// Délai de piste : copie du projet où les régions des pistes à délai sont décalées (même calcul que withTrackDelays dans audio.js)
-fn with_track_delays(project: &Project) -> Option<Project> {
-    if !project.tracks.iter().any(|t| t.delay_ms.unwrap_or(0.0) != 0.0) { return None; }
+/// Le Pitch « voix fidèle » retarde le son (`Pitch::latency`) : la piste (ou la région) qui l'utilise est avancée d'autant,
+/// pour que la voix retombe pile en place (comme la compensation de retard de Logic). Même calcul que pitchComp dans audio.js.
+fn pitch_on(effects: &[String], params: &crate::model::EffectParams, auto: Option<&crate::model::Automation>) -> bool {
+    effects.iter().any(|e| e == "pitch")
+        && (params.pitch.as_ref().is_some_and(|p| p.semi.unwrap_or(0.0) != 0.0 || p.formant.unwrap_or(0.0) != 0.0)
+            || auto.is_some_and(|a| a.other.keys().any(|k| k.starts_with("fx:pitch:"))))
+}
+/// Délai de piste : copie du projet où les régions des pistes à délai sont décalées (même calcul que withTrackDelays dans audio.js),
+/// moins la compensation du Pitch (`sr` = fréquence de rendu)
+fn with_track_delays(project: &Project, sr: f64) -> Option<Project> {
+    let comp = crate::pitch::Pitch::latency_for(sr) as f64 / sr;
+    let need = |t: &crate::model::Track| t.delay_ms.unwrap_or(0.0) != 0.0 || pitch_on(&t.effects, &t.effect_params, Some(&t.automation))
+        || t.clips.iter().any(|c| c.fx.as_ref().is_some_and(|f| pitch_on(&f.effects, &f.effect_params, None)));
+    if !project.tracks.iter().any(need) { return None; }
     let mut p = project.clone();
     for t in &mut p.tracks {
-        let d = t.delay_ms.unwrap_or(0.0) / 1000.0;
-        if d == 0.0 { continue; }
+        let d = t.delay_ms.unwrap_or(0.0) / 1000.0 - if pitch_on(&t.effects, &t.effect_params, Some(&t.automation)) { comp } else { 0.0 };
         for c in &mut t.clips {
-            c.start += d;
-            if let Some(le) = c.loop_end.as_mut() { *le += d; }
+            let dc = d - if c.fx.as_ref().is_some_and(|f| pitch_on(&f.effects, &f.effect_params, None)) { comp } else { 0.0 };
+            if dc == 0.0 { continue; }
+            c.start += dc;
+            if let Some(le) = c.loop_end.as_mut() { *le += dc; }
         }
     }
     Some(p)
@@ -316,10 +328,10 @@ fn track_taps(project: &Project, track: &crate::model::Track, idx: usize, opts: 
 fn smooth_k(sr: f64) -> f64 { 1.0 - (-1.0 / (0.01 * sr)).exp() }
 
 /// Le projet tel que le mixeur le voit : pistes gelées remplacées par leur rendu, délais de piste appliqués
-fn prepared(project: &Project, media: &Media) -> Project {
+fn prepared(project: &Project, media: &Media, sr: f64) -> Project {
     let frozen = with_frozen(project, media);
     let p = frozen.as_ref().unwrap_or(project);
-    with_track_delays(p).unwrap_or_else(|| p.clone())
+    with_track_delays(p, sr).unwrap_or_else(|| p.clone())
 }
 
 fn with_fader(project: &Project, opts: &RenderOptions) -> RenderOptions {
@@ -331,7 +343,7 @@ fn with_fader(project: &Project, opts: &RenderOptions) -> RenderOptions {
 impl Renderer {
     pub fn new(project: &Project, media: &Media, opts: &RenderOptions) -> Self {
         let base_opts = RenderOptions { sample_rate: opts.sample_rate, master_volume: opts.master_volume, range: opts.range, only_track: opts.only_track, start: opts.start };
-        let project = &prepared(project, media);
+        let project = &prepared(project, media, opts.sample_rate as f64);
         let opts = &with_fader(project, opts);
         let sr = opts.sample_rate as f64;
         let (from, to) = opts.range.unwrap_or((opts.start.max(0.0).min(project.end()), project.end()));
@@ -515,7 +527,7 @@ impl Renderer {
     /// les effets gardent leur état (une queue de reverb continue). La structure (régions, effets, sorties) doit rester la même :
     /// une piste ou un groupe dont la sortie a changé garde l'ancienne (il faut relancer la lecture pour ça).
     pub fn mix_from(&mut self, project: &Project, media: &Media) {
-        let project = &prepared(project, media);
+        let project = &prepared(project, media, self.base.sample_rate as f64);
         let opts = with_fader(project, &self.base);
         self.master_volume = opts.master_volume;
         for tr in &mut self.tracks {

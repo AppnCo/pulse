@@ -9455,7 +9455,8 @@ function openPitchPanel(trackIdx, anchorEl) {
         if (semi !== 0) { const xc = (n) => isBlack(n) ? KX + whiteIdx(n) * ww : KX + whiteIdx(n) * ww + ww / 2 - 1, y = KY + KH + 26, x0 = xc(base), x1 = xc(target);
             g += `<path d="M${x0.toFixed(1)} ${y} L${x1.toFixed(1)} ${y}" stroke="${col}" stroke-width="3" marker-end="url(#pitar)"/><defs><marker id="pitar" markerWidth="8" markerHeight="8" refX="5" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="${col}"/></marker></defs>`; }
         g += `<text x="${KX + KW / 2}" y="${KY + KH + 64}" class="sat-big" text-anchor="middle">${PITCH_WORDS[String(semi)] || (Math.abs(semi) + ' demi-ton' + (Math.abs(semi) > 1 ? 's' : '') + (semi > 0 ? ' plus aigu' : ' plus grave'))}</text>`;
-        g += `<text x="${KX + KW / 2}" y="${KY + KH + 86}" class="lim-txt" text-anchor="middle">${(P().mix ?? 100) < 100 ? 'mélangée à la voix d\'origine : ' + Math.round(P().mix) + ' %' : 'seulement la voix transposée'}</text>`;
+        const fo = Math.round((P().formant || 0) * 10) / 10;
+        g += `<text x="${KX + KW / 2}" y="${KY + KH + 86}" class="lim-txt" text-anchor="middle">${fo === 0 ? 'timbre d\'origine (la voix reste la tienne)' : 'timbre ' + (fo > 0 ? 'plus fin' : 'plus gros') + ' (formant ' + (fo > 0 ? '+' : '') + String(fo).replace('.', ',') + ')'}${(P().mix ?? 100) < 100 ? ' · mélangée à la voix d\'origine : ' + Math.round(P().mix) + ' %' : ''}</text>`;
         svg.innerHTML = g;
         panel.querySelector('.pit-v').textContent = label(semi) + ' dt';
         panel.querySelectorAll('.pit-jump').forEach(b => b.classList.toggle('on', +b.dataset.v === semi));
@@ -9468,7 +9469,10 @@ function openPitchPanel(trackIdx, anchorEl) {
         fp.appendChild(c0);
         c0.querySelectorAll('.pit-jump').forEach(b => b.addEventListener('click', () => { step(() => setSemi(+b.dataset.v)); }));
         const sep = document.createElement('div'); sep.className = 'lim-sep'; fp.appendChild(sep);
-        kMix = proKnob(fp, { key: 'mix', label: 'Mélange', min: 0, max: 100, val: P().mix ?? 100, big: true, fmt: (v) => Math.round(v) + ' %', onEnd: finish, onChange: (v) => { arm(); P().mix = Math.round(v); draw(); } });
+        proKnob(fp, { key: 'formant', label: 'Formant', min: -12, max: 12, val: P().formant || 0, big: true, color: '#F0ABFC',
+            fmt: (v) => { v = Math.round(v * 10) / 10; return v === 0 ? 'voix d\'origine' : (v > 0 ? '+' : '') + String(v).replace('.', ',') + (v > 0 ? ' plus fine' : ' plus grosse'); },
+            onEnd: finish, onChange: (v) => { arm(); v = Math.round(v * 10) / 10; if (Math.abs(v) < 0.05) delete P().formant; else P().formant = v; draw(); } });
+        kMix = proKnob(fp, { key: 'mix', label: 'Mélange', min: 0, max: 100, val: P().mix ?? 100, fmt: (v) => Math.round(v) + ' %', onEnd: finish, onChange: (v) => { arm(); P().mix = Math.round(v); draw(); } });
     };
     const at = (e) => { const r = svg.getBoundingClientRect(); return [(e.clientX - r.left) * W / r.width, (e.clientY - r.top) * H / r.height]; };
     svg.addEventListener('mousedown', (e) => {
@@ -9922,7 +9926,8 @@ const FX_PANEL_DEFS = {
     ],
     pitch: [
         { key: 'semi', label: 'Hauteur', unit: ' dt', min: -12, max: 12, def: 0, step: 1, tip: 'En demi-tons : -12 = une octave plus grave, +12 = une octave plus aiguë' },
-        { key: 'mix',  label: 'Mélange', unit: '%',   min: 0,   max: 100, def: 100, step: 1, tip: '100 % = seulement la voix transposée' }
+        { key: 'mix',  label: 'Mélange', unit: '%',   min: 0,   max: 100, def: 100, step: 1, tip: '100 % = seulement la voix transposée' },
+        { key: 'formant', label: 'Formant', unit: ' dt', min: -12, max: 12, def: 0, step: 0.1, tip: 'Le timbre de la voix (plus grosse / plus fine), sans changer la note' }
     ],
     delay: [
         { key: 'beats',    label: 'Temps', unit: '',  min: 0.125, max: 2,  def: 0.5, step: 0.125, fmt: beatsLabel,

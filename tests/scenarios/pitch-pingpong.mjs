@@ -12,10 +12,14 @@ export default async (c) => {
     const wav=await PulseAudio.exportWav(proj); const ab=await new OfflineAudioContext(1,1,48000).decodeAudioData(await wav.arrayBuffer());
     return { l:Array.from(ab.getChannelData(0).slice(0,sr)), r:Array.from(ab.getChannelData(1).slice(0,sr)) };
   })()`);
-  const freq = (s) => { let z = 0; for (let i = 4800; i < s.length - 1; i++) if (s[i] <= 0 && s[i + 1] > 0) z++; return z / ((s.length - 4800) / 48000); };
-  const base = freq((await render('pitch', { pitch: { semi: 0 } }, 'Math.sin(2*Math.PI*440*n/sr)*0.5')).l);   // référence sans transposition
+  // Pitch « voix fidèle » : il travaille sur les harmoniques (comme une voix) → son riche à 220 Hz, période par autocorrélation
+  const freq = (s) => { const lo = 48, hi = 720, n = 4096, a = 12000; let best = lo, bv = -Infinity;
+    for (let t = lo; t < hi; t++) { let c = 0, e = 0; for (let i = 0; i < n; i++) { c += s[a + i] * s[a + i + t]; e += s[a + i + t] * s[a + i + t]; } const v = c / Math.sqrt(e + 1e-12); if (v > bv * 1.05) { bv = v; best = t; } }
+    return 48000 / best; };
+  const SAW = '(((n*220/sr)%1)-0.5)*0.5';
+  const base = freq((await render('pitch', { pitch: { semi: 0 } }, SAW)).l);   // référence sans transposition
   for (const semi of [12, -12, 5]) {
-    const o = await render('pitch', { pitch: { semi, mix: 100 } }, 'Math.sin(2*Math.PI*440*n/sr)*0.5');
+    const o = await render('pitch', { pitch: { semi, mix: 100 } }, SAW);
     const want = base * 2 ** (semi / 12), f = freq(o.l);
     check(`Pitch ${semi > 0 ? '+' : ''}${semi} : rapport ${(2 ** (semi / 12)).toFixed(3)}`, Math.abs(f - want) / want < 0.03, `${base.toFixed(1)} → ${f.toFixed(1)} Hz`);
   }
