@@ -686,6 +686,74 @@ function openTapePanel(trackIdx, anchorEl) {
     makePlugWindow(panel, t, 'tape', trackIdx);
 }
 
+
+// ===== Lampe 670 : compresseur à lampes variable-mu (esprit « 670 ») : façade grise, gros boutons, vumètre =====
+function openL670Panel(trackIdx, anchorEl) {
+    closeTransientPanels();
+    const t = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;
+    if (!t) return;
+    const already = findPlugWin(t, 'l670');
+    if (already) { plugFront(already); return; }
+    t.effectParams = t.effectParams || {};
+    if (!t.effectParams.l670) t.effectParams.l670 = { input: 0, thr: 4, tc: 1, output: 0, mix: 100 };
+    const P = () => t.effectParams.l670, ed = anaEdit(t, 'l670');
+    const W = 860, H = 300;
+    const { panel, svg } = anaWindow(t, 'l670', 'Lampe 670', W, H, anchorEl, trackIdx, 860, 'gris');
+    const L = { style: 'paint-order:stroke', 'stroke-opacity': '.35', 'stroke-width': '.6', stroke: '#000' };
+    anaText(svg, 44, 40, 'PULSE · LAMPE 670', { ...L, 'text-anchor': 'start', 'font-size': 14, 'font-weight': 700, 'letter-spacing': 3 });
+    anaText(svg, 44, 56, 'COMPRESSEUR À LAMPES « VARIABLE-MU »', { class: 'ana-sub', 'text-anchor': 'start', 'letter-spacing': 2.5 });
+    const read = panel.querySelector('.ana-read');
+    const say = () => { const p = P(); read.innerHTML = `Entrée <b>${p.input > 0 ? '+' : ''}${p.input} dB</b> · Seuil <b>${p.thr}</b> · Constante <b>${(p.tc ?? 1) + 1}</b> · Sortie <b>${p.output > 0 ? '+' : ''}${p.output} dB</b>`; };
+    const knob = (o) => anaKnob(svg, { ...o, get: () => P()[o.key] ?? o.def, set: (v) => { P()[o.key] = Math.round(v * 2) / 2; ed.touch(o.key); say(); }, onStart: ed.start, onEnd: ed.end });
+    const CY = 160;
+    anaTicks(svg, 110, CY, 50, 7, -150, 150, ['−10', '', '0', '', '10', '', '20'], 7.5);
+    knob({ strip: 'black-big', cx: 110, cy: CY, d: 84, key: 'input', min: -10, max: 20, def: 0, tip: 'Entrée : pousse les lampes (plus de couleur, plus de compression)' });
+    anaText(svg, 110, CY + 76, 'ENTRÉE', { ...L, 'font-size': 10 });
+    anaTicks(svg, 240, CY, 50, 11, -150, 150, ['0', '', '2', '', '4', '', '6', '', '8', '', '10'], 7.5);
+    knob({ strip: 'black-big', cx: 240, cy: CY, d: 84, key: 'thr', min: 0, max: 10, def: 4, tip: 'Seuil : 0 = rien, 10 = beaucoup de compression' });
+    anaText(svg, 240, CY + 76, 'SEUIL', { ...L, 'font-size': 10 });
+    // vumètre de réduction au centre
+    const vx = 330, vy = 76, vw = 220, vh = 140, cx = vx + vw / 2, cy = vy + vh + 18, R = 108;
+    anaEl('rect', { x: vx - 6, y: vy - 6, width: vw + 12, height: vh + 12, rx: 8, fill: '#050407', stroke: '#2a2733' }, svg);
+    anaEl('rect', { x: vx, y: vy, width: vw, height: vh, rx: 4, fill: 'url(#anaVu)' }, svg);
+    const clip = anaEl('clipPath', { id: 'anaVuClip670' }, svg); anaEl('rect', { x: vx, y: vy, width: vw, height: vh, rx: 4 }, clip);
+    const vu = anaEl('g', { 'clip-path': 'url(#anaVuClip670)' }, svg);
+    const grA = (g) => -45 + 90 * Math.max(0, Math.min(1, 1 - g / 20));
+    [20, 15, 10, 6, 4, 2, 0].forEach((g) => { const a = grA(g) * Math.PI / 180; anaEl('line', { x1: cx + Math.sin(a) * R, y1: cy - Math.cos(a) * R, x2: cx + Math.sin(a) * (R + 7), y2: cy - Math.cos(a) * (R + 7), stroke: '#e9d5ff', 'stroke-width': 1.2 }, vu);
+        anaText(vu, cx + Math.sin(a) * (R + 15), cy - Math.cos(a) * (R + 15) + 3, String(g), { fill: '#e9d5ff', 'font-size': 7.5, 'letter-spacing': 0, class: '' }); });
+    const needle = anaEl('line', { x1: cx, y1: cy, x2: cx, y2: cy - R - 3, stroke: '#fff', 'stroke-width': 1.5, filter: 'url(#anaGlow)' }, vu);
+    anaText(svg, vx + 10, vy + vh - 9, 'RÉDUCTION · dB', { fill: '#a78bfa', 'text-anchor': 'start', 'font-size': 7.5, class: '' });
+    anaEl('rect', { x: vx, y: vy, width: vw, height: vh, rx: 4, fill: 'url(#anaGlass)', 'pointer-events': 'none' }, svg);
+    // constante de temps (6 crans), sortie, mélange
+    ['1', '2', '3', '4', '5', '6'].forEach((tx, i) => { const a = (-100 + 40 * i) * Math.PI / 180; anaText(svg, 640 + Math.sin(a) * 40, CY - Math.cos(a) * 40 + 3, tx, { 'font-size': 8, 'letter-spacing': 0 }); });
+    anaKnob(svg, { strip: 'sel6', cx: 640, cy: CY, d: 48, key: 'tc', min: 0, max: 5, def: 1, steps: [0, 1, 2, 3, 4, 5], get: () => P().tc ?? 1, set: (v) => { P().tc = v; say(); }, onStart: ed.start, onEnd: ed.end,
+        tip: 'Constante de temps : 1 rapide (0,3 s) … 4 lente (5 s) ; 5 et 6 = relâchement automatique (vite sur les coups, lent quand ça dure)' }).g.classList.remove('pk');
+    anaText(svg, 640, CY + 76, 'CONSTANTE', { ...L, 'font-size': 10 });
+    anaTicks(svg, 760, CY - 30, 24, 7, -150, 150, ['−20', '', '', '0', '', '', '+20'], 6.5);
+    knob({ strip: 'alu-big', cx: 760, cy: CY - 30, d: 38, key: 'output', min: -20, max: 20, def: 0, tip: 'Sortie (dB)' });
+    anaText(svg, 760, CY + 12, 'SORTIE', { ...L, 'font-size': 8 });
+    anaTicks(svg, 760, CY + 50, 15, 5, -135, 135, null);
+    knob({ strip: 'bakelite', cx: 760, cy: CY + 50, d: 22, key: 'mix', min: 0, max: 100, def: 100, tip: 'Mélange avec le son d\'origine' });
+    anaText(svg, 760, CY + 78, 'MÉLANGE', { ...L, 'font-size': 7, 'letter-spacing': 1 });
+    let ang = grA(0), last = performance.now();
+    const key = 'l670|' + fxKeyOf(trackIdx, t);
+    const tick = (now) => {
+        if (!panel.isConnected) return;
+        const on = (t.effects || []).includes('l670');
+        const m = on && (state.playing || state.recording) && PulseAudio.getCompReduction ? PulseAudio.getCompReduction(key) : null;
+        const target = grA(m ? (m.gr || 0) : 0);
+        const dt = Math.min(0.1, (now - last) / 1000); last = now;
+        ang += (target - ang) * (1 - Math.exp(-dt / 0.08));
+        needle.setAttribute('transform', `rotate(${ang.toFixed(2)} ${cx} ${cy})`);
+        requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+    panel.querySelector('.fx-bypass').addEventListener('change', (e) => { pushUndo(); setFxOn(t, 'l670', e.target.checked); refreshPlaybackSoon(); saveProject(); refreshStrips(); });
+    anaSkin(svg, 'gris');
+    say();
+    makePlugWindow(panel, t, 'l670', trackIdx);
+}
+
 // Styles de la façade (ici pour garder la gamme dans un seul fichier)
 (() => {
     const st = document.createElement('style');

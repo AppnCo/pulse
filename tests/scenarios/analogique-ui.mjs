@@ -99,6 +99,12 @@ export default async (c) => {
   check('Bande 80 : bobines', await J(ev, `return [...document.querySelectorAll('.fx-panel.plug-win[data-fx="tape"] image')].filter(i=>/reel/.test(i.getAttribute('href'))).length`) === 2);
   await click('.fx-panel.plug-win[data-fx="tape"] .ana-var[data-v="2"]');
   check('Bande 80 : Cassette', await J(ev, `return state.project.tracks[0].effectParams.tape.machine`) === 2);
+  // Lampe 670 : dans « Compresseurs », façade ouverte, constante de temps 6
+  await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
+  await click('#inspector .slot-plus[data-plus="fx"]');
+  await click('.fx-add-menu .fam-range', 'Analogique');
+  check('menu : Lampe 670 cliquée', await click('.fx-add-menu .fam-fx', 'Lampe 670')); await sleep(500);
+  check('Lampe 670 : façade', await J(ev, `return !!document.querySelector('.fx-panel.plug-win[data-fx="l670"] .ana-k[data-key="thr"]')`) === true);
   // ---- Envois façon Logic
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   await click('#inspector .slot-plus[data-plus="send"]');

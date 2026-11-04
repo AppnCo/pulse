@@ -1522,6 +1522,7 @@ pub struct Chain {
     eqp1: Option<(crate::analog::EqP1, crate::analog::EqP1Params)>,
     busg: Option<(crate::analog::BusG, crate::analog::BusGParams)>,
     tape: Option<(crate::analog::Tape, crate::analog::TapeParams)>,
+    l670: Option<(crate::analog::L670, crate::analog::L670Params)>,
     order: Vec<Stage>,
     /// Automation des réglages d'effet (même liste de réglages que le navigateur, voir AUTO_FX dans studio.js)
     auto: Vec<AutoParam>,
@@ -1611,6 +1612,10 @@ fn auto_range(fx: &str, key: &str) -> Option<(f64, f64, bool)> {
         ("eqp1", "output") => (-12.0, 12.0, false),
         ("busg", "thr") => (-30.0, 0.0, false),
         ("tape", "input") => (-12.0, 18.0, false),
+        ("l670", "input") => (-10.0, 20.0, false),
+        ("l670", "thr") => (0.0, 10.0, false),
+        ("l670", "output") => (-20.0, 20.0, false),
+        ("l670", "mix") => (0.0, 100.0, false),
         ("tape", "output") => (-12.0, 12.0, false),
         ("tape", "bias") => (-100.0, 100.0, false),
         ("tape", "noise") | ("tape", "wow") | ("tape", "mix") => (0.0, 100.0, false),
@@ -1877,8 +1882,9 @@ impl Chain {
         let eqp1 = has("eqp1").then(|| { let p = crate::analog::EqP1Params::from(&effect_params.eqp1.clone().unwrap_or_default()); (crate::analog::EqP1::new(&p, sr), p) });
         let busg = has("busg").then(|| { let p = crate::analog::BusGParams::from(&effect_params.busg.clone().unwrap_or_default()); (crate::analog::BusG::new(&p, sr), p) });
         let tape = has("tape").then(|| { let p = crate::analog::TapeParams::from(&effect_params.tape.clone().unwrap_or_default()); (crate::analog::Tape::new(&p, sr), p) });
+        let l670 = has("l670").then(|| { let p = crate::analog::L670Params::from(&effect_params.l670.clone().unwrap_or_default()); (crate::analog::L670::new(&p, sr), p) });
         let comp_p = effect_params.comp.clone().unwrap_or_default();
-        Self { cut, filters, dyn_eq, sat, gate, crush, util, width, modfx, deess, deess2, mband, msat, comp, master, limit, delay, reverb, pitch, fet76, pre73, opto2a, eqp1, busg, tape, order: Stage::DEFAULT.to_vec(),
+        Self { cut, filters, dyn_eq, sat, gate, crush, util, width, modfx, deess, deess2, mband, msat, comp, master, limit, delay, reverb, pitch, fet76, pre73, opto2a, eqp1, busg, tape, l670, order: Stage::DEFAULT.to_vec(),
             auto: Vec::new(), auto_from: 0.0, pos: 0, tempo: Vec::new(), tempo_i: 0, sr, comp_p, eq_bands, cut_kinds, names: effects.to_vec(), deess_freq: de.freq.unwrap_or(5500.0) }
     }
     /// Tempo qui change en cours de morceau : l'écho calé sur le rythme (1/4, 1/8…) suit le tempo de l'endroit joué.
@@ -1980,6 +1986,7 @@ impl Chain {
             ("eqp1", k) => if let Some((m, p)) = &mut self.eqp1 { if p.set_key(k, v) { m.set(p, self.sr); } },
             ("busg", k) => if let Some((m, p)) = &mut self.busg { if p.set_key(k, v) { m.set(p); } },
             ("tape", k) => if let Some((m, p)) = &mut self.tape { if p.set_key(k, v) { m.set(p); } },
+            ("l670", k) => if let Some((m, p)) = &mut self.l670 { if p.set_key(k, v) { m.set(p); } },
             (m @ ("tremolo" | "phaser" | "flanger" | "chorus" | "doubler" | "slapback"), k) => {
                 let st = match m { "tremolo" => Stage::Tremolo, "phaser" => Stage::Phaser, "flanger" => Stage::Flanger, "chorus" => Stage::Chorus, "doubler" => Stage::Doubler, _ => Stage::Slapback };
                 if let Some((_, f)) = self.modfx.iter_mut().find(|(s2, _)| *s2 == st) {
@@ -2027,7 +2034,7 @@ impl Chain {
         if m.gate.is_none() && m.deess.is_none() && m.mband.is_none() && m.limit.is_none() { None } else { Some(m) }
     }
     pub fn is_empty(&self) -> bool {
-        self.cut.is_empty() && self.filters.is_empty() && self.dyn_eq.is_empty() && self.sat.is_none() && self.gate.is_none() && self.crush.is_none() && self.util.is_none() && self.width.is_none() && self.modfx.is_empty() && self.deess.is_none() && self.deess2.is_none() && self.mband.is_none() && self.msat.is_none() && self.comp.is_none() && self.master.is_none() && self.limit.is_none() && self.delay.is_none() && self.reverb.is_none() && self.pitch.is_none() && self.fet76.is_none() && self.pre73.is_none() && self.opto2a.is_none() && self.eqp1.is_none() && self.busg.is_none() && self.tape.is_none()
+        self.cut.is_empty() && self.filters.is_empty() && self.dyn_eq.is_empty() && self.sat.is_none() && self.gate.is_none() && self.crush.is_none() && self.util.is_none() && self.width.is_none() && self.modfx.is_empty() && self.deess.is_none() && self.deess2.is_none() && self.mband.is_none() && self.msat.is_none() && self.comp.is_none() && self.master.is_none() && self.limit.is_none() && self.delay.is_none() && self.reverb.is_none() && self.pitch.is_none() && self.fet76.is_none() && self.pre73.is_none() && self.opto2a.is_none() && self.eqp1.is_none() && self.busg.is_none() && self.tape.is_none() && self.l670.is_none()
     }
     /// Une piste avec reverb sort toujours en stéréo, même si ses sons sont mono.
     pub fn makes_stereo(&self) -> bool {
@@ -2168,6 +2175,9 @@ impl Chain {
                     Stage::Tape => {
                         if let Some((m, _)) = &mut self.tape { m.tick(&mut x, nc); }
                     }
+                    Stage::L670 => {
+                        if let Some((m, _)) = &mut self.l670 { m.tick(&mut x, nc); }
+                    }
                     Stage::Reverb => {
                         if let Some(r) = &mut self.reverb {
                             r.tick(&mut x, nc);
@@ -2216,10 +2226,11 @@ enum Stage {
     EqP1,
     BusG,
     Tape,
+    L670,
 }
 
 impl Stage {
-    const DEFAULT: [Stage; 28] = [Stage::Pitch, Stage::Filter, Stage::Pre73, Stage::Gate, Stage::Eq, Stage::EqP1, Stage::Tape, Stage::Sat, Stage::Msat, Stage::Crush, Stage::Deess, Stage::Fet76, Stage::Opto2A, Stage::Comp, Stage::Mband, Stage::BusG, Stage::Util, Stage::Width, Stage::Tremolo, Stage::Phaser, Stage::Flanger, Stage::Chorus, Stage::Doubler, Stage::Slapback, Stage::Master, Stage::Limit, Stage::Delay, Stage::Reverb];
+    const DEFAULT: [Stage; 29] = [Stage::Pitch, Stage::Filter, Stage::Pre73, Stage::Gate, Stage::Eq, Stage::EqP1, Stage::Tape, Stage::Sat, Stage::Msat, Stage::Crush, Stage::Deess, Stage::Fet76, Stage::Opto2A, Stage::L670, Stage::Comp, Stage::Mband, Stage::BusG, Stage::Util, Stage::Width, Stage::Tremolo, Stage::Phaser, Stage::Flanger, Stage::Chorus, Stage::Doubler, Stage::Slapback, Stage::Master, Stage::Limit, Stage::Delay, Stage::Reverb];
     fn parse(name: &str) -> Option<Stage> {
         Some(match name {
             "filter" => Stage::Filter,
@@ -2250,6 +2261,7 @@ impl Stage {
             "eqp1" => Stage::EqP1,
             "busg" => Stage::BusG,
             "tape" => Stage::Tape,
+            "l670" => Stage::L670,
             _ => return None,
         })
     }
@@ -2540,7 +2552,7 @@ impl FxChain {
             for id in &ids {
                 let one = params.instance(id);
                 macro_rules! take { ($($f:ident),*) => { $( if one.$f.is_some() { ep.$f = one.$f; } )* } }
-                take!(filter, gate, chorus, flanger, phaser, tremolo, doubler, slapback, crush, util, width, eq, sat, deess, comp, mband, msat, reverb, delay, master, limit, pitch, fet76, pre73, opto2a, eqp1, busg, tape);
+                take!(filter, gate, chorus, flanger, phaser, tremolo, doubler, slapback, crush, util, width, eq, sat, deess, comp, mband, msat, reverb, delay, master, limit, pitch, fet76, pre73, opto2a, eqp1, busg, tape, l670);
             }
             let types: Vec<String> = ids.iter().map(|i| crate::model::fx_type(i).to_owned()).collect();
             (Chain::new(&types, &ep, sr, bpm, ceiling_db).with_order(&types), ids)

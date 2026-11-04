@@ -923,6 +923,124 @@ impl Tape {
     }
 }
 
+// ===== Lampe 670 : compresseur à lampes « variable-mu » (esprit « 670 ») =====
+// Le gain est réduit par des lampes dont l'amplification baisse quand on les polarise : le ratio n'est pas fixe, il grandit avec
+// le niveau (doux sur les nuances, ferme sur les crêtes) — la « colle » épaisse des disques soul et des masters. Push-pull :
+// surtout des harmoniques impaires, qui montent quand ça compresse ; de gros transfos. Contre-réaction (détecteur sur la sortie).
+// Comme la machine : Entrée, Seuil (0-10), Constante de temps 1 à 6 (attaque / relâchement liés ; 5 et 6 = relâchement
+// automatique en plusieurs temps), Sortie ; et la touche Pulse : Mélange.
+/// Constantes de temps : attaque (s), relâchement (s) ; 5 et 6 : relâchements rapide / lent (le lent quand la réduction dure)
+pub const L670_TC: [[f64; 3]; 6] = [[0.0002, 0.3, 0.3], [0.0002, 0.8, 0.8], [0.0004, 2.0, 2.0], [0.0008, 5.0, 5.0], [0.0002, 2.0, 10.0], [0.0004, 0.3, 10.0]];
+
+#[derive(Clone, Debug)]
+pub struct L670Params {
+    /// entrée (dB, −10 à +20) : pousse les lampes
+    pub input: f64,
+    /// seuil 0 (rien) à 10 (beaucoup)
+    pub thr: f64,
+    /// constante de temps 1 à 6 (index 0-5)
+    pub tc: usize,
+    /// sortie (dB, ±20), mélange %
+    pub output: f64,
+    pub mix: f64,
+}
+impl Default for L670Params {
+    fn default() -> Self { Self { input: 0.0, thr: 4.0, tc: 1, output: 0.0, mix: 100.0 } }
+}
+impl From<&crate::model::L670Json> for L670Params {
+    fn from(j: &crate::model::L670Json) -> Self {
+        let d = Self::default();
+        Self { input: j.input.unwrap_or(0.0), thr: j.thr.unwrap_or(d.thr), tc: j.tc.map_or(d.tc, |v| (v.round().max(0.0) as usize).min(5)),
+            output: j.output.unwrap_or(0.0), mix: j.mix.unwrap_or(100.0) }
+    }
+}
+impl L670Params {
+    pub fn set_key(&mut self, k: &str, v: f64) -> bool {
+        match k { "input" => self.input = v, "thr" => self.thr = v, "output" => self.output = v, "mix" => self.mix = v,
+            "tc" => self.tc = (v.round().max(0.0) as usize).min(5), _ => return false }
+        true
+    }
+}
+/// Marge des lampes (−16 dB) et force des transfos
+const HR670: f64 = 0.158_489_319_246_111_35;
+const IRON670: f64 = 0.08;
+
+pub struct L670 {
+    sr: f64,
+    gin: f64,
+    gout: f64,
+    thr: f64,
+    att: f64,
+    rel: f64,
+    rel_slow: f64,
+    auto: bool,
+    mix: f64,
+    gr: f64,
+    slow: f64,
+    os: [Os4; 2],
+    iron: [[Iron; 2]; 2],
+    ik: (f64, f64),
+    dry: [[f64; 40]; 2],
+}
+impl L670 {
+    pub const LATENCY: usize = 31;
+    pub fn new(p: &L670Params, sr: f64) -> Self {
+        let mut s = Self { sr, gin: 1.0, gout: 1.0, thr: -12.0, att: 0.0, rel: 0.0, rel_slow: 0.0, auto: false, mix: 1.0, gr: 0.0, slow: 0.0,
+            os: [Os4::new(), Os4::new()], iron: [[Iron::default(); 2]; 2], ik: iron_k(sr), dry: [[0.0; 40]; 2] };
+        s.set(p);
+        s
+    }
+    pub fn set(&mut self, p: &L670Params) {
+        let sr = self.sr;
+        let co = |t: f64| 1.0 - (-1.0 / (t * sr)).exp();
+        let tc = L670_TC[p.tc.min(5)];
+        self.gin = 10f64.powf(p.input.clamp(-10.0, 20.0) / 20.0);
+        self.gout = 10f64.powf(p.output.clamp(-20.0, 20.0) / 20.0);
+        self.thr = -3.0 * p.thr.clamp(0.0, 10.0);
+        self.att = co(tc[0]);
+        self.rel = co(tc[1]);
+        self.rel_slow = co(tc[2]);
+        self.auto = p.tc >= 4;
+        self.mix = (p.mix / 100.0).clamp(0.0, 1.0);
+    }
+    /// Réduction demandée pour un dépassement de sortie (dB) : genou très doux (12 dB), ratio qui grandit avec le niveau
+    /// (≈ 2:1 au début, beaucoup plus sur les grosses crêtes)
+    fn curve(&self, lvl: f64) -> f64 {
+        let over = lvl - self.thr;
+        let o = 6.0 * (1.0 + (over / 6.0).exp()).ln();
+        if o < 1e-9 { 0.0 } else { o + 0.12 * o * o }
+    }
+    pub fn reduction(&self) -> f64 { self.gr }
+    pub fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
+        let mut pk = 0.0f64;
+        for ch in 0..nc { pk = pk.max((x[ch] * self.gin).abs()); }
+        let want = self.curve(20.0 * (pk + 1e-12).log10() - self.gr);
+        // la boucle accélère l'attaque d'environ 2 (ratio de départ) : on la ralentit d'autant
+        if want > self.gr { self.gr += (want - self.gr) * self.att * 0.5; }
+        else if self.auto {
+            let rel = if self.slow > 0.7 * self.gr { self.rel_slow } else { self.rel };
+            self.gr += (want - self.gr) * rel;
+        } else { self.gr += (want - self.gr) * self.rel; }
+        self.slow += (self.gr - self.slow) * self.rel_slow * 0.5;
+        let g = 10f64.powf(-self.gr / 20.0);
+        // harmoniques impaires du push-pull, qui montent avec la réduction (la lampe travaille hors de sa zone droite)
+        let h3 = 0.02 + 0.06 * (1.0 - g);
+        let (iw, il) = self.ik;
+        for ch in 0..nc {
+            let iron = &mut self.iron[ch];
+            let y = self.os[ch].run(x[ch] * self.gin, |u| {
+                let v = iron[0].run(u * HR670, iw, il, IRON670) * g;
+                let c = v - h3 * v * v * v / (HR670 * HR670) * 0.05;
+                iron[1].run((1.1 * c).tanh() / 1.1, iw, il, IRON670) / HR670
+            }) * self.gout;
+            let d = &mut self.dry[ch];
+            d.copy_within(0..39, 1);
+            d[0] = x[ch];
+            x[ch] = if self.mix < 1.0 { d[Self::LATENCY] + (y - d[Self::LATENCY]) * self.mix } else { y };
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1188,5 +1306,26 @@ mod tests {
         assert!(rel(&cas, 15_000.0) < -4.0, "cassette : aigus coupés ({:.1} dB à 15 kHz)", rel(&cas, 15_000.0));
         let h3 = |inp: f64| { let o = runt(&TapeParams { input: inp, output: -inp, ..quiet.clone() }, 0.3, 200.0, 48_000); let s = &o[24_000..]; 20.0 * (harm(s, 200.0, 3) / harm(s, 200.0, 1)).log10() };
         assert!(h3(12.0) > h3(0.0) + 8.0, "pousser la bande : h3 {:.1} → {:.1}", h3(0.0), h3(12.0));
+    }
+
+    fn run670(p: &L670Params, amp: f64, f: f64, n: usize) -> (Vec<f64>, L670) {
+        let mut c = L670::new(p, SR);
+        let o = (0..n).map(|i| { let mut x = [amp * (2.0 * PI * f * i as f64 / SR).sin(), 0.0]; c.tick(&mut x, 1); x[0] }).collect();
+        (o, c)
+    }
+    /// Lampe 670 : le ratio grandit avec le niveau ; constante 1 relâche plus vite que 4 ; harmoniques impaires > paires
+    #[test]
+    fn l670_variable_mu() {
+        let p = L670Params { thr: 6.0, tc: 0, ..Default::default() };
+        let gr = |db: f64| run670(&p, 10f64.powf(db / 20.0), 1000.0, 48_000).1.reduction();
+        let (a, b, c) = (gr(-12.0), gr(-6.0), gr(0.0));
+        assert!(c - b > b - a, "le ratio grandit : {a:.1} → {b:.1} → {c:.1} dB de réduction");
+        let rel = |tc: usize| { let mut l = L670::new(&L670Params { thr: 6.0, tc, ..Default::default() }, SR);
+            for i in 0..24_000 { let mut x = [0.5 * (2.0 * PI * 1000.0 * i as f64 / SR).sin(), 0.0]; l.tick(&mut x, 1); }
+            let g0 = l.reduction(); let mut t = 0; for i in 0..(20.0 * SR) as usize { let mut x = [0.0, 0.0]; l.tick(&mut x, 1); if l.reduction() < g0 * 0.5 { t = i; break; } } t };
+        assert!(rel(0) < rel(3) / 4, "constante 1 : {} éch., constante 4 : {} éch.", rel(0), rel(3));
+        let (o, _) = run670(&L670Params { thr: 8.0, input: 10.0, output: -10.0, tc: 1, ..Default::default() }, 0.5, 200.0, 48_000);
+        let s2 = &o[24_000..];
+        assert!(harm(s2, 200.0, 3) > harm(s2, 200.0, 2) * 2.0, "push-pull : h3 > h2");
     }
 }

@@ -14,6 +14,8 @@ const CASES = [
   ['busg', { thr: -20, ratio: 10, attack: 0, release: 1, makeup: 8, variant: 1, mix: 70 }, [0.118260, 0.118260, 0.035387]],
   ['tape', { input: 8, output: -6, speed: 0, machine: 1, bias: -30, noise: 30, wow: 60 }, [0.168613, 0.168633, 0.030798]],
   ['tape', { input: 4, machine: 2, bias: 20, noise: 60, wow: 80, mix: 75 }, [0.168641, 0.175706, 0.020833]],
+  ['l670', { input: 6, thr: 7, tc: 1, output: -2 }, [0.048365, 0.048365, 0.014093]],
+  ['l670', { input: 10, thr: 5, tc: 5, output: -6, mix: 60 }, [0.083014, 0.083014, 0.025757]],
   ['opto2a', { peak: 60, gain: 55, variant: 0 }, [0.086484, 0.082398, 0.018677]],
   ['opto2a', { peak: 45, limit: 1, emph: 50, variant: 2, mix: 80 }, [0.055303, 0.053787, 0.016746]],
 ];
