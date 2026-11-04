@@ -5,6 +5,11 @@ cd "$(dirname "$0")/.."
 # L'appli joue pour de vrai par la sortie du Mac : on coupe le son du Mac pendant le test (et on le remet comme avant après),
 # sinon on entend des bips et des bouts de musique la nuit (vécu le 04/11)
 WAS_MUTED=$(osascript -e 'output muted of (get volume settings)' 2>/dev/null || echo false)
+# Certaines sorties (ex. « Pro Tools Aggregate I/O » de Ridwane) ne se coupent pas : le test ferait du bruit → il refuse de tourner
+# sauf si on l'autorise exprès (PULSE_SON_OK=1, quand Ridwane est là et d'accord)
+if [ "$WAS_MUTED" != "true" ] && [ "$WAS_MUTED" != "false" ] && [ "${PULSE_SON_OK:-0}" != "1" ]; then
+  echo "SANS SON IMPOSSIBLE : la sortie audio du Mac ne se coupe pas ($WAS_MUTED). Test sauté (PULSE_SON_OK=1 pour le lancer quand même)."; exit 0
+fi
 osascript -e 'set volume output muted true' 2>/dev/null || true
 trap 'osascript -e "set volume output muted $WAS_MUTED" 2>/dev/null || true' EXIT
 export PATH=$HOME/.cargo/bin:$PATH CARGO_TARGET_DIR=$HOME/pulse-build/tauri-target

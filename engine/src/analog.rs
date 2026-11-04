@@ -633,6 +633,143 @@ impl EqP1 {
     }
 }
 
+// ===== Bus G : compresseur de bus de console (esprit « G ») =====
+// Comme la machine : Seuil, Ratio 2 / 4 / 10, Attaque 0,1 · 0,3 · 1 · 3 · 10 · 30 ms, Relâchement 0,1 · 0,3 · 0,6 · 1,2 s ou Auto,
+// Gain de compensation ; et la touche Pulse : coupe-bas du détecteur (le grave ne fait plus pomper) et Mélange.
+// Compresseur à VCA « en avant » (le détecteur écoute l'entrée), stéréo liée. Auto : relâchement rapide sur les coups,
+// lent quand la réduction dure (la « colle » de la machine).
+// Variantes : Gris (la classique, propre) et Noir (plus agressive : genou plus franc, l'étage de sortie qui chauffe).
+pub const BUSG_ATT: [f64; 6] = [0.0001, 0.0003, 0.001, 0.003, 0.01, 0.03];
+pub const BUSG_REL: [f64; 4] = [0.1, 0.3, 0.6, 1.2];
+pub const BUSG_HPF: [f64; 4] = [0.0, 60.0, 90.0, 150.0];
+
+#[derive(Clone, Debug)]
+pub struct BusGParams {
+    /// seuil (dBFS, −30 à 0)
+    pub thr: f64,
+    /// 2, 4 ou 10
+    pub ratio: f64,
+    /// index BUSG_ATT
+    pub attack: usize,
+    /// index BUSG_REL, 4 = Auto
+    pub release: usize,
+    /// gain de compensation (dB, 0 à 15)
+    pub makeup: f64,
+    /// coupe-bas du détecteur (index BUSG_HPF, 0 = éteint)
+    pub sc_hpf: usize,
+    pub mix: f64,
+    /// 0 Gris, 1 Noir
+    pub variant: usize,
+}
+impl Default for BusGParams {
+    fn default() -> Self { Self { thr: -10.0, ratio: 4.0, attack: 3, release: 4, makeup: 0.0, sc_hpf: 0, mix: 100.0, variant: 0 } }
+}
+impl From<&crate::model::BusGJson> for BusGParams {
+    fn from(j: &crate::model::BusGJson) -> Self {
+        let d = Self::default();
+        let idx = |v: Option<f64>, def: usize, max: usize| v.map_or(def, |v| (v.round().max(0.0) as usize).min(max));
+        Self { thr: j.thr.unwrap_or(d.thr), ratio: j.ratio.unwrap_or(d.ratio), attack: idx(j.attack, d.attack, 5), release: idx(j.release, d.release, 4),
+            makeup: j.makeup.unwrap_or(0.0), sc_hpf: idx(j.sc_hpf, 0, 3), mix: j.mix.unwrap_or(100.0), variant: idx(j.variant, 0, 1) }
+    }
+}
+impl BusGParams {
+    pub fn set_key(&mut self, k: &str, v: f64) -> bool {
+        let ix = |v: f64, m: usize| (v.round().max(0.0) as usize).min(m);
+        match k { "thr" => self.thr = v, "ratio" => self.ratio = v, "makeup" => self.makeup = v, "mix" => self.mix = v,
+            "attack" => self.attack = ix(v, 5), "release" => self.release = ix(v, 4), "scHpf" => self.sc_hpf = ix(v, 3), "variant" => self.variant = ix(v, 1), _ => return false }
+        true
+    }
+}
+/// Marge de l'étage de sortie de la console (−18 dB)
+const HRG: f64 = 0.125_892_541_179_416_72;
+
+pub struct BusG {
+    sr: f64,
+    thr: f64,
+    slope: f64,
+    knee: f64,
+    att: f64,
+    rel: f64,
+    auto: bool,
+    rel_fast: f64,
+    rel_slow: f64,
+    gmk: f64,
+    mix: f64,
+    drive: f64,
+    h3: f64,
+    /// réduction (dB) ; en Auto : enveloppes rapide et lente
+    gr: f64,
+    slow: f64,
+    hp: [(f64, f64); 2],
+    hpa: f64,
+    os: [Os4; 2],
+    dry: [[f64; 40]; 2],
+}
+impl BusG {
+    pub const LATENCY: usize = 31;
+    pub fn new(p: &BusGParams, sr: f64) -> Self {
+        let mut s = Self { sr, thr: -10.0, slope: 0.75, knee: 6.0, att: 0.0, rel: 0.0, auto: true, rel_fast: 0.0, rel_slow: 0.0, gmk: 1.0, mix: 1.0, drive: 1.0, h3: 0.0,
+            gr: 0.0, slow: 0.0, hp: [(0.0, 0.0); 2], hpa: 0.0, os: [Os4::new(), Os4::new()], dry: [[0.0; 40]; 2] };
+        s.set(p);
+        s
+    }
+    pub fn set(&mut self, p: &BusGParams) {
+        let sr = self.sr;
+        let co = |t: f64| 1.0 - (-1.0 / (t * sr)).exp();
+        let noir = p.variant == 1;
+        self.thr = p.thr.clamp(-30.0, 0.0);
+        let r = match p.ratio.round() as i64 { r if r <= 2 => 2.0, r if r <= 4 => 4.0, _ => 10.0 };
+        self.slope = 1.0 - 1.0 / r;
+        self.knee = (if r <= 2.0 { 10.0 } else if r <= 4.0 { 6.0 } else { 4.0 }) * if noir { 0.5 } else { 1.0 };
+        self.att = co(BUSG_ATT[p.attack.min(5)]);
+        self.auto = p.release >= 4;
+        self.rel = co(BUSG_REL[p.release.min(3)]);
+        self.rel_fast = co(0.1);
+        self.rel_slow = co(1.2);
+        self.gmk = 10f64.powf(p.makeup.clamp(0.0, 15.0) / 20.0);
+        self.mix = (p.mix / 100.0).clamp(0.0, 1.0);
+        (self.drive, self.h3) = if noir { (1.6, 1.0) } else { (1.05, 0.0) };
+        let f = BUSG_HPF[p.sc_hpf.min(3)];
+        self.hpa = if f > 0.0 { (-2.0 * PI * f / sr).exp() } else { 0.0 };
+    }
+    fn curve(&self, lvl: f64) -> f64 {
+        let over = lvl - self.thr;
+        let k = self.knee;
+        if over <= -k / 2.0 { 0.0 } else if over >= k / 2.0 { over * self.slope } else { self.slope * (over + k / 2.0).powi(2) / (2.0 * k) }
+    }
+    pub fn reduction(&self) -> f64 { self.gr }
+    pub fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
+        // détecteur : coupe-bas (1er ordre) si demandé, crête liée des deux canaux
+        let mut pk = 0.0f64;
+        for ch in 0..nc {
+            let v = if self.hpa > 0.0 { let (xp, yp) = self.hp[ch]; let y = self.hpa * (yp + x[ch] - xp); self.hp[ch] = (x[ch], y); y } else { x[ch] };
+            pk = pk.max(v.abs());
+        }
+        let want = self.curve(20.0 * (pk + 1e-12).log10());
+        if want > self.gr { self.gr += (want - self.gr) * self.att; }
+        else if self.auto {
+            // Auto : la part de réduction qui dure repart lentement, le reste vite
+            let rel = if self.slow > 0.7 * self.gr { self.rel_slow } else { self.rel_fast };
+            self.gr += (want - self.gr) * rel;
+        } else { self.gr += (want - self.gr) * self.rel; }
+        self.slow += (self.gr - self.slow) * self.rel_slow * 0.5;
+        let g = 10f64.powf(-self.gr / 20.0) * self.gmk;
+        let (dr, h3) = (self.drive, self.h3);
+        for ch in 0..nc {
+            let y = self.os[ch].run(x[ch] * g, |u| {
+                // étage de sortie de la console : propre en Gris, il chauffe (harmonique 3) en Noir
+                let c = u * HRG * dr;
+                let c = c - h3 * 0.04 * c * c * c;
+                c.tanh() / dr / HRG
+            });
+            let d = &mut self.dry[ch];
+            d.copy_within(0..39, 1);
+            d[0] = x[ch];
+            x[ch] = if self.mix < 1.0 { d[Self::LATENCY] + (y - d[Self::LATENCY]) * self.mix } else { y };
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -859,5 +996,27 @@ mod tests {
         assert!(g250 < -1.0, "creux au-dessus ({g250:.1} dB à 250 Hz)");
         let hb = EqP1Params { high_boost: 8.0, high_f: 4, ..Default::default() };
         assert!((gain(&hb, 10_000.0) - 14.4).abs() < 1.5, "aigus poussés à 10 kHz : {:.1} dB", gain(&hb, 10_000.0));
+    }
+
+    fn rung(p: &BusGParams, amp: f64, f: f64, n: usize) -> (Vec<f64>, BusG) {
+        let mut c = BusG::new(p, SR);
+        let o = (0..n).map(|i| { let mut x = [amp * (2.0 * PI * f * i as f64 / SR).sin(), 0.0]; c.tick(&mut x, 1); x[0] }).collect();
+        (o, c)
+    }
+    /// Bus G : ratios 2 / 4 / 10 à 12 dB au-dessus du seuil ; le coupe-bas du détecteur laisse passer le grave sans pomper ;
+    /// Noir chauffe plus que Gris
+    #[test]
+    fn busg_ratios_detecteur_variantes() {
+        let a: f64 = 0.6;
+        for (r, want) in [(2.0, 6.0), (4.0, 9.0), (10.0, 10.8)] {
+            let lvl = 20.0 * a.log10();
+            let (_, c) = rung(&BusGParams { ratio: r, thr: lvl - 12.0, release: 3, ..Default::default() }, a, 1000.0, 48_000);
+            assert!((c.reduction() - want).abs() < 1.0, "ratio {r} : {:.1} dB (attendu {want})", c.reduction());
+        }
+        let (_, c0) = rung(&BusGParams { thr: -20.0, ..Default::default() }, 0.5, 40.0, 48_000);
+        let (_, c1) = rung(&BusGParams { thr: -20.0, sc_hpf: 3, ..Default::default() }, 0.5, 40.0, 48_000);
+        assert!(c1.reduction() < c0.reduction() - 6.0, "coupe-bas du détecteur : {:.1} contre {:.1} dB", c1.reduction(), c0.reduction());
+        let h3 = |v: usize| { let (o, _) = rung(&BusGParams { thr: 0.0, variant: v, ..Default::default() }, 0.7, 200.0, 48_000); let s = &o[24_000..]; 20.0 * (harm(s, 200.0, 3) / harm(s, 200.0, 1)).log10() };
+        assert!(h3(1) > h3(0) + 6.0, "Noir {:.1} dB, Gris {:.1} dB", h3(1), h3(0));
     }
 }

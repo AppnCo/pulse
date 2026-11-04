@@ -83,6 +83,13 @@ export default async (c) => {
   check('P1 : façade ouverte', !!pb);
   if (pb) { await mouse('mouseMoved', pb, { buttons: 0 }); await mouse('mousePressed', pb); for (let i = 1; i <= 6; i++) { await mouse('mouseMoved', { x: pb.x, y: pb.y - i * 10 }); await sleep(20); } await mouse('mouseReleased', { x: pb.x, y: pb.y - 60 }); await sleep(200); }
   check('P1 : grave poussé à la souris', await J(ev, `return state.project.tracks[0].effectParams.eqp1.lowBoost`) > 0);
+  // Bus G : dans « Compresseurs », façade ouverte, variante Noir
+  await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
+  await click('#inspector .slot-plus[data-plus="fx"]');
+  await click('.fx-add-menu .fam-range', 'Analogique');
+  check('menu : Bus G cliqué', await click('.fx-add-menu .fam-fx', 'Bus G')); await sleep(500);
+  await click('.fx-panel.plug-win[data-fx="busg"] .ana-var[data-v="1"]');
+  check('Bus G : variante Noir', await J(ev, `return state.project.tracks[0].effectParams.busg.variant`) === 1);
   // ---- Envois façon Logic
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   await click('#inspector .slot-plus[data-plus="send"]');

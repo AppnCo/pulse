@@ -11,7 +11,7 @@ const ANA_STRIPS = {
     hf73: { n: 61, px: 144, a0: -150, a1: 150, span: 2.4 }, mid73: { n: 61, px: 160, a0: -150, a1: 150, span: 2.4 },
     midf73: { n: 6, px: 160, a0: -100, a1: 100, span: 2.4 }, low73: { n: 61, px: 160, a0: -150, a1: 150, span: 2.4 },
     lowf73: { n: 4, px: 160, a0: -90, a1: 90, span: 2.4 }, hpf73: { n: 5, px: 112, a0: -120, a1: 120, span: 2.4 },
-    'black-big': { n: 61, px: 200, a0: -150, a1: 150, span: 2.4 }, sel7: { n: 7, px: 128, a0: -90, a1: 90, span: 2.4 }, sel3: { n: 3, px: 128, a0: -45, a1: 45, span: 2.4 }, sel4: { n: 4, px: 128, a0: -60, a1: 60, span: 2.4 }, 'tog-up': { n: 1, px: 128, span: 3.2 }, 'tog-down': { n: 1, px: 128, span: 3.2 }
+    'black-big': { n: 61, px: 200, a0: -150, a1: 150, span: 2.4 }, sel7: { n: 7, px: 128, a0: -90, a1: 90, span: 2.4 }, sel3: { n: 3, px: 128, a0: -45, a1: 45, span: 2.4 }, sel4: { n: 4, px: 128, a0: -60, a1: 60, span: 2.4 }, sel5: { n: 5, px: 128, a0: -90, a1: 90, span: 2.4 }, sel6: { n: 6, px: 128, a0: -100, a1: 100, span: 2.4 }, 'tog-up': { n: 1, px: 128, span: 3.2 }, 'tog-down': { n: 1, px: 128, span: 3.2 }
 };
 // Couleurs de façade (variantes) : dégradé du panneau, gravures, sous-titres, grain du brossé
 const ANA_SKINS = {
@@ -521,6 +521,94 @@ function openEqP1Panel(trackIdx, anchorEl) {
     anaSkin(svg, 'bleugris');
     say();
     makePlugWindow(panel, t, 'eqp1', trackIdx);
+}
+
+
+// ===== Bus G : compresseur de bus de console (esprit « G »), variantes Gris / Noir =====
+function openBusGPanel(trackIdx, anchorEl) {
+    closeTransientPanels();
+    const t = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;
+    if (!t) return;
+    const already = findPlugWin(t, 'busg');
+    if (already) { plugFront(already); return; }
+    t.effectParams = t.effectParams || {};
+    if (!t.effectParams.busg) t.effectParams.busg = { thr: -10, ratio: 4, attack: 3, release: 4, makeup: 0, scHpf: 0, mix: 100, variant: 0 };
+    const P = () => t.effectParams.busg, ed = anaEdit(t, 'busg');
+    const W = 900, H = 240, SK = ['gris', 'noir'], NM = ['Gris', 'Noir'], TIP = ['la classique : propre, elle « colle » le mix', 'plus agressive : genou plus franc, la sortie qui chauffe'];
+    const { panel, svg } = anaWindow(t, 'busg', 'Bus G', W, H, anchorEl, trackIdx, 900, SK[Math.round(P().variant ?? 0)]);
+    const L = { style: 'paint-order:stroke', 'stroke-opacity': '.35', 'stroke-width': '.6', stroke: '#000' };
+    anaText(svg, 44, 40, 'PULSE · BUS G', { ...L, 'text-anchor': 'start', 'font-size': 14, 'font-weight': 700, 'letter-spacing': 3 });
+    const sub = anaText(svg, 44, 56, '', { class: 'ana-sub', 'text-anchor': 'start', 'letter-spacing': 2.5 });
+    const ATT = ['0,1', '0,3', '1', '3', '10', '30'], REL = ['0,1', '0,3', '0,6', '1,2', 'AUTO'], RAT = [2, 4, 10], HPF = ['ARRÊT', '60', '90', '150'];
+    const read = panel.querySelector('.ana-read');
+    const say = () => { const p = P(); read.innerHTML = `${NM[Math.round(p.variant ?? 0)]} · Seuil <b>${Math.round(p.thr)} dB</b> · Ratio <b>${p.ratio}:1</b> · Attaque <b>${ATT[p.attack ?? 3]} ms</b> · Relâche <b>${REL[p.release ?? 4]}${(p.release ?? 4) < 4 ? ' s' : ''}</b> · Gain <b>+${Math.round(p.makeup)} dB</b>`; };
+    const knob = (o) => anaKnob(svg, { ...o, get: () => P()[o.key] ?? o.def, set: (v) => { P()[o.key] = Math.round(v * 2) / 2; ed.touch(o.key); say(); }, onStart: ed.start, onEnd: ed.end });
+    const sel = (o) => anaKnob(svg, { ...o, get: () => P()[o.key] ?? o.def, set: (v) => { P()[o.key] = v; say(); }, onStart: ed.start, onEnd: ed.end }).g.classList.remove('pk');
+    const CY = 130;
+    const pick = (cx, key, strip, labels, a0, a1, def, lab, tip, vals) => {
+        labels.forEach((tx, i) => { const a = (a0 + (a1 - a0) * i / (labels.length - 1)) * Math.PI / 180; anaText(svg, cx + Math.sin(a) * 36, CY - Math.cos(a) * 36 + 3, tx, { 'font-size': 7.5, 'letter-spacing': 0 }); });
+        sel({ strip, cx, cy: CY, d: 42, key, min: 0, max: labels.length - 1, def, steps: vals || labels.map((_, i) => i), tip });
+        anaText(svg, cx, CY + 62, lab, { ...L, 'font-size': 9 });
+    };
+    anaTicks(svg, 100, CY, 34, 7, -150, 150, ['−30', '', '', '−15', '', '', '0'], 7);
+    knob({ strip: 'hf73', cx: 100, cy: CY, d: 50, key: 'thr', min: -30, max: 0, def: -10, tip: 'Seuil : plus bas = plus de compression' });
+    anaText(svg, 100, CY + 62, 'SEUIL', { ...L, 'font-size': 9 });
+    pick(205, 'ratio', 'sel3', ['2', '4', '10'], -45, 45, 4, 'RATIO', 'Ratio : 2, 4 ou 10', RAT);
+    pick(305, 'attack', 'sel6', ATT, -100, 100, 3, 'ATTAQUE ms', 'Attaque : de 0,1 ms (écrase les coups) à 30 ms (laisse passer le claquant)');
+    pick(405, 'release', 'sel5', REL, -90, 90, 4, 'RELÂCHE s', 'Relâchement : 0,1 à 1,2 s, ou Auto (vite sur les coups, lent quand ça dure)');
+    anaTicks(svg, 505, CY, 34, 7, -150, 150, ['0', '', '', '', '', '', '15'], 7);
+    knob({ strip: 'hf73', cx: 505, cy: CY, d: 50, key: 'makeup', min: 0, max: 15, def: 0, tip: 'Gain de compensation' });
+    anaText(svg, 505, CY + 62, 'GAIN', { ...L, 'font-size': 9 });
+    // vumètre de réduction (comme la machine : l'aiguille part de 0 vers la gauche)
+    const vx = 580, vy = 66, vw = 170, vh = 110, cx = vx + vw / 2, cy = vy + vh + 14, R = 92;
+    anaEl('rect', { x: vx - 5, y: vy - 5, width: vw + 10, height: vh + 10, rx: 7, fill: '#050407', stroke: '#2a2733' }, svg);
+    anaEl('rect', { x: vx, y: vy, width: vw, height: vh, rx: 4, fill: 'url(#anaVu)' }, svg);
+    const clip = anaEl('clipPath', { id: 'anaVuClipG' }, svg); anaEl('rect', { x: vx, y: vy, width: vw, height: vh, rx: 4 }, clip);
+    const vu = anaEl('g', { 'clip-path': 'url(#anaVuClipG)' }, svg);
+    const GR = [20, 15, 10, 8, 6, 4, 2, 0], grA = (g) => -45 + 90 * Math.max(0, Math.min(1, 1 - g / 20));
+    GR.forEach((g) => { const a = grA(g) * Math.PI / 180; anaEl('line', { x1: cx + Math.sin(a) * R, y1: cy - Math.cos(a) * R, x2: cx + Math.sin(a) * (R + 7), y2: cy - Math.cos(a) * (R + 7), stroke: '#e9d5ff', 'stroke-width': 1.2 }, vu);
+        anaText(vu, cx + Math.sin(a) * (R + 15), cy - Math.cos(a) * (R + 15) + 3, String(g), { fill: '#e9d5ff', 'font-size': 7.5, 'letter-spacing': 0, class: '' }); });
+    const needle = anaEl('line', { x1: cx, y1: cy, x2: cx, y2: cy - R - 3, stroke: '#fff', 'stroke-width': 1.5, filter: 'url(#anaGlow)' }, vu);
+    anaText(svg, vx + 10, vy + vh - 9, 'RÉDUCTION · dB', { fill: '#a78bfa', 'text-anchor': 'start', 'font-size': 7.5, class: '' });
+    anaEl('rect', { x: vx, y: vy, width: vw, height: vh, rx: 4, fill: 'url(#anaGlass)', 'pointer-events': 'none' }, svg);
+    // coupe-bas du détecteur, mélange, variantes
+    const by = 212;
+    anaText(svg, 800, 52, 'DÉTECTEUR', { ...L, 'font-size': 7, 'letter-spacing': 1 });
+    ['ARRÊT', '60', '90', '150'].forEach((tx, i) => { const a = (-60 + 40 * i) * Math.PI / 180; anaText(svg, 800 + Math.sin(a) * 26, 92 - Math.cos(a) * 26 + 3, tx, { 'font-size': 6.5, 'letter-spacing': 0 }); });
+    sel({ strip: 'sel4', cx: 800, cy: 92, d: 28, key: 'scHpf', min: 0, max: 3, def: 0, steps: [0, 1, 2, 3], tip: 'Coupe-bas du détecteur : le grave ne fait plus pomper le mix (arrêt, 60, 90, 150 Hz)' });
+    anaText(svg, 800, 124, 'COUPE-BAS Hz', { ...L, 'font-size': 7, 'letter-spacing': .8 });
+    anaTicks(svg, 860, 92, 15, 5, -135, 135, null);
+    knob({ strip: 'bakelite', cx: 860, cy: 92, d: 22, key: 'mix', min: 0, max: 100, def: 100, tip: 'Mélange avec le son d\'origine (compression parallèle)' });
+    anaText(svg, 860, 124, 'MÉLANGE', { ...L, 'font-size': 7, 'letter-spacing': .8 });
+    const vg = anaEl('g', {}, svg);
+    const drawVar = () => {
+        vg.innerHTML = ''; const cur = Math.round(P().variant ?? 0);
+        NM.forEach((nm, i) => { const x = 800 + (i - 0.5) * 50, on = i === cur, g = anaEl('g', { class: 'ana-push ana-var', 'data-v': i }, vg);
+            anaEl('rect', { x: x - 22, y: 168, width: 44, height: 15, rx: 4, fill: on ? '#7c3aed' : '#1c1426', stroke: '#3a2b52', ...(on ? { filter: 'url(#anaGlow)' } : {}) }, g);
+            anaText(g, x, 178.5, nm.toUpperCase(), { fill: on ? '#fff' : '#a78bfa', 'font-size': 7, 'letter-spacing': .8, class: '' });
+            anaEl('title', {}, g).textContent = `${nm} : ${TIP[i]}`; });
+        sub.textContent = 'COMPRESSEUR DE BUS · ' + NM[cur].toUpperCase();
+        anaSkin(svg, SK[cur]);
+    };
+    vg.addEventListener('click', (e) => { const b = e.target.closest('.ana-var'); if (!b) return; ed.start(); P().variant = +b.dataset.v; ed.end(); drawVar(); say(); });
+    anaText(svg, 800, by - 14, 'VARIANTE', { ...L, 'font-size': 7, 'letter-spacing': 1 });
+    let ang = grA(0), last = performance.now();
+    const key = 'busg|' + fxKeyOf(trackIdx, t);
+    const tick = (now) => {
+        if (!panel.isConnected) return;
+        const on = (t.effects || []).includes('busg');
+        const m = on && (state.playing || state.recording) && PulseAudio.getCompReduction ? PulseAudio.getCompReduction(key) : null;
+        const target = grA(m ? (m.gr || 0) : 0);
+        const dt = Math.min(0.1, (now - last) / 1000); last = now;
+        ang += (target - ang) * (1 - Math.exp(-dt / 0.05));
+        needle.setAttribute('transform', `rotate(${ang.toFixed(2)} ${cx} ${cy})`);
+        requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+    panel.querySelector('.fx-bypass').addEventListener('change', (e) => { pushUndo(); setFxOn(t, 'busg', e.target.checked); refreshPlaybackSoon(); saveProject(); refreshStrips(); });
+    drawVar();
+    say();
+    makePlugWindow(panel, t, 'busg', trackIdx);
 }
 
 // Styles de la façade (ici pour garder la gamme dans un seul fichier)

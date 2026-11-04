@@ -139,6 +139,7 @@ pub struct EffectParams {
     pub pre73: Option<Pre73Json>,
     pub opto2a: Option<Opto2AJson>,
     pub eqp1: Option<EqP1Json>,
+    pub busg: Option<BusGJson>,
     /// Exemplaires en plus d'un même effet (« comp#2 », « eq#3»…), réglages bruts : lus par `EffectParams::instance`
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
@@ -253,6 +254,20 @@ pub struct Opto2AJson {
     pub emph: Option<f64>,
     pub variant: Option<f64>,
     pub mix: Option<f64>,
+}
+
+/// Bus G : thr (dBFS −30…0), ratio 2/4/10, attack (0-5), release (0-3, 4 = Auto), makeup (dB 0-15), scHpf (0-3 : arrêt/60/90/150 Hz), mix %, variant 0 Gris · 1 Noir
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct BusGJson {
+    pub thr: Option<f64>,
+    pub ratio: Option<f64>,
+    pub attack: Option<f64>,
+    pub release: Option<f64>,
+    pub makeup: Option<f64>,
+    pub sc_hpf: Option<f64>,
+    pub mix: Option<f64>,
+    pub variant: Option<f64>,
 }
 
 /// Égaliseur passif P1 : lowF (0-3 : 20/30/60/100 Hz), lowBoost, lowAtten, highF (0-6 : 3/4/5/8/10/12/16 kHz), highBoost, bw (0 large-10 serré),

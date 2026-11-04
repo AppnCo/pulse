@@ -10,6 +10,8 @@ const CASES = [
   ['fet76', { input: 36, output: 22, ratio: 12, variant: 1 }, [0.050767, 0.050767, 0.012441]],
   ['fet76', { input: 36, output: 22, ratio: 4, variant: 2, mix: 60 }, [0.092849, 0.092849, 0.028566]],
   ['eqp1', { lowF: 2, lowBoost: 8, lowAtten: 6, highF: 4, highBoost: 5, bw: 3, attenF: 1, highAtten: 3 }, [0.109054, 0.109054, 0.040556]],
+  ['busg', { thr: -24, ratio: 4, attack: 2, release: 4, makeup: 6, scHpf: 1 }, [0.076336, 0.076336, 0.022543]],
+  ['busg', { thr: -20, ratio: 10, attack: 0, release: 1, makeup: 8, variant: 1, mix: 70 }, [0.118260, 0.118260, 0.035387]],
   ['opto2a', { peak: 60, gain: 55, variant: 0 }, [0.086484, 0.082398, 0.018677]],
   ['opto2a', { peak: 45, limit: 1, emph: 50, variant: 2, mix: 80 }, [0.055303, 0.053787, 0.016746]],
 ];
