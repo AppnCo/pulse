@@ -1886,6 +1886,109 @@ impl Plate {
     }
 }
 
+// ===== Écho à bande (esprit « 201 ») : trois têtes de lecture, bande en boucle, ressort =====
+// Comme la machine : Mode (quelles têtes lisent : 1, 2, 3, 1+2, 2+3, 1+3, 1+2+3), Vitesse (la bande ralentit ou accélère —
+// les répétitions s'écartent et le son « pleure » quand on tourne), Intensité (combien ça revient ; au-delà de 100 ça s'emballe),
+// Grave / Aigu des répétitions, Écho, Ressort (la réverbe à ressort intégrée), Entrée (pousse la bande). Chaque passage sur la bande
+// sature un peu et perd de l'aigu ; la bande pleure légèrement.
+pub const TE_HEADS: [f64; 3] = [0.12, 0.24, 0.36];
+pub const TE_MODES: [[bool; 3]; 7] = [[true, false, false], [false, true, false], [false, false, true], [true, true, false], [false, true, true], [true, false, true], [true, true, true]];
+
+#[derive(Clone, Debug)]
+pub struct TapeEchoParams { pub mode: usize, pub rate: f64, pub intensity: f64, pub bass: f64, pub treble: f64, pub echo: f64, pub spring: f64, pub input: f64, pub wow: f64 }
+impl Default for TapeEchoParams {
+    fn default() -> Self { Self { mode: 1, rate: 1.0, intensity: 40.0, bass: 0.0, treble: 0.0, echo: 40.0, spring: 0.0, input: 0.0, wow: 50.0 } }
+}
+impl From<&crate::model::TapeEchoJson> for TapeEchoParams {
+    fn from(j: &crate::model::TapeEchoJson) -> Self {
+        let d = Self::default();
+        Self { mode: j.mode.map_or(d.mode, |v| (v.round().max(0.0) as usize).min(6)), rate: j.rate.unwrap_or(d.rate), intensity: j.intensity.unwrap_or(d.intensity),
+            bass: j.bass.unwrap_or(0.0), treble: j.treble.unwrap_or(0.0), echo: j.echo.unwrap_or(d.echo), spring: j.spring.unwrap_or(0.0), input: j.input.unwrap_or(0.0), wow: j.wow.unwrap_or(d.wow) }
+    }
+}
+impl TapeEchoParams {
+    pub fn set_key(&mut self, k: &str, v: f64) -> bool {
+        match k { "mode" => self.mode = (v.round().max(0.0) as usize).min(6), "rate" => self.rate = v, "intensity" => self.intensity = v, "bass" => self.bass = v, "treble" => self.treble = v,
+            "echo" => self.echo = v, "spring" => self.spring = v, "input" => self.input = v, "wow" => self.wow = v, _ => return false }
+        true
+    }
+}
+pub struct TapeEcho {
+    sr: f64,
+    tape: Dl,
+    heads: [bool; 3],
+    rate_t: f64, rate: f64, glide: f64,
+    fb: f64, gin: f64, echo: f64, spring_v: f64,
+    tone: [Biquad; 3],
+    hfz: f64, hfa: f64,
+    pw: f64, pf: f64, ww: f64, wf: f64,
+    // ressort : deux ressorts (gauche / droite) = passe-tout dispersifs dans une boucle
+    sp: [(Vec<Ap>, Dl, f64); 2],
+}
+impl TapeEcho {
+    pub fn new(p: &TapeEchoParams, sr: f64) -> Self {
+        let n = |v: f64| (v * sr).round() as usize;
+        let mk = |d: f64, k: usize| ((0..8).map(|i| Ap::new(((1.0 + i as f64 * 0.37 + k as f64 * 0.11) * sr / 8000.0).round().max(2.0) as usize)).collect::<Vec<_>>(), Dl::new(n(d) + 2), 0.0);
+        let mut s = Self { sr, tape: Dl::new(n(TE_HEADS[2] * 2.2) + 64), heads: [false; 3], rate_t: 1.0, rate: 1.0, glide: 1.0 - (-1.0 / (0.25 * sr)).exp(),
+            fb: 0.0, gin: 1.0, echo: 0.0, spring_v: 0.0, tone: [Biquad::first_order(true, 20.0, sr); 3], hfz: 0.0, hfa: 1.0 - (-2.0 * PI * 5_000.0 / sr).exp(),
+            pw: 0.0, pf: 0.0, ww: 0.0, wf: 0.0, sp: [mk(0.037, 0), mk(0.043, 1)] };
+        s.set(p);
+        s.rate = s.rate_t;
+        s
+    }
+    pub fn set(&mut self, p: &TapeEchoParams) {
+        let sr = self.sr;
+        self.heads = TE_MODES[p.mode.min(6)];
+        self.rate_t = p.rate.clamp(0.5, 2.0);
+        // plusieurs têtes reviennent ensemble : l'intensité est partagée (100 = au bord de l'emballement, quel que soit le mode)
+        let nh = self.heads.iter().filter(|h| **h).count().max(1) as f64;
+        self.fb = p.intensity.clamp(0.0, 120.0) / 100.0 / nh;
+        self.gin = 10f64.powf(p.input.clamp(-12.0, 12.0) / 20.0);
+        self.echo = p.echo.clamp(0.0, 100.0) / 100.0;
+        self.spring_v = p.spring.clamp(0.0, 100.0) / 100.0;
+        // couleur des répétitions (seuls les coefficients changent : pas de clic quand on tourne)
+        let t = [eq_matched("lowshelf", 200.0, 0.7, p.bass.clamp(-12.0, 12.0), sr), eq_matched("highshelf", 3_000.0, 0.7, p.treble.clamp(-12.0, 12.0), sr), eq_matched("highpass", 80.0, 0.707, 0.0, sr)];
+        for (a, b) in self.tone.iter_mut().zip(t) { a.retune(b); }
+        let w = p.wow.clamp(0.0, 100.0) / 50.0;
+        self.ww = (0.0015 * w * sr / (2.0 * PI * 0.7)).min(60.0);
+        self.wf = (0.0006 * w * sr / (2.0 * PI * 7.0)).min(8.0);
+    }
+    pub fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
+        let sr = self.sr;
+        let dry_l = x[0];
+        let dry_r = if nc > 1 { x[1] } else { x[0] };
+        let inp = if nc > 1 { 0.5 * (dry_l + dry_r) } else { dry_l } * self.gin;
+        // la bande change de vitesse doucement (inertie du moteur)
+        self.rate += (self.rate_t - self.rate) * self.glide;
+        self.pw += 2.0 * PI * 0.7 / sr; if self.pw > 2.0 * PI { self.pw -= 2.0 * PI; }
+        self.pf += 2.0 * PI * 7.0 / sr; if self.pf > 2.0 * PI { self.pf -= 2.0 * PI; }
+        let wobble = self.ww * self.pw.sin() + self.wf * self.pf.sin();
+        let mut sum = 0.0;
+        for h in 0..3 { if self.heads[h] { sum += self.tape.atf(TE_HEADS[h] * sr / self.rate + wobble); } }
+        // les répétitions : grave / aigu, coupe-bas, perte d'aigu de la bande
+        let mut e = sum;
+        for b in self.tone.iter_mut() { e = b.tick(e); }
+        self.hfz += (e - self.hfz) * self.hfa;
+        let e = self.hfz;
+        // écriture sur la bande : l'entrée + ce qui revient, saturé par la bande
+        let w = inp + e * self.fb;
+        self.tape.push((w * 0.8).tanh() / 0.8);
+        // ressort : deux ressorts nourris par l'entrée et l'écho
+        let feed = inp * 0.5 + e * 0.5;
+        let mut out = [0.0; 2];
+        for (k, (aps, dl, z)) in self.sp.iter_mut().enumerate() {
+            let mut v = feed + *z * 0.72;
+            for a in aps.iter_mut() { v = a.run(v, 0.62); }
+            dl.push(v);
+            let o = dl.at(dl.b.len() - 3);
+            *z = o;
+            out[k] = o;
+        }
+        x[0] = dry_l + e * self.echo + out[0] * self.spring_v * 0.6;
+        x[1] = dry_r + e * self.echo + out[1] * self.spring_v * 0.6;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2304,5 +2407,24 @@ mod tests {
         assert!(side > 1e-3, "queue stéréo");
         assert!(b > a * 1.8, "durée plus grande = queue plus longue ({a:.2} s → {b:.2} s)");
         assert!((a - 1.5).abs() < 0.8, "Durée 1,5 s : RT60 ≈ {a:.2} s");
+    }
+
+    /// Écho à bande : la tête 2 répète à 0,24 s à vitesse 1, à 0,48 s à vitesse 0,5 ; chaque répétition est plus sombre et plus faible
+    #[test]
+    fn echo_a_bande_tetes_vitesse() {
+        let first = |rate: f64| {
+            let mut e = TapeEcho::new(&TapeEchoParams { mode: 1, rate, intensity: 50.0, echo: 100.0, spring: 0.0, wow: 0.0, ..Default::default() }, SR);
+            let n = (1.5 * SR) as usize; let mut o = vec![0.0f64; n];
+            for i in 0..n { let mut x = [if i < 48 { 0.5 } else { 0.0 }, 0.0]; e.tick(&mut x, 1); o[i] = x[0]; }
+            // première répétition : le plus grand pic après 50 ms
+            let (i, _) = o.iter().enumerate().skip((0.05 * SR) as usize).fold((0, 0.0), |(bi, bv), (i, v)| if v.abs() > bv { (i, v.abs()) } else { (bi, bv) });
+            (i as f64 / SR, o)
+        };
+        let (t1, o) = first(1.0);
+        assert!((t1 - 0.24).abs() < 0.01, "tête 2 à vitesse 1 : {t1:.3} s");
+        let (t2, _) = first(0.5);
+        assert!((t2 - 0.48).abs() < 0.02, "vitesse 0,5 : {t2:.3} s");
+        let pk = |a: f64, b: f64| o[(a * SR) as usize..(b * SR) as usize].iter().fold(0f64, |m, v| m.max(v.abs()));
+        assert!(pk(0.45, 0.53) < pk(0.2, 0.28) * 0.8, "la 2e répétition est plus faible");
     }
 }

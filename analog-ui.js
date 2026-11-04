@@ -1248,6 +1248,62 @@ function openPlatePanel(trackIdx, anchorEl) {
     makePlugWindow(panel, t, 'plate', trackIdx);
 }
 
+
+// ===== Écho à bande (esprit « 201 ») : la boucle de bande et ses trois têtes qui s'allument selon le mode =====
+function openTapeEchoPanel(trackIdx, anchorEl) {
+    closeTransientPanels();
+    const t = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;
+    if (!t) return;
+    const already = findPlugWin(t, 'techo');
+    if (already) { plugFront(already); return; }
+    t.effectParams = t.effectParams || {};
+    if (!t.effectParams.techo) t.effectParams.techo = { mode: 1, rate: 1, intensity: 40, bass: 0, treble: 0, echo: 40, spring: 0, input: 0, wow: 50 };
+    const P = () => t.effectParams.techo, ed = anaEdit(t, 'techo');
+    const W = 940, H = 320, MODES = ['1', '2', '3', '1+2', '2+3', '1+3', '1+2+3'], HEADS = [[1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 0], [0, 1, 1], [1, 0, 1], [1, 1, 1]];
+    const { panel, svg } = anaWindow(t, 'techo', 'Écho à bande', W, H, anchorEl, trackIdx, 940, 'graphite');
+    const L = { style: 'paint-order:stroke', 'stroke-opacity': '.5', 'stroke-width': '.6', stroke: '#000' };
+    anaText(svg, 44, 38, 'PULSE · ÉCHO À BANDE', { ...L, 'text-anchor': 'start', 'font-size': 14, 'font-weight': 700, 'letter-spacing': 3 });
+    anaText(svg, 44, 54, 'TROIS TÊTES · RESSORT', { fill: '#c4b5fd', 'text-anchor': 'start', 'letter-spacing': 2.5, class: '' });
+    // la boucle de bande : un ovale brun qui défile, la tête d'enregistrement et les trois têtes de lecture
+    const tx = 70, ty = 80, tw = 420, th = 110;
+    anaEl('rect', { x: tx - 12, y: ty - 12, width: tw + 24, height: th + 24, rx: 14, fill: '#0b0a0e', stroke: '#2a2733' }, svg);
+    const loop = anaEl('rect', { x: tx, y: ty + 18, width: tw, height: th - 36, rx: 37, fill: 'none', stroke: '#4a2e1a', 'stroke-width': 9, 'stroke-dasharray': '14 5' }, svg);
+    const heads = [];
+    [['ENREG.', tx + 60], ['1', tx + 170], ['2', tx + 260], ['3', tx + 350]].forEach(([lab, x], i) => {
+        anaEl('rect', { x: x - 13, y: ty + 4, width: 26, height: 22, rx: 3, fill: '#9a9ca3', stroke: '#000' }, svg);
+        const led = anaEl('circle', { cx: x, cy: ty + th + 2, r: 4.5, fill: i ? '#1c1426' : '#7c3aed', ...(i ? {} : { filter: 'url(#anaGlow)' }) }, svg);
+        anaText(svg, x, ty - 1, lab, { fill: '#c4b5fd', 'font-size': 7, 'letter-spacing': 1, class: '' });
+        if (i) heads.push(led);
+    });
+    const read = panel.querySelector('.ana-read');
+    const say = () => { const p = P(); read.innerHTML = `Têtes <b>${MODES[p.mode ?? 1]}</b> · Vitesse <b>${(Math.round(p.rate * 100) / 100).toString().replace('.', ',')}</b> · Intensité <b>${Math.round(p.intensity)}</b> · Écho <b>${Math.round(p.echo)}</b> · Ressort <b>${Math.round(p.spring)}</b>`;
+        HEADS[p.mode ?? 1].forEach((on, i) => { heads[i].setAttribute('fill', on ? '#c084fc' : '#1c1426'); if (on) heads[i].setAttribute('filter', 'url(#anaGlow)'); else heads[i].removeAttribute('filter'); }); };
+    const knob = (o) => anaKnob(svg, { ...o, get: () => P()[o.key] ?? o.def, set: (v) => { P()[o.key] = Math.round(v * (o.r || 1)) / (o.r || 1); ed.touch(o.key); say(); }, onStart: ed.start, onEnd: ed.end });
+    // sélecteur de mode (7 crans) et vitesse (gros bouton)
+    MODES.forEach((m, i) => { const a = (-90 + 30 * i) * Math.PI / 180; anaText(svg, 600 + Math.sin(a) * 44, 136 - Math.cos(a) * 44 + 3, m, { fill: '#c4b5fd', 'font-size': 7.5, 'letter-spacing': 0, class: '' }); });
+    anaKnob(svg, { strip: 'sel7', cx: 600, cy: 136, d: 54, key: 'mode', min: 0, max: 6, def: 1, steps: [0, 1, 2, 3, 4, 5, 6], get: () => P().mode ?? 1, set: (v) => { P().mode = v; say(); }, onStart: ed.start, onEnd: ed.end, tip: 'Mode : quelles têtes lisent la bande' }).g.classList.remove('pk');
+    anaText(svg, 600, 198, 'MODE', { ...L, 'font-size': 9 });
+    anaTicks(svg, 740, 136, 44, 7, -150, 150, ['0,5', '', '', '1', '', '', '2'], 7);
+    knob({ strip: 'black-big', cx: 740, cy: 136, d: 72, key: 'rate', min: 0.5, max: 2, def: 1, r: 100, tip: 'Vitesse de la bande : lente = répétitions espacées ; tourner pendant que ça joue fait « pleurer » le son' });
+    anaText(svg, 740, 198, 'VITESSE', { ...L, 'font-size': 9 });
+    anaTicks(svg, 870, 136, 30, 7, -150, 150, ['0', '', '', '', '', '', '120'], 7);
+    knob({ strip: 'alu-big', cx: 870, cy: 136, d: 48, key: 'intensity', min: 0, max: 120, def: 40, tip: 'Intensité : combien les répétitions reviennent ; au-delà de 100 ça s\'emballe' });
+    anaText(svg, 870, 198, 'INTENSITÉ', { ...L, 'font-size': 9 });
+    // rangée du bas
+    [['input', 'ENTRÉE', -12, 12, 0, 'Entrée : pousse la bande (plus de saturation)'], ['bass', 'GRAVE', -12, 12, 0, 'Grave des répétitions'], ['treble', 'AIGU', -12, 12, 0, 'Aigu des répétitions'],
+     ['wow', 'PLEURAGE', 0, 100, 50, 'Pleurage de la bande (50 = la machine)'], ['echo', 'ÉCHO', 0, 100, 40, 'Niveau de l\'écho'], ['spring', 'RESSORT', 0, 100, 0, 'Niveau de la réverbe à ressort']].forEach(([key, lab, mn, mx, def, tip], i) => {
+        const x = 90 + i * 140; anaTicks(svg, x, 262, 20, 7, -150, 150, null); knob({ strip: 'bakelite', cx: x, cy: 262, d: 32, key, min: mn, max: mx, def, tip }); anaText(svg, x, 296, lab, { ...L, 'font-size': 8, 'letter-spacing': 1 }); });
+    // la bande défile pendant la lecture (plus vite si la vitesse monte)
+    let off = 0, last = performance.now();
+    const anim = (now) => { if (!panel.isConnected) return; const dt = Math.min(0.1, (now - last) / 1000); last = now;
+        if ((t.effects || []).includes('techo') && (state.playing || state.recording)) { off -= dt * 60 * (P().rate ?? 1); loop.setAttribute('stroke-dashoffset', off.toFixed(1)); }
+        requestAnimationFrame(anim); };
+    requestAnimationFrame(anim);
+    panel.querySelector('.fx-bypass').addEventListener('change', (e) => { pushUndo(); setFxOn(t, 'techo', e.target.checked); refreshPlaybackSoon(); saveProject(); refreshStrips(); });
+    say();
+    makePlugWindow(panel, t, 'techo', trackIdx);
+}
+
 // Styles de la façade (ici pour garder la gamme dans un seul fichier)
 (() => {
     const st = document.createElement('style');

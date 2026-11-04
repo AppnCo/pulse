@@ -32,6 +32,8 @@ const CASES = [
   ['horizon', { g2: 5, f2: 200, q2: 0.8, g3: 4, f3: 2500, ch3: 1, char: -0.7, strength: 130, lpOn: 1, lpF: 9000, lpS: 0, input: -3, output: 2 }, [0.193790, 0.193790, 0.016294]],
   ['plate', { decay: 2.5, pre: 30, bright: 70, lowcut: 120, mix: 40 }, [0.134996, 0.135534, 0.035645]],
   ['plate', { decay: 1.2, pre: 0, bright: 40, lowcut: 60, width: 140, mix: 60, variant: 1 }, [0.059170, 0.062295, 0.026672]],
+  ['techo', { mode: 3, rate: 1.2, intensity: 55, bass: -2, treble: -3, echo: 35, spring: 25, input: -3 }, [0.244318, 0.229543, 0.057974]],
+  ['techo', { mode: 6, rate: 0.7, intensity: 90, echo: 70, spring: 0, wow: 80 }, [0.171493, 0.227827, 0.060108]],
   ['opto2a', { peak: 60, gain: 55, variant: 0 }, [0.086484, 0.082398, 0.018677]],
   ['opto2a', { peak: 45, limit: 1, emph: 50, variant: 2, mix: 80 }, [0.055303, 0.053787, 0.016746]],
 ];

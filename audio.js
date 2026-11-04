@@ -1522,6 +1522,57 @@ window.PulseAudio = (function() {
             }
         }
         registerProcessor('pulse-plate', pulseAuto(PulsePlate, (s, v) => { let ch = false; for (const k in v) if (k in s.p && s.p[k] !== v[k]) { s.p[k] = v[k]; ch = true; } if (ch) s.set(); }));
+        // Écho à bande : trois têtes, vitesse qui glisse, répétitions saturées et assombries, deux ressorts. Même calcul que TapeEcho (analog.rs).
+        const TE_HEADS = [0.12, 0.24, 0.36], TE_MODES = [[1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 0], [0, 1, 1], [1, 0, 1], [1, 1, 1]];
+        class PulseTapeEcho extends AudioWorkletProcessor {
+            constructor(o) {
+                super();
+                const p = (o && o.processorOptions) || {}, sr = sampleRate, n = (v) => Math.round(v * sr);
+                this.p = { mode: p.mode ?? 1, rate: p.rate ?? 1, intensity: p.intensity ?? 40, bass: p.bass ?? 0, treble: p.treble ?? 0, echo: p.echo ?? 40, spring: p.spring ?? 0, input: p.input ?? 0, wow: p.wow ?? 50 };
+                this.tape = new PlDl(n(TE_HEADS[2] * 2.2) + 64); this.glide = 1 - Math.exp(-1 / (0.25 * sr));
+                this.tone = [[1, 0, 0, 0, 0], [1, 0, 0, 0, 0], [1, 0, 0, 0, 0]]; this.tst = [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]];
+                this.hfz = 0; this.hfa = 1 - Math.exp(-2 * Math.PI * 5000 / sr); this.pw = 0; this.pf = 0;
+                const mk = (d, k) => ({ aps: Array.from({ length: 8 }, (_, i) => new PlAp(Math.max(2, Math.round((1 + i * 0.37 + k * 0.11) * sr / 8000)))), dl: new PlDl(n(d) + 2), z: 0 });
+                this.sp = [mk(0.037, 0), mk(0.043, 1)];
+                this.set(); this.rate = this.rateT;
+            }
+            set() {
+                const p = this.p, sr = sampleRate, cl = (v, a, b) => Math.max(a, Math.min(b, v));
+                this.heads = TE_MODES[Math.min(6, Math.max(0, Math.round(p.mode)))];
+                this.rateT = cl(p.rate, 0.5, 2);
+                const nh = Math.max(1, this.heads.reduce((a, b) => a + b, 0));
+                this.fb = cl(p.intensity, 0, 120) / 100 / nh; this.gin = Math.pow(10, cl(p.input, -12, 12) / 20);
+                this.echo = cl(p.echo, 0, 100) / 100; this.springV = cl(p.spring, 0, 100) / 100;
+                this.tone = [eqMatched('lowshelf', 200, 0.7, cl(p.bass, -12, 12), sr), eqMatched('highshelf', 3000, 0.7, cl(p.treble, -12, 12), sr), eqMatched('highpass', 80, 0.707, 0, sr)];
+                const w = cl(p.wow, 0, 100) / 50;
+                this.ww = Math.min(60, 0.0015 * w * sr / (2 * Math.PI * 0.7)); this.wf = Math.min(8, 0.0006 * w * sr / (2 * Math.PI * 7));
+            }
+            process(inputs, outputs) {
+                const inp = inputs[0], out = outputs[0];
+                if (!out || !out.length) return true;
+                const n = out[0].length, nin = inp && inp.length ? Math.min(inp.length, 2) : 0, sr = sampleRate, TP = 2 * Math.PI;
+                for (let i = 0; i < n; i++) {
+                    const dl = nin ? inp[0][i] : 0, dr = nin > 1 ? inp[1][i] : dl, x = (nin > 1 ? 0.5 * (dl + dr) : dl) * this.gin;
+                    this.rate += (this.rateT - this.rate) * this.glide;
+                    this.pw += TP * 0.7 / sr; if (this.pw > TP) this.pw -= TP;
+                    this.pf += TP * 7 / sr; if (this.pf > TP) this.pf -= TP;
+                    const wob = this.ww * Math.sin(this.pw) + this.wf * Math.sin(this.pf);
+                    let sum = 0;
+                    for (let h = 0; h < 3; h++) if (this.heads[h]) sum += this.tape.atf(TE_HEADS[h] * sr / this.rate + wob);
+                    let e = sum;
+                    for (let j = 0; j < 3; j++) e = biqRun(this.tone[j], this.tst[j], e);
+                    this.hfz += (e - this.hfz) * this.hfa; e = this.hfz;
+                    const w = x + e * this.fb;
+                    this.tape.push(Math.tanh(w * 0.8) / 0.8);
+                    const feed = x * 0.5 + e * 0.5, so = [0, 0];
+                    for (let k = 0; k < 2; k++) { const s = this.sp[k]; let v = feed + s.z * 0.72; for (const a of s.aps) v = a.run(v, 0.62); s.dl.push(v); const o = s.dl.at(s.dl.b.length - 3); s.z = o; so[k] = o; }
+                    out[0][i] = dl + e * this.echo + so[0] * this.springV * 0.6;
+                    if (out[1]) out[1][i] = dr + e * this.echo + so[1] * this.springV * 0.6;
+                }
+                return true;
+            }
+        }
+        registerProcessor('pulse-techo', pulseAuto(PulseTapeEcho, (s, v) => { let ch = false; for (const k in v) if (k in s.p && s.p[k] !== v[k]) { s.p[k] = v[k]; ch = true; } if (ch) s.set(); }));
         registerProcessor('pulse-deesser', pulseAuto(PulseDeesser, (s, v) => { if (v.amount !== undefined) { const a = Math.max(0, Math.min(100, v.amount)); s.maxRed = a * 0.24; s.slope = a / 100 * 3; } }));
 
         // Gate : coupe le bruit entre deux phrases. Mêmes calculs que Gate dans engine/src/fx.rs.
@@ -2199,7 +2250,7 @@ window.PulseAudio = (function() {
 
     // Exemplaire d'un effet : « comp#2 » → type « comp » (même calcul que fx_type dans model.rs)
     const fxType = (id) => String(id).split('#')[0];
-    const FX_CHAIN = ['pitch', 'filter', 'pre73', 'stripe', 'gate', 'eq', 'eqp1', 'horizon', 'eq550', 'massif', 'tape', 'sat', 'msat', 'crush', 'deess', 'fet76', 'opto2a', 'l670', 'dtr', 'comp25', 'comp', 'mband', 'bus33', 'busg', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'plate', 'reverb']; // ordre habituel des effets
+    const FX_CHAIN = ['pitch', 'filter', 'pre73', 'stripe', 'gate', 'eq', 'eqp1', 'horizon', 'eq550', 'massif', 'tape', 'sat', 'msat', 'crush', 'deess', 'fet76', 'opto2a', 'l670', 'dtr', 'comp25', 'comp', 'mband', 'bus33', 'busg', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'techo', 'plate', 'reverb']; // ordre habituel des effets
     const SEND_REVERB_TRIM = 1 / 3; // la reverb seule sort 3 fois trop fort par rapport au son direct : on la ramène à niveau
 
     // Paliers de tempo [{ sec, bpm }] quand le tempo change en cours de morceau (sinon null) — Project::tempo_segments côté Rust
@@ -3942,6 +3993,12 @@ window.PulseAudio = (function() {
         B.eq550 = () => node('pulse-eq550', 'eq550');
         B.massif = () => node('pulse-massif', 'massif');
         B.horizon = () => node('pulse-horizon', 'horizon');
+        // Écho à bande : sortie stéréo (les deux ressorts)
+        B.techo = () => {
+            if (!enabled.includes('techo') || !fxReady.has(actx)) return;
+            connect(new AudioWorkletNode(actx, 'pulse-techo', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCountMode: 'max',
+                processorOptions: { kind: 'techo', ...(params.techo || {}), ...autoAll('techo') } }));
+        };
         // Plaque 140 : sortie stéréo même pour une piste mono (comme la reverb)
         B.plate = () => {
             if (!enabled.includes('plate') || !fxReady.has(actx)) return;

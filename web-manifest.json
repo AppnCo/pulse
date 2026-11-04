@@ -1,6 +1,6 @@
 {
 "files": {
-"analog-ui.js": "f6e13e522031f902b033315ad205ecf87ba955e01784c10ec5733cff0ee6f22c",
+"analog-ui.js": "14a3bf89d4370d1853fb65c295394de699996784ee4fb797a64b3365ea86ebd7",
 "assets/analog/alu-big.webp": "0584094c7144ed41bb2986eec3078dc6432530b908e0d11a5d462d82e39728df",
 "assets/analog/bakelite.webp": "7d509c304170a44d0736daf6a026b6ff7c481ab62d59fc85addd22ee63294974",
 "assets/analog/black-big.webp": "7c547fb34efadf15c59b21abda2f85c81bdb08955e1453917b235331208eee45",
@@ -31,8 +31,8 @@
 "assets/analog/trim73.webp": "cf347e89c1ea16839b52093fd8ebca8b510195743a8b5f834b9eb563286403bf",
 "assets/icon.svg": "72b5c27f134d23017550f44d8b4413d7c2a6bbb18c178b855f98af38d4700c4c",
 "assets/logo.svg": "91e45f0e09dcc7434f4231f622bda56ae8a7a696f9f3071e71d37008cdd61b78",
-"audio.js": "163ae6033691132e0c8b6c8389a48f64f53ff605a17704e434c000c939ef6ed8",
-"automation.js": "a7fd093e7a747ffd2c5ee082cc2da04395cbe4d31b76adee110a7fded37f6fc8",
+"audio.js": "3d5dbe1bd5103a498b1cc493d92427b00dfe04a07febd915bf8e500e022bb8bd",
+"automation.js": "38daf5f21d33a753218e7a89034ade97b48475fc57395fdee1de9ae93ff19ff7",
 "compteur.js": "cf3470a9fdadf52299a1c984654b1db75556986ffea64ec9c9ceda5137ad3ff3",
 "horizon-ui.js": "443547aacfed9b20bc606ce8513756857a0d9824d6caa36ae0265dae2e47d62f",
 "i18n/build-en-texts.js": "898f4c22a37e442dbbecef48a9835b7e2639013a0d61dbf24d7f68a11d72a60b",
@@ -53,7 +53,7 @@
 "script.js": "db3e98a56222a9e7297b9764201671e632aeaf9e22acaf311b56c3b9be541390",
 "studio.css": "e617aa31e34cf2e81f12b79ec929ff1e591a64be4dbead7dc4736feeb7882b80",
 "studio.html": "2c2e1d0d63cda816d9a468e051c4f577f777ab08631c22569ef5e31f55274465",
-"studio.js": "6c40d9bd5ef53e93e3fd175dffe96db9f271a203c630d14dfa107bc79e7c5df2",
+"studio.js": "b91f50c6fd44b159552f213990bb26ba7adecc741d6b09f64b89676b2950e640",
 "styles.css": "9040ad9ca17969d48b7cc98c58afab3190dab1db6b986d245b71d0f9c438705c",
 "synth.js": "3daafe1a68a4e2abff7717bdce0af9880279f119b3e5fc52b55018b824726a8d",
 "tempo.js": "1ad0200f61ad3db6f6f5c47500b5c5ff042a585607c713ca324f752d27e33ca3",
@@ -63,5 +63,5 @@
 "vendor/lame.min.js": "15d285e2587b3bdbfd18a68de6ce07cc074f7480a82c3815da2dc1c348ec6df4",
 "warp.js": "209bb3114410db48c37af5bf718a4cd482fcb95cc5bbf7ae6f024e3420bf6f3e"
 },
-"version": "2026-11-04 12:44"
+"version": "2026-11-04 13:45"
 }

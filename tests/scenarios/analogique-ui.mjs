@@ -168,6 +168,15 @@ export default async (c) => {
   check('menu : Plaque 140 cliquée', await click('.fx-add-menu .fam-fx', 'Plaque 140')); await sleep(500);
   await click('.fx-panel.plug-win[data-fx="plate"] .ana-var[data-v="1"] rect');
   check('Plaque 140 : Chaude', await J(ev, `return state.project.tracks[0].effectParams.plate.variant`) === 1);
+  // Écho à bande : façade, vitesse tournée
+  await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
+  await click('#inspector .slot-plus[data-plus="fx"]');
+  await click('.fx-add-menu .fam-range', 'Analogique');
+  await click('.fx-add-menu .fam-cat', 'Espace'); await sleep(100);
+  check('menu : Écho à bande cliqué', await click('.fx-add-menu .fam-fx', 'Écho à bande')); await sleep(500);
+  const rk = await pos('.fx-panel.plug-win[data-fx="techo"] .ana-k[data-key="rate"] circle');
+  if (rk) { await mouse('mouseMoved', rk, { buttons: 0 }); await mouse('mousePressed', rk); for (let i = 1; i <= 5; i++) { await mouse('mouseMoved', { x: rk.x, y: rk.y - i * 10 }); await sleep(20); } await mouse('mouseReleased', { x: rk.x, y: rk.y - 50 }); await sleep(200); }
+  check('Écho à bande : vitesse montée', await J(ev, `return state.project.tracks[0].effectParams.techo.rate`) > 1);
   // ---- Envois façon Logic
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   await click('#inspector .slot-plus[data-plus="send"]');
