@@ -1573,6 +1573,82 @@ window.PulseAudio = (function() {
             }
         }
         registerProcessor('pulse-techo', pulseAuto(PulseTapeEcho, (s, v) => { let ch = false; for (const k in v) if (k in s.p && s.p[k] !== v[k]) { s.p[k] = v[k]; ch = true; } if (ch) s.set(); }));
+        // Salle 80 : réverbe numérique des années 80, entrée stéréo dans un anneau de 4 sections. Même calcul que Hall80 (analog.rs).
+        const H80_IN = [4.77, 3.59, 12.73, 9.30], H80_SEC = [[22.58, 149.6, 60.48, 125.0], [30.51, 125.0, 89.24, 106.3], [26.83, 141.7, 64.28, 94.0], [33.47, 118.3, 74.65, 112.9]];
+        const H80_VAR = [[1, 1, 10000], [0.55, 0.5, 12000], [1.15, 2, 9000]], H80_RATES = [0.83, 1.07, 0.71, 1.31];
+        class PulseHall80 extends AudioWorkletProcessor {
+            constructor(o) {
+                super();
+                const p = (o && o.processorOptions) || {}, sr = sampleRate, mx = (ms) => Math.floor(ms * 1.8 * sr / 1000) + 8, marg = Math.floor(0.002 * sr) + 8;
+                this.p = { decay: p.decay ?? 2.5, pre: p.pre ?? 30, size: p.size ?? 100, bass: p.bass ?? 1.2, xover: p.xover ?? 400, treble: p.treble ?? 6000, diffusion: p.diffusion ?? 70, spin: p.spin ?? 40, width: p.width ?? 100, mix: p.mix ?? 25, variant: p.variant ?? 0 };
+                this.pre = new PlDl(Math.floor(0.5 * sr) + 8); this.preN = 0; this.inz = [0, 0];
+                this.din = [1, 1.07].map(k => H80_IN.map(ms => new PlAp(mx(ms * k))));
+                this.sec = H80_SEC.map((s, k) => ({ ap1: new PlAp(mx(s[0]) + marg), d1: new PlDl(mx(s[1])), ap2: new PlAp(mx(s[2])), d2: new PlDl(mx(s[3])), n1: 2, n2: 2, tz: 0, lz: 0, ghi: 0, glo: 0, ph: k * 1.3 }));
+                this.fb = [0, 0, 0, 0]; this.wph = 0; this.oz = [[0, 0, 0, 0], [0, 0, 0, 0]];
+                this.set();
+            }
+            set() {
+                const p = this.p, sr = sampleRate, cl = (v, a, b) => Math.max(a, Math.min(b, v));
+                const v = H80_VAR[Math.min(2, Math.max(0, Math.round(p.variant)))];
+                const f = cl(p.size, 50, 150) / 100 * v[0], smp = (ms) => Math.max(2, Math.round(ms * f * sr / 1000));
+                this.preN = Math.floor(cl(p.pre, 0, 200) / 1000 * sr);
+                [1, 1.07].forEach((k, c) => { for (let i = 0; i < 4; i++) this.din[c][i].n = Math.max(2, Math.round(H80_IN[i] * k * f * sr / 1000)); });
+                const rt = cl(p.decay, 0.3, 20), bm = cl(p.bass, 0.5, 2.5);
+                this.sec.forEach((s, k) => { const l = H80_SEC[k]; s.ap1.n = smp(l[0]); s.n1 = smp(l[1]); s.ap2.n = smp(l[2]); s.n2 = smp(l[3]);
+                    const t = (s.ap1.n + s.n1 + s.ap2.n + s.n2) / sr; s.ghi = Math.min(0.999, Math.pow(10, -3 * t / rt)); s.glo = Math.min(0.999, Math.pow(10, -3 * t / (rt * bm))); });
+                const oc = (fc) => 1 - Math.exp(-2 * Math.PI * fc / sr);
+                this.ta = oc(Math.min(cl(p.treble, 1000, 16000), 0.45 * sr)); this.xa = oc(cl(p.xover, 100, 1500));
+                this.ina = oc(Math.min(v[2], 0.45 * sr));
+                const w = 2 * Math.PI * Math.min(v[2], 0.45 * sr) / sr, al = Math.sin(w) / (2 * Math.SQRT1_2), cw = Math.cos(w), a0 = 1 + al;
+                this.ob = [(1 - cw) / 2 / a0, (1 - cw) / a0, (1 - cw) / 2 / a0, -2 * cw / a0, (1 - al) / a0];
+                const d = cl(p.diffusion, 0, 100) / 100; this.gi = [0.75 * d, 0.625 * d]; this.g1 = 0.4 + 0.3 * d; this.g2 = 0.5 * d;
+                const sp = cl(p.spin, 0, 100) / 100; this.exc = sp * 0.0008 * sr * v[1]; this.rate = 0.5 + sp;
+                this.width = cl(p.width, 0, 150) / 100; this.mix = cl(p.mix / 100, 0, 1);
+            }
+            process(inputs, outputs) {
+                const inp = inputs[0], out = outputs[0];
+                if (!out || !out.length) return true;
+                const n = out[0].length, nin = inp && inp.length ? Math.min(inp.length, 2) : 0, sr = sampleRate, S = this.sec, b = this.ob;
+                const g1 = this.g1, g2 = this.g2, ta = this.ta, xa = this.xa, exc = this.exc, step = 2 * Math.PI * this.rate / sr, inj = [0, 0], o = [0, 0], ys = [0, 0], fbn = [0, 0, 0, 0];
+                const tp = (s, two, fr) => two ? s.d2.at(Math.round(s.n2 * fr)) : s.d1.at(Math.round(s.n1 * fr));
+                for (let i = 0; i < n; i++) {
+                    const dl = nin ? inp[0][i] : 0, dr = nin > 1 ? inp[1][i] : dl;
+                    this.pre.push(dl); this.pre.push(dr);
+                    const il = this.pre.at(2 * this.preN + 1), ir = this.pre.at(2 * this.preN);
+                    for (let c = 0; c < 2; c++) {
+                        this.inz[c] += ((c ? ir : il) - this.inz[c]) * this.ina;
+                        const A = this.din[c]; let d = this.inz[c];
+                        d = A[0].run(d, this.gi[0]); d = A[1].run(d, this.gi[0]); d = A[2].run(d, this.gi[1]); d = A[3].run(d, this.gi[1]);
+                        inj[c] = d;
+                    }
+                    this.wph += 2 * Math.PI * 0.13 / sr; if (this.wph > 2 * Math.PI) this.wph -= 2 * Math.PI;
+                    const wander = 0.5 * Math.sin(this.wph);
+                    for (let k = 0; k < 4; k++) {
+                        const s = S[k];
+                        s.ph += step * H80_RATES[k]; if (s.ph > 2 * Math.PI) s.ph -= 2 * Math.PI;
+                        const m = exc * (Math.sin(s.ph) + wander) * (k % 2 === 0 ? 1 : -1);
+                        const u = this.fb[(k + 3) % 4] + (k === 0 ? inj[0] : k === 2 ? inj[1] : 0);
+                        const a = s.ap1.runMod(u, -g1, m); s.d1.push(a);
+                        s.tz += (s.d1.at(s.n1 - 1) - s.tz) * ta;
+                        s.lz += (s.tz - s.lz) * xa;
+                        const c = s.ap2.run(s.lz * s.glo + (s.tz - s.lz) * s.ghi, g2); s.d2.push(c);
+                        fbn[k] = s.d2.at(s.n2 - 1);
+                    }
+                    for (let k = 0; k < 4; k++) this.fb[k] = fbn[k];
+                    ys[0] = tp(S[0], false, 0.11) + tp(S[0], false, 0.67) - tp(S[1], true, 0.45) + tp(S[2], false, 0.33) - tp(S[3], true, 0.71) + tp(S[0], true, 0.21) - tp(S[3], false, 0.52);
+                    ys[1] = tp(S[2], false, 0.13) + tp(S[2], false, 0.61) - tp(S[3], true, 0.39) + tp(S[0], false, 0.29) - tp(S[1], true, 0.77) + tp(S[2], true, 0.17) - tp(S[1], false, 0.48);
+                    for (let c = 0; c < 2; c++) {
+                        const z = this.oz[c], v = ys[c] * 0.35, y = b[0] * v + b[1] * z[0] + b[2] * z[1] - b[3] * z[2] - b[4] * z[3];
+                        z[1] = z[0]; z[0] = v; z[3] = z[2]; z[2] = y; o[c] = y;
+                    }
+                    const mm = (o[0] + o[1]) * 0.5, ss = (o[0] - o[1]) * 0.5 * this.width;
+                    out[0][i] = dl * (1 - this.mix) + (mm + ss) * this.mix;
+                    if (out[1]) out[1][i] = dr * (1 - this.mix) + (mm - ss) * this.mix;
+                }
+                return true;
+            }
+        }
+        registerProcessor('pulse-hall80', pulseAuto(PulseHall80, (s, v) => { let ch = false; for (const k in v) if (k in s.p && s.p[k] !== v[k]) { s.p[k] = v[k]; ch = true; } if (ch) s.set(); }));
         registerProcessor('pulse-deesser', pulseAuto(PulseDeesser, (s, v) => { if (v.amount !== undefined) { const a = Math.max(0, Math.min(100, v.amount)); s.maxRed = a * 0.24; s.slope = a / 100 * 3; } }));
 
         // Gate : coupe le bruit entre deux phrases. Mêmes calculs que Gate dans engine/src/fx.rs.
@@ -2250,7 +2326,7 @@ window.PulseAudio = (function() {
 
     // Exemplaire d'un effet : « comp#2 » → type « comp » (même calcul que fx_type dans model.rs)
     const fxType = (id) => String(id).split('#')[0];
-    const FX_CHAIN = ['pitch', 'filter', 'pre73', 'stripe', 'gate', 'eq', 'eqp1', 'horizon', 'eq550', 'massif', 'tape', 'sat', 'msat', 'crush', 'deess', 'fet76', 'opto2a', 'l670', 'dtr', 'comp25', 'comp', 'mband', 'bus33', 'busg', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'techo', 'plate', 'reverb']; // ordre habituel des effets
+    const FX_CHAIN = ['pitch', 'filter', 'pre73', 'stripe', 'gate', 'eq', 'eqp1', 'horizon', 'eq550', 'massif', 'tape', 'sat', 'msat', 'crush', 'deess', 'fet76', 'opto2a', 'l670', 'dtr', 'comp25', 'comp', 'mband', 'bus33', 'busg', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'techo', 'plate', 'hall80', 'reverb']; // ordre habituel des effets
     const SEND_REVERB_TRIM = 1 / 3; // la reverb seule sort 3 fois trop fort par rapport au son direct : on la ramène à niveau
 
     // Paliers de tempo [{ sec, bpm }] quand le tempo change en cours de morceau (sinon null) — Project::tempo_segments côté Rust
@@ -3998,6 +4074,12 @@ window.PulseAudio = (function() {
             if (!enabled.includes('techo') || !fxReady.has(actx)) return;
             connect(new AudioWorkletNode(actx, 'pulse-techo', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCountMode: 'max',
                 processorOptions: { kind: 'techo', ...(params.techo || {}), ...autoAll('techo') } }));
+        };
+        // Salle 80 : sortie stéréo même pour une piste mono
+        B.hall80 = () => {
+            if (!enabled.includes('hall80') || !fxReady.has(actx)) return;
+            connect(new AudioWorkletNode(actx, 'pulse-hall80', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCountMode: 'max',
+                processorOptions: { kind: 'hall80', ...(params.hall80 || {}), ...autoAll('hall80') } }));
         };
         // Plaque 140 : sortie stéréo même pour une piste mono (comme la reverb)
         B.plate = () => {

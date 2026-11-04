@@ -55,17 +55,17 @@ const anaText = (parent, x, y, txt, attrs = {}) => { const e = anaEl('text', { x
 // Bouton tournant : glisser vers le haut / le bas (Maj = fin), molette, double-clic = valeur de départ.
 // `steps` = valeurs permises (bouton à crans) ; sinon continu entre min et max. Le bouton porte la classe .pk + data-key :
 // en mode automation, le toucher affiche sa courbe sur la piste (autoTargetOf), et il suit la courbe pendant la lecture (_pkShow).
-function anaKnob(parent, { strip, cx, cy, d, key, min, max, def, steps, get, set, fmt, onStart, onEnd, tip, hitR }) {
+function anaKnob(parent, { strip, cx, cy, d, key, min, max, def, steps, get, set, fmt, onStart, onEnd, tip, hitR, log }) {
     const g = anaEl('g', { class: 'pk ana-k', 'data-key': key }, parent);
     const sp = anaSprite(g, strip, cx, cy, d);
     // bouton concentrique : le petit bouton du centre n'attrape que le centre (le grand autour reste accessible)
     if (!hitR && /^(midf73|lowf73|k550f\d)$/.test(strip)) hitR = d * 0.22;
     const hit = anaEl('circle', { cx, cy, r: hitR || d / 2 + 4, fill: 'transparent' }, g);
     if (tip) anaEl('title', {}, hit).textContent = tip;
-    const frac = (v) => steps ? Math.max(0, steps.indexOf(steps.reduce((b, s) => Math.abs(s - v) < Math.abs(b - v) ? s : b, steps[0]))) / (steps.length - 1) : (v - min) / (max - min);
+    const frac = (v) => steps ? Math.max(0, steps.indexOf(steps.reduce((b, s) => Math.abs(s - v) < Math.abs(b - v) ? s : b, steps[0]))) / (steps.length - 1) : log ? Math.log(Math.max(min, v) / min) / Math.log(max / min) : (v - min) / (max - min);
     const draw = (v = get()) => sp.frame(frac(v) * (sp.n - 1));
     const quant = (v) => steps ? steps.reduce((b, s) => Math.abs(s - v) < Math.abs(b - v) ? s : b, steps[0]) : Math.max(min, Math.min(max, v));
-    const fromFrac = (f) => { f = Math.max(0, Math.min(1, f)); return steps ? steps[Math.round(f * (steps.length - 1))] : min + f * (max - min); };
+    const fromFrac = (f) => { f = Math.max(0, Math.min(1, f)); return steps ? steps[Math.round(f * (steps.length - 1))] : log ? min * Math.pow(max / min, f) : min + f * (max - min); };
     g.addEventListener('mousedown', (e) => {
         if (e.button !== 0) return;
         e.preventDefault(); e.stopPropagation();
@@ -1246,6 +1246,86 @@ function openPlatePanel(trackIdx, anchorEl) {
     panel.querySelector('.fx-bypass').addEventListener('change', (e) => { pushUndo(); setFxOn(t, 'plate', e.target.checked); refreshPlaybackSoon(); saveProject(); refreshStrips(); });
     say();
     makePlugWindow(panel, t, 'plate', trackIdx);
+}
+
+
+// ===== Salle 80 : réverbe numérique des années 80 (esprit « 224 / 480 ») : l'écran à LED rouges qui dessine la décroissance =====
+function openHall80Panel(trackIdx, anchorEl) {
+    closeTransientPanels();
+    const t = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;
+    if (!t) return;
+    const already = findPlugWin(t, 'hall80');
+    if (already) { plugFront(already); return; }
+    t.effectParams = t.effectParams || {};
+    if (!t.effectParams.hall80) t.effectParams.hall80 = { decay: 2.5, pre: 30, size: 100, bass: 1.2, xover: 400, treble: 6000, diffusion: 70, spin: 40, width: 100, mix: 25, variant: 0 };
+    const P = () => t.effectParams.hall80, ed = anaEdit(t, 'hall80');
+    const W = 900, H = 340, NM = ['Salle', 'Chambre', 'Riche'], SK = ['brun', 'graphite', 'noir'];
+    const TIP = ['Salle : grande salle de concert, la queue classique des années 80', 'Chambre : petite pièce dense, départ serré', 'Riche : plus grande, plus de mouvement, plus sombre'];
+    const { panel, svg } = anaWindow(t, 'hall80', 'Salle 80', W, H, anchorEl, trackIdx, 900, SK[Math.round(P().variant ?? 0)] || 'brun');
+    const L = { style: 'paint-order:stroke', 'stroke-opacity': '.35', 'stroke-width': '.6', stroke: '#000' };
+    anaText(svg, 44, 38, 'PULSE · SALLE 80', { ...L, 'text-anchor': 'start', 'font-size': 14, 'font-weight': 700, 'letter-spacing': 3 });
+    const sub = anaText(svg, 44, 54, '', { class: 'ana-sub', 'text-anchor': 'start', 'letter-spacing': 2.5 });
+    // l'écran : verre fumé, chiffres rouges, et la courbe de décroissance (graves / médiums / aigus) qui suit les réglages
+    const sx = 44, sy = 70, sw = 380, sh = 168;
+    const defs = svg.querySelector('defs');
+    defs.insertAdjacentHTML('beforeend', `<linearGradient id="h8Glass" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1a0606"/><stop offset="1" stop-color="#070202"/></linearGradient>
+        <filter id="h8Led" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="1.4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>`);
+    anaEl('rect', { x: sx - 6, y: sy - 6, width: sw + 12, height: sh + 12, rx: 5, fill: '#0a0a0c', stroke: '#000' }, svg);
+    anaEl('rect', { x: sx, y: sy, width: sw, height: sh, rx: 3, fill: 'url(#h8Glass)' }, svg);
+    for (let k = 1; k < 6; k++) anaEl('line', { x1: sx + 10, y1: sy + 40 + k * 20, x2: sx + sw - 10, y2: sy + 40 + k * 20, stroke: '#3a0c0c', 'stroke-width': 0.6 }, svg);
+    const led = (x, y, size, anchor = 'start') => anaText(svg, x, y, '', { fill: '#ff2a2a', 'font-size': size, 'font-family': 'ui-monospace, Menlo, monospace', 'font-weight': 700, 'text-anchor': anchor, filter: 'url(#h8Led)', class: '' });
+    const ledProg = led(sx + 12, sy + 26, 18), ledDec = led(sx + sw - 12, sy + 26, 18, 'end'), ledInfo = led(sx + 12, sy + sh - 8, 8.5);
+    const curves = anaEl('g', { filter: 'url(#h8Led)' }, svg);
+    const tail = anaEl('rect', { x: sx + 10, y: sy + 40, width: 0, height: sh - 62, fill: '#ff2a2a', opacity: 0.08 }, svg);
+    const drawCurves = () => {
+        const p = P(), rt = Math.max(0.3, p.decay ?? 2.5), span = Math.min(20, Math.max(2, rt * 1.6)), x0 = sx + 10, x1 = sx + sw - 10, y0 = sy + 44, y1 = sy + sh - 22;
+        const hiRt = rt * Math.max(0.25, Math.min(1, (p.treble ?? 6000) / 9000));
+        curves.innerHTML = '';
+        [[rt * (p.bass ?? 1.2), '#ff7a3a', 'GRAVES'], [rt, '#ff2a2a', 'MÉDIUMS'], [hiRt, '#ff9a9a', 'AIGUS']].forEach(([r, col, lab], i) => {
+            const pts = []; for (let k = 0; k <= 60; k++) { const s = k / 60 * span, db = Math.max(-60, -60 * s / r); pts.push(`${(x0 + (x1 - x0) * k / 60).toFixed(1)},${(y0 + (y1 - y0) * (-db / 60)).toFixed(1)}`); }
+            anaEl('polyline', { points: pts.join(' '), fill: 'none', stroke: col, 'stroke-width': i === 1 ? 1.8 : 1.1, opacity: i === 2 ? 0.7 : 1 }, curves);
+            anaText(curves, x1 - 4, y0 + 10 + i * 11, lab, { fill: col, 'font-size': 7, 'text-anchor': 'end', 'letter-spacing': 1, class: '' }); });
+        ledProg.textContent = NM[Math.round(p.variant ?? 0)].toUpperCase();
+        ledDec.textContent = (Math.round(rt * 10) / 10).toFixed(1) + ' s';
+        ledInfo.textContent = `PRÉ ${Math.round(p.pre ?? 30)} MS · TAILLE ${Math.round(p.size ?? 100)} % · GRAVES ×${(p.bass ?? 1.2).toFixed(1)}`;
+    };
+    const read = panel.querySelector('.ana-read');
+    const say = () => { const p = P(); drawCurves(); read.innerHTML = `${NM[Math.round(p.variant ?? 0)]} · Durée <b>${(Math.round(p.decay * 10) / 10).toString().replace('.', ',')} s</b> · Pré-délai <b>${Math.round(p.pre)} ms</b> · Mélange <b>${Math.round(p.mix)} %</b>`; };
+    const knob = (o) => anaKnob(svg, { ...o, get: () => P()[o.key] ?? o.def, set: (v) => { P()[o.key] = Math.round(v * (o.r || 1)) / (o.r || 1); ed.touch(o.key); say(); }, onStart: ed.start, onEnd: ed.end });
+    anaTicks(svg, 530, 150, 56, 11, -150, 150, ['0,3', '', '', '', '', '', '', '', '', '', '20'], 7.5);
+    knob({ strip: 'black-big', cx: 530, cy: 150, d: 92, key: 'decay', min: 0.3, max: 20, def: 2.5, r: 10, log: true, tip: 'Durée de la queue (médiums) : 0,3 à 20 s' });
+    anaText(svg, 530, 228, 'DURÉE · s', { ...L, 'font-size': 10 });
+    const mid = [['pre', 'PRÉ-DÉLAI', 0, 200, 30, 1, 'Pré-délai (ms) : la voix sort avant la salle'], ['size', 'TAILLE', 50, 150, 100, 1, 'Taille de la salle (%) : espacement des échos'],
+        ['bass', 'GRAVES ×', 0.5, 2.5, 1.2, 10, 'Multiplicateur de graves : les graves durent × plus (ou moins) que les médiums'], ['treble', 'AIGUS', 1000, 16000, 6000, 1, 'Aigus (Hz) : au-dessus, la queue s\'éteint plus vite']];
+    mid.forEach(([key, lab, mn, mx, def, r, tip], i) => { const x = 660 + (i % 2) * 110, y = 108 + Math.floor(i / 2) * 92;
+        anaTicks(svg, x, y, 24, 9, -150, 150, null); knob({ strip: 'bakelite', cx: x, cy: y, d: 40, key, min: mn, max: mx, def, r, log: key === 'treble', tip }); anaText(svg, x, y + 38, lab, { ...L, 'font-size': 8, 'letter-spacing': 1 }); });
+    const small = [['xover', 'CROISEMENT', 100, 1500, 400, 'Croisement (Hz) : où commencent les graves ×'], ['diffusion', 'DIFFUSION', 0, 100, 70, 'Diffusion : départ plus ou moins dense'],
+        ['spin', 'MOUVEMENT', 0, 100, 40, 'Mouvement : les retards flottent doucement, la queue vit'], ['width', 'LARGEUR', 0, 150, 100, 'Largeur stéréo (100 % = la salle)'], ['mix', 'MÉLANGE', 0, 100, 25, 'Mélange (en bus : 100 %)']];
+    small.forEach(([key, lab, mn, mx, def, tip], i) => { const x = 70 + i * 92; anaTicks(svg, x, 288, 18, 7, -150, 150, null); knob({ strip: 'bakelite', cx: x, cy: 288, d: 30, key, min: mn, max: mx, def, log: key === 'xover', tip }); anaText(svg, x, 318, lab, { ...L, 'font-size': 7.5, 'letter-spacing': 1 }); });
+    const vg = anaEl('g', {}, svg);
+    const drawVar = () => { vg.innerHTML = ''; const cur = Math.round(P().variant ?? 0);
+        NM.forEach((nm, i) => { const x = 610 + i * 82, on = i === cur, g = anaEl('g', { class: 'ana-push ana-var', 'data-v': i }, vg);
+            anaEl('rect', { x: x - 36, y: 280, width: 72, height: 18, rx: 4, fill: on ? '#b91c1c' : '#1a0d0d', stroke: '#4a1a1a', ...(on ? { filter: 'url(#anaGlow)' } : {}) }, g);
+            anaText(g, x, 292.5, nm.toUpperCase(), { fill: on ? '#fff' : '#fca5a5', 'font-size': 7.5, 'letter-spacing': 1, class: '' });
+            anaEl('title', {}, g).textContent = TIP[i]; });
+        sub.textContent = 'RÉVERBE NUMÉRIQUE · ' + NM[cur].toUpperCase(); anaSkin(svg, SK[cur]); };
+    vg.addEventListener('click', (e) => { const b = e.target.closest('.ana-var'); if (!b) return; ed.start(); P().variant = +b.dataset.v; ed.end(); drawVar(); say(); });
+    anaText(svg, 692, 316, 'PROGRAMME', { ...L, 'font-size': 7, 'letter-spacing': 1 });
+    drawVar();
+    // pendant la lecture, une lueur balaie l'écran au rythme de la queue
+    let ph0 = 0, last = performance.now();
+    const anim = (now) => {
+        if (!panel.isConnected) return;
+        const dt = Math.min(0.1, (now - last) / 1000); last = now;
+        const on = (t.effects || []).includes('hall80') && (state.playing || state.recording);
+        if (on) { ph0 = (ph0 + dt / Math.max(0.3, P().decay ?? 2.5)) % 1; tail.setAttribute('width', ((sw - 20) * ph0).toFixed(1)); tail.setAttribute('opacity', (0.12 * (1 - ph0)).toFixed(3)); }
+        else tail.setAttribute('width', 0);
+        requestAnimationFrame(anim);
+    };
+    requestAnimationFrame(anim);
+    panel.querySelector('.fx-bypass').addEventListener('change', (e) => { pushUndo(); setFxOn(t, 'hall80', e.target.checked); refreshPlaybackSoon(); saveProject(); refreshStrips(); });
+    say();
+    makePlugWindow(panel, t, 'hall80', trackIdx);
 }
 
 

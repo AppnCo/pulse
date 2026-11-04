@@ -1371,6 +1371,8 @@ mod tests {
             ("plate", r#"{"decay":1.2,"pre":0,"bright":40,"lowcut":60,"width":140,"mix":60,"variant":1}"#, [0.059170, 0.062295, 0.026672]),
             ("techo", r#"{"mode":3,"rate":1.2,"intensity":55,"bass":-2,"treble":-3,"echo":35,"spring":25,"input":-3}"#, [0.244318, 0.229543, 0.057974]),
             ("techo", r#"{"mode":6,"rate":0.7,"intensity":90,"echo":70,"spring":0,"wow":80}"#, [0.171493, 0.227827, 0.060108]),
+            ("hall80", r#"{"decay":2.5,"pre":30,"size":100,"bass":1.5,"xover":500,"treble":7000,"diffusion":70,"spin":40,"mix":40}"#, [0.134083, 0.137743, 0.034674]),
+            ("hall80", r#"{"decay":1.0,"pre":10,"size":70,"bass":0.8,"treble":4000,"diffusion":90,"spin":80,"width":130,"mix":60,"variant":2}"#, [0.105457, 0.100519, 0.023421]),
             ("opto2a", r#"{"peak":60,"gain":55,"variant":0}"#, [0.086484, 0.082398, 0.018677]),
             ("opto2a", r#"{"peak":45,"limit":1,"emph":50,"variant":2,"mix":80}"#, [0.055303, 0.053787, 0.016746])] {
             let t = format!(r#"{{"volume":100,"clips":[{{"id":"a","start":0,"duration":3,"offset":0}}],"effects":["{fx}"],"effectParams":{{"{fx}":{pp}}}}}"#);

@@ -177,6 +177,18 @@ export default async (c) => {
   const rk = await pos('.fx-panel.plug-win[data-fx="techo"] .ana-k[data-key="rate"] circle');
   if (rk) { await mouse('mouseMoved', rk, { buttons: 0 }); await mouse('mousePressed', rk); for (let i = 1; i <= 5; i++) { await mouse('mouseMoved', { x: rk.x, y: rk.y - i * 10 }); await sleep(20); } await mouse('mouseReleased', { x: rk.x, y: rk.y - 50 }); await sleep(200); }
   check('Écho à bande : vitesse montée', await J(ev, `return state.project.tracks[0].effectParams.techo.rate`) > 1);
+  // Salle 80 : façade avec l'écran à LED, programme Chambre, durée tournée (bouton logarithmique)
+  await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
+  await click('#inspector .slot-plus[data-plus="fx"]');
+  await click('.fx-add-menu .fam-range', 'Analogique');
+  await click('.fx-add-menu .fam-cat', 'Espace'); await sleep(100);
+  check('menu : Salle 80 cliquée', await click('.fx-add-menu .fam-fx', 'Salle 80')); await sleep(500);
+  await click('.fx-panel.plug-win[data-fx="hall80"] .ana-var[data-v="1"] rect');
+  check('Salle 80 : Chambre', await J(ev, `return state.project.tracks[0].effectParams.hall80.variant`) === 1);
+  const hk = await pos('.fx-panel.plug-win[data-fx="hall80"] .ana-k[data-key="decay"] circle');
+  if (hk) { await mouse('mouseMoved', hk, { buttons: 0 }); await mouse('mousePressed', hk); for (let i = 1; i <= 5; i++) { await mouse('mouseMoved', { x: hk.x, y: hk.y - i * 10 }); await sleep(20); } await mouse('mouseReleased', { x: hk.x, y: hk.y - 50 }); await sleep(200); }
+  const hd = await J(ev, `return state.project.tracks[0].effectParams.hall80.decay`);
+  check('Salle 80 : durée montée', hd > 2.5 && hd < 20, String(hd));
   // ---- Envois façon Logic
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   await click('#inspector .slot-plus[data-plus="send"]');

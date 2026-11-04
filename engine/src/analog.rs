@@ -1886,6 +1886,139 @@ impl Plate {
     }
 }
 
+// ===== Salle 80 : réverbe numérique des années 80 (esprit « 224 / 480 ») =====
+// Ce qui fait le son de ces machines : entrée stéréo vraie (gauche et droite entrent à deux endroits d'un même anneau de retards),
+// bande passante limitée par les convertisseurs de l'époque (≈ 10 kHz : la queue reste douce, jamais sifflante), « multiplicateur
+// de graves » (les graves tiennent plus ou moins longtemps que les médiums, autour d'un point de croisement), aigus qui meurent
+// plus vite, et retards qui « flottent » doucement (chorus lent) : la queue est vivante, sans résonance métallique.
+// Anneau de 4 sections (passe-tout modulé → retard → aigus → graves × → passe-tout → retard), gain par section calé sur sa longueur
+// pour une Durée juste. Variantes : Salle (grande salle), Chambre (petite pièce dense), Riche (plus grande, plus de mouvement, plus sombre).
+pub const H80_IN: [f64; 4] = [4.77, 3.59, 12.73, 9.30];
+pub const H80_SEC: [[f64; 4]; 4] = [[22.58, 149.6, 60.48, 125.0], [30.51, 125.0, 89.24, 106.3], [26.83, 141.7, 64.28, 94.0], [33.47, 118.3, 74.65, 112.9]];
+pub const H80_VAR: [[f64; 3]; 3] = [[1.0, 1.0, 10_000.0], [0.55, 0.5, 12_000.0], [1.15, 2.0, 9_000.0]]; // taille, mouvement, bande passante
+pub const H80_RATES: [f64; 4] = [0.83, 1.07, 0.71, 1.31];
+#[derive(Clone, Debug)]
+pub struct Hall80Params { pub decay: f64, pub pre: f64, pub size: f64, pub bass: f64, pub xover: f64, pub treble: f64, pub diffusion: f64, pub spin: f64, pub width: f64, pub mix: f64, pub variant: usize }
+impl Default for Hall80Params {
+    fn default() -> Self { Self { decay: 2.5, pre: 30.0, size: 100.0, bass: 1.2, xover: 400.0, treble: 6000.0, diffusion: 70.0, spin: 40.0, width: 100.0, mix: 25.0, variant: 0 } }
+}
+impl From<&crate::model::Hall80Json> for Hall80Params {
+    fn from(j: &crate::model::Hall80Json) -> Self {
+        let d = Self::default();
+        Self { decay: j.decay.unwrap_or(d.decay), pre: j.pre.unwrap_or(d.pre), size: j.size.unwrap_or(d.size), bass: j.bass.unwrap_or(d.bass), xover: j.xover.unwrap_or(d.xover),
+            treble: j.treble.unwrap_or(d.treble), diffusion: j.diffusion.unwrap_or(d.diffusion), spin: j.spin.unwrap_or(d.spin), width: j.width.unwrap_or(d.width), mix: j.mix.unwrap_or(d.mix),
+            variant: j.variant.map_or(0, |v| (v.round().max(0.0) as usize).min(2)) }
+    }
+}
+impl Hall80Params {
+    pub fn set_key(&mut self, k: &str, v: f64) -> bool {
+        match k { "decay" => self.decay = v, "pre" => self.pre = v, "size" => self.size = v, "bass" => self.bass = v, "xover" => self.xover = v, "treble" => self.treble = v,
+            "diffusion" => self.diffusion = v, "spin" => self.spin = v, "width" => self.width = v, "mix" => self.mix = v,
+            "variant" => self.variant = (v.round().max(0.0) as usize).min(2), _ => return false }
+        true
+    }
+}
+struct H80Sec { ap1: Ap, d1: Dl, ap2: Ap, d2: Dl, n1: usize, n2: usize, tz: f64, lz: f64, ghi: f64, glo: f64, ph: f64 }
+pub struct Hall80 {
+    sr: f64, pre: Dl, pre_n: usize,
+    inz: [f64; 2], ina: f64, din: [[Ap; 4]; 2],
+    sec: Vec<H80Sec>, fb: [f64; 4],
+    ta: f64, xa: f64, g1: f64, g2: f64, gi: [f64; 2], exc: f64, rate: f64, wph: f64,
+    oz: [[f64; 4]; 2], ob: [f64; 5], width: f64, mix: f64,
+}
+impl Hall80 {
+    pub fn new(p: &Hall80Params, sr: f64) -> Self {
+        let mx = |ms: f64| (ms * 1.8 * sr / 1000.0) as usize + 8;
+        let marg = (0.002 * sr) as usize + 8;
+        let din = |k: f64| [Ap::new(mx(H80_IN[0] * k)), Ap::new(mx(H80_IN[1] * k)), Ap::new(mx(H80_IN[2] * k)), Ap::new(mx(H80_IN[3] * k))];
+        let sec = H80_SEC.iter().enumerate().map(|(k, s)| H80Sec { ap1: Ap::new(mx(s[0]) + marg), d1: Dl::new(mx(s[1])), ap2: Ap::new(mx(s[2])), d2: Dl::new(mx(s[3])),
+            n1: 2, n2: 2, tz: 0.0, lz: 0.0, ghi: 0.0, glo: 0.0, ph: k as f64 * 1.3 }).collect();
+        let mut h = Self { sr, pre: Dl::new((0.5 * sr) as usize + 8), pre_n: 0, inz: [0.0; 2], ina: 1.0, din: [din(1.0), din(1.07)], sec, fb: [0.0; 4],
+            ta: 1.0, xa: 0.0, g1: 0.6, g2: 0.5, gi: [0.75, 0.625], exc: 0.0, rate: 1.0, wph: 0.0, oz: [[0.0; 4]; 2], ob: [1.0, 0.0, 0.0, 0.0, 0.0], width: 1.0, mix: 0.25 };
+        h.set(p);
+        h
+    }
+    pub fn set(&mut self, p: &Hall80Params) {
+        let sr = self.sr;
+        let v = H80_VAR[p.variant.min(2)];
+        let f = (p.size.clamp(50.0, 150.0) / 100.0) * v[0];
+        let smp = |ms: f64| ((ms * f * sr / 1000.0).round() as usize).max(2);
+        self.pre_n = ((p.pre.clamp(0.0, 200.0) / 1000.0) * sr) as usize;
+        for (c, k) in [(0usize, 1.0f64), (1, 1.07)] { for i in 0..4 { self.din[c][i].n = ((H80_IN[i] * k * f * sr / 1000.0).round() as usize).max(2); } }
+        let rt = p.decay.clamp(0.3, 20.0);
+        let bm = p.bass.clamp(0.5, 2.5);
+        for (s, l) in self.sec.iter_mut().zip(H80_SEC.iter()) {
+            s.ap1.n = smp(l[0]); s.n1 = smp(l[1]); s.ap2.n = smp(l[2]); s.n2 = smp(l[3]);
+            let t = (s.ap1.n + s.n1 + s.ap2.n + s.n2) as f64 / sr;
+            s.ghi = 10f64.powf(-3.0 * t / rt).min(0.999);
+            s.glo = 10f64.powf(-3.0 * t / (rt * bm)).min(0.999);
+        }
+        let oc = |fc: f64| 1.0 - (-2.0 * PI * fc / sr).exp();
+        self.ta = oc(p.treble.clamp(1000.0, 16_000.0).min(0.45 * sr));
+        self.xa = oc(p.xover.clamp(100.0, 1500.0));
+        self.ina = oc(v[2].min(0.45 * sr));
+        // filtre de sortie des convertisseurs : passe-bas 2e ordre (Butterworth) à la bande passante de la variante
+        let w = 2.0 * PI * v[2].min(0.45 * sr) / sr; let al = w.sin() / (2.0 * std::f64::consts::FRAC_1_SQRT_2); let cw = w.cos(); let a0 = 1.0 + al;
+        self.ob = [(1.0 - cw) / 2.0 / a0, (1.0 - cw) / a0, (1.0 - cw) / 2.0 / a0, -2.0 * cw / a0, (1.0 - al) / a0];
+        let d = p.diffusion.clamp(0.0, 100.0) / 100.0;
+        self.gi = [0.75 * d, 0.625 * d]; self.g1 = 0.4 + 0.3 * d; self.g2 = 0.5 * d;
+        let sp = p.spin.clamp(0.0, 100.0) / 100.0;
+        self.exc = sp * 0.0008 * sr * v[1]; self.rate = 0.5 + sp;
+        self.width = p.width.clamp(0.0, 150.0) / 100.0;
+        self.mix = (p.mix / 100.0).clamp(0.0, 1.0);
+    }
+    pub fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
+        let (dl, dr) = if nc > 1 { (x[0], x[1]) } else { (x[0], x[0]) };
+        // pré-délai (stéréo : la droite est relue dans le même tampon décalé d'un échantillon par paire)
+        self.pre.push(dl); self.pre.push(dr);
+        let il = self.pre.at(2 * self.pre_n + 1); let ir = self.pre.at(2 * self.pre_n);
+        // convertisseurs d'époque : bande passante limitée, puis diffusion d'entrée
+        let mut inj = [0.0; 2];
+        for (c, v) in [il, ir].into_iter().enumerate() {
+            self.inz[c] += (v - self.inz[c]) * self.ina;
+            let mut d = self.inz[c];
+            let (a, b) = (self.gi[0], self.gi[1]);
+            d = self.din[c][0].run(d, a); d = self.din[c][1].run(d, a); d = self.din[c][2].run(d, b); d = self.din[c][3].run(d, b);
+            inj[c] = d;
+        }
+        // flottement lent des retards (chaque section à sa vitesse) + dérive très lente commune
+        self.wph += 2.0 * PI * 0.13 / self.sr; if self.wph > 2.0 * PI { self.wph -= 2.0 * PI; }
+        let wander = 0.5 * self.wph.sin();
+        let (g1, g2, ta, xa, exc, step) = (self.g1, self.g2, self.ta, self.xa, self.exc, 2.0 * PI * self.rate / self.sr);
+        let mut out = [0.0; 4];
+        for k in 0..4 {
+            let s = &mut self.sec[k];
+            s.ph += step * H80_RATES[k]; if s.ph > 2.0 * PI { s.ph -= 2.0 * PI; }
+            let m = exc * (s.ph.sin() + wander) * if k % 2 == 0 { 1.0 } else { -1.0 };
+            let u = self.fb[(k + 3) % 4] + if k == 0 { inj[0] } else if k == 2 { inj[1] } else { 0.0 };
+            let a = s.ap1.run_mod(u, -g1, m);
+            s.d1.push(a);
+            let b = s.d1.at(s.n1 - 1);
+            s.tz += (b - s.tz) * ta;
+            s.lz += (s.tz - s.lz) * xa;
+            let y = s.lz * s.glo + (s.tz - s.lz) * s.ghi;
+            let c = s.ap2.run(y, g2);
+            s.d2.push(c);
+            out[k] = s.d2.at(s.n2 - 1);
+        }
+        self.fb = out;
+        let tp = |s: &H80Sec, two: bool, fr: f64| if two { s.d2.at((s.n2 as f64 * fr).round() as usize) } else { s.d1.at((s.n1 as f64 * fr).round() as usize) };
+        let sc = &self.sec;
+        let yl = tp(&sc[0], false, 0.11) + tp(&sc[0], false, 0.67) - tp(&sc[1], true, 0.45) + tp(&sc[2], false, 0.33) - tp(&sc[3], true, 0.71) + tp(&sc[0], true, 0.21) - tp(&sc[3], false, 0.52);
+        let yr = tp(&sc[2], false, 0.13) + tp(&sc[2], false, 0.61) - tp(&sc[3], true, 0.39) + tp(&sc[0], false, 0.29) - tp(&sc[1], true, 0.77) + tp(&sc[2], true, 0.17) - tp(&sc[1], false, 0.48);
+        let b = self.ob;
+        let mut o = [0.0; 2];
+        for (c, v) in [yl * 0.35, yr * 0.35].into_iter().enumerate() {
+            let z = &mut self.oz[c];
+            let y = b[0] * v + b[1] * z[0] + b[2] * z[1] - b[3] * z[2] - b[4] * z[3];
+            *z = [v, z[0], y, z[2]]; o[c] = y;
+        }
+        let (mm, ss) = ((o[0] + o[1]) * 0.5, (o[0] - o[1]) * 0.5 * self.width);
+        x[0] = dl * (1.0 - self.mix) + (mm + ss) * self.mix;
+        x[1] = dr * (1.0 - self.mix) + (mm - ss) * self.mix;
+    }
+}
+
 // ===== Écho à bande (esprit « 201 ») : trois têtes de lecture, bande en boucle, ressort =====
 // Comme la machine : Mode (quelles têtes lisent : 1, 2, 3, 1+2, 2+3, 1+3, 1+2+3), Vitesse (la bande ralentit ou accélère —
 // les répétitions s'écartent et le son « pleure » quand on tourne), Intensité (combien ça revient ; au-delà de 100 ça s'emballe),
@@ -2407,6 +2540,44 @@ mod tests {
         assert!(side > 1e-3, "queue stéréo");
         assert!(b > a * 1.8, "durée plus grande = queue plus longue ({a:.2} s → {b:.2} s)");
         assert!((a - 1.5).abs() < 0.8, "Durée 1,5 s : RT60 ≈ {a:.2} s");
+    }
+
+    /// Salle 80 : queue stéréo, Durée respectée, graves × qui allonge les graves, bande passante limitée (peu d'aigus au-dessus de 12 kHz)
+    #[test]
+    fn salle80_queue_graves_bande() {
+        let ir = |p: Hall80Params| {
+            let mut h = Hall80::new(&Hall80Params { pre: 0.0, mix: 100.0, ..p }, SR);
+            let n = (8.0 * SR) as usize;
+            (0..n).map(|i| { let mut x = [if i == 0 { 1.0 } else { 0.0 }, 0.0]; h.tick(&mut x, 1); x }).collect::<Vec<_>>()
+        };
+        let rt = |o: &Vec<[f64; 2]>| {
+            let n = o.len(); let mut acc = vec![0.0; n + 1];
+            for i in (0..n).rev() { acc[i] = acc[i + 1] + o[i][0] * o[i][0] + o[i][1] * o[i][1]; }
+            let t0 = (0.1 * SR) as usize; let r = acc[t0];
+            2.0 * ((t0..n).find(|&i| acc[i] < r * 1e-3).unwrap_or(n) - t0) as f64 / SR
+        };
+        let a = ir(Hall80Params { decay: 1.5, spin: 0.0, ..Default::default() });
+        let b = ir(Hall80Params { decay: 4.0, spin: 0.0, ..Default::default() });
+        let (ra, rb) = (rt(&a), rt(&b));
+        assert!((ra - 1.5).abs() < 0.6, "Durée 1,5 s : RT60 ≈ {ra:.2}");
+        assert!(rb > ra * 2.0, "{ra:.2} → {rb:.2}");
+        let side: f64 = a.iter().map(|x| (x[0] - x[1]).powi(2)).sum();
+        assert!(side > 1e-3, "queue stéréo");
+        // graves × : énergie basse (< 200 Hz) de la fin de queue plus forte avec bass = 2,5 qu'avec 0,5
+        let low_tail = |o: &Vec<[f64; 2]>| { let mut z = 0.0; let k = 1.0 - (-2.0 * PI * 150.0 / SR).exp(); let mut e = 0.0;
+            for (i, x) in o.iter().enumerate() { z += (x[0] - z) * k; if i > (2.0 * SR) as usize { e += z * z; } } e };
+        let lo = ir(Hall80Params { decay: 2.0, bass: 0.5, spin: 0.0, ..Default::default() });
+        let hi = ir(Hall80Params { decay: 2.0, bass: 2.5, spin: 0.0, ..Default::default() });
+        assert!(low_tail(&hi) > 4.0 * low_tail(&lo), "graves ×");
+        // bande passante : pas d'aigus au-delà de ~14 kHz (différence d'échantillons = filtre passe-haut grossier)
+        let hf: f64 = a.iter().skip(4800).take(48000).map(|x| x[0]).collect::<Vec<_>>().windows(2).map(|w| (w[1] - w[0]).powi(2)).sum();
+        let all: f64 = a.iter().skip(4800).take(48000).map(|x| x[0] * x[0]).sum();
+        assert!(hf < 0.7 * all, "queue douce ({:.3})", hf / all);
+        // stabilité sur 20 s avec Durée max et mouvement max
+        let mut h = Hall80::new(&Hall80Params { decay: 20.0, bass: 2.5, spin: 100.0, variant: 2, mix: 100.0, ..Default::default() }, SR);
+        let mut mx = 0.0f64;
+        for i in 0..(20.0 * SR) as usize { let mut x = [if i < 4800 { 0.3 * ((i as f64) * 0.05).sin() } else { 0.0 }, 0.0]; h.tick(&mut x, 1); mx = mx.max(x[0].abs()); }
+        assert!(mx.is_finite() && mx < 2.0, "stable ({mx})");
     }
 
     /// Écho à bande : la tête 2 répète à 0,24 s à vitesse 1, à 0,48 s à vitesse 0,5 ; chaque répétition est plus sombre et plus faible

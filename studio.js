@@ -2164,8 +2164,8 @@ function migrateProject() {
 
 // === Tranche à gauche (inspecteur) : la piste sélectionnée et, à sa droite, là où elle sort ===
 // Évite d'ouvrir le mixer pour voir les effets d'une piste ou régler son volume.
-const FX_NAMES = { msat: 'Saturation multibande', mband: 'Multibande', pitch: 'Pitch', crush: 'Bitcrusher', util: 'Utilitaire', width: 'Largeur', tremolo: 'Trémolo', phaser: 'Phaser', flanger: 'Flanger', chorus: 'Chorus', doubler: 'Doubleur', slapback: 'Slapback', filter: 'Filtre', gate: 'Gate', eq: 'EQ', sat: 'Saturation', deess: 'De-esser', comp: 'Compresseur', master: 'Finition', limit: 'Limiteur', delay: 'Écho', reverb: 'Reverb', fet76: 'Éclair 76', pre73: 'Pulse 73', opto2a: 'Optique 2A', eqp1: 'Égaliseur P1', busg: 'Bus G', tape: 'Bande 80', l670: 'Lampe 670', dtr: 'Détresse', stripe: 'Tranche E', eq550: 'EQ 550', comp25: 'Comp 25', bus33: 'Bus 33', massif: 'EQ Massif', horizon: 'EQ Horizon', plate: 'Plaque 140', techo: 'Écho à bande' };
-const FX_ORDER = ['pitch', 'filter', 'pre73', 'stripe', 'gate', 'eq', 'eqp1', 'horizon', 'eq550', 'massif', 'tape', 'sat', 'msat', 'crush', 'deess', 'fet76', 'opto2a', 'l670', 'dtr', 'comp25', 'comp', 'mband', 'bus33', 'busg', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'techo', 'plate', 'reverb'];
+const FX_NAMES = { msat: 'Saturation multibande', mband: 'Multibande', pitch: 'Pitch', crush: 'Bitcrusher', util: 'Utilitaire', width: 'Largeur', tremolo: 'Trémolo', phaser: 'Phaser', flanger: 'Flanger', chorus: 'Chorus', doubler: 'Doubleur', slapback: 'Slapback', filter: 'Filtre', gate: 'Gate', eq: 'EQ', sat: 'Saturation', deess: 'De-esser', comp: 'Compresseur', master: 'Finition', limit: 'Limiteur', delay: 'Écho', reverb: 'Reverb', fet76: 'Éclair 76', pre73: 'Pulse 73', opto2a: 'Optique 2A', eqp1: 'Égaliseur P1', busg: 'Bus G', tape: 'Bande 80', l670: 'Lampe 670', dtr: 'Détresse', stripe: 'Tranche E', eq550: 'EQ 550', comp25: 'Comp 25', bus33: 'Bus 33', massif: 'EQ Massif', horizon: 'EQ Horizon', plate: 'Plaque 140', techo: 'Écho à bande', hall80: 'Salle 80' };
+const FX_ORDER = ['pitch', 'filter', 'pre73', 'stripe', 'gate', 'eq', 'eqp1', 'horizon', 'eq550', 'massif', 'tape', 'sat', 'msat', 'crush', 'deess', 'fet76', 'opto2a', 'l670', 'dtr', 'comp25', 'comp', 'mband', 'bus33', 'busg', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'techo', 'plate', 'hall80', 'reverb'];
 function inspectorOpen() { try { return localStorage.getItem('pulse_inspector') !== '0'; } catch { return true; } }
 function setInspectorOpen(open) {
     try { localStorage.setItem('pulse_inspector', open ? '1' : '0'); } catch {}
@@ -2886,7 +2886,7 @@ function openOutputMenu(anchor, kind, x, idx) {
 const ADD_FX_CHOICES = [['crush', 'Bitcrusher (son lo-fi)'], ['util', 'Utilitaire (gain, mono, phase)'], ['width', 'Largeur stéréo'],
     ['tremolo', 'Trémolo (volume qui pulse)'], ['phaser', 'Phaser'], ['flanger', 'Flanger'], ['chorus', 'Chorus'],
     ['doubler', 'Doubleur de voix'], ['slapback', 'Slapback (écho court)'], ['gate', 'Gate (coupe le bruit entre les phrases)'], ['filter', 'Filtre (coupe-bas / coupe-haut)'], ['eq', 'EQ'], ['comp', 'Compresseur'], ['mband', 'Multibande'], ['deess', 'De-esser'], ['sat', 'Saturation'], ['msat', 'Saturation multibande'], ['delay', 'Écho'], ['reverb', 'Reverb'],
-    ['fet76', 'Éclair 76 (compresseur FET)'], ['pre73', 'Pulse 73 (préampli + EQ de console)'], ['opto2a', 'Optique 2A (compresseur optique à lampes)'], ['eqp1', 'Égaliseur P1 (égaliseur passif à lampes)'], ['busg', 'Bus G (compresseur de bus de console)'], ['tape', 'Bande 80 (magnétophone à bande)'], ['l670', 'Lampe 670 (compresseur à lampes variable-mu)'], ['dtr', 'Détresse (compresseur à tout faire)'], ['stripe', 'Tranche E (voie de console complète)'], ['eq550', 'EQ 550 (égaliseur à crans)'], ['comp25', 'Comp 25 (compresseur de bus américain)'], ['bus33', 'Bus 33 (compresseur-limiteur de bus)'], ['massif', 'EQ Massif (égaliseur à lampes de mastering)'], ['horizon', 'EQ Horizon (égaliseur de mastering : Terre, Ciel, Caractère)'], ['plate', 'Plaque 140 (réverbe à plaque)'], ['techo', 'Écho à bande (trois têtes et ressort)']];
+    ['fet76', 'Éclair 76 (compresseur FET)'], ['pre73', 'Pulse 73 (préampli + EQ de console)'], ['opto2a', 'Optique 2A (compresseur optique à lampes)'], ['eqp1', 'Égaliseur P1 (égaliseur passif à lampes)'], ['busg', 'Bus G (compresseur de bus de console)'], ['tape', 'Bande 80 (magnétophone à bande)'], ['l670', 'Lampe 670 (compresseur à lampes variable-mu)'], ['dtr', 'Détresse (compresseur à tout faire)'], ['stripe', 'Tranche E (voie de console complète)'], ['eq550', 'EQ 550 (égaliseur à crans)'], ['comp25', 'Comp 25 (compresseur de bus américain)'], ['bus33', 'Bus 33 (compresseur-limiteur de bus)'], ['massif', 'EQ Massif (égaliseur à lampes de mastering)'], ['horizon', 'EQ Horizon (égaliseur de mastering : Terre, Ciel, Caractère)'], ['plate', 'Plaque 140 (réverbe à plaque)'], ['techo', 'Écho à bande (trois têtes et ressort)'], ['hall80', 'Salle 80 (réverbe numérique des années 80)']];
 // Rangés par catégorie comme dans Logic (voir PLUGINS-CATALOGUE.md) : un nouvel effet = une ligne dans sa catégorie
 const ADD_FX_CATEGORIES = [
     ['Dynamique', ['comp', 'mband', 'deess', 'gate']],
@@ -2903,7 +2903,7 @@ const ADD_FX_CATEGORIES_ANA = [
     ['Compresseurs', ['fet76', 'opto2a', 'busg', 'l670', 'dtr', 'comp25', 'bus33']],
     ['Préamplis et EQ', ['pre73', 'eqp1', 'stripe', 'eq550', 'massif']],
     ['Bandes et couleur', ['tape']],
-    ['Espace', ['plate', 'techo']]
+    ['Espace', ['plate', 'hall80', 'techo']]
 ];
 // Une phrase par effet dans le menu « + Effet », et les mots qu'on tape pour le trouver
 const FX_DESC = { msat: 'chaleur et grain par zone : des graves ronds, des médiums qui grognent, des aigus qui brillent', mband: 'travaille seulement une zone du son (graves, boue, sifflantes…), quand elle déborde', pitch: 'monte ou descend la voix (demi-tons), pour un effet sur un passage', comp: 'resserre l\'écart entre les passages forts et faibles', deess: 'adoucit les « s » qui sifflent', eq: 'corrige les graves, médiums et aigus',
@@ -2925,11 +2925,12 @@ const FX_DESC = { msat: 'chaleur et grain par zone : des graves ronds, des médi
     massif: 'l\'égaliseur à lampes de mastering : quatre bandes larges, l\'air et le poids du master',
     horizon: 'l\'égaliseur de mastering : Terre (le grave profond), Ciel (l\'air), Caractère Eau / Feu, centre / côtés',
     plate: 'la réverbe à plaque des voix depuis les années 60 : dense, brillante, sans pièce',
+    hall80: 'la grande réverbe numérique des années 80 : queue douce et vivante, graves qui tiennent',
     techo: 'l\'écho à bande : répétitions qui saturent et dérivent, vitesse qui pleure, ressort' };
 const FX_WORDS = { msat: 'saturation multiband multibande saturn distortion drive chaleur tape tube', mband: 'multiband multibande compressor dynamic dynamique', pitch: 'pitch shift hauteur transpose alterboy grave aigu', comp: 'compressor compression dynamique', deess: 'deesser sibilance', gate: 'noise gate bruit', eq: 'equalizer egaliseur', filter: 'hpf lpf high pass low pass coupe-bas coupe-haut',
     sat: 'saturation distortion saturator drive', crush: 'bitcrusher lofi', delay: 'delay echo', reverb: 'reverb reverberation', slapback: 'slap delay echo',
     chorus: 'modulation', flanger: 'modulation', phaser: 'modulation', tremolo: 'modulation', doubler: 'doubler double', width: 'stereo imager', util: 'utility gain mono phase', tune: 'autotune pitch justesse',
-    fet76: 'analogique 1176 fet compressor compresseur limiting vintage', pre73: 'analogique 1073 preamp preampli console eq neve vintage', opto2a: 'analogique la2a la-2a opto optical leveling amplifier tube lampe compresseur teletronix', eqp1: 'analogique pultec eqp1a eqp-1a passive eq egaliseur lampe tube', busg: 'analogique ssl g bus compressor glue colle console mix bus', tape: 'analogique tape bande magneto studer ampex atr cassette lofi saturation wow flutter', l670: 'analogique fairchild 670 660 variable mu tube lampe compresseur mastering', dtr: 'analogique distressor empirical labs el8 compresseur nuke distorsion deesser', stripe: 'analogique ssl e channel strip console tranche voie eq gate compresseur 4000', eq550: 'analogique api 550 550a eq egaliseur crans 500 series', comp25: 'analogique api 2500 bus compressor thrust compresseur', bus33: 'analogique neve 33609 diode bridge bus compressor limiter limiteur', massif: 'analogique manley massive passive eq egaliseur mastering lampe tube air', horizon: 'eq egaliseur mastering air earth eiosis aireq slate terre ciel mid side centre cotes', plate: 'analogique emt 140 plate reverb reverbe plaque', techo: 'analogique space echo re-201 roland tape delay echo bande ressort spring dub' };
+    fet76: 'analogique 1176 fet compressor compresseur limiting vintage', pre73: 'analogique 1073 preamp preampli console eq neve vintage', opto2a: 'analogique la2a la-2a opto optical leveling amplifier tube lampe compresseur teletronix', eqp1: 'analogique pultec eqp1a eqp-1a passive eq egaliseur lampe tube', busg: 'analogique ssl g bus compressor glue colle console mix bus', tape: 'analogique tape bande magneto studer ampex atr cassette lofi saturation wow flutter', l670: 'analogique fairchild 670 660 variable mu tube lampe compresseur mastering', dtr: 'analogique distressor empirical labs el8 compresseur nuke distorsion deesser', stripe: 'analogique ssl e channel strip console tranche voie eq gate compresseur 4000', eq550: 'analogique api 550 550a eq egaliseur crans 500 series', comp25: 'analogique api 2500 bus compressor thrust compresseur', bus33: 'analogique neve 33609 diode bridge bus compressor limiter limiteur', massif: 'analogique manley massive passive eq egaliseur mastering lampe tube air', horizon: 'eq egaliseur mastering air earth eiosis aireq slate terre ciel mid side centre cotes', plate: 'analogique emt 140 plate reverb reverbe plaque', hall80: 'analogique lexicon 224 480 hall salle reverb reverbe numerique digital 80s chamber concert', techo: 'analogique space echo re-201 roland tape delay echo bande ressort spring dub' };
 const FX_START = {
     limit: { tp: 1 },    // pic réel allumé sur un limiteur neuf (les anciens projets gardent leur son)
     eq: { bands: [] },   // un EQ neuf s'ouvre sans aucun point : on les pose soi-même
@@ -2944,6 +2945,7 @@ const FX_START = {
     tape: { input: 0, output: 0, speed: 0, machine: 0, bias: 0, noise: 20, wow: 50, mix: 100 },
     l670: { input: 0, thr: 4, tc: 1, output: 0, mix: 100 },
     dtr: { input: 5, output: 5, attack: 5, release: 5, ratio: 3, detHp: 0, detBand: 0, dist: 0, mix: 100 },
+    hall80: { decay: 2.5, pre: 30, size: 100, bass: 1.2, xover: 400, treble: 6000, diffusion: 70, spin: 40, width: 100, mix: 25, variant: 0 },
     techo: { mode: 1, rate: 1, intensity: 40, bass: 0, treble: 0, echo: 40, spring: 0, input: 0, wow: 50 },
     plate: { decay: 2, pre: 20, bright: 60, lowcut: 100, width: 100, mix: 25, variant: 0 },
     horizon: { g1: 0, g2: 0, g3: 0, g4: 0, g5: 0, f1: 60, f2: 250, f3: 1000, f4: 4000, f5: 12000, q1: 0.7, q2: 0.7, q3: 0.7, q4: 0.7, q5: 0.7, typ1: 2, typ2: 0, typ3: 0, typ4: 0, typ5: 2, ch1: 0, ch2: 0, ch3: 0, ch4: 0, ch5: 0, on1: 1, on2: 1, on3: 1, on4: 1, on5: 1, hpOn: 0, hpF: 30, hpS: 1, lpOn: 0, lpF: 20000, lpS: 1, earth: 0, air: 0, char: 0, strength: 100, input: 0, output: 0 },
@@ -10124,6 +10126,15 @@ const FX_PANEL_DEFS = {
         { key: 'echo',      label: 'Écho',      unit: '',  min: 0, max: 100, def: 40, step: 1 },
         { key: 'spring',    label: 'Ressort',   unit: '',  min: 0, max: 100, def: 0, step: 1 }
     ],
+    hall80: [
+        { key: 'decay',  label: 'Durée',     unit: ' s',  min: 0.3, max: 20, def: 2.5, step: 0.1 },
+        { key: 'pre',    label: 'Pré-délai', unit: ' ms', min: 0, max: 200, def: 30, step: 1 },
+        { key: 'size',   label: 'Taille',    unit: '%',   min: 50, max: 150, def: 100, step: 1 },
+        { key: 'bass',   label: 'Graves ×',  unit: '×',   min: 0.5, max: 2.5, def: 1.2, step: 0.1 },
+        { key: 'treble', label: 'Aigus',     unit: ' Hz', min: 1000, max: 16000, def: 6000, step: 100 },
+        { key: 'spin',   label: 'Mouvement', unit: '',    min: 0, max: 100, def: 40, step: 1 },
+        { key: 'mix',    label: 'Mélange',   unit: '%',   min: 0, max: 100, def: 25, step: 1 }
+    ],
     plate: [
         { key: 'decay',  label: 'Durée',     unit: ' s',  min: 0.4, max: 6, def: 2, step: 0.1 },
         { key: 'pre',    label: 'Pré-délai', unit: ' ms', min: 0, max: 200, def: 20, step: 1 },
@@ -10256,6 +10267,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
     if (fxName === 'massif') return openMassifPanel(trackIdx, anchorEl);
     if (fxName === 'horizon') return openHorizonPanel(trackIdx, anchorEl);
     if (fxName === 'plate') return openPlatePanel(trackIdx, anchorEl);
+    if (fxName === 'hall80') return openHall80Panel(trackIdx, anchorEl);
     if (fxName === 'techo') return openTapeEchoPanel(trackIdx, anchorEl);
     if (['chorus', 'flanger', 'phaser', 'tremolo'].includes(fxName)) return openModPanel(trackIdx, fxName, anchorEl);
     if (['doubler', 'slapback', 'width'].includes(fxName)) return openStereoPanel(trackIdx, fxName, anchorEl);

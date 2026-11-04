@@ -151,6 +151,7 @@ pub struct EffectParams {
     pub horizon: Option<HorizonJson>,
     pub plate: Option<PlateJson>,
     pub techo: Option<TapeEchoJson>,
+    pub hall80: Option<Hall80Json>,
     /// Exemplaires en plus d'un même effet (« comp#2 », « eq#3»…), réglages bruts : lus par `EffectParams::instance`
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
@@ -271,6 +272,11 @@ pub struct Opto2AJson {
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 pub struct TapeEchoJson { pub mode: Option<f64>, pub rate: Option<f64>, pub intensity: Option<f64>, pub bass: Option<f64>, pub treble: Option<f64>, pub echo: Option<f64>, pub spring: Option<f64>, pub input: Option<f64>, pub wow: Option<f64> }
+
+/// Salle 80 : decay (s), pre (ms), size (%), bass (×), xover (Hz), treble (Hz), diffusion, spin, width, mix (%), variant (0 Salle · 1 Chambre · 2 Riche)
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct Hall80Json { pub decay: Option<f64>, pub pre: Option<f64>, pub size: Option<f64>, pub bass: Option<f64>, pub xover: Option<f64>, pub treble: Option<f64>, pub diffusion: Option<f64>, pub spin: Option<f64>, pub width: Option<f64>, pub mix: Option<f64>, pub variant: Option<f64> }
 
 /// Plaque 140 : decay (s), pre (ms), bright (0-100), lowcut (Hz), width (%), mix (%), variant (0 Claire · 1 Chaude)
 #[derive(Debug, Clone, Deserialize, Default)]
