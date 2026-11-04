@@ -1535,6 +1535,121 @@ impl Comp25 {
     }
 }
 
+// ===== Bus 33 : compresseur-limiteur de bus à pont de diodes (esprit « 33 ») =====
+// Comme la machine : une partie Compresseur (seuil, ratios 1,5 à 6, retour 100 ms à 1,5 s ou Auto A1 / A2) et une partie
+// Limiteur (seuil, retour, attaque rapide), chacune en service ou non, et le gain. Le pont de diodes ajoute de l'harmonique 3
+// quand il réduit ; les transfos donnent le grave rond. Rond, le mix tient sans se voir.
+pub const B33_RATIO: [f64; 5] = [1.5, 2.0, 3.0, 4.0, 6.0];
+/// retours : 0,1 / 0,4 / 0,8 / 1,5 s, A1 (40 ms → 2 s), A2 (150 ms → 5 s)
+pub const B33_REC: [f64; 4] = [0.1, 0.4, 0.8, 1.5];
+pub const B33_LREC: [f64; 4] = [0.05, 0.1, 0.2, 0.8];
+
+#[derive(Clone, Debug)]
+pub struct Bus33Params {
+    pub con: bool, pub cthr: f64, pub cratio: usize, pub crec: usize,
+    pub lon: bool, pub lthr: f64, pub lrec: usize,
+    pub makeup: f64, pub mix: f64,
+}
+impl Default for Bus33Params {
+    fn default() -> Self { Self { con: true, cthr: -10.0, cratio: 1, crec: 4, lon: false, lthr: -2.0, lrec: 1, makeup: 0.0, mix: 100.0 } }
+}
+impl From<&crate::model::Bus33Json> for Bus33Params {
+    fn from(j: &crate::model::Bus33Json) -> Self {
+        let d = Self::default();
+        let idx = |v: Option<f64>, def: usize, max: usize| v.map_or(def, |v| (v.round().max(0.0) as usize).min(max));
+        let b = |v: Option<f64>, def: bool| v.map_or(def, |v| v >= 0.5);
+        Self { con: b(j.con, true), cthr: j.cthr.unwrap_or(d.cthr), cratio: idx(j.cratio, d.cratio, 4), crec: idx(j.crec, d.crec, 5),
+            lon: b(j.lon, false), lthr: j.lthr.unwrap_or(d.lthr), lrec: idx(j.lrec, d.lrec, 5), makeup: j.makeup.unwrap_or(0.0), mix: j.mix.unwrap_or(100.0) }
+    }
+}
+impl Bus33Params {
+    pub fn set_key(&mut self, k: &str, v: f64) -> bool {
+        let ix = |v: f64, m: usize| (v.round().max(0.0) as usize).min(m);
+        match k { "cthr" => self.cthr = v, "lthr" => self.lthr = v, "makeup" => self.makeup = v, "mix" => self.mix = v, "con" => self.con = v >= 0.5, "lon" => self.lon = v >= 0.5,
+            "cratio" => self.cratio = ix(v, 4), "crec" => self.crec = ix(v, 5), "lrec" => self.lrec = ix(v, 5), _ => return false }
+        true
+    }
+}
+const HR33: f64 = 0.158_489_319_246_111_35;
+
+pub struct Bus33 {
+    sr: f64,
+    con: bool, cthr: f64, cratio: f64, catt: f64, crf: f64, crs: f64, cauto: bool, cgr: f64, cslow: f64,
+    lon: bool, lthr: f64, latt: f64, lrf: f64, lrs: f64, lauto: bool, lgr: f64, lslow: f64,
+    gmk: f64, mix: f64,
+    os: [Os4; 2],
+    iron: [[Iron; 2]; 2],
+    ik: (f64, f64),
+    dc: [(f64, f64); 2],
+    dry: [[f64; 40]; 2],
+}
+impl Bus33 {
+    pub const LATENCY: usize = 31;
+    pub fn new(p: &Bus33Params, sr: f64) -> Self {
+        let mut s = Self { sr, con: true, cthr: -10.0, cratio: 2.0, catt: 0.0, crf: 0.0, crs: 0.0, cauto: true, cgr: 0.0, cslow: 0.0,
+            lon: false, lthr: -2.0, latt: 0.0, lrf: 0.0, lrs: 0.0, lauto: false, lgr: 0.0, lslow: 0.0, gmk: 1.0, mix: 1.0,
+            os: [Os4::new(), Os4::new()], iron: [[Iron::default(); 2]; 2], ik: iron_k(sr), dc: [(0.0, 0.0); 2], dry: [[0.0; 40]; 2] };
+        s.set(p);
+        s
+    }
+    pub fn set(&mut self, p: &Bus33Params) {
+        let sr = self.sr;
+        let co = |t: f64| 1.0 - (-1.0 / (t * sr)).exp();
+        let rec = |i: usize, tab: &[f64; 4]| -> (f64, f64, bool) { match i { 4 => (0.04, 2.0, true), 5 => (0.15, 5.0, true), _ => (tab[i.min(3)], tab[i.min(3)], false) } };
+        self.con = p.con; self.cthr = p.cthr.clamp(-20.0, 10.0); self.cratio = B33_RATIO[p.cratio.min(4)];
+        self.catt = co(0.005);
+        let (f, sl, a) = rec(p.crec, &B33_REC); self.crf = co(f); self.crs = co(sl); self.cauto = a;
+        self.lon = p.lon; self.lthr = p.lthr.clamp(-12.0, 0.0); self.latt = co(0.002);
+        let (f, sl, a) = rec(p.lrec, &B33_LREC); self.lrf = co(f); self.lrs = co(sl); self.lauto = a;
+        self.gmk = 10f64.powf(p.makeup.clamp(0.0, 20.0) / 20.0);
+        self.mix = (p.mix / 100.0).clamp(0.0, 1.0);
+    }
+    pub fn reduction(&self) -> f64 { self.cgr + self.lgr }
+    pub fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
+        let mut pk = 0.0f64;
+        for ch in 0..nc { pk = pk.max(x[ch].abs()); }
+        let lin = 20.0 * (pk + 1e-12).log10();
+        // compresseur : contre-réaction, genou doux 8 dB
+        if self.con {
+            let over = lin - self.cgr - self.cthr;
+            let s = self.cratio - 1.0;
+            let want = if over <= -4.0 { 0.0 } else if over >= 4.0 { over * s } else { s * (over + 4.0).powi(2) / 16.0 };
+            if want > self.cgr { self.cgr += (want - self.cgr) * self.catt / self.cratio; }
+            else { let r = if self.cauto && self.cslow > 0.7 * self.cgr { self.crs } else { self.crf }; self.cgr += (want - self.cgr) * r; }
+            self.cslow += (self.cgr - self.cslow) * self.crs * 0.5;
+        } else { self.cgr = 0.0; }
+        // limiteur : en avant, presque tout écraser au-dessus de son seuil (après le compresseur)
+        if self.lon {
+            let over = lin - self.cgr - self.lthr;
+            let want = if over > 0.0 { over * 0.95 } else { 0.0 };
+            if want > self.lgr { self.lgr += (want - self.lgr) * self.latt; }
+            else { let r = if self.lauto && self.lslow > 0.7 * self.lgr { self.lrs } else { self.lrf }; self.lgr += (want - self.lgr) * r; }
+            self.lslow += (self.lgr - self.lslow) * self.lrs * 0.5;
+        } else { self.lgr = 0.0; }
+        let gr = self.cgr + self.lgr;
+        let g = 10f64.powf(-gr / 20.0);
+        let h3 = 0.03 + 0.12 * (1.0 - g);
+        let gm = self.gmk;
+        let (iw, il) = self.ik;
+        for ch in 0..nc {
+            let iron = &mut self.iron[ch];
+            let y = self.os[ch].run(x[ch], |u| {
+                // transfo d'entrée, pont de diodes (harmonique 3 qui monte avec la réduction), gain, transfo de sortie
+                let v = iron[0].run(u * HR33, iw, il, 0.05) * g;
+                let c = v - h3 * v * v * v / (HR33 * HR33) * 0.05;
+                iron[1].run((1.1 * c * gm).tanh() / 1.1, iw, il, 0.05) / HR33
+            });
+            let (xp, yp) = self.dc[ch];
+            let o = y - xp + 0.9998 * yp;
+            self.dc[ch] = (y, o);
+            let d = &mut self.dry[ch];
+            d.copy_within(0..39, 1);
+            d[0] = x[ch];
+            x[ch] = if self.mix < 1.0 { d[Self::LATENCY] + (o - d[Self::LATENCY]) * self.mix } else { o };
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1900,5 +2015,22 @@ mod tests {
         }
         let lo = |t: usize| run25(&Comp25Params { thr: -20.0, thrust: t, ..Default::default() }, 0.5, 60.0, 48_000).reduction();
         assert!(lo(2) < lo(0) - 3.0, "Poussée forte : {:.1} contre {:.1} dB sur le grave", lo(2), lo(0));
+    }
+
+    /// Bus 33 : ratio 2 → pente 1/2 ; le limiteur tient la crête ; la réduction ajoute de l'harmonique 3
+    #[test]
+    fn bus33_comp_limiteur() {
+        let a = 0.5f64; let lvl = 20.0 * a.log10();
+        let mut c = Bus33::new(&Bus33Params { cthr: lvl - 12.0, cratio: 1, crec: 1, ..Default::default() }, SR);
+        for i in 0..48_000 { let mut x = [a * (2.0 * PI * 1000.0 * i as f64 / SR).sin(), 0.0]; c.tick(&mut x, 1); }
+        assert!((c.reduction() - 6.0).abs() < 1.0, "ratio 2, 12 dB au-dessus : {:.1} dB", c.reduction());
+        let mut l = Bus33::new(&Bus33Params { con: false, lon: true, lthr: -12.0, lrec: 1, ..Default::default() }, SR);
+        let mut pk = 0f64;
+        for i in 0..48_000 { let mut x = [a * (2.0 * PI * 1000.0 * i as f64 / SR).sin(), 0.0]; l.tick(&mut x, 1); if i > 24_000 { pk = pk.max(x[0].abs()); } }
+        assert!(20.0 * pk.log10() < -10.0, "limiteur : crête à {:.1} dBFS", 20.0 * pk.log10());
+        let h3 = |thr: f64| { let mut b = Bus33::new(&Bus33Params { cthr: thr, cratio: 3, ..Default::default() }, SR);
+            let o: Vec<f64> = (0..48_000).map(|i| { let mut x = [0.4 * (2.0 * PI * 200.0 * i as f64 / SR).sin(), 0.0]; b.tick(&mut x, 1); x[0] }).collect();
+            let s = &o[24_000..]; 20.0 * (harm(s, 200.0, 3) / harm(s, 200.0, 1)).log10() };
+        assert!(h3(-25.0) > h3(10.0) + 3.0, "la réduction ajoute de l'harmonique 3 : {:.1} contre {:.1}", h3(-25.0), h3(10.0));
     }
 }

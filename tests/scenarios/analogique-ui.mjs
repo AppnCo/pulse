@@ -145,6 +145,13 @@ export default async (c) => {
   const tg25 = await pos('.fx-panel.plug-win[data-fx="comp25"] .ana-push rect');
   if (tg25) { await mouse('mouseMoved', tg25, { buttons: 0 }); await mouse('mousePressed', tg25); await mouse('mouseReleased', tg25); await sleep(200); }
   check('Comp 25 : contre-réaction', await J(ev, `return state.project.tracks[0].effectParams.comp25.feedback`) === 1);
+  // Bus 33 : façade, limiteur en service
+  await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
+  await click('#inspector .slot-plus[data-plus="fx"]');
+  await click('.fx-add-menu .fam-range', 'Analogique');
+  check('menu : Bus 33 cliqué', await click('.fx-add-menu .fam-fx', 'Bus 33')); await sleep(500);
+  await click('.fx-panel.plug-win[data-fx="bus33"] [data-k="lon"] rect');
+  check('Bus 33 : limiteur en service', await J(ev, `return state.project.tracks[0].effectParams.bus33.lon`) === 1);
   // ---- Envois façon Logic
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   await click('#inspector .slot-plus[data-plus="send"]');

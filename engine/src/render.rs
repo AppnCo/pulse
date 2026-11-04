@@ -176,7 +176,7 @@ fn fx_latency(effects: &[String], params: &crate::model::EffectParams, auto: Opt
     }).count() as f64;
     // machines Analogiques : 31 échantillons (suréchantillonnage), la Bande 80 en plus sa ligne de pleurage
     let analog: usize = effects.iter().map(|e| match crate::model::fx_type(e) {
-        "fet76" | "pre73" | "opto2a" | "eqp1" | "busg" | "comp25" | "eq550" | "stripe" | "dtr" | "l670" => crate::analog::Fet76::LATENCY,
+        "fet76" | "pre73" | "opto2a" | "eqp1" | "busg" | "bus33" | "comp25" | "eq550" | "stripe" | "dtr" | "l670" => crate::analog::Fet76::LATENCY,
         "tape" => crate::analog::Tape::LATENCY,
         _ => 0,
     }).sum();

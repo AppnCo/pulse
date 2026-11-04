@@ -24,6 +24,8 @@ const CASES = [
   ['eq550', { lf: -6, lfF: 2, lfPeak: 1, mf: -4, mfF: 1, hf: 8, hfF: 5, hfPeak: 1, band: 1, output: -3 }, [0.054618, 0.054618, 0.034231]],
   ['comp25', { thr: -18, ratio: 3, attack: 3, release: 3, knee: 1, thrust: 1, makeup: 6 }, [0.114105, 0.114101, 0.033354]],
   ['comp25', { thr: -14, ratio: 5, attack: 1, release: 6, relVar: 0.8, knee: 0, thrust: 2, feedback: 1, makeup: 8, mix: 70 }, [0.141093, 0.141094, 0.042066]],
+  ['bus33', { cthr: -18, cratio: 2, crec: 4, makeup: 5 }, [0.147440, 0.147441, 0.042710]],
+  ['bus33', { cthr: -16, cratio: 4, crec: 1, lon: 1, lthr: -6, lrec: 5, makeup: 8, mix: 80 }, [0.171531, 0.171500, 0.050472]],
   ['opto2a', { peak: 60, gain: 55, variant: 0 }, [0.086484, 0.082398, 0.018677]],
   ['opto2a', { peak: 45, limit: 1, emph: 50, variant: 2, mix: 80 }, [0.055303, 0.053787, 0.016746]],
 ];

@@ -146,6 +146,7 @@ pub struct EffectParams {
     pub stripe: Option<StripEJson>,
     pub eq550: Option<Eq550Json>,
     pub comp25: Option<Comp25Json>,
+    pub bus33: Option<Bus33Json>,
     /// Exemplaires en plus d'un même effet (« comp#2 », « eq#3»…), réglages bruts : lus par `EffectParams::instance`
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
@@ -260,6 +261,14 @@ pub struct Opto2AJson {
     pub emph: Option<f64>,
     pub variant: Option<f64>,
     pub mix: Option<f64>,
+}
+
+/// Bus 33 : con/cthr (dBFS)/cratio (0-4)/crec (0-5 : 0,1/0,4/0,8/1,5 s, A1, A2), lon/lthr (dBFS)/lrec (0-5), makeup (dB), mix %
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct Bus33Json {
+    pub con: Option<f64>, pub cthr: Option<f64>, pub cratio: Option<f64>, pub crec: Option<f64>,
+    pub lon: Option<f64>, pub lthr: Option<f64>, pub lrec: Option<f64>, pub makeup: Option<f64>, pub mix: Option<f64>,
 }
 
 /// Comp 25 : thr (dBFS −20…10), ratio (0-6 : 1,5/2/3/4/6/10/∞), attack (0-6), release (0-5, 6 = Variable → relVar s), knee (0-2), thrust (0-2), feedback (0/1), makeup (dB), mix %

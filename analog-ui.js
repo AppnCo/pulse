@@ -1049,6 +1049,77 @@ function openComp25Panel(trackIdx, anchorEl) {
     makePlugWindow(panel, t, 'comp25', trackIdx);
 }
 
+
+// ===== Bus 33 : compresseur-limiteur de bus à pont de diodes (esprit « 33 ») : façade gris-bleu, deux sections =====
+function openBus33Panel(trackIdx, anchorEl) {
+    closeTransientPanels();
+    const t = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;
+    if (!t) return;
+    const already = findPlugWin(t, 'bus33');
+    if (already) { plugFront(already); return; }
+    t.effectParams = t.effectParams || {};
+    if (!t.effectParams.bus33) t.effectParams.bus33 = { con: 1, cthr: -10, cratio: 1, crec: 4, lon: 0, lthr: -2, lrec: 1, makeup: 0, mix: 100 };
+    const P = () => t.effectParams.bus33, ed = anaEdit(t, 'bus33');
+    const W = 900, H = 270;
+    const { panel, svg } = anaWindow(t, 'bus33', 'Bus 33', W, H, anchorEl, trackIdx, 900, 'grisbleu');
+    const L = { style: 'paint-order:stroke', 'stroke-opacity': '.5', 'stroke-width': '.6', stroke: '#000' };
+    anaText(svg, 44, 40, 'PULSE · BUS 33', { ...L, 'text-anchor': 'start', 'font-size': 14, 'font-weight': 700, 'letter-spacing': 3 });
+    anaText(svg, 44, 56, 'COMPRESSEUR · LIMITEUR DE BUS', { fill: '#e0d4ff', 'text-anchor': 'start', 'letter-spacing': 2.5, class: '' });
+    const RAT = ['1,5', '2', '3', '4', '6'], REC = ['0,1', '0,4', '0,8', '1,5', 'A1', 'A2'], LREC = ['50', '100', '200', '800', 'A1', 'A2'];
+    const read = panel.querySelector('.ana-read');
+    const say = () => { const p = P(); read.innerHTML = `${(p.con ?? 1) >= 0.5 ? `Comp ${RAT[p.cratio ?? 1]}:1 à <b>${p.cthr} dB</b>, retour ${REC[p.crec ?? 4]}` : 'Comp éteint'} · ${(p.lon ?? 0) >= 0.5 ? `Limiteur à <b>${p.lthr} dB</b>` : 'Limiteur éteint'} · Gain <b>+${p.makeup} dB</b>`; };
+    const knob = (o) => anaKnob(svg, { ...o, get: () => P()[o.key] ?? o.def, set: (v) => { P()[o.key] = Math.round(v * 2) / 2; ed.touch(o.key); say(); }, onStart: ed.start, onEnd: ed.end });
+    const CY = 140;
+    const pick = (cx, key, strip, labels, a0, a1, def, lab, tip) => {
+        labels.forEach((tx, i) => { const a = (a0 + (a1 - a0) * i / (labels.length - 1)) * Math.PI / 180; anaText(svg, cx + Math.sin(a) * 37, CY - Math.cos(a) * 37 + 3, tx, { 'font-size': 7, 'letter-spacing': 0 }); });
+        anaKnob(svg, { strip, cx, cy: CY, d: 42, key, min: 0, max: labels.length - 1, def, steps: labels.map((_, i) => i), get: () => P()[key] ?? def, set: (v) => { P()[key] = v; say(); }, onStart: ed.start, onEnd: ed.end, tip }).g.classList.remove('pk');
+        anaText(svg, cx, CY + 62, lab, { ...L, 'font-size': 8.5 });
+    };
+    const sec = (x, txt) => anaText(svg, x, 82, txt, { fill: '#e0d4ff', 'font-size': 8, 'letter-spacing': 2, class: '' });
+    sec(200, 'COMPRESSEUR');
+    anaTicks(svg, 90, CY, 36, 7, -150, 150, ['−20', '', '', '−5', '', '', '+10'], 7);
+    knob({ strip: 'black-big', cx: 90, cy: CY, d: 56, key: 'cthr', min: -20, max: 10, def: -10, tip: 'Seuil du compresseur (dBFS)' });
+    anaText(svg, 90, CY + 62, 'SEUIL', { ...L, 'font-size': 8.5 });
+    pick(195, 'cratio', 'sel5', RAT, -90, 90, 1, 'RATIO', 'Ratio : 1,5 à 6');
+    pick(300, 'crec', 'sel6', REC, -100, 100, 4, 'RETOUR s', 'Retour : 0,1 à 1,5 s, ou automatique (A1 rapide, A2 lent)');
+    anaEl('line', { x1: 380, y1: 74, x2: 380, y2: 246, stroke: '#00000044' }, svg);
+    sec(500, 'LIMITEUR');
+    anaTicks(svg, 450, CY, 36, 7, -150, 150, ['−12', '', '', '−6', '', '', '0'], 7);
+    knob({ strip: 'black-big', cx: 450, cy: CY, d: 56, key: 'lthr', min: -12, max: 0, def: -2, tip: 'Seuil du limiteur (dBFS)' });
+    anaText(svg, 450, CY + 62, 'SEUIL', { ...L, 'font-size': 8.5 });
+    pick(555, 'lrec', 'sel6', LREC, -100, 100, 1, 'RETOUR ms', 'Retour du limiteur : 50 à 800 ms, ou automatique');
+    anaEl('line', { x1: 630, y1: 74, x2: 630, y2: 246, stroke: '#00000044' }, svg);
+    // en service, réduction, gain, mélange
+    const pg = anaEl('g', {}, svg);
+    const drawP = () => { pg.innerHTML = '';
+        [['con', 300, 232, 'COMP EN SERVICE'], ['lon', 555, 232, 'LIM. EN SERVICE']].forEach(([k, x, y, txt]) => { const on = (P()[k] ?? (k === 'con' ? 1 : 0)) >= 0.5, g = anaEl('g', { class: 'ana-push', 'data-k': k }, pg);
+            anaEl('rect', { x: x - 48, y: y - 8, width: 96, height: 16, rx: 3, fill: on ? '#7c3aed' : '#1c1426', stroke: '#3a2b52', ...(on ? { filter: 'url(#anaGlow)' } : {}) }, g);
+            anaText(g, x, y + 3, txt, { fill: on ? '#fff' : '#a78bfa', 'font-size': 7, 'letter-spacing': .5, class: '' }); }); };
+    pg.addEventListener('click', (e) => { const b = e.target.closest('[data-k]'); if (!b) return; const k = b.dataset.k; ed.start(); P()[k] = (P()[k] ?? (k === 'con' ? 1 : 0)) >= 0.5 ? 0 : 1; ed.end(); drawP(); say(); });
+    drawP();
+    const leds = [1, 2, 4, 6, 8, 12, 16, 20].map((db, i) => { anaText(svg, 668, 92 + i * 15 + 3, String(db), { 'font-size': 6.5, 'letter-spacing': 0, 'text-anchor': 'end', fill: '#e0d4ff', class: '' }); return anaEl('circle', { cx: 680, cy: 92 + i * 15, r: 4.5, fill: '#1c1426', stroke: '#000' }, svg); });
+    anaText(svg, 680, 226, 'RÉDUCTION', { ...L, 'font-size': 7, 'letter-spacing': .8 });
+    anaTicks(svg, 780, 130, 34, 7, -150, 150, ['0', '', '', '10', '', '', '20'], 7);
+    knob({ strip: 'alu-big', cx: 780, cy: 130, d: 52, key: 'makeup', min: 0, max: 20, def: 0, tip: 'Gain (dB)' });
+    anaText(svg, 780, 186, 'GAIN', { ...L, 'font-size': 8.5 });
+    anaTicks(svg, 780, 222, 15, 5, -135, 135, null);
+    knob({ strip: 'bakelite', cx: 780, cy: 222, d: 22, key: 'mix', min: 0, max: 100, def: 100, tip: 'Mélange avec le son d\'origine' });
+    anaText(svg, 820, 225, 'MÉLANGE', { ...L, 'font-size': 7, 'letter-spacing': 1, 'text-anchor': 'start' });
+    const key = 'bus33|' + fxKeyOf(trackIdx, t);
+    const tick = () => {
+        if (!panel.isConnected) return;
+        const on = (t.effects || []).includes('bus33');
+        const m = on && (state.playing || state.recording) && PulseAudio.getCompReduction ? PulseAudio.getCompReduction(key) : null;
+        const gr = m ? (m.gr || 0) : 0;
+        [1, 2, 4, 6, 8, 12, 16, 20].forEach((db, i) => leds[i].setAttribute('fill', gr >= db ? (db >= 12 ? '#f0abfc' : '#a855f7') : '#1c1426'));
+        requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+    panel.querySelector('.fx-bypass').addEventListener('change', (e) => { pushUndo(); setFxOn(t, 'bus33', e.target.checked); refreshPlaybackSoon(); saveProject(); refreshStrips(); });
+    say();
+    makePlugWindow(panel, t, 'bus33', trackIdx);
+}
+
 // Styles de la façade (ici pour garder la gamme dans un seul fichier)
 (() => {
     const st = document.createElement('style');
