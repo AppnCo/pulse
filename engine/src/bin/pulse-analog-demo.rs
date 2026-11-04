@@ -13,9 +13,9 @@ fn main() {
     let pre = Pre73Params { gain: 18.0, output: -14.0, high: 4.0, mid: 3.0, mid_f: 3, low: 0.0, low_f: 2, hpf: Some(1), eq: true };
     let (mut p73, mut f76): (Option<Pre73>, Option<Fet76>) = match a[3].as_str() {
         "pre" => (Some(Pre73::new(&pre, sr)), None),
-        "fet4" => (None, Some(Fet76::new(&Fet76Params { input: 36.0, output: 30.0, attack: 3.0, release: 5.0, ratio: 4.0, mix: 100.0 }, sr))),
-        "fetall" => (None, Some(Fet76::new(&Fet76Params { input: 36.0, output: 30.0, attack: 4.0, release: 6.0, ratio: 0.0, mix: 100.0 }, sr))),
-        _ => (Some(Pre73::new(&pre, sr)), Some(Fet76::new(&Fet76Params { input: 34.0, output: 30.0, attack: 3.0, release: 5.0, ratio: 4.0, mix: 100.0 }, sr))),
+        "fet4" => (None, Some(Fet76::new(&Fet76Params { input: 36.0, output: 30.0, attack: 3.0, release: 5.0, ratio: 4.0, mix: 100.0, variant: 0 }, sr))),
+        "fetall" => (None, Some(Fet76::new(&Fet76Params { input: 36.0, output: 30.0, attack: 4.0, release: 6.0, ratio: 0.0, mix: 100.0, variant: 0 }, sr))),
+        _ => (Some(Pre73::new(&pre, sr)), Some(Fet76::new(&Fet76Params { input: 34.0, output: 30.0, attack: 3.0, release: 5.0, ratio: 4.0, mix: 100.0, variant: 0 }, sr))),
     };
     let lat = p73.as_ref().map_or(0, |_| Pre73::LATENCY) + f76.as_ref().map_or(0, |_| Fet76::LATENCY);
     let mut y = Vec::with_capacity(x.len() + lat);

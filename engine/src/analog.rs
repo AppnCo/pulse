@@ -84,26 +84,32 @@ pub struct Fet76Params {
     pub ratio: f64,
     /// Mélange avec le son d'origine (%), 100 = comme la machine
     pub mix: f64,
+    /// 0 Noir (moderne, propre, rapide), 1 Argent « bande bleue » (le premier modèle : plus de grain, aigus plus doux,
+    /// attaque un peu plus lente), 2 Graphite (version de mastering : encore plus propre)
+    pub variant: usize,
 }
 impl From<&crate::model::Fet76Json> for Fet76Params {
     fn from(j: &crate::model::Fet76Json) -> Self {
         let d = Self::default();
         Self { input: j.input.unwrap_or(d.input), output: j.output.unwrap_or(d.output), attack: j.attack.unwrap_or(d.attack),
-            release: j.release.unwrap_or(d.release), ratio: j.ratio.unwrap_or(d.ratio), mix: j.mix.unwrap_or(d.mix) }
+            release: j.release.unwrap_or(d.release), ratio: j.ratio.unwrap_or(d.ratio), mix: j.mix.unwrap_or(d.mix),
+            variant: j.variant.map_or(0, |v| (v.round().max(0.0) as usize).min(2)) }
     }
 }
 impl Fet76Params {
     /// Un réglage changé en direct (automation), unités de la façade
     pub fn set_key(&mut self, k: &str, v: f64) -> bool {
         match k { "input" => self.input = v, "output" => self.output = v, "attack" => self.attack = v, "release" => self.release = v,
-            "ratio" => self.ratio = v, "mix" => self.mix = v, _ => return false }
+            "ratio" => self.ratio = v, "mix" => self.mix = v, "variant" => self.variant = (v.round().max(0.0) as usize).min(2), _ => return false }
         true
     }
 }
 impl Default for Fet76Params {
-    fn default() -> Self { Self { input: 24.0, output: 24.0, attack: 3.0, release: 5.0, ratio: 4.0, mix: 100.0 } }
+    fn default() -> Self { Self { input: 24.0, output: 24.0, attack: 3.0, release: 5.0, ratio: 4.0, mix: 100.0, variant: 0 } }
 }
 
+/// Variantes du 76 : attaque (×), grain du FET (×), fer (×), coupure douce des aigus (Hz, 0 = aucune)
+const FET_VARIANTS: [[f64; 4]; 3] = [[1.0, 1.0, 1.0, 0.0], [1.4, 1.8, 1.6, 16_000.0], [1.0, 0.5, 0.5, 0.0]];
 /// Seuil interne (dBFS, crête) : là où la machine commence à travailler, Entrée à 24
 const FET_THR: f64 = -18.0;
 /// Marge avant saturation de l'étage de sortie (−12 dB)
@@ -129,6 +135,11 @@ pub struct Fet76 {
     ff: f64,
     iron: [Iron; 2],
     ik: (f64, f64),
+    /// variante : grain du FET, force du fer, coupure des aigus (coefficient, 1 = aucune) et sa mémoire
+    vfet: f64,
+    viron: f64,
+    lpa: f64,
+    lp: [f64; 2],
     os: [Os4; 2],
     dc: [(f64, f64); 2],
     /// son d'origine retardé comme la partie suréchantillonnée
@@ -138,7 +149,7 @@ pub struct Fet76 {
 impl Fet76 {
     pub fn new(p: &Fet76Params, sr: f64) -> Self {
         let mut s = Self { sr, gin: 1.0, gout: 1.0, ratio: 4.0, knee: 6.0, all: false, att: 0.0, rel_fast: 0.0, rel_slow: 0.0, mix: 1.0,
-            gr: 0.0, gr_slow: 0.0, ff: 0.0, iron: [Iron::default(); 2], ik: iron_k(sr), os: [Os4::new(), Os4::new()], dc: [(0.0, 0.0); 2], dry: [[0.0; 40]; 2] };
+            gr: 0.0, gr_slow: 0.0, ff: 0.0, iron: [Iron::default(); 2], ik: iron_k(sr), vfet: 1.0, viron: 1.0, lpa: 1.0, lp: [0.0; 2], os: [Os4::new(), Os4::new()], dc: [(0.0, 0.0); 2], dry: [[0.0; 40]; 2] };
         s.set(p);
         s
     }
@@ -154,7 +165,10 @@ impl Fet76 {
         // 1 → 7 : courbe logarithmique entre les deux bouts de la machine
         let a = (p.attack.clamp(1.0, 7.0) - 1.0) / 6.0;
         let r7 = (p.release.clamp(1.0, 7.0) - 1.0) / 6.0;
-        let att_s = 800e-6 * (20e-6f64 / 800e-6).powf(a) * if self.all { 2.5 } else { 1.0 };
+        let v = FET_VARIANTS[p.variant.min(2)];
+        (self.vfet, self.viron) = (v[1], v[2]);
+        self.lpa = if v[3] > 0.0 { 1.0 - (-2.0 * PI * v[3] / sr).exp() } else { 1.0 };
+        let att_s = 800e-6 * (20e-6f64 / 800e-6).powf(a) * if self.all { 2.5 } else { 1.0 } * v[0];
         let rel_s = 1.1 * (0.05f64 / 1.1).powf(r7) * if self.all { 0.6 } else { 1.0 };
         let co = |t: f64| 1.0 - (-1.0 / (t * sr)).exp();
         self.att = co(att_s);
@@ -197,7 +211,8 @@ impl Fet76 {
         let g = 10f64.powf(-(self.gr + self.ff) / 20.0);
         let (iw, il) = self.ik;
         // couleur : harmonique 2 du FET (croît avec la réduction), puis l'étage de sortie qui arrondit les crêtes
-        let fet = (0.04 + 0.5 * (1.0 - g)) * if self.all { 2.2 } else { 1.0 };
+        let fet = (0.04 + 0.5 * (1.0 - g)) * if self.all { 2.2 } else { 1.0 } * self.vfet;
+        let ib = IRON76 * self.viron;
         for ch in 0..nc {
             let v = x[ch] * self.gin;
             let iron = &mut self.iron[ch];
@@ -206,13 +221,14 @@ impl Fet76 {
                 let c = u * g * HR76;
                 let c = c + fet * c * c;
                 // étage de sortie classe A puis transfo de sortie (sature dans les graves)
-                iron.run((1.15 * c).tanh() / 1.15, iw, il, IRON76) / HR76
+                iron.run((1.15 * c).tanh() / 1.15, iw, il, ib) / HR76
             });
             // l'harmonique 2 décale un peu le zéro : on le retire (comme le condensateur de sortie)
             let (xp, yp) = self.dc[ch];
             let o = y - xp + 0.9995 * yp;
             self.dc[ch] = (y, o);
-            y = o * self.gout;
+            self.lp[ch] += (o - self.lp[ch]) * self.lpa;
+            y = self.lp[ch] * self.gout;
             let d = &mut self.dry[ch];
             d.copy_within(0..39, 1);
             d[0] = x[ch];
@@ -327,6 +343,165 @@ impl Pre73 {
                 iron[1].run((1.05 * y * HR73).tanh() / 1.05, iw, il, IRON73) / HR73
             });
             x[ch] = y * self.gout;
+        }
+    }
+}
+
+// ===== Optique 2A : compresseur à cellule optique et lampes (esprit « 2A ») =====
+// Comme la machine : un bouton Gain (sortie, avant l'étage à lampe : il colore aussi), un bouton Réduction (Peak Reduction),
+// Compression / Limitation, l'accentuation des aigus du détecteur (à l'arrière de la machine). La cellule optique fait tout le son :
+// attaque ~10 ms, relâchement en deux temps (moitié en ~60 ms, le reste en 0,5 à 5 s), et une MÉMOIRE : plus elle a travaillé
+// longtemps, plus elle relâche lentement. Contre-réaction (le détecteur écoute la sortie), comme le 76.
+// Trois variantes, comme les séries de la machine : Gris (la plus ancienne, sombre, lente, grasse), Argent (la classique),
+// Noir (plus claire, plus rapide, plus de mordant).
+
+/// Réglages de l'Optique 2A (unités de la façade)
+#[derive(Clone, Debug)]
+pub struct Opto2AParams {
+    /// Gain de sortie 0 à 100 (40 = gain unité) — avant l'étage à lampe : plus on monte, plus ça colore
+    pub gain: f64,
+    /// Réduction (Peak Reduction) 0 à 100 : plus on tourne, plus ça compresse
+    pub peak: f64,
+    /// Limitation (sinon Compression)
+    pub limit: bool,
+    /// Accentuation des aigus du détecteur 0 à 100 (les « s » et les aigus font plus réagir la cellule)
+    pub emph: f64,
+    /// 0 Gris, 1 Argent, 2 Noir
+    pub variant: usize,
+    /// Mélange avec le son d'origine (%)
+    pub mix: f64,
+}
+impl Default for Opto2AParams {
+    fn default() -> Self { Self { gain: 40.0, peak: 40.0, limit: false, emph: 0.0, variant: 1, mix: 100.0 } }
+}
+impl From<&crate::model::Opto2AJson> for Opto2AParams {
+    fn from(j: &crate::model::Opto2AJson) -> Self {
+        let d = Self::default();
+        Self { gain: j.gain.unwrap_or(d.gain), peak: j.peak.unwrap_or(d.peak), limit: j.limit.unwrap_or(0.0) >= 0.5, emph: j.emph.unwrap_or(0.0),
+            variant: j.variant.map_or(1, |v| (v.round().max(0.0) as usize).min(2)), mix: j.mix.unwrap_or(100.0) }
+    }
+}
+impl Opto2AParams {
+    pub fn set_key(&mut self, k: &str, v: f64) -> bool {
+        match k { "gain" => self.gain = v, "peak" => self.peak = v, "emph" => self.emph = v, "mix" => self.mix = v,
+            "limit" => self.limit = v >= 0.5, "variant" => self.variant = (v.round().max(0.0) as usize).min(2), _ => return false }
+        true
+    }
+}
+/// Ce qui change d'une variante à l'autre : attaque, relâchement (rapide, lent sans / avec mémoire), harmonique 2, mordant (3),
+/// coupure des aigus de sortie (Hz, 0 = aucune), fer
+const OPTO_VARIANTS: [[f64; 8]; 3] = [
+    [0.012, 0.080, 1.0, 8.0, 0.20, 1.25, 12_000.0, 0.07],
+    [0.010, 0.060, 0.5, 5.0, 0.12, 1.15, 18_000.0, 0.05],
+    [0.007, 0.045, 0.3, 3.0, 0.06, 1.35, 0.0, 0.04],
+];
+/// Part rapide de la cellule : 65 % de la réduction repart en ~90 ms, le reste lentement
+const OPTO_FAST: f64 = 0.65;
+/// Marge de l'étage à lampe (−14 dB)
+const HR2A: f64 = 0.199_526_231_496_888;
+
+pub struct Opto2A {
+    sr: f64,
+    gout: f64,
+    thr: f64,
+    ratio: f64,
+    knee: f64,
+    emph: f64,
+    att: f64,
+    rf: f64,
+    rs_min: f64,
+    rs_max: f64,
+    a2: f64,
+    k: f64,
+    lpa: f64,
+    iron_b: f64,
+    mix: f64,
+    /// réduction : partie rapide et partie lente (mélangées par OPTO_FAST), mémoire de la cellule (0 à 1)
+    gr_f: f64,
+    gr_s: f64,
+    mem: f64,
+    scl: [f64; 2],
+    lp: [f64; 2],
+    os: [Os4; 2],
+    iron: [Iron; 2],
+    ik: (f64, f64),
+    dc: [(f64, f64); 2],
+    dry: [[f64; 40]; 2],
+    co_mem_up: f64,
+    co_mem_down: f64,
+    a1k: f64,
+}
+
+impl Opto2A {
+    pub const LATENCY: usize = 31;
+    pub fn new(p: &Opto2AParams, sr: f64) -> Self {
+        let mut s = Self { sr, gout: 1.0, thr: -20.0, ratio: 3.0, knee: 12.0, emph: 0.0, att: 0.0, rf: 0.0, rs_min: 0.0, rs_max: 0.0, a2: 0.0, k: 1.0, lpa: 1.0, iron_b: 0.0, mix: 1.0,
+            gr_f: 0.0, gr_s: 0.0, mem: 0.0, scl: [0.0; 2], lp: [0.0; 2], os: [Os4::new(), Os4::new()], iron: [Iron::default(); 2], ik: iron_k(sr), dc: [(0.0, 0.0); 2], dry: [[0.0; 40]; 2],
+            co_mem_up: 1.0 - (-1.0 / (3.0 * sr)).exp(), co_mem_down: 1.0 - (-1.0 / (20.0 * sr)).exp(), a1k: 1.0 - (-2.0 * PI * 1000.0 / sr).exp() };
+        s.set(p);
+        s
+    }
+    pub fn set(&mut self, p: &Opto2AParams) {
+        let sr = self.sr;
+        let v = OPTO_VARIANTS[p.variant.min(2)];
+        let co = |t: f64| 1.0 - (-1.0 / (t * sr)).exp();
+        self.gout = 10f64.powf((p.gain.clamp(0.0, 100.0) - 40.0) * 0.5 / 20.0);
+        self.thr = -0.48 * p.peak.clamp(0.0, 100.0);
+        (self.ratio, self.knee) = if p.limit { (10.0, 6.0) } else { (3.0, 12.0) };
+        self.emph = p.emph.clamp(0.0, 100.0) / 100.0 * 3.0;
+        self.att = co(v[0]); self.rf = co(v[1]); self.rs_min = co(v[2]); self.rs_max = co(v[3]);
+        self.a2 = v[4]; self.k = v[5];
+        self.lpa = if v[6] > 0.0 { 1.0 - (-2.0 * PI * v[6] / sr).exp() } else { 1.0 };
+        self.iron_b = v[7];
+        self.mix = (p.mix / 100.0).clamp(0.0, 1.0);
+    }
+    fn curve(&self, lvl: f64) -> f64 {
+        let over = lvl - self.thr;
+        let (k, s) = (self.knee, self.ratio - 1.0);
+        if over <= -k / 2.0 { 0.0 } else if over >= k / 2.0 { over * s } else { s * (over + k / 2.0).powi(2) / (2.0 * k) }
+    }
+    /// Réduction en cours (dB), pour l'aiguille
+    pub fn reduction(&self) -> f64 { OPTO_FAST * self.gr_f + (1.0 - OPTO_FAST) * self.gr_s }
+    pub fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
+        // détecteur : les aigus accentués si demandé (filtre 1 kHz), niveau crête des deux canaux
+        let mut pk = 0.0f64;
+        for ch in 0..nc {
+            self.scl[ch] += (x[ch] - self.scl[ch]) * self.a1k;
+            pk = pk.max((x[ch] + self.emph * (x[ch] - self.scl[ch])).abs());
+        }
+        let gr = self.reduction();
+        let want = self.curve(20.0 * (pk + 1e-12).log10() - gr);
+        if want > gr {
+            let d = (want - gr) * self.att / self.ratio;
+            self.gr_f += d; self.gr_s += d;
+        } else {
+            // relâchement en deux temps ; la partie lente dépend de la mémoire de la cellule
+            let rs = self.rs_min + (self.rs_max - self.rs_min) * self.mem;
+            self.gr_f += (want - self.gr_f) * self.rf;
+            self.gr_s += (want - self.gr_s) * rs;
+        }
+        let gr = self.reduction();
+        let m = (gr / 12.0).clamp(0.0, 1.0);
+        self.mem += (m - self.mem) * if m > self.mem { self.co_mem_up } else { self.co_mem_down };
+        let g = 10f64.powf(-gr / 20.0) * self.gout;
+        let (a2, k, (iw, il), ib) = (self.a2, self.k, self.ik, self.iron_b);
+        for ch in 0..nc {
+            let iron = &mut self.iron[ch];
+            let mut y = self.os[ch].run(x[ch], |u| {
+                // cellule (atténuation passive) puis gain, étage à lampe (harmonique 2, mordant), transfo de sortie
+                let c = u * g * HR2A;
+                let c = c + a2 * c * c;
+                iron.run((k * c).tanh() / k, iw, il, ib) / HR2A
+            });
+            let (xp, yp) = self.dc[ch];
+            let o = y - xp + 0.9995 * yp;
+            self.dc[ch] = (y, o);
+            self.lp[ch] += (o - self.lp[ch]) * self.lpa;
+            y = self.lp[ch];
+            let d = &mut self.dry[ch];
+            d.copy_within(0..39, 1);
+            d[0] = x[ch];
+            x[ch] = if self.mix < 1.0 { d[Self::LATENCY] + (y - d[Self::LATENCY]) * self.mix } else { y };
         }
     }
 }
@@ -461,5 +636,67 @@ mod tests {
         let (r4a, r4b) = { let o = |db: f64| { let (o, _) = run(&Fet76Params { ratio: 4.0, attack: 5.0, release: 4.0, ..Default::default() }, 10f64.powf((FET_THR + db) / 20.0), 1000.0, 48_000);
             let s = &o[24_000..48_000]; (s.iter().map(|v| v * v).sum::<f64>() / s.len() as f64).sqrt() }; (o(12.0), o(30.0)) };
         assert!(r4b > r4a, "ratio 4 : le son continue de monter");
+    }
+
+    fn run2a(p: &Opto2AParams, amp: f64, f: f64, n: usize) -> (Vec<f64>, Opto2A) {
+        let mut c = Opto2A::new(p, SR);
+        let out = (0..n).map(|i| { let mut x = [amp * (2.0 * PI * f * i as f64 / SR).sin(), 0.0]; c.tick(&mut x, 1); x[0] }).collect();
+        (out, c)
+    }
+    /// Optique 2A : Réduction à 0 = presque transparent ; tournée = ça compresse (≈ 3:1 en Compression, plus en Limitation)
+    #[test]
+    fn opto_reduction_et_ratio() {
+        let amp = 10f64.powf(-6.0 / 20.0);
+        let (_, c0) = run2a(&Opto2AParams { peak: 0.0, ..Default::default() }, amp, 1000.0, 96_000);
+        assert!(c0.reduction() < 1.0, "Réduction 0 : {:.2} dB", c0.reduction());
+        let (_, cc) = run2a(&Opto2AParams { peak: 60.0, ..Default::default() }, amp, 1000.0, 96_000);
+        let (_, cl) = run2a(&Opto2AParams { peak: 60.0, limit: true, ..Default::default() }, amp, 1000.0, 96_000);
+        // seuil à −28,8 dB, crête à −6 : 22,8 dB au-dessus → 3:1 ≈ 15,2 dB de réduction, 10:1 ≈ 20,5 dB
+        assert!((cc.reduction() - 15.2).abs() < 2.0, "Compression : {:.1} dB", cc.reduction());
+        assert!(cl.reduction() > cc.reduction() + 3.0, "Limitation {:.1} > Compression {:.1}", cl.reduction(), cc.reduction());
+    }
+    /// La cellule : attaque ~10 ms, moitié du relâchement vite, le reste lentement ; et plus elle a travaillé, plus elle traîne
+    #[test]
+    fn opto_releve_en_deux_temps_avec_memoire() {
+        let amp = 10f64.powf(-6.0 / 20.0);
+        let p = Opto2AParams { peak: 60.0, ..Default::default() };
+        let rel = |hold: usize| {
+            let mut c = Opto2A::new(&p, SR);
+            for i in 0..hold { let mut x = [amp * (2.0 * PI * 1000.0 * i as f64 / SR).sin(), 0.0]; c.tick(&mut x, 1); }
+            let g0 = c.reduction();
+            let mut t50 = 0; let mut t90 = 0;
+            for i in 0..(10.0 * SR) as usize { let mut x = [0.0, 0.0]; c.tick(&mut x, 1); let r = c.reduction(); if t50 == 0 && r < g0 * 0.5 { t50 = i; } if t90 == 0 && r < g0 * 0.1 { t90 = i; break; } }
+            (t50 as f64 / SR, t90 as f64 / SR)
+        };
+        let (a50, a90) = rel(24_000);
+        let (b50, b90) = rel(480_000);
+        assert!(a50 < 0.15, "moitié du relâchement en {a50:.3} s");
+        assert!(a90 > 5.0 * a50, "le reste traîne : 90 % en {a90:.2} s");
+        assert!(b90 > a90 * 1.5, "après 10 s de compression la cellule traîne plus ({b90:.2} s contre {a90:.2} s)");
+        let _ = b50;
+    }
+    /// Les variantes sonnent différemment : Gris plus sombre et plus grasse (h2), Noir plus claire
+    #[test]
+    fn opto_variantes() {
+        let amp = 10f64.powf(-8.0 / 20.0);
+        let m = |v: usize| { let (o, _) = run2a(&Opto2AParams { peak: 30.0, gain: 60.0, variant: v, ..Default::default() }, amp, 200.0, 48_000);
+            let s = &o[24_000..48_000]; 20.0 * (harm(s, 200.0, 2) / harm(s, 200.0, 1)).log10() };
+        let (g, a, n) = (m(0), m(1), m(2));
+        assert!(g > a + 2.0 && a > n + 2.0, "harmonique 2 : Gris {g:.1}, Argent {a:.1}, Noir {n:.1}");
+        let hf = |v: usize| { let (o, _) = run2a(&Opto2AParams { peak: 0.0, variant: v, ..Default::default() }, 0.1, 15_000.0, 24_000);
+            peak_db(&o[12_000..]) };
+        assert!(hf(0) < hf(2) - 1.0, "15 kHz : Gris {:.1} dB, Noir {:.1} dB", hf(0), hf(2));
+    }
+
+    /// Variantes du 76 : Argent plus granuleux et plus doux dans l'aigu que Noir ; Graphite plus propre que Noir
+    #[test]
+    fn fet_variantes() {
+        let amp = 10f64.powf((FET_THR + 14.0) / 20.0);
+        let h2 = |v: usize| { let (o, _) = run(&Fet76Params { ratio: 8.0, variant: v, ..Default::default() }, amp, 200.0, 48_000);
+            let s = &o[24_000..48_000]; 20.0 * (harm(s, 200.0, 2) / harm(s, 200.0, 1)).log10() };
+        let (n, a, g) = (h2(0), h2(1), h2(2));
+        assert!(a > n + 3.0 && n > g + 3.0, "harmonique 2 : Argent {a:.1}, Noir {n:.1}, Graphite {g:.1}");
+        let hf = |v: usize| { let (o, _) = run(&Fet76Params { variant: v, ..Default::default() }, 0.05, 15_000.0, 24_000); peak_db(&o[12_000..]) };
+        assert!(hf(1) < hf(0) - 1.0, "15 kHz : Argent {:.1}, Noir {:.1}", hf(1), hf(0));
     }
 }

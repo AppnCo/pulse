@@ -36,6 +36,11 @@ export default async (c) => {
   check('Entrée tournée à la souris (> 24)', inp > 24, String(inp));
   await click('.fx-panel.plug-win[data-fx="fet76"] .ana-push[data-r="20"]');
   check('poussoir ratio 20', await J(ev, `return state.project.tracks[0].effectParams.fet76.ratio`) === 20);
+  const s76 = await J(ev, `return document.querySelector('.fx-panel.plug-win[data-fx="fet76"] #anaPanel stop').getAttribute('stop-color')`);
+  await click('.fx-panel.plug-win[data-fx="fet76"] .ana-var[data-v="1"]');
+  const v76 = JSON.parse(await J(ev, `return JSON.stringify({ v: state.project.tracks[0].effectParams.fet76.variant, stop: document.querySelector('.fx-panel.plug-win[data-fx="fet76"] #anaPanel stop').getAttribute('stop-color') })`));
+  check('76 Argent : variante + façade claire', v76.v === 1 && v76.stop !== s76, JSON.stringify(v76));
+  await ev(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'z',code:'KeyZ',metaKey:true,bubbles:true}))`); await sleep(300);
   await ev(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'z',code:'KeyZ',metaKey:true,bubbles:true}))`); await sleep(300);
   check('⌘Z : ratio revenu à 4', await J(ev, `return state.project.tracks[0].effectParams.fet76.ratio`) === 4);
   // Pulse 73
@@ -51,6 +56,20 @@ export default async (c) => {
   await mouse('mouseReleased', { x: g.x, y: g.y - 96 }); await sleep(200);
   const gain = await J(ev, `return state.project.tracks[0].effectParams.pre73.gain`);
   check('gain à crans (multiple de 5, > 0)', gain > 0 && gain % 5 === 0, String(gain));
+  // Optique 2A : variantes (la façade change de couleur, réglages gardés), Compression / Limitation
+  await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
+  await click('#inspector .slot-plus[data-plus="fx"]');
+  await click('.fx-add-menu .fam-range', 'Analogique');
+  check('menu : Optique 2A cliqué', await click('.fx-add-menu .fam-fx', 'Optique 2A')); await sleep(500);
+  check('Optique 2A ajouté, façade ouverte', await J(ev, `return state.project.tracks[0].effects.includes('opto2a') && !!document.querySelector('.fx-panel.plug-win[data-fx="opto2a"]')`) === true);
+  const stop0 = await J(ev, `return document.querySelector('.fx-panel.plug-win[data-fx="opto2a"] #anaPanel stop').getAttribute('stop-color')`);
+  await click('.fx-panel.plug-win[data-fx="opto2a"] .ana-var[data-v="0"]');
+  const st2a = JSON.parse(await J(ev, `const p=document.querySelector('.fx-panel.plug-win[data-fx="opto2a"]'); return JSON.stringify({ v: state.project.tracks[0].effectParams.opto2a.variant, stop: p.querySelector('#anaPanel stop').getAttribute('stop-color'), peak: state.project.tracks[0].effectParams.opto2a.peak })`));
+  check('variante Gris : réglage + façade grise', st2a.v === 0 && st2a.stop !== stop0, JSON.stringify(st2a) + ' / ' + stop0);
+  check('les réglages restent', st2a.peak === 40, String(st2a.peak));
+  const tg = await pos('.fx-panel.plug-win[data-fx="opto2a"] .ana-push rect');
+  await mouse('mouseMoved', tg, { buttons: 0 }); await mouse('mousePressed', tg); await mouse('mouseReleased', tg); await sleep(200);
+  check('levier : Limitation', await J(ev, `return state.project.tracks[0].effectParams.opto2a.limit`) === 1);
   // ---- Envois façon Logic
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   await click('#inspector .slot-plus[data-plus="send"]');

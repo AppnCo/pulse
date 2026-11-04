@@ -1333,7 +1333,11 @@ mod tests {
         let rms = |x: &[f32], a: f64, z: f64| { let (a, z) = ((a * SR as f64).round() as usize, (z * SR as f64).round() as usize); (x[a..z].iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / (z - a) as f64).sqrt() };
         for (fx, pp, want) in [("pre73", r#"{"gain":20,"output":-20,"high":4,"mid":3,"midF":3,"low":2,"lowF":1,"hpf":1}"#, [0.099128f64, 0.099128, 0.027474]),
             ("fet76", r#"{"input":36,"output":20,"attack":4,"release":5,"ratio":8}"#, [0.043774, 0.043774, 0.012732]),
-            ("fet76", r#"{"input":40,"output":18,"ratio":0,"mix":70}"#, [0.051816, 0.051816, 0.016344])] {
+            ("fet76", r#"{"input":40,"output":18,"ratio":0,"mix":70}"#, [0.051816, 0.051816, 0.016344]),
+            ("fet76", r#"{"input":36,"output":22,"ratio":12,"variant":1}"#, [0.050767, 0.050767, 0.012441]),
+            ("fet76", r#"{"input":36,"output":22,"ratio":4,"variant":2,"mix":60}"#, [0.092849, 0.092849, 0.028566]),
+            ("opto2a", r#"{"peak":60,"gain":55,"variant":0}"#, [0.086484, 0.082398, 0.018677]),
+            ("opto2a", r#"{"peak":45,"limit":1,"emph":50,"variant":2,"mix":80}"#, [0.055303, 0.053787, 0.016746])] {
             let t = format!(r#"{{"volume":100,"clips":[{{"id":"a","start":0,"duration":3,"offset":0}}],"effects":["{fx}"],"effectParams":{{"{fx}":{pp}}}}}"#);
             let p = Project { tracks: vec![serde_json::from_str(&t).unwrap()], ..Default::default() };
             let l = render(&p, &saw, &RenderOptions { only_track: Some(0), ..opts() }).0;

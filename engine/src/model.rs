@@ -137,6 +137,7 @@ pub struct EffectParams {
     /// Gamme Analogique : compresseur FET « 76 » et préampli « 73 » (voir analog.rs)
     pub fet76: Option<Fet76Json>,
     pub pre73: Option<Pre73Json>,
+    pub opto2a: Option<Opto2AJson>,
     /// Exemplaires en plus d'un même effet (« comp#2 », « eq#3»…), réglages bruts : lus par `EffectParams::instance`
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
@@ -236,6 +237,20 @@ pub struct Fet76Json {
     pub attack: Option<f64>,
     pub release: Option<f64>,
     pub ratio: Option<f64>,
+    pub mix: Option<f64>,
+    /// 0 Noir · 1 Argent · 2 Graphite
+    pub variant: Option<f64>,
+}
+
+/// Optique 2A : gain 0-100 (40 = unité), peak (réduction) 0-100, limit 0/1, emph 0-100, variant 0 Gris · 1 Argent · 2 Noir, mix %
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct Opto2AJson {
+    pub gain: Option<f64>,
+    pub peak: Option<f64>,
+    pub limit: Option<f64>,
+    pub emph: Option<f64>,
+    pub variant: Option<f64>,
     pub mix: Option<f64>,
 }
 

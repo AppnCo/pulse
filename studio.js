@@ -2164,8 +2164,8 @@ function migrateProject() {
 
 // === Tranche à gauche (inspecteur) : la piste sélectionnée et, à sa droite, là où elle sort ===
 // Évite d'ouvrir le mixer pour voir les effets d'une piste ou régler son volume.
-const FX_NAMES = { msat: 'Saturation multibande', mband: 'Multibande', pitch: 'Pitch', crush: 'Bitcrusher', util: 'Utilitaire', width: 'Largeur', tremolo: 'Trémolo', phaser: 'Phaser', flanger: 'Flanger', chorus: 'Chorus', doubler: 'Doubleur', slapback: 'Slapback', filter: 'Filtre', gate: 'Gate', eq: 'EQ', sat: 'Saturation', deess: 'De-esser', comp: 'Compresseur', master: 'Finition', limit: 'Limiteur', delay: 'Écho', reverb: 'Reverb', fet76: 'Éclair 76', pre73: 'Pulse 73' };
-const FX_ORDER = ['pitch', 'filter', 'pre73', 'gate', 'eq', 'sat', 'msat', 'crush', 'deess', 'fet76', 'comp', 'mband', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'reverb'];
+const FX_NAMES = { msat: 'Saturation multibande', mband: 'Multibande', pitch: 'Pitch', crush: 'Bitcrusher', util: 'Utilitaire', width: 'Largeur', tremolo: 'Trémolo', phaser: 'Phaser', flanger: 'Flanger', chorus: 'Chorus', doubler: 'Doubleur', slapback: 'Slapback', filter: 'Filtre', gate: 'Gate', eq: 'EQ', sat: 'Saturation', deess: 'De-esser', comp: 'Compresseur', master: 'Finition', limit: 'Limiteur', delay: 'Écho', reverb: 'Reverb', fet76: 'Éclair 76', pre73: 'Pulse 73', opto2a: 'Optique 2A' };
+const FX_ORDER = ['pitch', 'filter', 'pre73', 'gate', 'eq', 'sat', 'msat', 'crush', 'deess', 'fet76', 'opto2a', 'comp', 'mband', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'reverb'];
 function inspectorOpen() { try { return localStorage.getItem('pulse_inspector') !== '0'; } catch { return true; } }
 function setInspectorOpen(open) {
     try { localStorage.setItem('pulse_inspector', open ? '1' : '0'); } catch {}
@@ -2886,7 +2886,7 @@ function openOutputMenu(anchor, kind, x, idx) {
 const ADD_FX_CHOICES = [['crush', 'Bitcrusher (son lo-fi)'], ['util', 'Utilitaire (gain, mono, phase)'], ['width', 'Largeur stéréo'],
     ['tremolo', 'Trémolo (volume qui pulse)'], ['phaser', 'Phaser'], ['flanger', 'Flanger'], ['chorus', 'Chorus'],
     ['doubler', 'Doubleur de voix'], ['slapback', 'Slapback (écho court)'], ['gate', 'Gate (coupe le bruit entre les phrases)'], ['filter', 'Filtre (coupe-bas / coupe-haut)'], ['eq', 'EQ'], ['comp', 'Compresseur'], ['mband', 'Multibande'], ['deess', 'De-esser'], ['sat', 'Saturation'], ['msat', 'Saturation multibande'], ['delay', 'Écho'], ['reverb', 'Reverb'],
-    ['fet76', 'Éclair 76 (compresseur FET)'], ['pre73', 'Pulse 73 (préampli + EQ de console)']];
+    ['fet76', 'Éclair 76 (compresseur FET)'], ['pre73', 'Pulse 73 (préampli + EQ de console)'], ['opto2a', 'Optique 2A (compresseur optique à lampes)']];
 // Rangés par catégorie comme dans Logic (voir PLUGINS-CATALOGUE.md) : un nouvel effet = une ligne dans sa catégorie
 const ADD_FX_CATEGORIES = [
     ['Dynamique', ['comp', 'mband', 'deess', 'gate']],
@@ -2900,7 +2900,7 @@ const ADD_FX_CATEGORIES = [
 ];
 // Gamme Analogique : les machines de studio reprises à notre sauce (façades 3D, analog-ui.js) — rangée à part dans le menu
 const ADD_FX_CATEGORIES_ANA = [
-    ['Compresseurs', ['fet76']],
+    ['Compresseurs', ['fet76', 'opto2a']],
     ['Préamplis et EQ', ['pre73']]
 ];
 // Une phrase par effet dans le menu « + Effet », et les mots qu'on tape pour le trouver
@@ -2909,11 +2909,12 @@ const FX_DESC = { msat: 'chaleur et grain par zone : des graves ronds, des médi
     width: 'élargit ou resserre l\'image stéréo', chorus: 'épaissit le son en le dédoublant légèrement', flanger: 'balayage métallique qui tourne',
     phaser: 'balayage doux et rond', tremolo: 'le volume pulse en rythme', doubler: 'donne l\'impression de deux prises', slapback: 'écho court, très utilisé en rap',
     crush: 'son lo-fi, numérique abîmé', util: 'volume, phase, passage en mono', filter: 'coupe les graves ou les aigus',
-    fet76: 'le compresseur FET des studios : on pousse l\'entrée, la voix passe devant', pre73: 'le préampli de console : gain qui colore et EQ aux fréquences de la machine' };
+    fet76: 'le compresseur FET des studios : on pousse l\'entrée, la voix passe devant', pre73: 'le préampli de console : gain qui colore et EQ aux fréquences de la machine',
+    opto2a: 'le compresseur optique à lampes : lent, doux, la voix se pose toute seule (Gris, Argent, Noir)' };
 const FX_WORDS = { msat: 'saturation multiband multibande saturn distortion drive chaleur tape tube', mband: 'multiband multibande compressor dynamic dynamique', pitch: 'pitch shift hauteur transpose alterboy grave aigu', comp: 'compressor compression dynamique', deess: 'deesser sibilance', gate: 'noise gate bruit', eq: 'equalizer egaliseur', filter: 'hpf lpf high pass low pass coupe-bas coupe-haut',
     sat: 'saturation distortion saturator drive', crush: 'bitcrusher lofi', delay: 'delay echo', reverb: 'reverb reverberation', slapback: 'slap delay echo',
     chorus: 'modulation', flanger: 'modulation', phaser: 'modulation', tremolo: 'modulation', doubler: 'doubler double', width: 'stereo imager', util: 'utility gain mono phase', tune: 'autotune pitch justesse',
-    fet76: 'analogique 1176 fet compressor compresseur limiting vintage', pre73: 'analogique 1073 preamp preampli console eq neve vintage' };
+    fet76: 'analogique 1176 fet compressor compresseur limiting vintage', pre73: 'analogique 1073 preamp preampli console eq neve vintage', opto2a: 'analogique la2a la-2a opto optical leveling amplifier tube lampe compresseur teletronix' };
 const FX_START = {
     limit: { tp: 1 },    // pic réel allumé sur un limiteur neuf (les anciens projets gardent leur son)
     eq: { bands: [] },   // un EQ neuf s'ouvre sans aucun point : on les pose soi-même
@@ -2921,7 +2922,8 @@ const FX_START = {
     tremolo: { rate: 5, depth: 50 }, phaser: { rate: 0.4, depth: 70, feedback: 40, mix: 50 }, flanger: { rate: 0.25, depth: 2, feedback: 50, mix: 50 },
     chorus: { rate: 0.8, depth: 5, mix: 50 }, doubler: { width: 50, mix: 50 }, slapback: { time: 110, feedback: 12, mix: 25 },
     gate: { threshold: -45, release: 150, reduction: 40 }, filter: { hpf: 80, lpf: 20000, slope: 12 }, sat: { drive: 25 }, msat: { bands: [{ base: true, sty: 'bande', va: 1, heat: 30 }] }, mband: { bands: [] }, deess: { thr: -26, range: 10, lo: 5000, hi: 11000 }, delay: { beats: 0.5, feedback: 35, wet: 25 },
-    fet76: { input: 24, output: 24, attack: 3, release: 5, ratio: 4, mix: 100 }, pre73: { gain: 0, output: 0, high: 0, mid: 0, midF: 2, low: 0, lowF: 1, hpf: -1, eq: 1 } };
+    fet76: { input: 24, output: 24, attack: 3, release: 5, ratio: 4, mix: 100 }, pre73: { gain: 0, output: 0, high: 0, mid: 0, midF: 2, low: 0, lowF: 1, hpf: -1, eq: 1 },
+    opto2a: { gain: 40, peak: 40, limit: 0, emph: 0, variant: 1, mix: 100 } };
 function openAddEffectMenu(anchor, target, x) {
     closeAllMenus();
     const r = anchor.getBoundingClientRect();
@@ -10087,6 +10089,12 @@ const FX_PANEL_DEFS = {
         { key: 'mid',    label: 'Médiums', unit: ' dB', min: -18, max: 18, def: 0, step: 0.5 },
         { key: 'low',    label: 'Graves',  unit: ' dB', min: -16, max: 16, def: 0, step: 0.5 }
     ],
+    opto2a: [
+        { key: 'gain', label: 'Gain',      unit: '',  min: 0, max: 100, def: 40, step: 1 },
+        { key: 'peak', label: 'Réduction', unit: '',  min: 0, max: 100, def: 40, step: 1 },
+        { key: 'emph', label: 'Aigus détecteur', unit: '', min: 0, max: 100, def: 0, step: 1 },
+        { key: 'mix',  label: 'Mélange',   unit: '%', min: 0, max: 100, def: 100, step: 1 }
+    ],
     delay: [
         { key: 'beats',    label: 'Temps', unit: '',  min: 0.125, max: 2,  def: 0.5, step: 0.125, fmt: beatsLabel,
           choices: [0.25, 1 / 3, 0.5, 0.75, 1, 1.5, 2], choiceLabels: ['1/16', '1/8 T', '1/8', '1/8 .', '1/4', '1/4 .', '1/2'] },
@@ -10117,6 +10125,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
     if (fxName === 'pitch') return openPitchPanel(trackIdx, anchorEl);
     if (fxName === 'fet76') return openFet76Panel(trackIdx, anchorEl);
     if (fxName === 'pre73') return openPre73Panel(trackIdx, anchorEl);
+    if (fxName === 'opto2a') return openOpto2APanel(trackIdx, anchorEl);
     if (['chorus', 'flanger', 'phaser', 'tremolo'].includes(fxName)) return openModPanel(trackIdx, fxName, anchorEl);
     if (['doubler', 'slapback', 'width'].includes(fxName)) return openStereoPanel(trackIdx, fxName, anchorEl);
     if (fxName === 'crush' || fxName === 'util') return openCrushUtilPanel(trackIdx, fxName, anchorEl);

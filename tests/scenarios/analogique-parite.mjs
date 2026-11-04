@@ -5,6 +5,10 @@ const CASES = [
   ['pre73', { gain: 20, output: -20, high: 4, mid: 3, midF: 3, low: 2, lowF: 1, hpf: 1 }, [0.099128, 0.099128, 0.027474]],
   ['fet76', { input: 36, output: 20, attack: 4, release: 5, ratio: 8 }, [0.043774, 0.043774, 0.012732]],
   ['fet76', { input: 40, output: 18, ratio: 0, mix: 70 }, [0.051816, 0.051816, 0.016344]],
+  ['fet76', { input: 36, output: 22, ratio: 12, variant: 1 }, [0.050767, 0.050767, 0.012441]],
+  ['fet76', { input: 36, output: 22, ratio: 4, variant: 2, mix: 60 }, [0.092849, 0.092849, 0.028566]],
+  ['opto2a', { peak: 60, gain: 55, variant: 0 }, [0.086484, 0.082398, 0.018677]],
+  ['opto2a', { peak: 45, limit: 1, emph: 50, variant: 2, mix: 80 }, [0.055303, 0.053787, 0.016746]],
 ];
 export default async (c) => {
   const { ev, check } = c;
