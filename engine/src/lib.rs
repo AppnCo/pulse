@@ -1065,6 +1065,23 @@ mod tests {
         }
     }
 
+    /// Mouvement calé sur le tempo : trémolo au 1/8 à 120 BPM = trémolo à 4 Hz ; la vitesse automatisée est ignorée en mode note
+    #[test]
+    fn mouvement_cale_sur_le_tempo() {
+        let run = |json: &str| {
+            let t: Track = serde_json::from_str(json).unwrap();
+            let mut a: Vec<f32> = (0..48_000).map(|i| (i as f32 * 0.0577).sin() * 0.5).collect(); let mut b = a.clone();
+            crate::fx::Chain::for_track(&t, SR as f64, 120.0).process(&mut a, &mut b, false);
+            a
+        };
+        let x = run(r#"{"effects":["tremolo"],"effectParams":{"tremolo":{"rate":0.3,"depth":80,"sync":1,"beats":0.5}}}"#);
+        let y = run(r#"{"effects":["tremolo"],"effectParams":{"tremolo":{"rate":4,"depth":80}}}"#);
+        assert!(x.iter().zip(&y).all(|(p, q)| (p - q).abs() < 1e-6), "1/8 à 120 BPM = 4 Hz");
+        let z = run(r#"{"effects":["chorus"],"effectParams":{"chorus":{"sync":1,"beats":2}}}"#);
+        let w = run(r#"{"effects":["chorus"],"effectParams":{"chorus":{"rate":1}}}"#);
+        assert!(z.iter().zip(&w).all(|(p, q)| (p - q).abs() < 1e-6), "chorus 1/2 à 120 BPM = 1 Hz");
+    }
+
     /// Largeur (milieu / côtés) et Utilitaire (mono, phase, volume) sur une piste stéréo.
     #[test]
     fn largeur_et_utilitaire_en_stereo() {
@@ -1375,6 +1392,8 @@ mod tests {
             ("hall80", r#"{"decay":1.0,"pre":10,"size":70,"bass":0.8,"treble":4000,"diffusion":90,"spin":80,"width":130,"mix":60,"variant":2}"#, [0.105457, 0.100519, 0.023421]),
             ("h910", r#"{"pitchL":0.09,"pitchR":-0.09,"delay":12,"mix":35}"#, [0.104098, 0.116562, 0.038046]),
             ("h910", r#"{"pitchL":7,"pitchR":-5,"delay":40,"feedback":50,"mix":50,"variant":1}"#, [0.124564, 0.125594, 0.036002]),
+            ("dim", r#"{"mode":1,"mix":100}"#, [0.134686, 0.139287, 0.045639]),
+            ("dim", r#"{"mode":3,"mix":80,"width":130,"variant":1}"#, [0.208333, 0.116070, 0.047483]),
             ("opto2a", r#"{"peak":60,"gain":55,"variant":0}"#, [0.086484, 0.082398, 0.018677]),
             ("opto2a", r#"{"peak":45,"limit":1,"emph":50,"variant":2,"mix":80}"#, [0.055303, 0.053787, 0.016746])] {
             let t = format!(r#"{{"volume":100,"clips":[{{"id":"a","start":0,"duration":3,"offset":0}}],"effects":["{fx}"],"effectParams":{{"{fx}":{pp}}}}}"#);

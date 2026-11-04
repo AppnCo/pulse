@@ -199,6 +199,16 @@ export default async (c) => {
   check('Harmoniseur : préréglage Octave', await J(ev, `const p=state.project.tracks[0].effectParams.h910; return p.pitchL===12 && p.pitchR===-12`));
   await click('.fx-panel.plug-win[data-fx="h910"] .ana-var[data-v="1"] rect');
   check('Harmoniseur : modèle 949', await J(ev, `return state.project.tracks[0].effectParams.h910.variant`) === 1);
+  // Dimension : façade, mode 4, Ensemble
+  await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
+  await click('#inspector .slot-plus[data-plus="fx"]');
+  await click('.fx-add-menu .fam-range', 'Analogique');
+  await click('.fx-add-menu .fam-cat', 'Espace'); await sleep(100);
+  check('menu : Dimension cliquée', await click('.fx-add-menu .fam-fx', 'Dimension')); await sleep(500);
+  await click('.fx-panel.plug-win[data-fx="dim"] .dim-mode[data-m="3"] rect');
+  check('Dimension : mode 4', await J(ev, `return state.project.tracks[0].effectParams.dim.mode`) === 3);
+  await click('.fx-panel.plug-win[data-fx="dim"] .ana-var[data-v="1"] rect');
+  check('Dimension : Ensemble', await J(ev, `return state.project.tracks[0].effectParams.dim.variant`) === 1);
   // ---- Envois façon Logic
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   await click('#inspector .slot-plus[data-plus="send"]');

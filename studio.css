@@ -3794,3 +3794,12 @@ body[data-left-tool="fade"] .timeline-tracks .clip { cursor: ew-resize; }
 .cu-looks { grid-template-columns: repeat(2, auto); }
 .cu-look.on { background: #2a1840; border-color: #A855F7; color: #fff; }
 .cu-tog { padding: 10px 18px; font-size: 13px; }
+/* Mouvement : vitesse en Hz ou calée sur le tempo */
+.mod-rate-col { align-items: center; gap: 6px; }
+.mod-sync-sw { grid-template-columns: repeat(2, auto); }
+.mod-sync, .mod-div { padding: 3px 8px; justify-content: center; }
+.mod-divs { grid-template-columns: repeat(4, auto); }
+.mod-sync.on, .mod-div.on { background: #A855F733; border-color: #A855F7; color: #fff; }
+/* Façades fines (Pulse 73 / 84) : pas de phrase d'aide en bas, juste les valeurs */
+.ana-narrow .lim-sb > span:first-child, .ana-narrow .lim-sb .lim-spacer { display: none; }
+.ana-narrow .lim-sb .ana-read { font-size: 10px; line-height: 1.35; }

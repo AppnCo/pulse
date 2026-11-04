@@ -153,6 +153,7 @@ pub struct EffectParams {
     pub techo: Option<TapeEchoJson>,
     pub hall80: Option<Hall80Json>,
     pub h910: Option<H910Json>,
+    pub dim: Option<DimJson>,
     /// Exemplaires en plus d'un même effet (« comp#2 », « eq#3»…), réglages bruts : lus par `EffectParams::instance`
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
@@ -273,6 +274,11 @@ pub struct Opto2AJson {
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 pub struct TapeEchoJson { pub mode: Option<f64>, pub rate: Option<f64>, pub intensity: Option<f64>, pub bass: Option<f64>, pub treble: Option<f64>, pub echo: Option<f64>, pub spring: Option<f64>, pub input: Option<f64>, pub wow: Option<f64> }
+
+/// Dimension : mode (0-3), mix (%), width (%), variant (0 Dimension · 1 Ensemble)
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct DimJson { pub mode: Option<f64>, pub mix: Option<f64>, pub width: Option<f64>, pub variant: Option<f64> }
 
 /// Harmoniseur 910 : pitchL / pitchR (demi-tons), delay (ms), feedback (%), mix (%), variant (0 910 · 1 949)
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -459,6 +465,9 @@ pub struct ModParams {
     pub mix: Option<f64>,
     pub time: Option<f64>,
     pub width: Option<f64>,
+    /// Vitesse calée sur le tempo (chorus, flanger, phaser, trémolo) : sync = 1, beats = durée d'un cycle en temps (0,25 = double croche)
+    pub sync: Option<f64>,
+    pub beats: Option<f64>,
 }
 
 /// Bitcrusher : bits conservés, un échantillon sur `down`, mélange en %.

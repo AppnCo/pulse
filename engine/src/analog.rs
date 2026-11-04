@@ -2097,6 +2097,63 @@ impl H910 {
     }
 }
 
+// ===== Dimension : chorus d'espace à lignes « BBD » (esprit « Dimension D » et chorus d'ensemble des synthés) =====
+// Le son mono entre dans deux lignes de retard modulées par un triangle lent, en opposition ; chaque côté reçoit sa ligne moins
+// une part de l'autre : l'image s'élargit sans qu'on entende la modulation (et ça reste juste en mono). Lignes analogiques :
+// bande passante ≈ 9 kHz, légère saturation. 4 boutons de mode (profondeur, vitesse). Variantes : Dimension (subtil, ne s'entend
+// pas, ça élargit) et Ensemble (le chorus des synthés des années 80, plus profond et plus rapide).
+pub const DIM_MODES: [[[f64; 3]; 4]; 2] = [
+    [[6.0, 0.30, 0.25], [6.5, 0.45, 0.25], [7.0, 0.60, 0.25], [7.5, 0.80, 0.50]],   // centre (ms), profondeur (ms), vitesse (Hz)
+    [[3.5, 1.60, 0.50], [3.5, 1.80, 0.83], [3.0, 1.20, 4.50], [3.5, 2.20, 0.65]]];
+#[derive(Clone, Debug)]
+pub struct DimParams { pub mode: usize, pub mix: f64, pub width: f64, pub variant: usize }
+impl Default for DimParams { fn default() -> Self { Self { mode: 1, mix: 100.0, width: 100.0, variant: 0 } } }
+impl From<&crate::model::DimJson> for DimParams {
+    fn from(j: &crate::model::DimJson) -> Self {
+        let d = Self::default();
+        Self { mode: j.mode.map_or(d.mode, |v| (v.round().max(0.0) as usize).min(3)), mix: j.mix.unwrap_or(d.mix), width: j.width.unwrap_or(d.width),
+            variant: j.variant.map_or(0, |v| (v.round().max(0.0) as usize).min(1)) }
+    }
+}
+impl DimParams {
+    pub fn set_key(&mut self, k: &str, v: f64) -> bool {
+        match k { "mode" => self.mode = (v.round().max(0.0) as usize).min(3), "mix" => self.mix = v, "width" => self.width = v,
+            "variant" => self.variant = (v.round().max(0.0) as usize).min(1), _ => return false }
+        true
+    }
+}
+pub struct Dim { sr: f64, buf: Dl, ph: f64, step: f64, c: f64, dep: f64, g: f64, x: f64, lpa: f64, z: [f64; 3] }
+impl Dim {
+    pub fn new(p: &DimParams, sr: f64) -> Self {
+        let mut d = Self { sr, buf: Dl::new((0.02 * sr) as usize + 8), ph: 0.0, step: 0.0, c: 0.0, dep: 0.0, g: 0.0, x: 0.0, lpa: 1.0, z: [0.0; 3] };
+        d.set(p);
+        d
+    }
+    pub fn set(&mut self, p: &DimParams) {
+        let m = DIM_MODES[p.variant.min(1)][p.mode.min(3)];
+        self.c = m[0] / 1000.0 * self.sr; self.dep = m[1] / 1000.0 * self.sr; self.step = m[2] / self.sr;
+        self.g = (p.mix / 100.0).clamp(0.0, 1.0) * if p.variant == 1 { 0.7 } else { 0.5 };
+        self.x = 0.45 * (p.width.clamp(0.0, 150.0) / 100.0);
+        self.lpa = 1.0 - (-2.0 * PI * 9000.0f64.min(0.45 * self.sr) / self.sr).exp();
+    }
+    pub fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
+        let (dl, dr) = if nc > 1 { (x[0], x[1]) } else { (x[0], x[0]) };
+        // entrée des lignes : mono, passe-bas d'anti-repliement
+        self.z[0] += ((dl + dr) * 0.5 - self.z[0]) * self.lpa;
+        self.buf.push(self.z[0]);
+        self.ph += self.step; if self.ph >= 1.0 { self.ph -= 1.0; }
+        let tri = 4.0 * (self.ph - 0.5).abs() - 1.0;
+        let a = self.buf.atf(self.c + self.dep * tri);
+        let b = self.buf.atf(self.c - self.dep * tri);
+        // sortie des lignes : passe-bas + légère saturation
+        self.z[1] += (a - self.z[1]) * self.lpa; self.z[2] += (b - self.z[2]) * self.lpa;
+        let (ya, yb) = ((self.z[1] * 1.2).tanh() / 1.2, (self.z[2] * 1.2).tanh() / 1.2);
+        let n = 1.0 / (1.0 + self.g * (1.0 - self.x));
+        x[0] = (dl + self.g * (ya - self.x * yb)) * n;
+        x[1] = (dr + self.g * (yb - self.x * ya)) * n;
+    }
+}
+
 // ===== Écho à bande (esprit « 201 ») : trois têtes de lecture, bande en boucle, ressort =====
 // Comme la machine : Mode (quelles têtes lisent : 1, 2, 3, 1+2, 2+3, 1+3, 1+2+3), Vitesse (la bande ralentit ou accélère —
 // les répétitions s'écartent et le son « pleure » quand on tourne), Intensité (combien ça revient ; au-delà de 100 ça s'emballe),
@@ -2618,6 +2675,20 @@ mod tests {
         assert!(side > 1e-3, "queue stéréo");
         assert!(b > a * 1.8, "durée plus grande = queue plus longue ({a:.2} s → {b:.2} s)");
         assert!((a - 1.5).abs() < 0.8, "Durée 1,5 s : RT60 ≈ {a:.2} s");
+    }
+
+    /// Dimension : le son direct reste, l'image s'élargit (G ≠ D), le niveau ne bouge presque pas, en mono (G + D) la modulation se tient
+    #[test]
+    fn dimension_large_et_mono() {
+        for v in 0..2 { for m in 0..4 {
+            let mut d = Dim::new(&DimParams { mode: m, variant: v, ..Default::default() }, SR);
+            let n = SR as usize; let (mut e_in, mut e_out, mut side) = (0.0, 0.0, 0.0);
+            for i in 0..n { let s = 0.4 * (2.0 * PI * 330.0 * i as f64 / SR).sin(); let mut x = [s, 0.0]; d.tick(&mut x, 1);
+                if i > 4800 { e_in += s * s; e_out += 0.5 * (x[0] * x[0] + x[1] * x[1]); side += (x[0] - x[1]).powi(2); } }
+            let r = (e_out / e_in).sqrt();
+            assert!(r > 0.75 && r < 1.3, "variante {v} mode {m} : niveau {r:.2}");
+            assert!(side / e_in > 0.005, "variante {v} mode {m} : stéréo");
+        } }
     }
 
     /// Harmoniseur : +12 → une octave au-dessus, −12 → une octave en dessous (passages par zéro), Micro garde le niveau, réinjection stable

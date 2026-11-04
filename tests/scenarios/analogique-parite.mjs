@@ -38,6 +38,8 @@ const CASES = [
   ['hall80', { decay: 1.0, pre: 10, size: 70, bass: 0.8, treble: 4000, diffusion: 90, spin: 80, width: 130, mix: 60, variant: 2 }, [0.105457, 0.100519, 0.023421]],
   ['h910', { pitchL: 0.09, pitchR: -0.09, delay: 12, mix: 35 }, [0.104098, 0.116562, 0.038046]],
   ['h910', { pitchL: 7, pitchR: -5, delay: 40, feedback: 50, mix: 50, variant: 1 }, [0.124564, 0.125594, 0.036002]],
+  ['dim', { mode: 1, mix: 100 }, [0.134686, 0.139287, 0.045639]],
+  ['dim', { mode: 3, mix: 80, width: 130, variant: 1 }, [0.208333, 0.116070, 0.047483]],
   ['opto2a', { peak: 60, gain: 55, variant: 0 }, [0.086484, 0.082398, 0.018677]],
   ['opto2a', { peak: 45, limit: 1, emph: 50, variant: 2, mix: 80 }, [0.055303, 0.053787, 0.016746]],
 ];

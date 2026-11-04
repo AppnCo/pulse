@@ -1688,6 +1688,43 @@ window.PulseAudio = (function() {
             }
         }
         registerProcessor('pulse-h910', pulseAuto(PulseH910, (s, v) => { let ch = false; for (const k in v) if (k in s.p && s.p[k] !== v[k]) { s.p[k] = v[k]; ch = true; } if (ch) s.set(); }));
+        // Dimension : deux lignes modulées en opposition, chaque côté reçoit sa ligne moins une part de l'autre. Même calcul que Dim (analog.rs).
+        const DIM_MODES = [[[6, 0.30, 0.25], [6.5, 0.45, 0.25], [7, 0.60, 0.25], [7.5, 0.80, 0.50]], [[3.5, 1.60, 0.50], [3.5, 1.80, 0.83], [3, 1.20, 4.50], [3.5, 2.20, 0.65]]];
+        class PulseDim extends AudioWorkletProcessor {
+            constructor(o) {
+                super();
+                const p = (o && o.processorOptions) || {};
+                this.p = { mode: p.mode ?? 1, mix: p.mix ?? 100, width: p.width ?? 100, variant: p.variant ?? 0 };
+                this.buf = new PlDl(Math.floor(0.02 * sampleRate) + 8); this.ph = 0; this.z = [0, 0, 0];
+                this.set();
+            }
+            set() {
+                const p = this.p, sr = sampleRate, cl = (v, a, b) => Math.max(a, Math.min(b, v)), v = Math.min(1, Math.max(0, Math.round(p.variant)));
+                const m = DIM_MODES[v][Math.min(3, Math.max(0, Math.round(p.mode)))];
+                this.c = m[0] / 1000 * sr; this.dep = m[1] / 1000 * sr; this.step = m[2] / sr;
+                this.g = cl(p.mix / 100, 0, 1) * (v === 1 ? 0.7 : 0.5); this.x = 0.45 * (cl(p.width, 0, 150) / 100);
+                this.lpa = 1 - Math.exp(-2 * Math.PI * Math.min(9000, 0.45 * sr) / sr);
+            }
+            process(inputs, outputs) {
+                const inp = inputs[0], out = outputs[0];
+                if (!out || !out.length) return true;
+                const n = out[0].length, nin = inp && inp.length ? Math.min(inp.length, 2) : 0, z = this.z, lpa = this.lpa, g = this.g, xx = this.x, nn = 1 / (1 + g * (1 - xx));
+                for (let i = 0; i < n; i++) {
+                    const dl = nin ? inp[0][i] : 0, dr = nin > 1 ? inp[1][i] : dl;
+                    z[0] += ((dl + dr) * 0.5 - z[0]) * lpa;
+                    this.buf.push(z[0]);
+                    this.ph += this.step; if (this.ph >= 1) this.ph -= 1;
+                    const tri = 4 * Math.abs(this.ph - 0.5) - 1;
+                    const a = this.buf.atf(this.c + this.dep * tri), b = this.buf.atf(this.c - this.dep * tri);
+                    z[1] += (a - z[1]) * lpa; z[2] += (b - z[2]) * lpa;
+                    const ya = Math.tanh(z[1] * 1.2) / 1.2, yb = Math.tanh(z[2] * 1.2) / 1.2;
+                    out[0][i] = (dl + g * (ya - xx * yb)) * nn;
+                    if (out[1]) out[1][i] = (dr + g * (yb - xx * ya)) * nn;
+                }
+                return true;
+            }
+        }
+        registerProcessor('pulse-dim', pulseAuto(PulseDim, (s, v) => { let ch = false; for (const k in v) if (k in s.p && s.p[k] !== v[k]) { s.p[k] = v[k]; ch = true; } if (ch) s.set(); }));
         registerProcessor('pulse-deesser', pulseAuto(PulseDeesser, (s, v) => { if (v.amount !== undefined) { const a = Math.max(0, Math.min(100, v.amount)); s.maxRed = a * 0.24; s.slope = a / 100 * 3; } }));
 
         // Gate : coupe le bruit entre deux phrases. Mêmes calculs que Gate dans engine/src/fx.rs.
@@ -2365,7 +2402,7 @@ window.PulseAudio = (function() {
 
     // Exemplaire d'un effet : « comp#2 » → type « comp » (même calcul que fx_type dans model.rs)
     const fxType = (id) => String(id).split('#')[0];
-    const FX_CHAIN = ['pitch', 'filter', 'pre73', 'stripe', 'gate', 'eq', 'eqp1', 'horizon', 'eq550', 'massif', 'tape', 'sat', 'msat', 'crush', 'deess', 'fet76', 'opto2a', 'l670', 'dtr', 'comp25', 'comp', 'mband', 'bus33', 'busg', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'techo', 'h910', 'plate', 'hall80', 'reverb']; // ordre habituel des effets
+    const FX_CHAIN = ['pitch', 'filter', 'pre73', 'stripe', 'gate', 'eq', 'eqp1', 'horizon', 'eq550', 'massif', 'tape', 'sat', 'msat', 'crush', 'deess', 'fet76', 'opto2a', 'l670', 'dtr', 'comp25', 'comp', 'mband', 'bus33', 'busg', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'dim', 'doubler', 'slapback', 'master', 'limit', 'delay', 'techo', 'h910', 'plate', 'hall80', 'reverb']; // ordre habituel des effets
     const SEND_REVERB_TRIM = 1 / 3; // la reverb seule sort 3 fois trop fort par rapport au son direct : on la ramène à niveau
 
     // Paliers de tempo [{ sec, bpm }] quand le tempo change en cours de morceau (sinon null) — Project::tempo_segments côté Rust
@@ -2374,6 +2411,8 @@ window.PulseAudio = (function() {
         const segs = window.PulseTempo.tempoSegments(project);
         return segs.length > 1 ? segs.map(x => ({ sec: x.sec, bpm: x.bpm })) : null;
     }
+    // Vitesse (Hz) d'un mouvement calé sur le tempo : un cycle dure `beats` temps (même calcul que mod_sync_rate dans fx.rs)
+    function modSyncRate(bpm, beats) { return (bpm > 0 ? bpm : 90) / 60 / (beats > 0 ? beats : 1); }
     // Temps de l'écho en secondes : calé sur le rythme (beats = nombre de temps) ou donné en millisecondes
     function delaySeconds(dp, bpm) {
         if (dp.ms > 0) return dp.ms / 1000;
@@ -4090,7 +4129,19 @@ window.PulseAudio = (function() {
                 processorOptions: { kind, ...(params[kind] || {}), ...autoAll(kind) }
             }));
         };
-        ['chorus', 'flanger', 'phaser', 'tremolo', 'doubler', 'slapback'].forEach((k) => { B[k] = () => node('pulse-mod', k); });
+        ['doubler', 'slapback'].forEach((k) => { B[k] = () => node('pulse-mod', k); });
+        // Chorus, flanger, phaser, trémolo : vitesse en Hz, ou calée sur le tempo (sync + beats = un cycle en temps), au tempo de l'endroit où la lecture part
+        ['chorus', 'flanger', 'phaser', 'tremolo'].forEach((k) => { B[k] = () => {
+            if (!enabled.includes(k) || !fxReady.has(actx)) return;
+            const mp = params[k] || {}, o = { kind: k, ...mp, ...autoAll(k) };
+            if (mp.sync > 0) {
+                const tp = params.tempo && params.tempo.length > 1 ? params.tempo : null;
+                const bpm0 = tp ? tp.reduce((b, x) => x.sec <= autoAt.from + 1e-9 ? x.bpm : b, tp[0].bpm) : bpm;
+                o.rate = modSyncRate(bpm0, mp.beats);
+                if (o.auto) { delete o.auto.rate; if (!Object.keys(o.auto).length) delete o.auto; else o.autoLog = o.autoLog.filter(x => x !== 'rate'); }
+            }
+            connect(new AudioWorkletNode(actx, 'pulse-mod', { numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max', processorOptions: o }));
+        }; });
         B.crush = () => node('pulse-crush', 'crush');
         B.pitch = () => { const pp = params.pitch || {}; if (pp.semi || pp.formant || hasAuto('pitch')) node('pulse-pitch', 'pitch'); };
         // Éclair 76 : en lecture, il envoie sa réduction et sa sortie pour l'aiguille de sa façade (clé « fet76|t0 »)
@@ -4113,6 +4164,12 @@ window.PulseAudio = (function() {
             if (!enabled.includes('techo') || !fxReady.has(actx)) return;
             connect(new AudioWorkletNode(actx, 'pulse-techo', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCountMode: 'max',
                 processorOptions: { kind: 'techo', ...(params.techo || {}), ...autoAll('techo') } }));
+        };
+        // Dimension : sortie stéréo même pour une piste mono
+        B.dim = () => {
+            if (!enabled.includes('dim') || !fxReady.has(actx)) return;
+            connect(new AudioWorkletNode(actx, 'pulse-dim', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCountMode: 'max',
+                processorOptions: { kind: 'dim', ...(params.dim || {}), ...autoAll('dim') } }));
         };
         // Harmoniseur 910 : deux voix (gauche, droite) même pour une piste mono
         B.h910 = () => {
