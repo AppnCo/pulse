@@ -555,6 +555,7 @@ function rerenderTracks() {
 }
 
 function bindGroupEvents() {
+    setTimeout(paintGroupChosen, 0);
     document.querySelectorAll('.group-header').forEach(h => {
         const bus = groupById(h.dataset.bus);
         if (!bus) return;
@@ -581,6 +582,10 @@ function bindGroupEvents() {
         // Un clic sur l'en-tête d'un groupe l'affiche dans le bloc de faders de gauche, comme une piste
         h.addEventListener('click', (e) => {
             if (e.target.closest('button, input, .group-name.editing, .group-toggle')) return;
+            // ⌘ / ⇧ + clic : ajouter / retirer ce groupe des groupes choisis ensemble (même choix que la table de mixage)
+            state.mixBuses = state.mixBuses instanceof Set ? state.mixBuses : new Set();
+            if (e.metaKey || e.shiftKey || e.ctrlKey) { if (state.mixBuses.has(bus.id)) state.mixBuses.delete(bus.id); else state.mixBuses.add(bus.id); paintGroupChosen(); return; }
+            state.mixBuses = new Set([bus.id]);
             state.selectedBus = bus.id; state._selBusTrack = state.selectedTrack;
             renderTracksPanel(); bindTrackEvents();
         });
@@ -598,8 +603,20 @@ function bindGroupEvents() {
         let volUndone = false;
         vol.addEventListener('input', () => {
             if (!volUndone) { pushUndo(); volUndone = true; }
+            const prev = bus.volume ?? 100;
             bus.volume = posToVol(parseFloat(vol.value));
             if (!bus.muted) PulseAudio.updateBusVolume(bus.id, bus.volume);
+            // groupes choisis ensemble (⌘ / ⇧ + clic) : ils bougent du même écart en dB, comme les tranches de Logic
+            const ids = state.mixBuses instanceof Set ? state.mixBuses : new Set();
+            if (ids.size > 1 && ids.has(bus.id) && prev > 0) {
+                const k = bus.volume / prev;
+                (state.project.buses || []).forEach(o => {
+                    if (o === bus || !ids.has(o.id) || o.locked) return;
+                    o.volume = Math.max(0, Math.min(VOL_MAX, Math.round((o.volume ?? 100) * k)));
+                    if (!o.muted) PulseAudio.updateBusVolume(o.id, o.volume);
+                    const sl = document.querySelector(`.group-header[data-bus="${CSS.escape(o.id)}"] .group-vol`); if (sl) sl.value = volToPos(o.volume);
+                });
+            }
         });
         vol.addEventListener('change', () => { volUndone = false; renderMixer(); bindMixerEvents(); saveProject(); });
         const nameEl = h.querySelector('.group-name');
@@ -5117,6 +5134,12 @@ function markSoloMutes() {
     const off = (t) => !t.muted && !PulseAudio.isTrackAudible(p, t);
     document.querySelectorAll('.track-item').forEach(el => { const t = p.tracks[parseInt(el.dataset.i)]; const b = el.querySelector('.t-mini[data-flag="mute"]'); if (t && b) b.classList.toggle('solo-off', off(t)); });
     document.querySelectorAll('.mixer-strips .strip[data-kind="track"]').forEach(el => { const t = p.tracks[parseInt(el.dataset.i)]; const b = el.querySelector('.strip-m'); if (t && b) b.classList.toggle('solo-off', off(t)); });
+}
+// Groupes choisis ensemble (au moins deux) : contour, comme les tranches choisies
+function paintGroupChosen() {
+    const ids = state.mixBuses instanceof Set ? state.mixBuses : new Set();
+    document.querySelectorAll('.group-header[data-bus]').forEach(h => h.classList.toggle('is-chosen', ids.size > 1 && ids.has(h.dataset.bus)));
+    paintMixerSelection();
 }
 function clearSoloFlags() {
     state.project.tracks.forEach(t => t.solo = false);

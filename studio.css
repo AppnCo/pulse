@@ -3827,3 +3827,5 @@ body[data-left-tool="fade"] .timeline-tracks .clip { cursor: ew-resize; }
 /* Comme Logic : M qui clignote (bleu) quand la piste est coupée parce qu'une autre est en solo */
 @keyframes soloOffBlink { 0%, 55% { background: #3b82f6; border-color: #3b82f6; color: #fff; } 56%, 100% { background: transparent; } }
 .t-mini.m-m.solo-off, .strip-ms .strip-m.solo-off { animation: soloOffBlink 1s steps(1) infinite; }
+/* Groupes choisis ensemble (⌘ / ⇧ + clic sur l'en-tête) */
+.group-header.is-chosen { outline: 2px solid var(--group-color, #A855F7); outline-offset: -2px; }
