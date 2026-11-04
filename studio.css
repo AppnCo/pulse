@@ -3811,3 +3811,16 @@ body[data-left-tool="fade"] .timeline-tracks .clip { cursor: ew-resize; }
 .strip-ms .strip-m.active { background: #f59e0b; border-color: #f59e0b; color: #000; }
 .strip-ms .strip-s.active { background: #22D3EE; border-color: #22D3EE; color: #000; }
 .strip-ms .strip-s.implied { border-color: #22D3EE; color: #22D3EE; background: #22D3EE22; }
+.ctx-swatches { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 10px 8px; max-width: 220px; }
+.ctx-swatch { width: 14px; height: 14px; border-radius: 3px; cursor: pointer; border: 1px solid #0006; }
+.ctx-swatch:hover { outline: 2px solid #fff; }
+.mixer-strips .strip.is-dragging { opacity: .45; }
+.mixer-strips .strip[data-kind="bus"] .strip-name { cursor: grab; }
+/* Menu + Effet : petite image du plugin à côté du nom */
+.fx-add-menu .fam-fx { flex-direction: row; align-items: center; gap: 10px; }
+.fx-add-menu .fam-txt { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; min-width: 0; }
+.fx-add-menu .fam-thumb { height: 42px; width: auto; max-width: 76px; object-fit: contain; flex: 0 0 auto; border-radius: 3px; box-shadow: 0 2px 6px #0008; }
+.fx-add-menu .fam-fx > .fam-thumb, .fx-add-menu .fam-fx > .fam-thumb-none { margin-left: 0; }
+.fx-add-menu .fam-thumb-wrap { width: 76px; flex: 0 0 76px; display: flex; justify-content: center; }
+.fx-add-menu .fam-thumb-none { display: flex; align-items: center; justify-content: center; color: #c4b5fd; font-size: 18px; width: 42px; height: 42px; box-shadow: none; }
+.fx-add-menu .fam-fx:hover .fam-thumb { box-shadow: 0 0 0 1px #ffffff55, 0 2px 6px #0008; }

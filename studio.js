@@ -918,6 +918,28 @@ function nextCopyName(name) {
     return base + k;
 }
 
+// Supprimer un bus : ce qui y sortait repart vers sa sortie à lui, les envois vers ce bus disparaissent
+function deleteBus(busId) {
+    const bus = (state.project.buses || []).find(b => b.id === busId);
+    if (!bus || bus.premaster || bus.locked) return;
+    pushUndo();
+    const out = bus.output || 'master';
+    state.project.tracks.forEach(t => { if (t.output === busId) t.output = out; if (t.busSends) delete t.busSends[busId]; });
+    (state.project.buses || []).forEach(b => { if (b.output === busId) b.output = out; if (b.busSends) delete b.busSends[busId]; });
+    state.project.buses = state.project.buses.filter(b => b !== bus);
+    if (state.mixBuses instanceof Set) state.mixBuses.delete(busId);
+    if (state._inspRight && state._inspRight.bus === busId) state._inspRight = null;
+    afterGroupChange(`« ${bus.name} » supprimé`);
+}
+// Renommer une tranche de bus sur place (Entrée = garder, Échap = annuler)
+function renameBusInline(nameEl, bus) {
+    nameEl.contentEditable = 'true'; nameEl.textContent = bus.name; nameEl.focus();
+    const rg = document.createRange(); rg.selectNodeContents(nameEl); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(rg);
+    const done = (keep) => { nameEl.contentEditable = 'false'; const v = nameEl.textContent.trim(); if (keep && v && v !== bus.name) { pushUndo(); bus.name = v; afterGroupChange(); } else nameEl.textContent = bus.name; };
+    nameEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); done(true); } if (e.key === 'Escape') { e.preventDefault(); done(false); } e.stopPropagation(); });
+    nameEl.addEventListener('blur', () => done(true), { once: true });
+}
+
 function removeTrackFromGroup(idx) {
     const t = state.project.tracks[idx];
     const bus = t && (state.project.buses || []).find(b => b.id === t.output);
@@ -3040,7 +3062,8 @@ function openAddEffectMenu(anchor, target, x) {
     cats.forEach(([c, names]) => names.forEach(n => {
         const el = document.createElement('div');
         el.className = 'ctx-item fam-fx'; el.dataset.cat = c; el.dataset.fx = n;
-        el.innerHTML = `<span class="fam-nm">${esc(n === 'tune' ? 'PulseTune' : nameOf(n))}${has(n) ? '<i class="fam-tag">déjà là · ouvrir</i>' : ''}</span><span class="fam-ds">${esc(n === 'tune' ? 'Auto-Tune : corrige la justesse de la voix' : descOf(n))}</span>`;
+        // petite image de la fenêtre du plugin à côté de son nom (assets/fxthumbs)
+        el.innerHTML = `<span class="fam-thumb-wrap">${n === 'tune' ? '<span class="fam-thumb fam-thumb-none">♪</span>' : `<img class="fam-thumb" src="assets/fxthumbs/${esc(fxType(n))}.webp" alt="" loading="lazy" onerror="this.style.visibility='hidden'">`}</span><span class="fam-txt"><span class="fam-nm">${esc(n === 'tune' ? 'PulseTune' : nameOf(n))}${has(n) ? '<i class="fam-tag">déjà là · ouvrir</i>' : ''}</span><span class="fam-ds">${esc(n === 'tune' ? 'Auto-Tune : corrige la justesse de la voix' : descOf(n))}</span></span>`;
         el.addEventListener('click', () => pick(n));
         right.appendChild(el);
     }));
@@ -11510,6 +11533,57 @@ function bindMixerEvents() {
             if (add) { if (state.mixBuses.has(b.id)) state.mixBuses.delete(b.id); else state.mixBuses.add(b.id); }
             else { state.mixBuses = new Set([b.id]); state._mixNoTrack = true; state.selectedTracks = new Set(); }
             paintMixerSelection();
+        });
+    });
+    // Tranches de bus : glisser le nom pour les ranger, clic droit = menu, double-clic sur le nom = renommer
+    document.querySelectorAll('.mixer-strips .strip[data-kind="bus"]').forEach(strip => {
+        const b = state.project.buses[parseInt(strip.dataset.i)]; if (!b) return;
+        const nameEl = strip.querySelector('.strip-name');
+        if (nameEl && !b.premaster) {
+            nameEl.addEventListener('dblclick', (e) => { e.stopPropagation(); renameBusInline(nameEl, b); });
+            nameEl.addEventListener('mousedown', (e) => {
+                if (e.button !== 0 || nameEl.isContentEditable) return;
+                const x0 = e.clientX; let moving = false, ghost = null;
+                const strips = () => [...document.querySelectorAll('.mixer-strips .strip[data-kind="bus"]')];
+                const mv = (ev) => {
+                    if (!moving && Math.abs(ev.clientX - x0) < 6) return;
+                    if (!moving) { moving = true; strip.classList.add('is-dragging'); ghost = document.createElement('div'); ghost.className = 'strip-drop-line'; document.body.appendChild(ghost); }
+                    const list = strips(), tgt = list.find(el => { const rr = el.getBoundingClientRect(); return ev.clientX < rr.left + rr.width / 2; }) || null;
+                    const rr = (tgt || list[list.length - 1]).getBoundingClientRect();
+                    ghost.style.cssText = `position:fixed;top:${rr.top}px;height:${rr.height}px;left:${(tgt ? rr.left : rr.right) - 2}px;width:3px;background:var(--violet-2);z-index:300;pointer-events:none;border-radius:2px`;
+                    ghost.dataset.to = tgt ? tgt.dataset.i : String(list.length);
+                };
+                const up = () => {
+                    document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up);
+                    strip.classList.remove('is-dragging');
+                    if (!moving) return;
+                    const to = parseInt(ghost.dataset.to); ghost.remove();
+                    const from = state.project.buses.indexOf(b);
+                    let dest = to > from ? to - 1 : to;
+                    if (dest === from) return;
+                    pushUndo(); state.project.buses.splice(from, 1); state.project.buses.splice(dest, 0, b);
+                    renderMixer(); bindMixerEvents(); rerenderTracks(); saveProject();
+                };
+                document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
+            });
+        }
+        strip.addEventListener('contextmenu', (e) => {
+            if (b.premaster) return;
+            e.preventDefault(); closeAllMenus();
+            const menu = document.createElement('div'); menu.className = 'track-ctx-menu';
+            menu.style.cssText = `position:fixed;left:${e.clientX}px;top:${e.clientY}px;z-index:200;`;
+            const members = groupMemberIdx(b).length;
+            const items = [['Renommer', () => renameBusInline(strip.querySelector('.strip-name'), b)],
+                ...(members ? [['Éclater le groupe (les pistes restent, le bus disparaît)', () => dissolveGroup(b.id)]] : []),
+                ['Supprimer le bus', () => deleteBus(b.id)]];
+            items.forEach(([label, action]) => { const it = document.createElement('div'); it.className = 'ctx-item'; it.textContent = label; it.addEventListener('mousedown', (ev) => { ev.stopPropagation(); closeAllMenus(); action(); }); menu.appendChild(it); });
+            // couleur : une rangée de pastilles
+            const row = document.createElement('div'); row.className = 'ctx-swatches';
+            COLOR_HUES.forEach(h => { const c = hslHex(h, COLOR_TONES[2][0], COLOR_TONES[2][1]); const sw = document.createElement('span'); sw.className = 'ctx-swatch'; sw.style.background = c;
+                sw.addEventListener('mousedown', (ev) => { ev.stopPropagation(); closeAllMenus(); pushUndo(); b.color = c; renderMixer(); bindMixerEvents(); rerenderTracks(); saveProject(); }); row.appendChild(sw); });
+            menu.appendChild(row);
+            document.body.appendChild(menu);
+            setTimeout(() => document.addEventListener('mousedown', closeAllMenus, { once: true }), 10);
         });
     });
     // M / S sur chaque tranche : sur toutes les tranches choisies si on clique l'une d'elles (comme Logic)

@@ -38,4 +38,19 @@ export default async (c) => {
   await ev(`(()=>{ const f=document.querySelector('.mixer-strips .strip[data-kind="track"][data-i="0"] .fader'); f.value=volToPos(50); f.dispatchEvent(new Event('input',{bubbles:true})); f.dispatchEvent(new Event('change',{bubbles:true})); })()`); await sleep(100);
   const v2 = JSON.parse(await J(ev, `return JSON.stringify({ t: state.project.tracks.map(t=>t.volume), b2: state.project.buses[1].volume, fC: posToVol(+document.querySelector('.mixer-strips .strip[data-kind="track"][data-i="2"] .fader').value) })`));
   check('fader d\'une piste choisie : les autres pistes et le bus choisi suivent', v2.t.every(x => Math.abs(x - 50) <= 1) && Math.abs(v2.b2 - 12.5) <= 1.5 && Math.abs(v2.fC - 50) <= 1, JSON.stringify(v2));
+  // ranger les bus en glissant le nom : Bus 2 avant Bus 1
+  const n2 = await at('.mixer-strips .strip[data-kind="bus"][data-i="1"] .strip-name'), n1 = await at('.mixer-strips .strip[data-kind="bus"][data-i="0"] .strip-name');
+  await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: n2.x, y: n2.y }); await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: n2.x, y: n2.y, button: 'left', clickCount: 1 });
+  for (let k = 1; k <= 8; k++) { await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: n2.x + (n1.x - 40 - n2.x) * k / 8, y: n2.y, buttons: 1 }); await sleep(20); }
+  await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: n1.x - 40, y: n2.y, button: 'left', clickCount: 1 }); await sleep(200);
+  check('glisser : Bus 2 passe devant Bus 1', await J(ev, `return state.project.buses.map(b=>b.name).join(',')`) === 'Bus 2,Bus 1');
+  // clic droit sur le Bus 1 → Supprimer le bus : envois et sorties nettoyés
+  await ev(`state.project.tracks[0].busSends={b1:40}; state.project.tracks[1].output='b1'; renderMixer(); bindMixerEvents()`); await sleep(100);
+  const p1 = await at('.mixer-strips .strip[data-kind="bus"][data-i="1"] .strip-name');
+  await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: p1.x, y: p1.y + 30, button: 'right', clickCount: 1 }); await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: p1.x, y: p1.y + 30, button: 'right', clickCount: 1 }); await sleep(200);
+  const items = await J(ev, `return [...document.querySelectorAll('.track-ctx-menu .ctx-item')].map(e=>e.textContent).join('|')`);
+  check('clic droit sur un bus : Renommer, Éclater, Supprimer', /Renommer/.test(items) && /Éclater/.test(items) && /Supprimer le bus/.test(items), items);
+  await ev(`[...document.querySelectorAll('.track-ctx-menu .ctx-item')].find(e=>e.textContent==='Supprimer le bus').dispatchEvent(new MouseEvent('mousedown',{bubbles:true}))`); await sleep(200);
+  const after = JSON.parse(await J(ev, `return JSON.stringify({ buses: state.project.buses.map(b=>b.name), out: state.project.tracks[1].output, sends: state.project.tracks[0].busSends })`));
+  check('bus supprimé : la piste ressort au master, l\'envoi disparaît', after.buses.join() === 'Bus 2' && after.out === 'master' && !after.sends.b1, JSON.stringify(after));
 };
