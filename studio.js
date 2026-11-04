@@ -3833,7 +3833,7 @@ async function saveProjectFolder(askAgain = false) {
         }
         await nativeWrite(dir, 'Pistes.txt', new TextEncoder().encode(lines.join('\n') + '\n'));
         flash(missing ? `⚠ Projet enregistré, mais ${missing} son${missing > 1 ? 's' : ''} manquai${missing > 1 ? 'ent' : 't'} déjà — dossier : ${dir}` : `✓ Projet enregistré dans « ${dir} » (⌘S pour remettre à jour)`);
-        if (!state._folderShown) { state._folderShown = true; window.__TAURI__.core.invoke('reveal_project_folder', { dir }).catch(() => {}); }
+        // ⌘S enregistre et c'est tout (le Finder ne s'ouvre plus) ; « Sauvegardé il y a … » en haut le confirme
     } catch (err) {
         console.error(err);
         flash('Impossible d\'écrire dans ce dossier — choisis-en un autre avec ⌘⌥S (le projet reste gardé dans Pulse)');
