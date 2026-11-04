@@ -1329,6 +1329,72 @@ function openHall80Panel(trackIdx, anchorEl) {
 }
 
 
+// ===== Harmoniseur 910 (esprit « 910 / 949 ») : deux afficheurs ambre (transposition et rapport de vitesse), une molette par voix =====
+function openH910Panel(trackIdx, anchorEl) {
+    closeTransientPanels();
+    const t = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;
+    if (!t) return;
+    const already = findPlugWin(t, 'h910');
+    if (already) { plugFront(already); return; }
+    t.effectParams = t.effectParams || {};
+    if (!t.effectParams.h910) t.effectParams.h910 = { pitchL: 0.09, pitchR: -0.09, delay: 12, feedback: 0, mix: 35, variant: 0 };
+    const P = () => t.effectParams.h910, ed = anaEdit(t, 'h910');
+    const W = 860, H = 320, NM = ['910', '949'], SK = ['bleugris', 'grisbleu'];
+    const TIP = ['910 : fondus courts, bande 8 kHz — le grain d\'époque, un peu « glitch »', '949 : fondus doux, bande 12 kHz — plus propre'];
+    const { panel, svg } = anaWindow(t, 'h910', 'Harmoniseur 910', W, H, anchorEl, trackIdx, 860, SK[Math.round(P().variant ?? 0)] || 'bleugris');
+    const L = { style: 'paint-order:stroke', 'stroke-opacity': '.35', 'stroke-width': '.6', stroke: '#000' };
+    anaText(svg, 44, 38, 'PULSE · HARMONISEUR 910', { ...L, 'text-anchor': 'start', 'font-size': 14, 'font-weight': 700, 'letter-spacing': 3 });
+    const sub = anaText(svg, 44, 54, '', { class: 'ana-sub', 'text-anchor': 'start', 'letter-spacing': 2.5 });
+    const defs = svg.querySelector('defs');
+    defs.insertAdjacentHTML('beforeend', `<filter id="h9Led" x="-20%" y="-30%" width="140%" height="160%"><feGaussianBlur stdDeviation="1.3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>`);
+    const fmtSt = (v) => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2);
+    const disp = [['pitchL', 'VOIX G', 139], ['pitchR', 'VOIX D', 355]].map(([key, lab, cx]) => {
+        anaEl('rect', { x: cx - 96, y: 68, width: 192, height: 58, rx: 4, fill: '#0b0a08', stroke: '#000' }, svg);
+        anaEl('rect', { x: cx - 90, y: 73, width: 180, height: 48, rx: 2, fill: '#160d02' }, svg);
+        const big = anaText(svg, cx + 80, 104, '', { fill: '#ffb020', 'font-size': 22, 'font-family': 'ui-monospace, Menlo, monospace', 'font-weight': 700, 'text-anchor': 'end', filter: 'url(#h9Led)', class: '' });
+        const small = anaText(svg, cx - 82, 116, '', { fill: '#ffb020', 'font-size': 8, 'font-family': 'ui-monospace, Menlo, monospace', 'text-anchor': 'start', opacity: 0.8, class: '' });
+        anaText(svg, cx - 82, 86, lab, { fill: '#ffb020', 'font-size': 8, 'letter-spacing': 1.5, 'text-anchor': 'start', opacity: 0.8, class: '' });
+        return { key, big, small };
+    });
+    const read = panel.querySelector('.ana-read');
+    const say = () => { const p = P();
+        disp.forEach(d => { const v = p[d.key] ?? 0; d.big.textContent = fmtSt(v); d.small.textContent = `DEMI-TONS · ×${Math.pow(2, v / 12).toFixed(4)}`; });
+        read.innerHTML = `${NM[Math.round(p.variant ?? 0)]} · G <b>${fmtSt(p.pitchL ?? 0)}</b> · D <b>${fmtSt(p.pitchR ?? 0)}</b> · Retard <b>${Math.round(p.delay)} ms</b> · Mélange <b>${Math.round(p.mix)} %</b>`; };
+    const knob = (o) => anaKnob(svg, { ...o, get: () => P()[o.key] ?? o.def, set: (v) => { P()[o.key] = Math.round(v * (o.r || 1)) / (o.r || 1); ed.touch(o.key); say(); }, onStart: ed.start, onEnd: ed.end });
+    [['pitchL', 139, 0.09], ['pitchR', 355, -0.09]].forEach(([key, cx, def]) => {
+        anaTicks(svg, cx, 210, 52, 9, -150, 150, ['−12', '', '', '', '0', '', '', '', '+12'], 7.5);
+        knob({ strip: 'black-big', cx, cy: 210, d: 84, key, min: -12, max: 12, def, r: 100, tip: 'Transposition (demi-tons, −12 à +12) — Maj pour régler finement' });
+        anaText(svg, cx, 286, key === 'pitchL' ? 'TRANSPOSITION G' : 'TRANSPOSITION D', { ...L, 'font-size': 9, 'letter-spacing': 1 }); });
+    [['delay', 'RETARD · ms', 0, 120, 12, 'Retard (ms) : 10-30 ms pour un doublage large'], ['feedback', 'RÉINJECTION', 0, 90, 0, 'Réinjection : les répétitions montent (ou descendent) encore d\'un cran'], ['mix', 'MÉLANGE', 0, 100, 35, 'Mélange (en bus : 100 %)']]
+        .forEach(([key, lab, mn, mx, def, tip], i) => { const x = 540 + i * 100; anaTicks(svg, x, 112, 26, 9, -150, 150, null); knob({ strip: 'bakelite', cx: x, cy: 112, d: 42, key, min: mn, max: mx, def, tip }); anaText(svg, x, 152, lab, { ...L, 'font-size': 8, 'letter-spacing': 1 }); });
+    // préréglages d'usage : Micro (doublage ±9 centièmes), Quinte, Octave
+    const PRE = [['MICRO', { pitchL: 0.09, pitchR: -0.09, delay: 12, feedback: 0, mix: 35 }, 'Micro : la voix doublée et élargie (±9 centièmes, 12 ms)'],
+        ['QUINTE', { pitchL: 7, pitchR: -5, delay: 0, feedback: 0, mix: 40 }, 'Quinte : une quinte au-dessus à gauche, une quarte en dessous à droite'],
+        ['OCTAVE', { pitchL: 12, pitchR: -12, delay: 0, feedback: 0, mix: 40 }, 'Octave : une octave au-dessus et une en dessous']];
+    const pg = anaEl('g', {}, svg);
+    PRE.forEach(([nm, vals, tip], i) => { const x = 540 + i * 100, g = anaEl('g', { class: 'ana-push h9-pre', 'data-i': i }, pg);
+        anaEl('rect', { x: x - 38, y: 190, width: 76, height: 20, rx: 4, fill: '#15110a', stroke: '#4a3a1a' }, g);
+        anaText(g, x, 203.5, nm, { fill: '#ffb020', 'font-size': 8, 'letter-spacing': 1.2, class: '' });
+        anaEl('title', {}, g).textContent = tip; });
+    pg.addEventListener('click', (e) => { const b = e.target.closest('.h9-pre'); if (!b) return; ed.start(); Object.assign(P(), PRE[+b.dataset.i][1]); Object.keys(PRE[+b.dataset.i][1]).forEach(k => ed.touch(k)); ed.end();
+        svg.querySelectorAll('.ana-k').forEach(k => k._pkRestore && k._pkRestore()); say(); });
+    anaText(svg, 640, 228, 'PRÉRÉGLAGES', { ...L, 'font-size': 7, 'letter-spacing': 1 });
+    const vg = anaEl('g', {}, svg);
+    const drawVar = () => { vg.innerHTML = ''; const cur = Math.round(P().variant ?? 0);
+        NM.forEach((nm, i) => { const x = 590 + i * 100, on = i === cur, g = anaEl('g', { class: 'ana-push ana-var', 'data-v': i }, vg);
+            anaEl('rect', { x: x - 38, y: 256, width: 76, height: 20, rx: 4, fill: on ? '#d97706' : '#15110a', stroke: '#4a3a1a', ...(on ? { filter: 'url(#anaGlow)' } : {}) }, g);
+            anaText(g, x, 269.5, nm, { fill: on ? '#fff' : '#ffb020', 'font-size': 8.5, 'letter-spacing': 1.5, class: '' });
+            anaEl('title', {}, g).textContent = TIP[i]; });
+        sub.textContent = 'TRANSPOSITEUR À DEUX VOIX · ' + NM[cur]; anaSkin(svg, SK[cur]); };
+    vg.addEventListener('click', (e) => { const b = e.target.closest('.ana-var'); if (!b) return; ed.start(); P().variant = +b.dataset.v; ed.end(); drawVar(); say(); });
+    anaText(svg, 640, 294, 'MODÈLE', { ...L, 'font-size': 7, 'letter-spacing': 1 });
+    drawVar();
+    panel.querySelector('.fx-bypass').addEventListener('change', (e) => { pushUndo(); setFxOn(t, 'h910', e.target.checked); refreshPlaybackSoon(); saveProject(); refreshStrips(); });
+    say();
+    makePlugWindow(panel, t, 'h910', trackIdx);
+}
+
+
 // ===== Écho à bande (esprit « 201 ») : la boucle de bande et ses trois têtes qui s'allument selon le mode =====
 function openTapeEchoPanel(trackIdx, anchorEl) {
     closeTransientPanels();

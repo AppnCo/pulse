@@ -2019,6 +2019,84 @@ impl Hall80 {
     }
 }
 
+// ===== Harmoniseur 910 : transpositeur à lignes de retard des années 70 (esprit « H910 / H949 ») =====
+// Le principe de ces machines : le son est écrit dans une mémoire, deux têtes de lecture la relisent plus vite (plus aigu) ou
+// plus lentement (plus grave), chacune repart en arrière quand elle rattrape l'écriture ; on passe de l'une à l'autre en fondu.
+// Deux voix (gauche, droite) avec chacune sa transposition, retard (0-120 ms) et réinjection (les répétitions montent ou
+// descendent encore d'un cran). Variantes : 910 (fenêtre courte à bords francs, bande 8 kHz, le « grain » d'époque) et
+// 949 (fondu doux, bande 12 kHz, plus propre). Le bouton Micro (façade) règle le doublage classique ±9 centièmes.
+#[derive(Clone, Debug)]
+pub struct H910Params { pub pitch_l: f64, pub pitch_r: f64, pub delay: f64, pub feedback: f64, pub mix: f64, pub variant: usize }
+impl Default for H910Params {
+    fn default() -> Self { Self { pitch_l: 0.09, pitch_r: -0.09, delay: 12.0, feedback: 0.0, mix: 35.0, variant: 0 } }
+}
+impl From<&crate::model::H910Json> for H910Params {
+    fn from(j: &crate::model::H910Json) -> Self {
+        let d = Self::default();
+        Self { pitch_l: j.pitch_l.unwrap_or(d.pitch_l), pitch_r: j.pitch_r.unwrap_or(d.pitch_r), delay: j.delay.unwrap_or(d.delay), feedback: j.feedback.unwrap_or(d.feedback),
+            mix: j.mix.unwrap_or(d.mix), variant: j.variant.map_or(0, |v| (v.round().max(0.0) as usize).min(1)) }
+    }
+}
+impl H910Params {
+    pub fn set_key(&mut self, k: &str, v: f64) -> bool {
+        match k { "pitchL" => self.pitch_l = v, "pitchR" => self.pitch_r = v, "delay" => self.delay = v, "feedback" => self.feedback = v, "mix" => self.mix = v,
+            "variant" => self.variant = (v.round().max(0.0) as usize).min(1), _ => return false }
+        true
+    }
+}
+struct H910Voice { buf: Dl, ph: f64, step: f64, fb: f64, lp: f64 }
+pub struct H910 {
+    sr: f64, v: [H910Voice; 2], win: f64, d0: f64, fb: f64, mix: f64, lpa: f64, edge: f64,
+}
+impl H910 {
+    pub fn new(p: &H910Params, sr: f64) -> Self {
+        let n = (0.3 * sr) as usize + 8;
+        let mk = || H910Voice { buf: Dl::new(n), ph: 0.0, step: 0.0, fb: 0.0, lp: 0.0 };
+        let mut h = Self { sr, v: [mk(), mk()], win: 1.0, d0: 0.0, fb: 0.0, mix: 0.35, lpa: 1.0, edge: 0.5 };
+        h.set(p);
+        h
+    }
+    pub fn set(&mut self, p: &H910Params) {
+        let sr = self.sr;
+        let v1 = p.variant == 1;
+        // fenêtre : 910 courte (≈ 30 ms) à fondus courts, 949 plus longue (≈ 45 ms) en fondu complet
+        self.win = (if v1 { 0.045 } else { 0.030 }) * sr;
+        self.edge = if v1 { 0.5 } else { 0.04 };
+        self.d0 = (p.delay.clamp(0.0, 120.0) / 1000.0) * sr;
+        self.fb = p.feedback.clamp(0.0, 90.0) / 100.0;
+        self.mix = (p.mix / 100.0).clamp(0.0, 1.0);
+        self.lpa = 1.0 - (-2.0 * PI * (if v1 { 12_000.0f64 } else { 8_000.0 }).min(0.45 * sr) / sr).exp();
+        for (vc, st) in self.v.iter_mut().zip([p.pitch_l, p.pitch_r]) {
+            let r = 2f64.powf(st.clamp(-12.0, 12.0) / 12.0);
+            vc.step = (1.0 - r) / self.win;
+        }
+    }
+    fn gain(&self, q: f64) -> f64 {
+        // les deux têtes se partagent toujours le son (somme = 1) : 949 en fondu sinus², 910 en fondu court au quart de tour
+        if self.edge >= 0.5 { let s = (PI * q).sin(); s * s } else { (0.5 + (0.25 - (q - 0.5).abs()) / (2.0 * self.edge)).clamp(0.0, 1.0) }
+    }
+    pub fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
+        let (dl, dr) = if nc > 1 { (x[0], x[1]) } else { (x[0], x[0]) };
+        let mut o = [0.0; 2];
+        for c in 0..2 {
+            let inp = if c == 0 { dl } else { dr };
+            let fbv = self.v[c].fb;
+            let (win, d0, lpa) = (self.win, self.d0, self.lpa);
+            let vc = &mut self.v[c];
+            vc.lp += (inp + fbv * self.fb - vc.lp) * lpa;
+            vc.buf.push(vc.lp);
+            vc.ph += vc.step; if vc.ph >= 1.0 { vc.ph -= 1.0; } else if vc.ph < 0.0 { vc.ph += 1.0; }
+            let (p1, p2) = (vc.ph, (vc.ph + 0.5) % 1.0);
+            let (a, b) = (vc.buf.atf(d0 + p1 * win), vc.buf.atf(d0 + p2 * win));
+            let y = a * self.gain(p1) + b * self.gain(p2);
+            self.v[c].fb = y;
+            o[c] = y;
+        }
+        x[0] = dl * (1.0 - self.mix) + o[0] * self.mix;
+        x[1] = dr * (1.0 - self.mix) + o[1] * self.mix;
+    }
+}
+
 // ===== Écho à bande (esprit « 201 ») : trois têtes de lecture, bande en boucle, ressort =====
 // Comme la machine : Mode (quelles têtes lisent : 1, 2, 3, 1+2, 2+3, 1+3, 1+2+3), Vitesse (la bande ralentit ou accélère —
 // les répétitions s'écartent et le son « pleure » quand on tourne), Intensité (combien ça revient ; au-delà de 100 ça s'emballe),
@@ -2540,6 +2618,27 @@ mod tests {
         assert!(side > 1e-3, "queue stéréo");
         assert!(b > a * 1.8, "durée plus grande = queue plus longue ({a:.2} s → {b:.2} s)");
         assert!((a - 1.5).abs() < 0.8, "Durée 1,5 s : RT60 ≈ {a:.2} s");
+    }
+
+    /// Harmoniseur : +12 → une octave au-dessus, −12 → une octave en dessous (passages par zéro), Micro garde le niveau, réinjection stable
+    #[test]
+    fn harmoniseur_octaves() {
+        let run = |p: H910Params| {
+            let mut h = H910::new(&H910Params { mix: 100.0, ..p }, SR);
+            (0..(SR as usize)).map(|i| { let mut x = [0.5 * (2.0 * PI * 440.0 * i as f64 / SR).sin(), 0.0]; h.tick(&mut x, 1); x }).collect::<Vec<_>>()
+        };
+        let zc = |o: &Vec<[f64; 2]>, c: usize| o.windows(2).skip(4800).filter(|w| w[0][c] <= 0.0 && w[1][c] > 0.0).count() as f64 / ((o.len() - 4801) as f64 / SR);
+        for v in 0..2 {
+            let o = run(H910Params { pitch_l: 12.0, pitch_r: -12.0, delay: 0.0, variant: v, ..Default::default() });
+            let (fl, fr) = (zc(&o, 0), zc(&o, 1));
+            assert!((fl - 880.0).abs() < 60.0, "variante {v} : +12 → {fl:.0} Hz");
+            assert!((fr - 220.0).abs() < 30.0, "variante {v} : −12 → {fr:.0} Hz");
+        }
+        let o = run(H910Params::default());
+        let rms = |c: usize| (o.iter().skip(4800).map(|x| x[c] * x[c]).sum::<f64>() / (o.len() - 4800) as f64).sqrt();
+        assert!((rms(0) / (0.5 / 2f64.sqrt()) - 1.0).abs() < 0.15, "Micro garde le niveau ({:.3})", rms(0));
+        let o = run(H910Params { pitch_l: 3.0, pitch_r: -5.0, feedback: 90.0, delay: 80.0, ..Default::default() });
+        assert!(o.iter().all(|x| x[0].is_finite() && x[0].abs() < 5.0 && x[1].abs() < 5.0), "réinjection stable");
     }
 
     /// Salle 80 : queue stéréo, Durée respectée, graves × qui allonge les graves, bande passante limitée (peu d'aigus au-dessus de 12 kHz)

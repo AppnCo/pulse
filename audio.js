@@ -1649,6 +1649,45 @@ window.PulseAudio = (function() {
             }
         }
         registerProcessor('pulse-hall80', pulseAuto(PulseHall80, (s, v) => { let ch = false; for (const k in v) if (k in s.p && s.p[k] !== v[k]) { s.p[k] = v[k]; ch = true; } if (ch) s.set(); }));
+        // Harmoniseur 910 : deux voix transposées (têtes de lecture qui glissent dans une mémoire), retard et réinjection. Même calcul que H910 (analog.rs).
+        class PulseH910 extends AudioWorkletProcessor {
+            constructor(o) {
+                super();
+                const p = (o && o.processorOptions) || {}, sr = sampleRate, n = Math.floor(0.3 * sr) + 8;
+                this.p = { pitchL: p.pitchL ?? 0.09, pitchR: p.pitchR ?? -0.09, delay: p.delay ?? 12, feedback: p.feedback ?? 0, mix: p.mix ?? 35, variant: p.variant ?? 0 };
+                this.v = [0, 1].map(() => ({ buf: new PlDl(n), ph: 0, step: 0, fb: 0, lp: 0 }));
+                this.set();
+            }
+            set() {
+                const p = this.p, sr = sampleRate, cl = (v, a, b) => Math.max(a, Math.min(b, v)), v1 = Math.min(1, Math.max(0, Math.round(p.variant))) === 1;
+                this.win = (v1 ? 0.045 : 0.030) * sr; this.edge = v1 ? 0.5 : 0.04;
+                this.d0 = cl(p.delay, 0, 120) / 1000 * sr; this.fb = cl(p.feedback, 0, 90) / 100; this.mix = cl(p.mix / 100, 0, 1);
+                this.lpa = 1 - Math.exp(-2 * Math.PI * Math.min(v1 ? 12000 : 8000, 0.45 * sr) / sr);
+                [p.pitchL, p.pitchR].forEach((st, c) => { const r = Math.pow(2, cl(st, -12, 12) / 12); this.v[c].step = (1 - r) / this.win; });
+            }
+            gain(q) { if (this.edge >= 0.5) { const s = Math.sin(Math.PI * q); return s * s; } return Math.max(0, Math.min(1, 0.5 + (0.25 - Math.abs(q - 0.5)) / (2 * this.edge))); }
+            process(inputs, outputs) {
+                const inp = inputs[0], out = outputs[0];
+                if (!out || !out.length) return true;
+                const n = out[0].length, nin = inp && inp.length ? Math.min(inp.length, 2) : 0, win = this.win, d0 = this.d0, lpa = this.lpa, o = [0, 0];
+                for (let i = 0; i < n; i++) {
+                    const dl = nin ? inp[0][i] : 0, dr = nin > 1 ? inp[1][i] : dl;
+                    for (let c = 0; c < 2; c++) {
+                        const vc = this.v[c];
+                        vc.lp += ((c ? dr : dl) + vc.fb * this.fb - vc.lp) * lpa;
+                        vc.buf.push(vc.lp);
+                        vc.ph += vc.step; if (vc.ph >= 1) vc.ph -= 1; else if (vc.ph < 0) vc.ph += 1;
+                        const p1 = vc.ph, p2 = (vc.ph + 0.5) % 1;
+                        const y = vc.buf.atf(d0 + p1 * win) * this.gain(p1) + vc.buf.atf(d0 + p2 * win) * this.gain(p2);
+                        vc.fb = y; o[c] = y;
+                    }
+                    out[0][i] = dl * (1 - this.mix) + o[0] * this.mix;
+                    if (out[1]) out[1][i] = dr * (1 - this.mix) + o[1] * this.mix;
+                }
+                return true;
+            }
+        }
+        registerProcessor('pulse-h910', pulseAuto(PulseH910, (s, v) => { let ch = false; for (const k in v) if (k in s.p && s.p[k] !== v[k]) { s.p[k] = v[k]; ch = true; } if (ch) s.set(); }));
         registerProcessor('pulse-deesser', pulseAuto(PulseDeesser, (s, v) => { if (v.amount !== undefined) { const a = Math.max(0, Math.min(100, v.amount)); s.maxRed = a * 0.24; s.slope = a / 100 * 3; } }));
 
         // Gate : coupe le bruit entre deux phrases. Mêmes calculs que Gate dans engine/src/fx.rs.
@@ -2326,7 +2365,7 @@ window.PulseAudio = (function() {
 
     // Exemplaire d'un effet : « comp#2 » → type « comp » (même calcul que fx_type dans model.rs)
     const fxType = (id) => String(id).split('#')[0];
-    const FX_CHAIN = ['pitch', 'filter', 'pre73', 'stripe', 'gate', 'eq', 'eqp1', 'horizon', 'eq550', 'massif', 'tape', 'sat', 'msat', 'crush', 'deess', 'fet76', 'opto2a', 'l670', 'dtr', 'comp25', 'comp', 'mband', 'bus33', 'busg', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'techo', 'plate', 'hall80', 'reverb']; // ordre habituel des effets
+    const FX_CHAIN = ['pitch', 'filter', 'pre73', 'stripe', 'gate', 'eq', 'eqp1', 'horizon', 'eq550', 'massif', 'tape', 'sat', 'msat', 'crush', 'deess', 'fet76', 'opto2a', 'l670', 'dtr', 'comp25', 'comp', 'mband', 'bus33', 'busg', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'techo', 'h910', 'plate', 'hall80', 'reverb']; // ordre habituel des effets
     const SEND_REVERB_TRIM = 1 / 3; // la reverb seule sort 3 fois trop fort par rapport au son direct : on la ramène à niveau
 
     // Paliers de tempo [{ sec, bpm }] quand le tempo change en cours de morceau (sinon null) — Project::tempo_segments côté Rust
@@ -4074,6 +4113,12 @@ window.PulseAudio = (function() {
             if (!enabled.includes('techo') || !fxReady.has(actx)) return;
             connect(new AudioWorkletNode(actx, 'pulse-techo', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCountMode: 'max',
                 processorOptions: { kind: 'techo', ...(params.techo || {}), ...autoAll('techo') } }));
+        };
+        // Harmoniseur 910 : deux voix (gauche, droite) même pour une piste mono
+        B.h910 = () => {
+            if (!enabled.includes('h910') || !fxReady.has(actx)) return;
+            connect(new AudioWorkletNode(actx, 'pulse-h910', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCountMode: 'max',
+                processorOptions: { kind: 'h910', ...(params.h910 || {}), ...autoAll('h910') } }));
         };
         // Salle 80 : sortie stéréo même pour une piste mono
         B.hall80 = () => {

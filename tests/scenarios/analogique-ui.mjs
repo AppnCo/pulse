@@ -189,6 +189,16 @@ export default async (c) => {
   if (hk) { await mouse('mouseMoved', hk, { buttons: 0 }); await mouse('mousePressed', hk); for (let i = 1; i <= 5; i++) { await mouse('mouseMoved', { x: hk.x, y: hk.y - i * 10 }); await sleep(20); } await mouse('mouseReleased', { x: hk.x, y: hk.y - 50 }); await sleep(200); }
   const hd = await J(ev, `return state.project.tracks[0].effectParams.hall80.decay`);
   check('Salle 80 : durée montée', hd > 2.5 && hd < 20, String(hd));
+  // Harmoniseur 910 : façade, préréglage Octave, modèle 949
+  await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
+  await click('#inspector .slot-plus[data-plus="fx"]');
+  await click('.fx-add-menu .fam-range', 'Analogique');
+  await click('.fx-add-menu .fam-cat', 'Espace'); await sleep(100);
+  check('menu : Harmoniseur 910 cliqué', await click('.fx-add-menu .fam-fx', 'Harmoniseur 910')); await sleep(500);
+  await click('.fx-panel.plug-win[data-fx="h910"] .h9-pre[data-i="2"] rect');
+  check('Harmoniseur : préréglage Octave', await J(ev, `const p=state.project.tracks[0].effectParams.h910; return p.pitchL===12 && p.pitchR===-12`));
+  await click('.fx-panel.plug-win[data-fx="h910"] .ana-var[data-v="1"] rect');
+  check('Harmoniseur : modèle 949', await J(ev, `return state.project.tracks[0].effectParams.h910.variant`) === 1);
   // ---- Envois façon Logic
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   await click('#inspector .slot-plus[data-plus="send"]');

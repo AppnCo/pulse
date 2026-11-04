@@ -152,6 +152,7 @@ pub struct EffectParams {
     pub plate: Option<PlateJson>,
     pub techo: Option<TapeEchoJson>,
     pub hall80: Option<Hall80Json>,
+    pub h910: Option<H910Json>,
     /// Exemplaires en plus d'un même effet (« comp#2 », « eq#3»…), réglages bruts : lus par `EffectParams::instance`
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
@@ -272,6 +273,11 @@ pub struct Opto2AJson {
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 pub struct TapeEchoJson { pub mode: Option<f64>, pub rate: Option<f64>, pub intensity: Option<f64>, pub bass: Option<f64>, pub treble: Option<f64>, pub echo: Option<f64>, pub spring: Option<f64>, pub input: Option<f64>, pub wow: Option<f64> }
+
+/// Harmoniseur 910 : pitchL / pitchR (demi-tons), delay (ms), feedback (%), mix (%), variant (0 910 · 1 949)
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct H910Json { #[serde(rename = "pitchL")] pub pitch_l: Option<f64>, #[serde(rename = "pitchR")] pub pitch_r: Option<f64>, pub delay: Option<f64>, pub feedback: Option<f64>, pub mix: Option<f64>, pub variant: Option<f64> }
 
 /// Salle 80 : decay (s), pre (ms), size (%), bass (×), xover (Hz), treble (Hz), diffusion, spin, width, mix (%), variant (0 Salle · 1 Chambre · 2 Riche)
 #[derive(Debug, Clone, Deserialize, Default)]
