@@ -2150,6 +2150,8 @@ function migrateProject() {
         changed = true;
         try { renderAll(); } catch {}
     }
+    // Bus d'envoi nommés d'office par une ancienne version : numérotés comme dans Logic (Bus 1, Bus 2…)
+    if (numberAuxBuses()) { changed = true; try { renderAll(); } catch {} }
     // Un modèle décrit le son voulu (« Voix lead » sur le groupe…) : on le traduit en vrais effets à la première ouverture
     [...state.project.tracks, ...(state.project.buses || [])].forEach(x => {
         if (x.sound && x.effects === undefined) { applySound(x); changed = true; }
@@ -2162,8 +2164,8 @@ function migrateProject() {
 
 // === Tranche à gauche (inspecteur) : la piste sélectionnée et, à sa droite, là où elle sort ===
 // Évite d'ouvrir le mixer pour voir les effets d'une piste ou régler son volume.
-const FX_NAMES = { msat: 'Saturation multibande', mband: 'Multibande', pitch: 'Pitch', crush: 'Bitcrusher', util: 'Utilitaire', width: 'Largeur', tremolo: 'Trémolo', phaser: 'Phaser', flanger: 'Flanger', chorus: 'Chorus', doubler: 'Doubleur', slapback: 'Slapback', filter: 'Filtre', gate: 'Gate', eq: 'EQ', sat: 'Saturation', deess: 'De-esser', comp: 'Compresseur', master: 'Finition', limit: 'Limiteur', delay: 'Écho', reverb: 'Reverb' };
-const FX_ORDER = ['pitch', 'filter', 'gate', 'eq', 'sat', 'msat', 'crush', 'deess', 'comp', 'mband', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'reverb'];
+const FX_NAMES = { msat: 'Saturation multibande', mband: 'Multibande', pitch: 'Pitch', crush: 'Bitcrusher', util: 'Utilitaire', width: 'Largeur', tremolo: 'Trémolo', phaser: 'Phaser', flanger: 'Flanger', chorus: 'Chorus', doubler: 'Doubleur', slapback: 'Slapback', filter: 'Filtre', gate: 'Gate', eq: 'EQ', sat: 'Saturation', deess: 'De-esser', comp: 'Compresseur', master: 'Finition', limit: 'Limiteur', delay: 'Écho', reverb: 'Reverb', fet76: 'Éclair 76', pre73: 'Pulse 73' };
+const FX_ORDER = ['pitch', 'filter', 'pre73', 'gate', 'eq', 'sat', 'msat', 'crush', 'deess', 'fet76', 'comp', 'mband', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'reverb'];
 function inspectorOpen() { try { return localStorage.getItem('pulse_inspector') !== '0'; } catch { return true; } }
 function setInspectorOpen(open) {
     try { localStorage.setItem('pulse_inspector', open ? '1' : '0'); } catch {}
@@ -2438,12 +2440,17 @@ function renderInspector() {
     const dest = busById(t.output);
     // Un groupe cliqué dans la liste s'affiche comme une piste (avec sa sortie en dessous) ; sinon : la piste choisie + son groupe de sortie
     const selBus = state.selectedBus && state._selBusTrack === state.selectedTrack ? busById(state.selectedBus) : null;
+    // Comme Logic : quand on clique un envoi, la tranche de droite montre son bus (pour y mettre des effets) ; sinon la sortie
+    const left = selBus || t, ir = state._inspRight;
+    const sendBus = ir && ir.owner === state.selectedTrack && (left.busSends || {})[ir.bus] !== undefined ? busById(ir.bus) : null;
     if (selBus) {
-        const up = busById(selBus.output);
+        const up = sendBus && sendBus.id !== selBus.id ? sendBus : busById(selBus.output);
         el.innerHTML = inspectorStrip('bus', selBus) + (up ? inspectorStrip('bus', up) : inspectorStrip('master'));
     } else {
-        el.innerHTML = inspectorStrip('track', t, idx) + (dest ? inspectorStrip('bus', dest) : inspectorStrip('master'));
+        const right = sendBus || dest;
+        el.innerHTML = inspectorStrip('track', t, idx) + (right ? inspectorStrip('bus', right) : inspectorStrip('master'));
     }
+    if (sendBus) { const st = el.querySelectorAll('.insp-strip')[1]; if (st) st.classList.add('insp-send-dest'); el.querySelectorAll(`.insp-strip:first-child .send-bar-row[data-bsend="${CSS.escape(sendBus.id)}"]`).forEach(r => r.classList.add('shown')); }
     el.querySelectorAll('.insp-strip').forEach(strip => {
         const kind = strip.dataset.kind;
         const x = kind === 'track' ? t : kind === 'bus' ? busById(strip.dataset.id) : null;
@@ -2509,7 +2516,12 @@ function renderInspector() {
         }
         // Direction : où part le son de cette piste / de ce groupe
         const outBtn = strip.querySelector('.insp-output');
-        if (outBtn && x) outBtn.addEventListener('click', (e) => { e.stopPropagation(); openOutputMenu(outBtn, kind, x, idx); });
+        if (outBtn && x) outBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            // la tranche de droite montrait un bus d'envoi : on revient sur la sortie (comme Logic)
+            if (state._inspRight && strip === el.querySelector('.insp-strip')) { state._inspRight = null; renderInspector(); const nb = el.querySelector('.insp-strip .insp-output'); if (nb) openOutputMenu(nb, kind, x, idx); return; }
+            openOutputMenu(outBtn, kind, x, idx);
+        });
     });
 }
 
@@ -2571,7 +2583,7 @@ function bindSlotLists(strip, kind, x, idx) {
             const setPre = (on) => { pushUndo(); set.forEach(o => { o.preSends = o.preSends || {}; if (on) o.preSends[key] = true; else delete o.preSends[key]; }); saveProject(); refreshPlaybackSoon(); refreshStrips(); flash(on ? 'Envoi avant le fader (Pre) : il ne suit plus le fader ni le gauche/droite' : 'Envoi après le fader (Post) : il suit le fader'); };
             item((isPre ? '   ' : '✓ ') + 'Après le fader (Post)', () => setPre(false));
             item((isPre ? '✓ ' : '   ') + 'Avant le fader (Pre)', () => setPre(true));
-            if (isBusSend) item(`Ouvrir le bus « ${busById(id) ? busById(id).name : ''} » (ses effets)`, () => openSendBus(id, false));
+            if (isBusSend) item(`Afficher ${busById(id) ? busById(id).name : 'le bus'} à droite (ses effets)`, () => { if (srow.closest('#inspector')) { state._inspRight = { owner: state.selectedTrack, bus: id }; refreshStrips(); } else openSendBus(id, false); });
             else item(`Transformer « ${(projectSends().find(sd => sd.id === id) || {}).name || 'ce retour'} » en bus (pour y mettre des plugins)`, () => convertSendToBus(id));
             if (isBusSend) item('Retirer cet envoi', () => {
                 pushUndo(); set.forEach(o => { if (o.busSends) delete o.busSends[id]; if (o.preSends) delete o.preSends[key]; });
@@ -2613,24 +2625,30 @@ function openSendTargetMenu(anchor, kind, x) {
     const menu = document.createElement('div');
     menu.className = 'track-ctx-menu';
     menu.style.cssText = `position:fixed;left:${Math.max(8, Math.min(r.left, window.innerWidth - 230))}px;top:${Math.max(8, Math.min(r.bottom + 2, window.innerHeight - 320))}px;z-index:300;min-width:210px;max-height:60vh;overflow:auto`;
-    // Comme Logic : un envoi part vers un bus, et ce bus a ses propres effets (on y met ce qu'on veut)
-    const items = [
-        { label: 'Nouveau bus', run: () => createSendBus(kind, x, 'empty') },
-        { head: 'Vers un bus existant' }
-    ];
-    const buses = (state.project.buses || []).filter(b => !b.premaster && b.id !== 'master' && !(kind === 'bus' && busFeeds(busById(b.id), x.id)) && !(x.busSends || {})[b.id]);
-    // un groupe où ce son passe déjà (sa sortie) n'a pas besoin d'envoi
-    buses.forEach(b => items.push({ label: b.name, run: () => {
+    // Comme Logic : la liste des bus numérotés (Bus 1, Bus 2…). Un bus déjà créé garde son nom (« Bus 1 · Reverb ») ;
+    // un numéro libre crée le bus. Ce bus a ses propres effets ; il s'affiche aussitôt dans la tranche de droite.
+    const buses = (state.project.buses || []).filter(b => !b.premaster && b.id !== 'master' && !(kind === 'bus' && (b.id === x.id || busFeeds(busById(b.id), x.id))) && !(x.busSends || {})[b.id]);
+    const add = (b) => {
         pushUndo(); const set = kind === 'track' ? selectedTrackIdxs().map(i => state.project.tracks[i]).filter(Boolean) : [x];
         (set.includes(x) ? set : [x]).forEach(o => { o.busSends = o.busSends || {}; o.busSends[b.id] = 50; });
+        state._inspRight = { owner: state.selectedTrack, bus: b.id };
         saveProject(); refreshPlaybackSoon(); refreshStrips();
-        flash(`Envoi vers « ${b.name} » ajouté à 50 : double-clic sur sa barre pour écrire le chiffre`);
-    } }));
-    if (!buses.length) items.pop();
+        flash(`Envoi vers ${b.name} ajouté : son bus est à droite, ajoute-lui ses effets`);
+    };
+    const items = [{ head: 'Bus' }];
+    const num = (b) => b.busNum || +((/^Bus (\d+)$/.exec(b.name || '') || [])[1] || 0);
+    const auxes = buses.filter(b => b.isAux).sort((a, c) => (num(a) || 999) - (num(c) || 999));
+    auxes.forEach(b => items.push({ label: num(b) && b.name !== `Bus ${num(b)}` ? `Bus ${num(b)} · ${b.name}` : b.name, run: () => add(b) }));
+    const used = new Set((state.project.buses || []).map(num).filter(Boolean));
+    let shown = 0;
+    for (let n = 1; shown < 4 && n < 200; n++) if (!used.has(n)) { const k = n; items.push({ label: `Bus ${k}`, hint: 'nouveau', run: () => createSendBus(kind, x, 'empty', k) }); shown++; }
+    // les groupes (sous-mix) peuvent aussi recevoir un envoi
+    const groups = buses.filter(b => !b.isAux);
+    if (groups.length) { items.push({ head: 'Groupes' }); groups.forEach(b => items.push({ label: b.name, run: () => add(b) })); }
     items.forEach(it => {
         const el = document.createElement('div');
         if (it.head) { el.className = 'ctx-head'; el.textContent = it.head; }
-        else { el.className = 'ctx-item'; el.textContent = it.label; el.addEventListener('mousedown', (ev) => { ev.stopPropagation(); closeAllMenus(); it.run(); }); }
+        else { el.className = 'ctx-item'; el.textContent = it.label; if (it.hint) el.insertAdjacentHTML('beforeend', ` <i class="fam-tag">${it.hint}</i>`); el.addEventListener('mousedown', (ev) => { ev.stopPropagation(); closeAllMenus(); it.run(); }); }
         menu.appendChild(el);
     });
     document.body.appendChild(menu);
@@ -2640,25 +2658,28 @@ function openSendTargetMenu(anchor, kind, x) {
 // Bus d'envoi (aux façon Logic) : un groupe qui ne reçoit que des envois, avec ses inserts à lui.
 // Reverb à 100 % d'effet et -9,5 dB en sortie : même niveau que les anciens retours.
 const SEND_BUS_OUT = -9.54;
-function sendBusName(base) {
-    const used = new Set((state.project.buses || []).map(b => b.name));
-    let n = 1; while (used.has(n === 1 ? base : `${base} ${n}`)) n++;
-    return n === 1 ? base : `${base} ${n}`;
+// Comme Logic, les bus sont numérotés : « Bus 1 », « Bus 2 »… (le premier numéro libre). Les noms viendront avec la template.
+function freeBusNum() {
+    const used = new Set((state.project.buses || []).map(b => b.busNum || +((/^Bus (\d+)$/.exec(b.name || '') || [])[1] || 0)).filter(Boolean));
+    let n = 1; while (used.has(n)) n++;
+    return n;
 }
-function createSendBus(kind, x, type) {
+function sendBusName() { return `Bus ${freeBusNum()}`; }
+function createSendBus(kind, x, type, num) {
     pushUndo();
     state.project.buses = state.project.buses || [];
     const id = 'aux_' + Date.now().toString(36);
-    const b = { id, name: sendBusName(type === 'reverb' ? 'Reverb' : type === 'delay' ? 'Écho' : 'Bus'), isGroup: true, isAux: true, output: 'master', color: '#7C3AED', volume: 100, effects: [] };
+    const n = num || freeBusNum();
+    const b = { id, name: `Bus ${n}`, busNum: n, isGroup: true, isAux: true, output: 'master', color: '#7C3AED', volume: 100, effects: [] };
     if (type === 'reverb') { b.effects = ['reverb']; b.effectParams = { reverb: { size: 2, pre: 0, wet: 100, out: SEND_BUS_OUT } }; }
     if (type === 'delay') { b.effects = ['delay']; b.effectParams = { delay: { beats: 0.5, feedback: 35, wet: 100, dry: 0 } }; }
     state.project.buses.push(b);
     const set = kind === 'track' ? selectedTrackIdxs().map(i => state.project.tracks[i]).filter(Boolean) : [x];
     (set.includes(x) ? set : [x]).forEach(o => { o.busSends = o.busSends || {}; o.busSends[id] = 50; });
-    afterGroupChange(type === 'empty'
-        ? `Bus d'envoi « ${b.name} » créé : choisis ses effets`
-        : `Bus d'envoi « ${b.name} » créé, envoi à 50 — clic droit sur l'envoi pour ouvrir le bus et y ajouter d'autres effets`);
-    openSendBus(id, type === 'empty');
+    // la piste reste à gauche avec son nouvel envoi ; le bus s'affiche à droite, prêt à recevoir ses effets (comme Logic)
+    state._inspRight = { owner: state.selectedTrack, bus: id };
+    if (kind === 'bus' && state.selectedBus !== x.id) { state.selectedBus = x.id; state._selBusTrack = state.selectedTrack; }
+    afterGroupChange(`Envoi vers ${b.name} ajouté : son bus est à droite, clique « + » pour lui mettre des effets`);
     return b;
 }
 // Ouvre un bus d'envoi dans la tranche de gauche (comme sélectionner l'aux dans Logic) ; withMenu = menu d'ajout d'effet tout de suite
@@ -2680,6 +2701,18 @@ function convertSendToBus(sid) {
     afterGroupChange(`« ${b.name} » est maintenant un bus d'envoi : ajoute-lui les effets que tu veux — ⌘Z pour annuler`);
     openSendBus(b.id, false);
 }
+// Noms donnés automatiquement par les anciennes versions (« Rev Long », « Del 1/4 », « Reverb 2 »…) : remplacés par des numéros
+const AUTO_BUS_NAME = /^(Rev|Del|Reverb|Écho|Echo|Bus)(\b|\s|$)/i;
+function numberAuxBuses() {
+    let n = 0;
+    (state.project.buses || []).forEach(b => {
+        if (!b.isAux || b.busNum || !AUTO_BUS_NAME.test(b.name || '')) return;
+        const m = /^Bus (\d+)$/.exec(b.name || '');
+        if (m) { b.busNum = +m[1]; return; }
+        const k = freeBusNum(); b.busNum = k; b.name = `Bus ${k}`; n++;
+    });
+    return n;
+}
 // Fait le travail sans annulation ni message (utilisé aussi à l'ouverture d'un ancien projet)
 function sendToBusRaw(sid) {
     const sd = projectSends().find(s => s.id === sid); if (!sd) return null;
@@ -2689,7 +2722,8 @@ function sendToBusRaw(sid) {
     let id = taken(sd.id) ? 'aux_' + Date.now().toString(36) : sd.id, k = 1;
     while (taken(id)) id = 'aux_' + Date.now().toString(36) + '_' + (k++);
     const isDelay = sd.type === 'delay';
-    const b = { id, name: sendBusName(sd.name || (isDelay ? 'Écho' : 'Reverb')), isGroup: true, isAux: true, output: 'master', color: '#7C3AED', volume: sd.volume ?? 100, muted: !!sd.muted,
+    const bn = freeBusNum();
+    const b = { id, name: !sd.name || AUTO_BUS_NAME.test(sd.name) ? `Bus ${bn}` : sd.name, busNum: bn, isGroup: true, isAux: true, output: 'master', color: '#7C3AED', volume: sd.volume ?? 100, muted: !!sd.muted,
         effects: [isDelay ? 'delay' : 'reverb'],
         effectParams: isDelay
             ? { delay: { ...(sd.ms ? { ms: sd.ms } : { beats: sd.beats ?? 0.5 }), feedback: sd.feedback ?? 35, pp: !!sd.pp, wet: 100, dry: 0 } }
@@ -2851,7 +2885,8 @@ function openOutputMenu(anchor, kind, x, idx) {
 // Effets qu'on peut poser sur une piste ou un bus (chacun a son panneau)
 const ADD_FX_CHOICES = [['crush', 'Bitcrusher (son lo-fi)'], ['util', 'Utilitaire (gain, mono, phase)'], ['width', 'Largeur stéréo'],
     ['tremolo', 'Trémolo (volume qui pulse)'], ['phaser', 'Phaser'], ['flanger', 'Flanger'], ['chorus', 'Chorus'],
-    ['doubler', 'Doubleur de voix'], ['slapback', 'Slapback (écho court)'], ['gate', 'Gate (coupe le bruit entre les phrases)'], ['filter', 'Filtre (coupe-bas / coupe-haut)'], ['eq', 'EQ'], ['comp', 'Compresseur'], ['mband', 'Multibande'], ['deess', 'De-esser'], ['sat', 'Saturation'], ['msat', 'Saturation multibande'], ['delay', 'Écho'], ['reverb', 'Reverb']];
+    ['doubler', 'Doubleur de voix'], ['slapback', 'Slapback (écho court)'], ['gate', 'Gate (coupe le bruit entre les phrases)'], ['filter', 'Filtre (coupe-bas / coupe-haut)'], ['eq', 'EQ'], ['comp', 'Compresseur'], ['mband', 'Multibande'], ['deess', 'De-esser'], ['sat', 'Saturation'], ['msat', 'Saturation multibande'], ['delay', 'Écho'], ['reverb', 'Reverb'],
+    ['fet76', 'Éclair 76 (compresseur FET)'], ['pre73', 'Pulse 73 (préampli + EQ de console)']];
 // Rangés par catégorie comme dans Logic (voir PLUGINS-CATALOGUE.md) : un nouvel effet = une ligne dans sa catégorie
 const ADD_FX_CATEGORIES = [
     ['Dynamique', ['comp', 'mband', 'deess', 'gate']],
@@ -2863,22 +2898,30 @@ const ADD_FX_CATEGORIES = [
     ['Stéréo', ['width']],
     ['Utilitaires', ['util']]
 ];
+// Gamme Analogique : les machines de studio reprises à notre sauce (façades 3D, analog-ui.js) — rangée à part dans le menu
+const ADD_FX_CATEGORIES_ANA = [
+    ['Compresseurs', ['fet76']],
+    ['Préamplis et EQ', ['pre73']]
+];
 // Une phrase par effet dans le menu « + Effet », et les mots qu'on tape pour le trouver
 const FX_DESC = { msat: 'chaleur et grain par zone : des graves ronds, des médiums qui grognent, des aigus qui brillent', mband: 'travaille seulement une zone du son (graves, boue, sifflantes…), quand elle déborde', pitch: 'monte ou descend la voix (demi-tons), pour un effet sur un passage', comp: 'resserre l\'écart entre les passages forts et faibles', deess: 'adoucit les « s » qui sifflent', eq: 'corrige les graves, médiums et aigus',
     sat: 'chaleur et grain, comme une bande ou une lampe', delay: 'répétitions calées sur le tempo (1/8, 1/4…)', reverb: 'ajoute de l\'espace, une pièce',
     width: 'élargit ou resserre l\'image stéréo', chorus: 'épaissit le son en le dédoublant légèrement', flanger: 'balayage métallique qui tourne',
     phaser: 'balayage doux et rond', tremolo: 'le volume pulse en rythme', doubler: 'donne l\'impression de deux prises', slapback: 'écho court, très utilisé en rap',
-    crush: 'son lo-fi, numérique abîmé', util: 'volume, phase, passage en mono', filter: 'coupe les graves ou les aigus' };
+    crush: 'son lo-fi, numérique abîmé', util: 'volume, phase, passage en mono', filter: 'coupe les graves ou les aigus',
+    fet76: 'le compresseur FET des studios : on pousse l\'entrée, la voix passe devant', pre73: 'le préampli de console : gain qui colore et EQ aux fréquences de la machine' };
 const FX_WORDS = { msat: 'saturation multiband multibande saturn distortion drive chaleur tape tube', mband: 'multiband multibande compressor dynamic dynamique', pitch: 'pitch shift hauteur transpose alterboy grave aigu', comp: 'compressor compression dynamique', deess: 'deesser sibilance', gate: 'noise gate bruit', eq: 'equalizer egaliseur', filter: 'hpf lpf high pass low pass coupe-bas coupe-haut',
     sat: 'saturation distortion saturator drive', crush: 'bitcrusher lofi', delay: 'delay echo', reverb: 'reverb reverberation', slapback: 'slap delay echo',
-    chorus: 'modulation', flanger: 'modulation', phaser: 'modulation', tremolo: 'modulation', doubler: 'doubler double', width: 'stereo imager', util: 'utility gain mono phase', tune: 'autotune pitch justesse' };
+    chorus: 'modulation', flanger: 'modulation', phaser: 'modulation', tremolo: 'modulation', doubler: 'doubler double', width: 'stereo imager', util: 'utility gain mono phase', tune: 'autotune pitch justesse',
+    fet76: 'analogique 1176 fet compressor compresseur limiting vintage', pre73: 'analogique 1073 preamp preampli console eq neve vintage' };
 const FX_START = {
     limit: { tp: 1 },    // pic réel allumé sur un limiteur neuf (les anciens projets gardent leur son)
     eq: { bands: [] },   // un EQ neuf s'ouvre sans aucun point : on les pose soi-même
     crush: { bits: 8, down: 4, mix: 100 }, util: { gain: 0, invert: 0, mono: 0 }, width: { width: 100 },
     tremolo: { rate: 5, depth: 50 }, phaser: { rate: 0.4, depth: 70, feedback: 40, mix: 50 }, flanger: { rate: 0.25, depth: 2, feedback: 50, mix: 50 },
     chorus: { rate: 0.8, depth: 5, mix: 50 }, doubler: { width: 50, mix: 50 }, slapback: { time: 110, feedback: 12, mix: 25 },
-    gate: { threshold: -45, release: 150, reduction: 40 }, filter: { hpf: 80, lpf: 20000, slope: 12 }, sat: { drive: 25 }, msat: { bands: [{ base: true, sty: 'bande', va: 1, heat: 30 }] }, mband: { bands: [] }, deess: { thr: -26, range: 10, lo: 5000, hi: 11000 }, delay: { beats: 0.5, feedback: 35, wet: 25 } };
+    gate: { threshold: -45, release: 150, reduction: 40 }, filter: { hpf: 80, lpf: 20000, slope: 12 }, sat: { drive: 25 }, msat: { bands: [{ base: true, sty: 'bande', va: 1, heat: 30 }] }, mband: { bands: [] }, deess: { thr: -26, range: 10, lo: 5000, hi: 11000 }, delay: { beats: 0.5, feedback: 35, wet: 25 },
+    fet76: { input: 24, output: 24, attack: 3, release: 5, ratio: 4, mix: 100 }, pre73: { gain: 0, output: 0, high: 0, mid: 0, midF: 2, low: 0, lowF: 1, hpf: -1, eq: 1 } };
 function openAddEffectMenu(anchor, target, x) {
     closeAllMenus();
     const r = anchor.getBoundingClientRect();
@@ -2894,13 +2937,15 @@ function openAddEffectMenu(anchor, target, x) {
     const descOf = (n) => FX_DESC[n] || ((fxChoice[n] || '').match(/\((.*)\)$/) || [])[1] || '';
     let recent = [];
     try { recent = JSON.parse(localStorage.getItem('pulse_fx_recent') || '[]').filter(n => fxChoice[n]); } catch {}
-    const cats = ADD_FX_CATEGORIES.map(([c, names]) => [c, names.filter(n => fxChoice[n])]);
+    // Deux gammes rangées à part : les plugins Pulse et la gamme Analogique (onglets en haut de la colonne de gauche)
+    const RANGES = [['Pulse', ADD_FX_CATEGORIES], ['Analogique', ADD_FX_CATEGORIES_ANA]];
+    const cats = RANGES.flatMap(([g, list]) => list.map(([c, names]) => [c, names.filter(n => fxChoice[n]), g]));
     const voice = state.project.tracks.includes(x);   // PulseTune : sur toute piste, pas sur un groupe
     if (voice) { const vh = cats.find(([c]) => c === 'Voix et hauteur'); if (vh) vh[1] = ['tune', ...vh[1]]; }   // Auto-Tune en tête : 1er maillon d'une voix
     const left = document.createElement('div'); left.className = 'fam-left';
     const right = document.createElement('div'); right.className = 'fam-right';
     menu.append(left, right);
-    left.innerHTML = `<input class="fam-search" type="text" placeholder="Chercher un effet…" spellcheck="false">`;
+    left.innerHTML = `<div class="fam-ranges">${RANGES.map(([g]) => `<button class="fam-range" data-range="${g}">${g}</button>`).join('')}</div><input class="fam-search" type="text" placeholder="Chercher un effet…" spellcheck="false">`;
     const search = left.querySelector('.fam-search');
     const addHead = (box, txt) => { const h = document.createElement('div'); h.className = 'ctx-head'; h.textContent = txt; box.appendChild(h); };
     const pick = (n) => {
@@ -2955,7 +3000,13 @@ function openAddEffectMenu(anchor, target, x) {
     }));
     const head = document.createElement('div'); head.className = 'ctx-head fam-title'; right.prepend(head);
     const empty = document.createElement('div'); empty.className = 'fam-empty'; empty.textContent = 'Aucun effet ne correspond. Essaie « écho », « reverb », « compresseur »…'; right.appendChild(empty);
+    const rangeOf = (c) => (cats.find(k => k[0] === c) || [])[2] || 'Pulse';
+    const showRange = (g) => {
+        left.querySelectorAll('.fam-range').forEach(b => b.classList.toggle('on', b.dataset.range === g));
+        left.querySelectorAll('.fam-cat').forEach(el => { el.hidden = rangeOf(el.dataset.cat) !== g; });
+    };
     const showCat = (c) => {
+        showRange(rangeOf(c));
         head.textContent = c; empty.hidden = true;
         right.querySelectorAll('.fam-fx').forEach(el => { el.hidden = el.dataset.cat !== c; });
         left.querySelectorAll('.fam-cat').forEach(el => el.classList.toggle('on', el.dataset.cat === c));
@@ -2974,14 +3025,15 @@ function openAddEffectMenu(anchor, target, x) {
         el.addEventListener('click', () => { search.value = ''; showCat(c); });
         left.appendChild(el);
     });
-    // Recherche : nom, explication et mots courants (anglais compris : delay, reverb…)
+    left.querySelectorAll('.fam-range').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); search.value = ''; showCat(cats.find(k => k[2] === b.dataset.range)[0]); }));
+    // Recherche : nom, explication et mots courants (anglais compris : delay, reverb…), dans les deux gammes
     const norm = (t) => t.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
     search.addEventListener('input', () => {
         const q = norm(search.value.trim());
         if (!q) { showCat(left.querySelector('.fam-cat.on')?.dataset.cat || cats[0][0]); return; }
         let n = 0;
         right.querySelectorAll('.fam-fx').forEach(el => {
-            const ok = norm(el.textContent + ' ' + el.dataset.cat + ' ' + (FX_WORDS[el.dataset.fx] || '')).includes(q);
+            const ok = norm(el.textContent + ' ' + el.dataset.cat + ' ' + rangeOf(el.dataset.cat) + ' ' + (FX_WORDS[el.dataset.fx] || '')).includes(q);
             el.hidden = !ok; if (ok) n++;
         });
         head.textContent = 'Résultats'; empty.hidden = n > 0;
@@ -3183,11 +3235,18 @@ function sendKnobHtml(v) { return `<span class="send-knob" data-tooltip="Glisser
         const x0 = e.clientX, v0 = parseFloat(inp.value) || 0, w = Math.max(40, row.getBoundingClientRect().width);
         row.classList.add('turning');
         const move = (ev) => {
+            if (Math.abs(ev.clientX - x0) > 2) moved = true;
             const nv = Math.round(Math.max(0, Math.min(100, v0 + (ev.clientX - x0) / w * 100 * (ev.shiftKey ? 0.15 : 1))));
             if (nv === Math.round(parseFloat(inp.value))) return;
             inp.value = nv; inp.dispatchEvent(new Event('input', { bubbles: true }));
         };
-        const up = () => { row.classList.remove('turning'); document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); inp.dispatchEvent(new Event('change', { bubbles: true })); };
+        let moved = false;
+        const up = () => {
+            row.classList.remove('turning'); document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up);
+            // un simple clic sur un envoi vers un bus (tranche de gauche) : son bus s'affiche à droite, comme dans Logic
+            if (!moved && row.dataset.bsend && row.closest('#inspector')) state._inspRight = { owner: state.selectedTrack, bus: row.dataset.bsend };
+            inp.dispatchEvent(new Event('change', { bubbles: true }));
+        };
         document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
     }, true);
     document.addEventListener('dblclick', (e) => {
@@ -8025,7 +8084,7 @@ function openEqPanel(trackIdx, anchorEl) {
 
 // === Panneaux d'effets : un cadre commun pour tous (boutons rotatifs, Simple / Avancé, A / B) ===
 // Une couleur par catégorie, sur le fond violet de Pulse
-const FX_CAT_COLORS = { 'Dynamique': '#A855F7', 'Égaliseur et filtre': '#22D3EE', 'Distorsion': '#FB923C', 'Mouvement': '#F472B6',
+const FX_CAT_COLORS = { 'Compresseurs': '#C084FC', 'Préamplis et EQ': '#C084FC', 'Dynamique': '#A855F7', 'Égaliseur et filtre': '#22D3EE', 'Distorsion': '#FB923C', 'Mouvement': '#F472B6',
     'Voix et hauteur': '#A3E635', 'Écho et espace': '#60A5FA', 'Stéréo': '#2DD4BF', 'Utilitaires': '#9A8CB8' };
 // Position d'un réglage sur la course du bouton (0 à 1) ; les fréquences tournent en logarithmique, comme sur une console
 function fxFrac(d, v) {
@@ -10013,6 +10072,21 @@ const FX_PANEL_DEFS = {
         { key: 'mix',  label: 'Mélange', unit: '%',   min: 0,   max: 100, def: 100, step: 1, tip: '100 % = seulement la voix transposée' },
         { key: 'formant', label: 'Formant', unit: ' dt', min: -12, max: 12, def: 0, step: 0.1, tip: 'Le timbre de la voix (plus grosse / plus fine), sans changer la note' }
     ],
+    // Gamme Analogique (façades à venir) : mêmes unités que la machine
+    fet76: [
+        { key: 'input',   label: 'Entrée',     unit: '',    min: 0, max: 48, def: 24, step: 1 },
+        { key: 'output',  label: 'Sortie',     unit: '',    min: 0, max: 48, def: 24, step: 1 },
+        { key: 'attack',  label: 'Attaque',    unit: '',    min: 1, max: 7, def: 3, step: 0.1 },
+        { key: 'release', label: 'Relâche',    unit: '',    min: 1, max: 7, def: 5, step: 0.1 },
+        { key: 'mix',     label: 'Mélange',    unit: '%',   min: 0, max: 100, def: 100, step: 1 }
+    ],
+    pre73: [
+        { key: 'gain',   label: 'Gain',    unit: ' dB', min: 0, max: 30, def: 0, step: 5 },
+        { key: 'output', label: 'Sortie',  unit: ' dB', min: -24, max: 12, def: 0, step: 0.5 },
+        { key: 'high',   label: 'Aigus',   unit: ' dB', min: -16, max: 16, def: 0, step: 0.5 },
+        { key: 'mid',    label: 'Médiums', unit: ' dB', min: -18, max: 18, def: 0, step: 0.5 },
+        { key: 'low',    label: 'Graves',  unit: ' dB', min: -16, max: 16, def: 0, step: 0.5 }
+    ],
     delay: [
         { key: 'beats',    label: 'Temps', unit: '',  min: 0.125, max: 2,  def: 0.5, step: 0.125, fmt: beatsLabel,
           choices: [0.25, 1 / 3, 0.5, 0.75, 1, 1.5, 2], choiceLabels: ['1/16', '1/8 T', '1/8', '1/8 .', '1/4', '1/4 .', '1/2'] },
@@ -10041,6 +10115,8 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
     if (fxName === 'sat') return openSatPanel(trackIdx, anchorEl);
     if (fxName === 'filter') return openFilterPanel(trackIdx, anchorEl);
     if (fxName === 'pitch') return openPitchPanel(trackIdx, anchorEl);
+    if (fxName === 'fet76') return openFet76Panel(trackIdx, anchorEl);
+    if (fxName === 'pre73') return openPre73Panel(trackIdx, anchorEl);
     if (['chorus', 'flanger', 'phaser', 'tremolo'].includes(fxName)) return openModPanel(trackIdx, fxName, anchorEl);
     if (['doubler', 'slapback', 'width'].includes(fxName)) return openStereoPanel(trackIdx, fxName, anchorEl);
     if (fxName === 'crush' || fxName === 'util') return openCrushUtilPanel(trackIdx, fxName, anchorEl);

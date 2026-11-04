@@ -1,4 +1,5 @@
 //! Pulse — moteur audio natif (v0.1 : lecture .pulse + mixage hors-ligne).
+pub mod analog;
 pub mod file;
 pub mod fx;
 pub mod model;
@@ -1294,6 +1295,53 @@ mod tests {
         let p = Project { tracks: vec![serde_json::from_str(t).unwrap()], ..Default::default() };
         let t0 = onset(&render(&p, &saw, &opts()).0);
         assert!((t0 - 1.0).abs() < 0.004, "deux Pitch : la voix démarre à {t0:.4} s au lieu de 1 s");
+    }
+
+    /// Gamme Analogique branchée : 73 + 76 sur une piste et un groupe, le retard du suréchantillonnage est compensé (pas de décalage),
+    /// et l'automation de l'Entrée du 76 change bien la compression
+    #[test]
+    fn analogique_branche_et_cale() {
+        let n = SR as usize * 3;
+        let saw = Media::from([("a".to_owned(), Source::new(SR, vec![(0..n).map(|i| if i < SR as usize { 0.0 } else { (((i as f64 * 220.0 / SR as f64) % 1.0) * 0.6 - 0.3) as f32 }).collect()]))]);
+        let mk = |fx: &str| -> Project {
+            let t = format!(r#"{{"volume":100,"clips":[{{"id":"a","start":0,"duration":3,"offset":0}}],"effects":[{fx}],"effectParams":{{"pre73":{{"gain":0}},"fet76":{{"input":24,"output":24,"ratio":4}}}}}}"#);
+            Project { tracks: vec![serde_json::from_str(&t).unwrap()], ..Default::default() }
+        };
+        let dry = render(&mk(""), &saw, &opts()).0;
+        let wet = render(&mk(r#""pre73","fet76""#), &saw, &opts()).0;
+        let (a, z) = ((1.2 * SR as f64) as usize, (2.6 * SR as f64) as usize);
+        let best = (-40i64..=40).max_by(|x, y| {
+            let c = |l: i64| (a..z).map(|i| dry[i] as f64 * wet[(i as i64 + l) as usize] as f64).sum::<f64>();
+            c(*x).partial_cmp(&c(*y)).unwrap()
+        }).unwrap();
+        assert_eq!(best, 0, "73 + 76 : le son arrive décalé de {best} échantillons");
+        // pousser l'Entrée du 76 de +24 dB (automation) : ça compresse, le niveau monte bien moins que 24 dB
+        let rms = |l: &[f32]| (l[a..z].iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / (z - a) as f64).sqrt();
+        let mut p = mk(r#""fet76""#);
+        p.tracks[0].automation = serde_json::from_str(r#"{"fx:fet76:input":{"points":[{"t":0,"v":1}]}}"#).unwrap();
+        let hot = render(&p, &saw, &opts()).0;
+        assert!(hot.iter().all(|v| v.is_finite()));
+        let up = 20.0 * (rms(&hot) / rms(&wet)).log10();
+        assert!(up > 1.0 && up < 10.0, "Entrée du 76 à fond : le niveau monte de {up:.1} dB");
+    }
+
+    /// Gamme Analogique : mêmes chiffres que le navigateur (tests/scenarios/analogique-parite.mjs)
+    #[test]
+    fn analogique_comme_le_navigateur() {
+        let n = SR as usize * 3;
+        let saw = Media::from([("a".to_owned(), Source::new(SR, vec![(0..n).map(|i| if i < SR as usize { 0.0 } else { (((i as f64 * 220.0 / SR as f64) % 1.0) * 0.6 - 0.3) as f32 }).collect()]))]);
+        let rms = |x: &[f32], a: f64, z: f64| { let (a, z) = ((a * SR as f64).round() as usize, (z * SR as f64).round() as usize); (x[a..z].iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / (z - a) as f64).sqrt() };
+        for (fx, pp, want) in [("pre73", r#"{"gain":20,"output":-20,"high":4,"mid":3,"midF":3,"low":2,"lowF":1,"hpf":1}"#, [0.099128f64, 0.099128, 0.027474]),
+            ("fet76", r#"{"input":36,"output":20,"attack":4,"release":5,"ratio":8}"#, [0.043774, 0.043774, 0.012732]),
+            ("fet76", r#"{"input":40,"output":18,"ratio":0,"mix":70}"#, [0.051816, 0.051816, 0.016344])] {
+            let t = format!(r#"{{"volume":100,"clips":[{{"id":"a","start":0,"duration":3,"offset":0}}],"effects":["{fx}"],"effectParams":{{"{fx}":{pp}}}}}"#);
+            let p = Project { tracks: vec![serde_json::from_str(&t).unwrap()], ..Default::default() };
+            let l = render(&p, &saw, &RenderOptions { only_track: Some(0), ..opts() }).0;
+            let (i0, i1) = ((1.2 * SR as f64) as usize, (1.8 * SR as f64) as usize);
+            let hf = ((i0..i1).map(|i| { let d = l[i] as f64 - 2.0 * l[i - 1] as f64 + l[i - 2] as f64; d * d }).sum::<f64>() / (i1 - i0) as f64).sqrt();
+            let got = [rms(&l, 1.2, 1.8), rms(&l, 2.0, 2.6), hf];
+            for k in 0..3 { assert!((got[k] - want[k]).abs() < want[k] * 0.001 + 2e-6, "{fx} {pp} : {got:?} au lieu de {want:?}"); }
+        }
     }
 
     /// Pitch « voix fidèle » : mêmes chiffres que le navigateur (tests/scenarios/pitch-parite.mjs)

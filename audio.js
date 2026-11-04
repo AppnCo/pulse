@@ -694,6 +694,146 @@ window.PulseAudio = (function() {
             }
         }
         registerProcessor('pulse-dyneq', PulseDynEq);
+
+        // Gamme Analogique : compresseur FET « 76 » et préampli + EQ « 73 ». Même calcul que engine/src/analog.rs (Fet76, Pre73) :
+        // tout le non-linéaire tourne 4× plus vite (filtre 128 coefficients), retard 31 échantillons, compensé comme le Pitch.
+        const anaFir = (() => {
+            const h = new Float64Array(128), fc = 0.118; let s = 0;
+            for (let i = 0; i < 128; i++) {
+                const m = i - 63.5, x = 2 * fc * m, sinc = Math.abs(x) < 1e-12 ? 1 : Math.sin(Math.PI * x) / (Math.PI * x);
+                const w = 0.42 - 0.5 * Math.cos(2 * Math.PI * i / 127) + 0.08 * Math.cos(4 * Math.PI * i / 127);
+                h[i] = 2 * fc * sinc * w; s += h[i];
+            }
+            for (let i = 0; i < 128; i++) h[i] /= s;
+            return h;
+        })();
+        class AnaOs {
+            constructor() { this.xin = new Float64Array(32); this.xs = new Float64Array(128); this.pos = 0; }
+            run(v, f) {
+                const h = anaFir, xin = this.xin, xs = this.xs;
+                xin.copyWithin(1, 0, 31); xin[0] = v;
+                for (let p = 0; p < 4; p++) { let u = 0; for (let j = 0; j < 32; j++) u += h[p + 4 * j] * xin[j]; this.pos = (this.pos + 1) % 128; xs[this.pos] = f(4 * u); }
+                let out = 0, idx = this.pos;
+                for (let j = 0; j < 128; j++) { out += h[j] * xs[idx]; idx = (idx + 127) % 128; }
+                return out;
+            }
+        }
+        const ANA_LAT = 31, FET_THR = -18, HR76 = 0.251188643150958, HR73 = 0.1778279410038923, IRON73 = 0.06, IRON76 = 0.03;
+        // Transfo (le fer) : le flux suit l'intégrale du signal, il sature d'abord dans les graves (même calcul que Iron dans analog.rs)
+        const ironK = (sr) => [2 * Math.PI * 50 / (4 * sr), Math.exp(-2 * Math.PI * 3 / (4 * sr))];
+        const ironRun = (st, u, w, l, b) => { st[0] = st[0] * l + u * w; const p = st[0]; return u - b * p * p * p; };
+        class PulseFet76 extends AudioWorkletProcessor {
+            constructor(o) {
+                super();
+                const p = (o && o.processorOptions) || {};
+                this.p = { input: p.input ?? 24, output: p.output ?? 24, attack: p.attack ?? 3, release: p.release ?? 5, ratio: p.ratio ?? 4, mix: p.mix ?? 100 };
+                this.gr = 0; this.grSlow = 0; this.ff = 0; this.iron = [[0], [0]]; this.ik = ironK(sampleRate); this.os = [new AnaOs(), new AnaOs()]; this.dc = [[0, 0], [0, 0]]; this.dry = [new Float64Array(40), new Float64Array(40)];
+                // aiguille de la façade : réduction et niveau de sortie (dBFS efficace), envoyés ~25 fois par seconde en lecture
+                this.report = !!p.report; this.mN = 0; this.mS = 0; this.mGr = 0;
+                this.set();
+            }
+            set() {
+                const p = this.p, sr = sampleRate, cl = (v, a, b) => Math.max(a, Math.min(b, v));
+                this.gin = Math.pow(10, (cl(p.input, 0, 48) - 24) / 20);
+                this.gout = Math.pow(10, (cl(p.output, 0, 48) - 24) / 20);
+                this.all = p.ratio <= 0;
+                const r = Math.round(p.ratio);
+                [this.ratio, this.knee] = r <= 0 ? [30, 1] : r === 4 ? [4, 6] : r === 8 ? [8, 4] : r === 12 ? [12, 3] : [20, 2];
+                const a = (cl(p.attack, 1, 7) - 1) / 6, r7 = (cl(p.release, 1, 7) - 1) / 6;
+                const attS = 800e-6 * Math.pow(20e-6 / 800e-6, a) * (this.all ? 2.5 : 1);
+                const relS = 1.1 * Math.pow(0.05 / 1.1, r7) * (this.all ? 0.6 : 1);
+                const co = (t) => 1 - Math.exp(-1 / (t * sr));
+                this.att = co(attS); this.relFast = co(relS); this.relSlow = co(relS * 6);
+                this.mix = cl(p.mix / 100, 0, 1);
+            }
+            // contre-réaction : le détecteur écoute le son déjà compressé (lvl = niveau de sortie)
+            curve(lvl) {
+                const over = lvl - FET_THR, k = this.knee, s = this.ratio - 1;
+                return over <= -k / 2 ? 0 : over >= k / 2 ? over * s : s * (over + k / 2) ** 2 / (2 * k);
+            }
+            process(inputs, outputs) {
+                const inp = inputs[0], out = outputs[0];
+                if (!inp || !inp.length) return true;
+                const n = inp[0].length, nc = Math.min(inp.length, out.length, 2);
+                for (let i = 0; i < n; i++) {
+                    let pk = 0;
+                    for (let ch = 0; ch < nc; ch++) pk = Math.max(pk, Math.abs(inp[ch][i] * this.gin));
+                    const lin = 20 * Math.log10(pk + 1e-12), want = this.curve(lin - this.gr);
+                    if (want > this.gr) this.gr += (want - this.gr) * this.att / this.ratio;
+                    else {
+                        this.grSlow += (this.gr - this.grSlow) * this.relSlow * 0.5;
+                        const rel = this.grSlow > 0.6 * this.gr ? this.relSlow : this.relFast;
+                        this.gr += (Math.max(want, 0) - this.gr) * rel;
+                    }
+                    if (want > this.grSlow) this.grSlow += (want - this.grSlow) * this.att * 0.05;
+                    const fft = this.all ? 0.2 * Math.max(0, lin - FET_THR - 8) : 0;
+                    this.ff += (fft - this.ff) * (fft > this.ff ? this.att : this.relFast);
+                    const g = Math.pow(10, -(this.gr + this.ff) / 20), fet = (0.04 + 0.5 * (1 - g)) * (this.all ? 2.2 : 1), [iw, il] = this.ik;
+                    for (let ch = 0; ch < nc; ch++) {
+                        const x = inp[ch][i], ir = this.iron[ch];
+                        const sh = (u) => { let c = u * g * HR76; c = c + fet * c * c; return ironRun(ir, Math.tanh(1.15 * c) / 1.15, iw, il, IRON76) / HR76; };
+                        let y = this.os[ch].run(x * this.gin, sh);
+                        const dc = this.dc[ch], o = y - dc[0] + 0.9995 * dc[1];
+                        dc[0] = y; dc[1] = o;
+                        y = o * this.gout;
+                        const d = this.dry[ch]; d.copyWithin(1, 0, 39); d[0] = x;
+                        out[ch][i] = this.mix < 1 ? d[ANA_LAT] + (y - d[ANA_LAT]) * this.mix : y;
+                        if (this.report && ch === 0) { this.mS += out[0][i] * out[0][i]; this.mN++; }
+                    }
+                    if (this.report) this.mGr = Math.max(this.mGr, this.gr + this.ff);
+                }
+                if (this.report && this.mN >= 1920) { this.port.postMessage({ gr: this.mGr, out: 10 * Math.log10(this.mS / this.mN + 1e-12) }); this.mN = 0; this.mS = 0; this.mGr = 0; }
+                return true;
+            }
+        }
+        registerProcessor('pulse-fet76', pulseAuto(PulseFet76, (s, v) => { let ch = false; for (const k in v) if (k in s.p && s.p[k] !== v[k]) { s.p[k] = v[k]; ch = true; } if (ch) s.set(); }));
+        const PRE73_MID = [360, 700, 1600, 3200, 4800, 7200], PRE73_LOW = [35, 60, 110, 220], PRE73_HPF = [50, 80, 160, 300];
+        class PulsePre73 extends AudioWorkletProcessor {
+            constructor(o) {
+                super();
+                const p = (o && o.processorOptions) || {};
+                this.p = { gain: p.gain ?? 0, output: p.output ?? 0, high: p.high ?? 0, mid: p.mid ?? 0, midF: p.midF ?? 2, low: p.low ?? 0, lowF: p.lowF ?? 1, hpf: p.hpf ?? -1, eq: p.eq ?? 1 };
+                this.os = [new AnaOs(), new AnaOs()]; this.dc = [[0, 0], [0, 0]]; this.eq = []; this.st = [[], []]; this.iron = [[[0], [0]], [[0], [0]]]; this.ik = ironK(sampleRate);
+                this.set();
+            }
+            set() {
+                const p = this.p, sr = sampleRate * 4, cl = (v, a, b) => Math.max(a, Math.min(b, v)), ix = (v, m) => Math.min(m, Math.max(0, Math.round(v)));
+                const eq = [];
+                if (p.hpf >= -0.5) {
+                    const f = PRE73_HPF[ix(p.hpf, 3)];
+                    for (const q of [1, 0.5]) eq.push(eqMatched('highpass', f, q, 0, sr));
+                    const w = 2 * Math.PI * f / sr, al = Math.sin(w) / 2, c = Math.cos(w), a0 = 1 + al;
+                    eq.push([(1 + c) / 2 / a0, -(1 + c) / a0, (1 + c) / 2 / a0, -2 * c / a0, (1 - al) / a0]);
+                }
+                if (p.eq >= 0.5) {
+                    if (Math.abs(p.low) > 1e-6) eq.push(eqMatched('lowshelf', PRE73_LOW[ix(p.lowF, 3)], 0.9, cl(p.low, -16, 16), sr));
+                    if (Math.abs(p.mid) > 1e-6) eq.push(eqMatched('peaking', PRE73_MID[ix(p.midF, 5)], 0.7 + 0.02 * Math.abs(p.mid), cl(p.mid, -18, 18), sr));
+                    if (Math.abs(p.high) > 1e-6) eq.push(eqMatched('highshelf', 8500, 0.7, cl(p.high, -16, 16), sr));
+                }
+                // mémoire des filtres gardée quand seuls les coefficients changent (pas de clic)
+                if (eq.length !== this.eq.length) this.st = [eq.map(() => [0, 0, 0, 0]), eq.map(() => [0, 0, 0, 0])];
+                this.eq = eq;
+                this.gin = Math.pow(10, cl(p.gain, 0, 30) / 20); this.gout = Math.pow(10, cl(p.output, -24, 12) / 20); this.drive = cl(p.gain, 0, 30) / 30;
+            }
+            process(inputs, outputs) {
+                const inp = inputs[0], out = outputs[0];
+                if (!inp || !inp.length) return true;
+                const n = inp[0].length, nc = Math.min(inp.length, out.length, 2), d = this.drive, a2 = 0.08 + 0.35 * d, k = 1 + 0.3 * d, eq = this.eq, [iw, il] = this.ik;
+                for (let ch = 0; ch < nc; ch++) {
+                    const a = inp[ch], o = out[ch], os = this.os[ch], dc = this.dc[ch], st = this.st[ch], ir = this.iron[ch];
+                    const f = (u) => {
+                        u = ironRun(ir[0], u * HR73, iw, il, IRON73);
+                        let y = Math.tanh((u + a2 * u * u) * k) / k / HR73;
+                        const z = y - dc[0] + 0.99988 * dc[1]; dc[0] = y; dc[1] = z; y = z;
+                        for (let j = 0; j < eq.length; j++) y = biqRun(eq[j], st[j], y);
+                        return ironRun(ir[1], Math.tanh(1.05 * y * HR73) / 1.05, iw, il, IRON73) / HR73;
+                    };
+                    for (let i = 0; i < n; i++) o[i] = os.run(a[i] * this.gin, f) * this.gout;
+                }
+                return true;
+            }
+        }
+        registerProcessor('pulse-pre73', pulseAuto(PulsePre73, (s, v) => { let ch = false; for (const k in v) if (k in s.p && s.p[k] !== v[k]) { s.p[k] = v[k]; ch = true; } if (ch) s.set(); }));
         registerProcessor('pulse-deesser', pulseAuto(PulseDeesser, (s, v) => { if (v.amount !== undefined) { const a = Math.max(0, Math.min(100, v.amount)); s.maxRed = a * 0.24; s.slope = a / 100 * 3; } }));
 
         // Gate : coupe le bruit entre deux phrases. Mêmes calculs que Gate dans engine/src/fx.rs.
@@ -1371,7 +1511,7 @@ window.PulseAudio = (function() {
 
     // Exemplaire d'un effet : « comp#2 » → type « comp » (même calcul que fx_type dans model.rs)
     const fxType = (id) => String(id).split('#')[0];
-    const FX_CHAIN = ['pitch', 'filter', 'gate', 'eq', 'sat', 'msat', 'crush', 'deess', 'comp', 'mband', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'reverb']; // ordre habituel des effets
+    const FX_CHAIN = ['pitch', 'filter', 'pre73', 'gate', 'eq', 'sat', 'msat', 'crush', 'deess', 'fet76', 'comp', 'mband', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'reverb']; // ordre habituel des effets
     const SEND_REVERB_TRIM = 1 / 3; // la reverb seule sort 3 fois trop fort par rapport au son direct : on la ramène à niveau
 
     // Paliers de tempo [{ sec, bpm }] quand le tempo change en cours de morceau (sinon null) — Project::tempo_segments côté Rust
@@ -2111,35 +2251,36 @@ window.PulseAudio = (function() {
         const sd = sr / 4, tmaxD = Math.ceil(sd / 70), winD = 2 * tmaxD + 32;
         return Math.round(0.025 * sr) + winD * 2 + Math.ceil(1.3 * Math.ceil(sr / 70)) + 16;
     }
-    // Nombre de Pitch actifs (« pitch », « pitch#2 »… : chacun ajoute son retard). Même calcul que pitch_count (render.rs).
-    function pitchCount(effects, params, auto) {
-        return (effects || []).filter(e => fxType(e) === 'pitch').filter(e => {
+    // Retard total (secondes) d'une liste d'effets : chaque Pitch actif (« pitch », « pitch#2 »…) et chaque machine Analogique
+    // (suréchantillonnage, 31 échantillons). Même calcul que fx_latency (render.rs).
+    function fxLatency(effects, params, auto, sr) {
+        const np = (effects || []).filter(e => fxType(e) === 'pitch').filter(e => {
             const p = (params || {})[e] || {};
             return !!(p.semi || p.formant) || Object.keys(auto || {}).some(k => k.startsWith(`fx:${e}:`));
         }).length;
+        const na = (effects || []).filter(e => fxType(e) === 'fet76' || fxType(e) === 'pre73').length;
+        return np * pitchLatency(sr) / sr + na * 31 / sr;
     }
-    const pitchOn = (effects, params, auto) => pitchCount(effects, params, auto) > 0;
-    // Nombre de groupes avec Pitch sur le trajet de sortie d'une piste (un stem seul contourne les groupes). Même calcul que pitch_buses (render.rs).
-    function pitchBuses(project, output, stem) {
+    // Retard des groupes sur le trajet de sortie d'une piste (un stem seul contourne les groupes). Même calcul que bus_latency (render.rs).
+    function busLatency(project, output, stem, sr) {
         if (stem) return 0;
         let n = 0, next = output;
         for (let k = 0; k < 8 && next; k++) {
             const b = (project.buses || []).find(x => x.id === next);
             if (!b) break;
-            n += pitchCount(b.effects, b.effectParams, b.automation);
+            n += fxLatency(b.effects, b.effectParams, b.automation, sr);
             next = b.output;
         }
         return n;
     }
     let pitchSr = 48000;   // fréquence du rendu en cours (lecture ou export)
     function withTrackDelays(project, sr = pitchSr, stem = false) {
-        const clipPitch = (c) => !!(c.fx && pitchOn(c.fx.effects, c.fx.effectParams));
-        if (!project || !(project.tracks || []).some(t => t.delayMs || pitchOn(t.effects, t.effectParams, t.automation) || pitchBuses(project, t.output, stem) || (t.clips || []).some(clipPitch))) return project;
-        const comp = pitchLatency(sr) / sr;
+        const clipLat = (c) => c.fx ? fxLatency(c.fx.effects, c.fx.effectParams, null, sr) : 0;
+        if (!project || !(project.tracks || []).some(t => t.delayMs || fxLatency(t.effects, t.effectParams, t.automation, sr) || busLatency(project, t.output, stem, sr) || (t.clips || []).some(clipLat))) return project;
         return { ...project, tracks: project.tracks.map(t => {
-            const d = (t.delayMs || 0) / 1000 - pitchCount(t.effects, t.effectParams, t.automation) * comp - pitchBuses(project, t.output, stem) * comp;
-            if (!d && !(t.clips || []).some(clipPitch)) return t;
-            return { ...t, clips: (t.clips || []).map(c => { const dc = d - (c.fx ? pitchCount(c.fx.effects, c.fx.effectParams) : 0) * comp; return dc ? { ...c, start: c.start + dc, ...(c.loopEnd ? { loopEnd: c.loopEnd + dc } : {}) } : c; }) };
+            const d = (t.delayMs || 0) / 1000 - fxLatency(t.effects, t.effectParams, t.automation, sr) - busLatency(project, t.output, stem, sr);
+            if (!d && !(t.clips || []).some(clipLat)) return t;
+            return { ...t, clips: (t.clips || []).map(c => { const dc = d - clipLat(c); return dc ? { ...c, start: c.start + dc, ...(c.loopEnd ? { loopEnd: c.loopEnd + dc } : {}) } : c; }) };
         }) };
     }
     // Piste gelée (`track.frozen = { id, gain }`, comme « Geler » dans Logic) : elle joue son rendu (régions + effets de piste,
@@ -3065,6 +3206,16 @@ window.PulseAudio = (function() {
         ['chorus', 'flanger', 'phaser', 'tremolo', 'doubler', 'slapback'].forEach((k) => { B[k] = () => node('pulse-mod', k); });
         B.crush = () => node('pulse-crush', 'crush');
         B.pitch = () => { const pp = params.pitch || {}; if (pp.semi || pp.formant || hasAuto('pitch')) node('pulse-pitch', 'pitch'); };
+        // Éclair 76 : en lecture, il envoie sa réduction et sa sortie pour l'aiguille de sa façade (clé « fet76|t0 »)
+        B.fet76 = () => {
+            if (!enabled.includes('fet76') || !fxReady.has(actx)) return;
+            const live = !!params.grKey && !(typeof OfflineAudioContext !== 'undefined' && actx instanceof OfflineAudioContext);
+            const n = new AudioWorkletNode(actx, 'pulse-fet76', { numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max',
+                processorOptions: { kind: 'fet76', ...(params.fet76 || {}), report: live, ...autoAll('fet76') } });
+            if (live) { const k = 'fet76|' + gk('fet76'); n.port.onmessage = (e) => { compGR.set(k, e.data); compGRts.set(k, performance.now()); }; }
+            connect(n);
+        };
+        B.pre73 = () => node('pulse-pre73', 'pre73');
         B.util = () => node('pulse-util', 'util');
         B.width = () => node('pulse-util', 'width');
 

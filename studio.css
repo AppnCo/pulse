@@ -3203,6 +3203,10 @@ body.is-splitting, body.is-splitting * { cursor: col-resize !important; }
 .fam-empty { font-size: 11px; color: var(--text-3); padding: 8px 10px; }
 .fx-add-menu .ctx-sep { height: 1px; background: var(--border); margin: 4px 6px; }
 .fx-add-menu .fam-cat { display: flex; align-items: center; gap: 8px; }
+.fam-ranges { display: flex; gap: 4px; margin: 0 0 6px; padding: 3px; background: #0d0915; border: 1px solid #2a2038; border-radius: 8px; }
+.fam-range { flex: 1; border: 0; border-radius: 6px; padding: 5px 8px; background: transparent; color: #a99cc4; font: 600 11.5px -apple-system, system-ui, sans-serif; letter-spacing: .03em; cursor: pointer; }
+.fam-range.on { background: linear-gradient(180deg, #7c3aed, #5b21b6); color: #fff; }
+.fx-add-menu .fam-cat[hidden] { display: none; }
 .fam-dot { width: 7px; height: 7px; border-radius: 50%; background: #5B21B6; box-shadow: 0 0 0 1px rgba(168,85,247,.35); flex-shrink: 0; }
 .fx-add-menu .fam-cat.on .fam-dot { background: #fff; box-shadow: none; }
 

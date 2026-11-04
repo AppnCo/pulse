@@ -134,6 +134,9 @@ pub struct EffectParams {
     pub master: Option<MasterParams>,
     pub limit: Option<LimitParams>,
     pub pitch: Option<PitchParams>,
+    /// Gamme Analogique : compresseur FET « 76 » et préampli « 73 » (voir analog.rs)
+    pub fet76: Option<Fet76Json>,
+    pub pre73: Option<Pre73Json>,
     /// Exemplaires en plus d'un même effet (« comp#2 », « eq#3»…), réglages bruts : lus par `EffectParams::instance`
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
@@ -222,6 +225,34 @@ pub struct PitchParams {
     pub mix: Option<f64>,
     /// formants en demi-tons (−12 à +12) : timbre plus grave / plus fin, sans changer la note
     pub formant: Option<f64>,
+}
+
+/// Compresseur « 76 » : unités de la façade (Entrée / Sortie 0-48, 24 = unité ; Attaque / Relâche 1-7 ; ratio 4/8/12/20, 0 = tous enfoncés ; mix %)
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct Fet76Json {
+    pub input: Option<f64>,
+    pub output: Option<f64>,
+    pub attack: Option<f64>,
+    pub release: Option<f64>,
+    pub ratio: Option<f64>,
+    pub mix: Option<f64>,
+}
+
+/// Préampli « 73 » : gain 0-30 dB, sortie dB, aigus / médiums / graves en dB, fréquences en index (midF 0-5, lowF 0-3),
+/// coupe-bas : index 0-3 (absent ou < 0 = éteint), eq : 0 = EQ hors service
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Pre73Json {
+    pub gain: Option<f64>,
+    pub output: Option<f64>,
+    pub high: Option<f64>,
+    pub mid: Option<f64>,
+    pub mid_f: Option<f64>,
+    pub low: Option<f64>,
+    pub low_f: Option<f64>,
+    pub hpf: Option<f64>,
+    pub eq: Option<f64>,
 }
 
 /// Filtre : coupe-bas `hpf` et coupe-haut `lpf` en Hz (≤ 20 et ≥ 20 000 = éteint), pente 12 ou 24 dB par octave.

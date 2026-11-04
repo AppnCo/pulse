@@ -1,9 +1,25 @@
 {
 "files": {
+"analog-ui.js": "e7578c00511cd6251a8b4d4354e84f38a40b9dc456c14539eba84489539d79da",
+"assets/analog/alu-big.webp": "0584094c7144ed41bb2986eec3078dc6432530b908e0d11a5d462d82e39728df",
+"assets/analog/bakelite.webp": "7d509c304170a44d0736daf6a026b6ff7c481ab62d59fc85addd22ee63294974",
+"assets/analog/chicken.webp": "cb08c12a209b6a16a8cc417099f116b516c618b2edff818c5bcd78d9a7b4438b",
+"assets/analog/gain73.webp": "ba0ec1db086d67fa3c1869b0d566a32fe00e35b86158a061d07409c8b89c3c5c",
+"assets/analog/hf73.webp": "f86db081c2686db239145030f679f5ab7ba4ace6e02e44f9e36aa957a14a4094",
+"assets/analog/hpf73.webp": "ce767f5a267bab255d4ad3a4d22952c98f30b6d803146ea85b1192e2a777af4b",
+"assets/analog/index.json": "24ad1244041c5d91ebc00c22237bf5c5e2e46d55d176d98723cf9b1574bbaf30",
+"assets/analog/low73.webp": "adaa95d4d81d9d0d2b5963b6e4c5bb1e663d14afa31f79fa8ef25a99571ea39b",
+"assets/analog/lowf73.webp": "9519f9223a4b7269a2e456f463a1a52ba04d49ba677f3e108c15bb57d0f25a15",
+"assets/analog/mid73.webp": "e5ee535cde0a9faa943be52b9cdab06e06f8b650426d122620f3f9b7fedab06f",
+"assets/analog/midf73.webp": "95b11b1bbb60010d1b27a6c69be4b98bef284bec54659da9a6e45a284dacdd0c",
+"assets/analog/push-off.webp": "657ad2b1cba6cc5d4b9e2a86f4673539a9921613bfdf274f7269a743ea09c9f6",
+"assets/analog/push-on.webp": "4c06d18ad5ca7249c4ef969d261049c3a1d69396ec61356bef1233aafdbaa414",
+"assets/analog/screw.webp": "3017e9ba36fb718d767fb5c51092cdb8ce37770a336780cacb96ed27ba48c235",
+"assets/analog/trim73.webp": "cf347e89c1ea16839b52093fd8ebca8b510195743a8b5f834b9eb563286403bf",
 "assets/icon.svg": "72b5c27f134d23017550f44d8b4413d7c2a6bbb18c178b855f98af38d4700c4c",
 "assets/logo.svg": "91e45f0e09dcc7434f4231f622bda56ae8a7a696f9f3071e71d37008cdd61b78",
-"audio.js": "326c36dae08cd132da42edf5a898aaf2c4f05cbff62b3d60633f69d44a322df9",
-"automation.js": "af2b6e7cd9434090c7a029d621ea5073b9abaa30d6f19895e49c148357f802e5",
+"audio.js": "709a2894478c058a2feb3ae4dd4acfeae061f3fab829fa972a241e2fdfe12c4c",
+"automation.js": "a2753180f1216e8601f21d69ffad2c88beafb0fe7bcf55e540992fb8812a884e",
 "compteur.js": "cf3470a9fdadf52299a1c984654b1db75556986ffea64ec9c9ceda5137ad3ff3",
 "i18n/build-en-texts.js": "898f4c22a37e442dbbecef48a9835b7e2639013a0d61dbf24d7f68a11d72a60b",
 "i18n/en-extra.js": "6f7a113b83941e8e0148633a53c28a1456ea51decb604a14bce4d8b357e6b6d2",
@@ -21,9 +37,9 @@
 "pianoroll.js": "3f86d5e52189243f73f085807f13c9f479988d1d868b0f4f6190f4576d9765f9",
 "projectfile.js": "e214c12e0ff946f21e7cc39b9c54ce0ee44ac35632e86a93211ebb7cca15748f",
 "script.js": "db3e98a56222a9e7297b9764201671e632aeaf9e22acaf311b56c3b9be541390",
-"studio.css": "00b72202d5cab5539929382b215edc704f443ee903653f7778012bd79f3624e7",
-"studio.html": "e06474f4527d1172c8393dfa3333bce62a14893531af7435ad44b106a8717d5d",
-"studio.js": "f29ecc13a3adbf04275eee4bc9718b6bd99f889c451252b93f51bc7f8b7b5c69",
+"studio.css": "e617aa31e34cf2e81f12b79ec929ff1e591a64be4dbead7dc4736feeb7882b80",
+"studio.html": "220c3db97ab2dd431ac5f54829d623fe883d3187ab04ba97d7bf6de5fefa00f6",
+"studio.js": "e9238380560c909177860d469ee145e96c5da837adb58de51ac4e1c5133976b4",
 "styles.css": "9040ad9ca17969d48b7cc98c58afab3190dab1db6b986d245b71d0f9c438705c",
 "synth.js": "3daafe1a68a4e2abff7717bdce0af9880279f119b3e5fc52b55018b824726a8d",
 "tempo.js": "1ad0200f61ad3db6f6f5c47500b5c5ff042a585607c713ca324f752d27e33ca3",
@@ -33,5 +49,5 @@
 "vendor/lame.min.js": "15d285e2587b3bdbfd18a68de6ce07cc074f7480a82c3815da2dc1c348ec6df4",
 "warp.js": "209bb3114410db48c37af5bf718a4cd482fcb95cc5bbf7ae6f024e3420bf6f3e"
 },
-"version": "2026-11-03 20:56"
+"version": "2026-11-04 01:43"
 }

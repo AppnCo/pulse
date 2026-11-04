@@ -164,44 +164,48 @@ fn aux_sends(project: &Project, sends: &HashMap<String, f64>, auto: &crate::mode
         .collect()
 }
 
-/// Le Pitch « voix fidèle » retarde le son (`Pitch::latency`) : la piste (ou la région) qui l'utilise est avancée d'autant,
-/// pour que la voix retombe pile en place (comme la compensation de retard de Logic). Même calcul que pitchComp dans audio.js.
-fn pitch_on(effects: &[String], params: &crate::model::EffectParams, auto: Option<&crate::model::Automation>) -> bool { pitch_count(effects, params, auto) > 0 }
-/// Nombre de Pitch actifs (chacun ajoute son retard) : plusieurs exemplaires possibles (« pitch », « pitch#2 »…)
-fn pitch_count(effects: &[String], params: &crate::model::EffectParams, auto: Option<&crate::model::Automation>) -> u32 {
-    effects.iter().filter(|e| crate::model::fx_type(e) == "pitch").filter(|e| {
+/// Effets qui retardent le son : le Pitch « voix fidèle » (`Pitch::latency`) et les machines de la gamme Analogique
+/// (suréchantillonnage, `analog::Fet76::LATENCY`). La piste (ou la région) qui les utilise est avancée d'autant,
+/// pour que le son retombe pile en place (comme la compensation de retard de Logic). Même calcul que fxLatency dans audio.js.
+/// Retard total (secondes) d'une liste d'effets ; plusieurs exemplaires possibles (« pitch », « pitch#2 »…)
+fn fx_latency(effects: &[String], params: &crate::model::EffectParams, auto: Option<&crate::model::Automation>, sr: f64) -> f64 {
+    let pitch = effects.iter().filter(|e| crate::model::fx_type(e) == "pitch").filter(|e| {
         let p = params.instance(e);
         p.pitch.as_ref().is_some_and(|p| p.semi.unwrap_or(0.0) != 0.0 || p.formant.unwrap_or(0.0) != 0.0)
             || auto.is_some_and(|a| a.other.keys().any(|k| k.starts_with(&format!("fx:{e}:"))))
-    }).count() as u32
+    }).count() as f64;
+    let analog = effects.iter().filter(|e| matches!(crate::model::fx_type(e), "fet76" | "pre73")).count() as f64;
+    pitch * crate::pitch::Pitch::latency_for(sr) as f64 / sr + analog * crate::analog::Fet76::LATENCY as f64 / sr
 }
-/// Nombre de groupes avec Pitch sur le trajet de sortie d'une piste (groupe → groupe → master). Même calcul que pitchBuses dans audio.js.
+/// Retard des groupes sur le trajet de sortie d'une piste (groupe → groupe → master). Même calcul que busLatency dans audio.js.
 /// Un stem seul contourne les groupes : 0.
-fn pitch_buses(project: &Project, output: Option<&str>, stem: bool) -> u32 {
-    if stem { return 0; }
-    let (mut n, mut next) = (0, output.map(str::to_owned));
+fn bus_latency(project: &Project, output: Option<&str>, stem: bool, sr: f64) -> f64 {
+    if stem { return 0.0; }
+    let (mut n, mut next) = (0.0, output.map(str::to_owned));
     for _ in 0..8 {
         let Some(id) = next.as_deref() else { break };
         let Some(b) = project.buses.iter().find(|b| b.id == id) else { break };
-        n += pitch_count(&b.effects, &b.effect_params, Some(&b.automation));
+        n += fx_latency(&b.effects, &b.effect_params, Some(&b.automation), sr);
         next = b.output.clone();
     }
     n
 }
 /// Délai de piste : copie du projet où les régions des pistes à délai sont décalées (même calcul que withTrackDelays dans audio.js),
-/// moins la compensation du Pitch de la piste, de ses régions et des groupes où elle sort (`sr` = fréquence de rendu, `stem` = piste seule)
+/// moins le retard des effets de la piste, de ses régions et des groupes où elle sort (`sr` = fréquence de rendu, `stem` = piste seule)
 fn with_track_delays(project: &Project, sr: f64, stem: bool) -> Option<Project> {
-    let comp = crate::pitch::Pitch::latency_for(sr) as f64 / sr;
-    let need = |t: &crate::model::Track| t.delay_ms.unwrap_or(0.0) != 0.0 || pitch_on(&t.effects, &t.effect_params, Some(&t.automation))
-        || pitch_buses(project, t.output.as_deref(), stem) > 0
-        || t.clips.iter().any(|c| c.fx.as_ref().is_some_and(|f| pitch_on(&f.effects, &f.effect_params, None)));
+    let lat = |t: &crate::model::Track| fx_latency(&t.effects, &t.effect_params, Some(&t.automation), sr);
+    let clip_lat = |c: &crate::model::Clip| c.fx.as_ref().map_or(0.0, |f| fx_latency(&f.effects, &f.effect_params, None, sr));
+    let need = |t: &crate::model::Track| t.delay_ms.unwrap_or(0.0) != 0.0 || lat(t) > 0.0
+        || bus_latency(project, t.output.as_deref(), stem, sr) > 0.0
+        || t.clips.iter().any(|c| clip_lat(c) > 0.0);
     if !project.tracks.iter().any(need) { return None; }
-    let nb: Vec<u32> = project.tracks.iter().map(|t| pitch_buses(project, t.output.as_deref(), stem)).collect();
+    let nb: Vec<f64> = project.tracks.iter().map(|t| bus_latency(project, t.output.as_deref(), stem, sr)).collect();
+    let tl: Vec<f64> = project.tracks.iter().map(|t| lat(t)).collect();
     let mut p = project.clone();
-    for (t, nb) in p.tracks.iter_mut().zip(nb) {
-        let d = t.delay_ms.unwrap_or(0.0) / 1000.0 - pitch_count(&t.effects, &t.effect_params, Some(&t.automation)) as f64 * comp - nb as f64 * comp;
+    for ((t, nb), tl) in p.tracks.iter_mut().zip(nb).zip(tl) {
+        let d = t.delay_ms.unwrap_or(0.0) / 1000.0 - tl - nb;
         for c in &mut t.clips {
-            let dc = d - c.fx.as_ref().map_or(0, |f| pitch_count(&f.effects, &f.effect_params, None)) as f64 * comp;
+            let dc = d - c.fx.as_ref().map_or(0.0, |f| fx_latency(&f.effects, &f.effect_params, None, sr));
             if dc == 0.0 { continue; }
             c.start += dc;
             if let Some(le) = c.loop_end.as_mut() { *le += dc; }
