@@ -4703,6 +4703,7 @@ window.PulseAudio = (function() {
 
     // Mute / solo à chaud pendant la lecture
     function refreshAudibility(project) {
+        try { if (typeof window.markSoloMutes === 'function') window.markSoloMutes(); } catch {}   // M qui clignotent (studio.js)
         if (nativeOn) { nativeMixSoon(); return; }
         if (!ctx) return;
         liveNodes.forEach((n, idx) => {
@@ -4952,7 +4953,7 @@ window.PulseAudio = (function() {
         startRecording, stopRecording, takeRecRescue, clearRecRescue,
         registerBuffer, hasBuffer, getBuffer, getBufferDuration, clearBuffers, computePeaks,
         play, stopAll, getPlaybackPosition, setNativeBackend, isNative, setBeatsPerBar,
-        updateTrackVolume, updateTrackPan, updateComp, setAutoRanges, eqSections, horizonCoefs, eqMatched, eqIsDynamic, getEqDyn, eqBandCoefs, getLimiterMeter, getGateMeter, getDeessMeter, getMbandMeter, refreshAudibility, clearLiveNodes,
+        updateTrackVolume, updateTrackPan, updateComp, setAutoRanges, eqSections, horizonCoefs, eqMatched, eqIsDynamic, getEqDyn, eqBandCoefs, getLimiterMeter, getGateMeter, getDeessMeter, getMbandMeter, refreshAudibility, isTrackAudible, clearLiveNodes,
         getTrackAnalyser, getTrackMeters, trackChannelCount, getMasterAnalyser, getTrackSpectrum, getBusSpectrum, getCompReduction, setMasterVolume,
         setMetronome, setMetronomeBpm, setCountIn, isCountInEnabled,
         startMetronome, stopMetronome, playCountIn, stopCountIn, isCountingIn,

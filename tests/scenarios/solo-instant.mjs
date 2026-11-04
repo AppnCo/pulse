@@ -7,7 +7,7 @@ export default async (c) => {
   await boot(c, { id: 'so1', name: 'SO', bpm: 120, sends: [], tracks: [tr('A'), tr('B'), tr('C')] }, { mic: false });
   await ev(`state.selectedTrack=0; renderTracksPanel(); bindTrackEvents()`); await sleep(200);
   const at = async (sel) => JSON.parse(await J(ev, `const r=document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return JSON.stringify({x:r.x+r.width/2,y:r.y+r.height/2})`));
-  const clickAt = async (p) => { await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y }); await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: p.x, y: p.y, button: 'left', clickCount: 1 }); await sleep(30); await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: p.x, y: p.y, button: 'left', clickCount: 1 }); await sleep(150); };
+  const clickAt = async (p, mod = 0) => { await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y }); await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: p.x, y: p.y, button: 'left', clickCount: 1, modifiers: mod }); await sleep(30); await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: p.x, y: p.y, button: 'left', clickCount: 1, modifiers: mod }); await sleep(150); };
   await clickAt(await at('.track-item[data-i="2"] .t-mini[data-flag="solo"]'));
   check('un clic sur S d\'une autre piste : solo allumé tout de suite', await J(ev, `return !!state.project.tracks[2].solo`));
   check('le bouton S est allumé', await J(ev, `return document.querySelector('.track-item[data-i="2"] .t-mini[data-flag="solo"]').classList.contains('active')`));
@@ -40,4 +40,26 @@ export default async (c) => {
   check('la piste hors du groupe ne s\'entend plus', +wav < 1e-3, wav);
   await clickAt(await at('.group-header[data-bus="g"] .g-s'));
   check('re-clic : plus de solo nulle part', await J(ev, `return !state.project.buses[0].solo && document.querySelectorAll('.t-mini.implied').length===0`));
+  // ---- Gestes Logic (manuel d'Apple)
+  await ev(`state.project.buses=[]; state.project.tracks.forEach(t=>{t.solo=false;t.muted=false;t.output='master';t.pan=0}); state.selectedTrack=0; state.selectedTracks=new Set(); renderTracksPanel(); bindTrackEvents()`); await sleep(150);
+  const down = async (p, mod = 0) => { await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y }); await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: p.x, y: p.y, button: 'left', clickCount: 1, modifiers: mod }); };
+  // glisser sur les M : appui sur le M de A, glisser jusqu'à C → les 3 coupées
+  const m0 = await at('.track-item[data-i="0"] .t-mini[data-flag="mute"]'), m2 = await at('.track-item[data-i="2"] .t-mini[data-flag="mute"]');
+  await down(m0); for (let k = 1; k <= 10; k++) { await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: m0.x, y: m0.y + (m2.y - m0.y) * k / 10, buttons: 1 }); await sleep(25); }
+  await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: m2.x, y: m2.y, button: 'left', clickCount: 1 }); await sleep(200);
+  check('glisser sur les M : les 3 pistes coupées', await J(ev, `return state.project.tracks.every(t=>t.muted)`), await J(ev, `return JSON.stringify(state.project.tracks.map(t=>!!t.muted))`));
+  // ⌘ + clic sur un M (tous coupés) : tous les M dans le même état basculent → tous rallumés
+  await clickAt(await at('.track-item[data-i="1"] .t-mini[data-flag="mute"]'), 4);
+  check('⌘ + clic sur un M : tous ceux dans le même état basculent', await J(ev, `return state.project.tracks.every(t=>!t.muted)`));
+  // S sur A puis ⌥ + clic sur le S de C : C seule en solo
+  await clickAt(await at('.track-item[data-i="0"] .t-mini[data-flag="solo"]'));
+  await clickAt(await at('.track-item[data-i="2"] .t-mini[data-flag="solo"]'), 1);
+  check('⌥ + clic sur un S éteint : cette piste seule en solo', await J(ev, `return JSON.stringify(state.project.tracks.map(t=>!!t.solo))`) === '[false,false,true]');
+  check('les M des pistes coupées par le solo clignotent', await J(ev, `return JSON.stringify([...document.querySelectorAll('.track-item .t-mini[data-flag="mute"]')].map(b=>b.classList.contains('solo-off')))`) === '[true,true,false]');
+  await clickAt(await at('.track-item[data-i="2"] .t-mini[data-flag="solo"]'), 1);
+  check('⌥ + clic sur un S allumé : plus aucun solo, plus de clignotement', await J(ev, `return state.project.tracks.every(t=>!t.solo) && !document.querySelector('.solo-off')`));
+  // ⌥ + clic sur le pan rond d'une piste : au centre
+  await ev(`state.project.tracks[1].pan=40; renderTracksPanel(); bindTrackEvents()`); await sleep(100);
+  await clickAt(await at('.track-item[data-i="1"] .t-knob'), 1);
+  check('⌥ + clic sur un pan : au centre', await J(ev, `return state.project.tracks[1].pan`) === 0);
 };

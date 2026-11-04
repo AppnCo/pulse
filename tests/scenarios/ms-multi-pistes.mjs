@@ -25,7 +25,7 @@ export default async ({ ev, nav, send, sleep, check }) => {
   await click('.track-item[data-i="3"] .m-s', 4);
   check('⌘ + clic S : D seule en solo', (await st('solo')) === '0001', await st('solo'));
   await click('.track-item[data-i="1"] .m-s', 1);
-  check('⌥ + clic S sur une piste sans solo : toutes en solo', (await st('solo')) === '1111', await st('solo'));
+  check('⌥ + clic S sur une piste sans solo : elle seule en solo (comme Logic)', (await st('solo')) === '0100', await st('solo'));
   await click('.track-item[data-i="1"] .m-s', 1);
   check('⌥ + clic S encore : plus aucun solo', (await st('solo')) === '0000', await st('solo'));
 };

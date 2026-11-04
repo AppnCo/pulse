@@ -3824,3 +3824,6 @@ body[data-left-tool="fade"] .timeline-tracks .clip { cursor: ew-resize; }
 .fx-add-menu .fam-thumb-wrap { width: 76px; flex: 0 0 76px; display: flex; justify-content: center; }
 .fx-add-menu .fam-thumb-none { display: flex; align-items: center; justify-content: center; color: #c4b5fd; font-size: 18px; width: 42px; height: 42px; box-shadow: none; }
 .fx-add-menu .fam-fx:hover .fam-thumb { box-shadow: 0 0 0 1px #ffffff55, 0 2px 6px #0008; }
+/* Comme Logic : M qui clignote (bleu) quand la piste est coupée parce qu'une autre est en solo */
+@keyframes soloOffBlink { 0%, 55% { background: #3b82f6; border-color: #3b82f6; color: #fff; } 56%, 100% { background: transparent; } }
+.t-mini.m-m.solo-off, .strip-ms .strip-m.solo-off { animation: soloOffBlink 1s steps(1) infinite; }

@@ -1051,8 +1051,8 @@ function renderTracksPanel() {
             <div class="track-info">
                 <div class="track-name" contenteditable="${!t.isCapture}" data-i="${i}">${esc(t.name)}${t.isCapture ? '<span class="chip" contenteditable="false"> LIVE</span>' : ''}</div>
                 <div class="track-buttons">
-                    <button class="t-mini m-m ${t.muted?'active':''}" data-flag="mute" data-i="${i}" data-tooltip="Mute (M) — ⌥+clic = toutes les pistes">M</button>
-                    <button class="t-mini m-s ${t.solo?'active':''} ${!t.solo && trackGroups(t).some(g => g.solo) ? 'implied' : ''}" data-flag="solo" data-i="${i}" data-tooltip="Solo (S) — ⌘+clic = exclusif · ⌥+clic = toutes les pistes">S</button>
+                    <button class="t-mini m-m ${t.muted?'active':''}" data-flag="mute" data-i="${i}" data-tooltip="Mute (M) — glisser sur les M = plusieurs pistes · ⌘ + clic = tous les M dans le même état · ⌥ + clic = toutes les pistes">M</button>
+                    <button class="t-mini m-s ${t.solo?'active':''} ${!t.solo && trackGroups(t).some(g => g.solo) ? 'implied' : ''}" data-flag="solo" data-i="${i}" data-tooltip="Solo (S) — ⌥ + clic = cette piste seule (re-⌥ + clic = plus de solo) · glisser sur les S = plusieurs pistes">S</button>
                     <button class="t-mini m-r ${t.armed?'active':''}" data-flag="rec" data-i="${i}" data-tooltip="${t.armed ? 'Prête à enregistrer : la prochaine prise ira ici (clic pour désarmer)' : 'Prête à enregistrer : clique pour que la prochaine prise aille ici'}">R</button>
                     <button class="t-mini m-i ${trackMonitored(t)?'active':''}" data-flag="mon" data-i="${i}" data-tooltip="${trackMonitored(t) ? 'Retour casque : tu t\'entends (clic pour couper)' : 'Retour casque coupé (clic pour t\'entendre)'}">i</button>
                     ${trackTakeNumbers(t).length ? `<button class="takes-toggle ${t.takesOpen ? 'active' : ''}" data-takes="${i}" data-tooltip="${t.takesOpen ? 'Cacher les prises' : 'Voir les prises mises de côté'}"><svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>${trackTakeNumbers(t).length}</button>` : ''}
@@ -5103,6 +5103,13 @@ function setTracksFlag(key) {
     saveProject();
 }
 // Tous les solos à zéro : pistes, groupes, dossiers
+// Comme Logic : le M d'une piste qu'on n'entend pas parce qu'une AUTRE est en solo clignote (pistes et table de mixage)
+function markSoloMutes() {
+    const p = state.project; if (!p || !p.tracks) return;
+    const off = (t) => !t.muted && !PulseAudio.isTrackAudible(p, t);
+    document.querySelectorAll('.track-item').forEach(el => { const t = p.tracks[parseInt(el.dataset.i)]; const b = el.querySelector('.t-mini[data-flag="mute"]'); if (t && b) b.classList.toggle('solo-off', off(t)); });
+    document.querySelectorAll('.mixer-strips .strip[data-kind="track"]').forEach(el => { const t = p.tracks[parseInt(el.dataset.i)]; const b = el.querySelector('.strip-m'); if (t && b) b.classList.toggle('solo-off', off(t)); });
+}
 function clearSoloFlags() {
     state.project.tracks.forEach(t => t.solo = false);
     (state.project.buses || []).forEach(b => { delete b.solo; });
@@ -5170,6 +5177,7 @@ function clickSelectTrack(idx, e) {
 }
 // Tranches du mixeur : les pistes choisies sont marquées (comme Logic)
 function paintMixerSelection() {
+    markSoloMutes();
     const sel = new Set(mixChosenTracks()), bs = mixChosenBuses();
     document.querySelectorAll('.mixer-strips .strip[data-kind="track"]').forEach(el => el.classList.toggle('is-chosen', sel.has(parseInt(el.dataset.i))));
     document.querySelectorAll('.mixer-strips .strip[data-kind="bus"]').forEach(el => { const b = state.project.buses[parseInt(el.dataset.i)]; el.classList.toggle('is-chosen', !!b && bs.includes(b)); });
@@ -12926,6 +12934,7 @@ new MutationObserver((muts) => {
 
 // --- Events pistes ---
 function bindTrackEvents() {
+    markSoloMutes();
     bindTrackResize();
     bindGroupResize();
     // Drag depuis n'importe où sur la piste + clic pour sélectionner
@@ -13169,7 +13178,23 @@ function bindTrackEvents() {
     document.querySelectorAll('.t-mini').forEach(el => {
         // Comme Logic : M / S / R réagissent dès l'appui. Avant, l'appui choisissait d'abord la piste et redessinait la liste :
         // le bouton était remplacé avant le relâché, le clic se perdait (il fallait cliquer deux fois).
-        el.addEventListener('mousedown', e => { if (e.button !== 0) return; e.stopPropagation(); e.preventDefault(); el._downDone = true; act(e); });
+        el.addEventListener('mousedown', e => {
+            if (e.button !== 0) return; e.stopPropagation(); e.preventDefault(); el._downDone = true; act(e);
+            // Comme Logic : appui sur un M (ou S) puis glisser vers le haut / bas = toutes les pistes survolées prennent le même état
+            const flag = el.dataset.flag; if ((flag !== 'mute' && flag !== 'solo') || e.altKey || e.metaKey || e.ctrlKey) return;
+            const key = flag === 'mute' ? 'muted' : 'solo', t0 = state.project.tracks[parseInt(el.dataset.i)]; if (!t0) return;
+            const want = !!t0[key], done = new Set([parseInt(el.dataset.i)]);
+            const mv = (ev) => {
+                const it = document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.('.track-item'); if (!it) return;
+                const j = parseInt(it.dataset.i), x = state.project.tracks[j]; if (!x || done.has(j)) return;
+                done.add(j); if (!!x[key] === want) return;
+                x[key] = want;
+                const b = it.querySelector(`.t-mini[data-flag="${flag}"]`); if (b) b.classList.toggle('active', want);
+                PulseAudio.refreshAudibility(state.project);
+            };
+            const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); if (done.size > 1) { renderTracksPanel(); bindTrackEvents(); if (state.mixerOpen) { renderMixer(); bindMixerEvents(); } saveProject(); } };
+            document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
+        });
         el.addEventListener('click', e => { e.stopPropagation(); if (el._downDone) { el._downDone = false; return; } act(e); });
         const act = (e) => {
             const i = parseInt(el.dataset.i);
@@ -13182,11 +13207,22 @@ function bindTrackEvents() {
                 return;
             }
 
-            // Comme Logic : ⌥ + clic = toutes les pistes ; clic sur une des pistes choisies = toutes les pistes choisies
+            // Comme Logic (manuel d'Apple) : ⌥ + clic sur un S éteint = cette piste seule en solo, sur un S allumé = plus aucun solo
+            if (flag === 'solo' && e.altKey) {
+                const was = !!t.solo; pushUndo(); clearSoloFlags(); if (!was) t.solo = true;
+                PulseAudio.refreshAudibility(state.project); renderTracksPanel(); bindTrackEvents(); saveProject();
+                if (state.mixerOpen) { renderMixer(); bindMixerEvents(); }
+                flash(was ? 'Plus aucun solo' : `Solo : « ${t.name} » seule`);
+                return;
+            }
+            // ⌘ + clic sur un M = tous les M dans le même état que lui basculent (Logic) ; ⌥ + clic sur un M = toutes les pistes ;
+            // clic sur une des pistes choisies = toutes les pistes choisies
             if ((flag === 'mute' || flag === 'solo') && !(flag === 'solo' && (e.metaKey || e.ctrlKey))) {
                 const key = flag === 'mute' ? 'muted' : 'solo', want = !t[key];
                 const sel = selectedTrackIdxs();
-                const idxs = e.altKey ? state.project.tracks.map((_, j) => j) : (sel.length > 1 && sel.includes(i) ? sel : [i]);
+                const sameAll = flag === 'mute' && (e.metaKey || e.ctrlKey);
+                const idxs = sameAll ? state.project.tracks.map((x, j) => !!x.muted === !!t.muted ? j : -1).filter(j => j >= 0)
+                    : e.altKey ? state.project.tracks.map((_, j) => j) : (sel.length > 1 && sel.includes(i) ? sel : [i]);
                 idxs.forEach(j => { const x = state.project.tracks[j]; if (x) x[key] = want; });
                 PulseAudio.refreshAudibility(state.project);
                 renderTracksPanel(); bindTrackEvents(); saveProject();
@@ -15133,6 +15169,15 @@ function resetRange(el) {
 }
 document.addEventListener('mousedown', (e) => {
     if (!(e.metaKey || e.ctrlKey || e.altKey) || e.button !== 0) return;
+    // ⌥ + clic sur un pan rond (piste, table de mixage) = au centre, comme Logic
+    const pk = e.altKey && e.target && e.target.closest ? e.target.closest('.t-knob, .strip-pan-knob') : null;
+    if (pk) {
+        e.preventDefault(); e.stopPropagation();
+        if (pk.classList.contains('t-knob')) { pk.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); return; }
+        const i = parseInt(pk.closest('.strip')?.dataset.i), t = state.project.tracks[i]; if (!t) return;
+        pushUndo(); t.pan = 0; updatePanKnobVisual(pk, 0); PulseAudio.updateTrackPan(i, 0); syncTrackPan(i); saveProject();
+        return;
+    }
     const el = e.target && e.target.closest ? e.target.closest('input[type="range"][data-default]') : null;
     if (!el || el.disabled) return;
     e.preventDefault(); e.stopPropagation();
