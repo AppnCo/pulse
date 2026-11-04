@@ -1076,6 +1076,9 @@ mod tests {
             "buses":[{"id":"g","name":"Guitares"}],"folders":[{"id":"f","solo":true}]}"#).unwrap();
         let b: Vec<bool> = q.tracks.iter().map(|t| q.is_audible(t)).collect();
         assert_eq!(b, vec![false, true, false]);
+        // bus d'envoi en solo : la piste qui y envoie joue, l'autre non
+        let r: crate::model::Project = serde_json::from_str(r#"{"tracks":[{"name":"V","busSends":{"rev":40}},{"name":"B"}],"buses":[{"id":"rev","name":"Bus 1","solo":true}]}"#).unwrap();
+        assert_eq!(r.tracks.iter().map(|t| r.is_audible(t)).collect::<Vec<_>>(), vec![true, false]);
     }
 
     /// Mouvement calé sur le tempo : trémolo au 1/8 à 120 BPM = trémolo à 4 Hz ; la vitesse automatisée est ignorée en mode note

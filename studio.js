@@ -633,7 +633,7 @@ function bindGroupEvents() {
                 ['Ranger dans un nouveau grand groupe', () => wrapGroup(bus.id)],
                 ...others.map(o => [`Ranger dans « ${o.name} »`, () => moveGroupInto(bus.id, o.id)]),
                 ...(parent ? [[`Sortir de « ${parent.name} »`, () => moveGroupInto(bus.id, parent.output || 'master')]] : []),
-                ['Dissoudre le groupe (les pistes restent)', () => dissolveGroup(bus.id)]
+                ['Éclater le groupe (les pistes restent, le bus disparaît)', () => dissolveGroup(bus.id)]
             ];
             items.forEach(([label, action]) => {
                 const it = document.createElement('div');
@@ -3371,6 +3371,7 @@ function renderMixer() {
         return `
         <div class="strip ${t.isCapture?'strip-capture':''} ${isPendDel(t) ? 'pend-del' : ''}" style="--track-color: ${t.color}" data-kind="track" data-i="${i}">
             <div class="strip-name">${esc(t.name)}</div>
+            <div class="strip-ms"><button class="strip-m ${t.muted ? 'active' : ''}" data-tooltip="Mute (M)">M</button><button class="strip-s ${t.solo ? 'active' : ''} ${!t.solo && trackGroups(t).some(g => g.solo) ? 'implied' : ''}" data-tooltip="Solo (S)">S</button></div>
             <button class="strip-sound" data-tooltip="Réglage de la piste : charge un réglage prêt à l'emploi (comme « Réglage » dans Logic)">${t.sound && SOUND_PRESETS[t.sound.preset] ? esc(SOUND_PRESETS[t.sound.preset].label) : 'Réglage'} ▾</button>
             ${slotListsHtml('track', t)}
             <div class="strip-pan">
@@ -3394,6 +3395,7 @@ function renderMixer() {
         ${buses.map((b, bi) => `
             <div class="strip strip-bus ${b.locked?'strip-locked':''}" style="--track-color: ${b.color || 'var(--violet-2)'}" data-kind="bus" data-i="${bi}">
                 <div class="strip-name">${esc(b.name)}${b.locked ? ' <span class="chip chip-red">Verrouillé</span>' : ''}</div>
+                ${b.premaster ? '' : `<div class="strip-ms"><button class="strip-m ${b.muted ? 'active' : ''}" data-tooltip="Couper ce bus">M</button><button class="strip-s ${b.solo ? 'active' : ''}" data-tooltip="Écouter seulement ce bus et ce qui y entre">S</button></div>`}
                 ${b.premaster || b.locked ? `<div class="strip-fx">
                     ${b.premaster ? `<button class="return-edit master-edit" data-bus="${esc(b.id)}" data-tooltip="Le réglage final de tout le morceau">Finition ▾</button>` : `<div class="strip-fx-slot active" data-fx="preset">${esc(({ 'bus-allvocal': 'Toutes les voix', 'bus-safety': 'Sécurité', 'bus-mix1': 'Finition' })[b.preset] || 'Groupe')}</div>`}
                 </div>` : `
@@ -5119,6 +5121,7 @@ function dropStaleClipSelection() {
 
 // Clic sur une piste (liste ou tranche du mixeur) : seul = elle ; ⇧ = de la piste choisie jusqu'à elle ; ⌘ = l'ajouter / la retirer
 function clickSelectTrack(idx, e) {
+    state._mixNoTrack = false;
     const isMac = /Mac/i.test(navigator.platform);
     const cmd = e.metaKey || (!isMac && e.ctrlKey);
     if (e.shiftKey) {
@@ -5144,8 +5147,45 @@ function clickSelectTrack(idx, e) {
 }
 // Tranches du mixeur : les pistes choisies sont marquées (comme Logic)
 function paintMixerSelection() {
-    const sel = new Set(selectedTrackIdxs());
+    const sel = new Set(mixChosenTracks()), bs = mixChosenBuses();
     document.querySelectorAll('.mixer-strips .strip[data-kind="track"]').forEach(el => el.classList.toggle('is-chosen', sel.has(parseInt(el.dataset.i))));
+    document.querySelectorAll('.mixer-strips .strip[data-kind="bus"]').forEach(el => { const b = state.project.buses[parseInt(el.dataset.i)]; el.classList.toggle('is-chosen', !!b && bs.includes(b)); });
+}
+// Tranches choisies dans la table de mixage : pistes (sauf si on vient de choisir un bus seul) et bus
+function mixChosenTracks() { return state._mixNoTrack ? [] : selectedTrackIdxs(); }
+function mixChosenBuses() { const ids = state.mixBuses instanceof Set ? state.mixBuses : new Set(); return (state.project.buses || []).filter(b => ids.has(b.id)); }
+// M / S depuis la table de mixage (piste ou bus) : la tranche cliquée, ou toutes les choisies si elle en fait partie
+function mixerFlag(kind, i, flag) {
+    const tIdx = mixChosenTracks(), bs = mixChosenBuses();
+    const src = kind === 'track' ? state.project.tracks[i] : state.project.buses[i]; if (!src) return;
+    const inSel = kind === 'track' ? tIdx.includes(i) : bs.includes(src);
+    const key = flag === 'mute' ? 'muted' : 'solo', want = !src[key];
+    pushUndo();
+    const tracks = inSel ? tIdx.map(j => state.project.tracks[j]).filter(Boolean) : (kind === 'track' ? [src] : []);
+    const buses = inSel ? bs : (kind === 'bus' ? [src] : []);
+    tracks.forEach(t => { t[key] = want; });
+    buses.forEach(b => { if (want) b[key] = true; else delete b[key]; if (key === 'muted') PulseAudio.updateBusVolume(b.id, b.muted ? 0 : (b.volume ?? 100)); });
+    PulseAudio.refreshAudibility(state.project);
+    renderTracksPanel(); bindTrackEvents();
+    if (state.mixerOpen) { renderMixer(); bindMixerEvents(); }
+    saveProject();
+}
+// Faders liés (comme Logic) : la tranche bougée fait bouger toutes les tranches choisies du même écart en dB, pistes et bus
+function followMixerVolume(kind, i, prev, v) {
+    const tIdx = mixChosenTracks(), bs = mixChosenBuses();
+    const src = kind === 'track' ? state.project.tracks[i] : state.project.buses[i];
+    const inSel = kind === 'track' ? tIdx.includes(i) : bs.includes(src);
+    if (!inSel || tIdx.length + bs.length < 2 || prev <= 0) return;
+    const k = v / prev;
+    const setF = (sel, vol) => { const el = document.querySelector(sel); if (!el) return; const f = el.querySelector('.fader'); if (f) f.value = volToPos(vol); const d = el.querySelector('.strip-db'); if (d) d.textContent = `${volumeToDb(vol)} dB`; };
+    if (kind === 'bus') tIdx.forEach(j => { const o = state.project.tracks[j]; if (!o || o.locked) return; o.volume = Math.max(0, Math.min(VOL_MAX, Math.round((o.volume ?? 100) * k))); PulseAudio.updateTrackVolume(j, o.volume); syncInspectorVolume(j); });
+    tIdx.forEach(j => { const o = state.project.tracks[j]; if (o) setF(`.mixer-strips .strip[data-kind="track"][data-i="${j}"]`, o.volume ?? 100); });
+    bs.forEach(b => {
+        if (b === src || b.locked) return;
+        b.volume = Math.max(0, Math.min(VOL_MAX, Math.round((b.volume ?? 100) * k)));
+        PulseAudio.updateBusVolume(b.id, b.muted ? 0 : b.volume);
+        setF(`.mixer-strips .strip[data-kind="bus"][data-i="${state.project.buses.indexOf(b)}"]`, b.volume);
+    });
 }
 function selectTrack(idx) {
     state.deselectedAt = null;
@@ -11453,8 +11493,29 @@ function bindMixerEvents() {
             if (e.target.closest('input, button, select, textarea, [contenteditable="true"], .fader, .strip-pan-knob, .insert-slot, .send-slot, .ctx-item, [role="slider"]')) return;
             const i = parseInt(strip.dataset.i);
             if (!state.project.tracks[i]) return;
+            const isMac = /Mac/i.test(navigator.platform);
+            if (!(e.shiftKey || e.metaKey || (!isMac && e.ctrlKey))) state.mixBuses = new Set();
+            state._mixNoTrack = false;
             clickSelectTrack(i, e);
         });
+    });
+    // Tranches de bus : clic = choisir ce bus ; ⇧ / ⌘ + clic = l'ajouter / le retirer (avec les pistes choisies), comme Logic
+    document.querySelectorAll('.mixer-strips .strip[data-kind="bus"]').forEach(strip => {
+        strip.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+            if (e.target.closest('input, button, select, textarea, [contenteditable="true"], .fader, .insert-slot, .send-slot, .ctx-item, [role="slider"]')) return;
+            const b = state.project.buses[parseInt(strip.dataset.i)]; if (!b) return;
+            const isMac = /Mac/i.test(navigator.platform), add = e.shiftKey || e.metaKey || (!isMac && e.ctrlKey);
+            state.mixBuses = state.mixBuses instanceof Set ? state.mixBuses : new Set();
+            if (add) { if (state.mixBuses.has(b.id)) state.mixBuses.delete(b.id); else state.mixBuses.add(b.id); }
+            else { state.mixBuses = new Set([b.id]); state._mixNoTrack = true; state.selectedTracks = new Set(); }
+            paintMixerSelection();
+        });
+    });
+    // M / S sur chaque tranche : sur toutes les tranches choisies si on clique l'une d'elles (comme Logic)
+    document.querySelectorAll('.mixer-strips .strip .strip-m, .mixer-strips .strip .strip-s').forEach(btn => {
+        const strip = btn.closest('.strip'), kind = strip.dataset.kind, i = parseInt(strip.dataset.i), mute = btn.classList.contains('strip-m');
+        pressBtn(btn, () => mixerFlag(kind, i, mute ? 'mute' : 'solo'));
     });
     paintMixerSelection();
     // Envois : dose par piste, retours, ajout
@@ -11581,10 +11642,11 @@ function bindMixerEvents() {
                     t.volume = v;
                     if (window.PulseAudio) PulseAudio.updateTrackVolume(i, v);
                     syncInspectorVolume(i);
-                    followSelectedVolume(i, prevV, v);
+                    if (!state._mixNoTrack) followSelectedVolume(i, prevV, v);
+                    followMixerVolume('track', i, prevV, v);
                 } else if (kind === 'bus') {
                     const b = state.project.buses[i];
-                    if (b) { b.volume = v; PulseAudio.updateBusVolume(b.id, b.muted ? 0 : v); }
+                    if (b) { const prevB = b.volume ?? 100; b.volume = v; PulseAudio.updateBusVolume(b.id, b.muted ? 0 : v); followMixerVolume('bus', i, prevB, v); }
                 }
                 // Mise à jour visuelle du dB
                 const dbEl = strip.querySelector('.strip-db');

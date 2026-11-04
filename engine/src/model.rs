@@ -847,6 +847,8 @@ impl Project {
             if b.solo { return true; }
             out = b.output.clone();
         }
+        // un bus d'envoi en solo fait jouer les pistes qui lui envoient du son (sinon il n'entendrait rien), comme Logic
+        if track.bus_sends.iter().any(|(id, l)| *l > 0.0 && self.buses.iter().any(|b| &b.id == id && b.solo)) { return true; }
         track.folder.as_ref().is_some_and(|f| self.folders.iter().any(|x| &x.id == f && x.solo))
     }
 

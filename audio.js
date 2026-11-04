@@ -3120,6 +3120,8 @@ window.PulseAudio = (function() {
         const buses = project.buses || [];
         let out = track.output;
         for (let n = 0; n < 8 && out; n++) { const b = buses.find(x => x.id === out); if (!b) break; if (b.solo) return true; out = b.output; }
+        // un bus d'envoi en solo fait jouer les pistes qui lui envoient du son (sinon il n'entendrait rien), comme Logic
+        if (Object.entries(track.busSends || {}).some(([id, l]) => l > 0 && buses.some(b => b.id === id && b.solo))) return true;
         return !!(track.folder && (project.folders || []).some(f => f.id === track.folder && f.solo));
     }
     function isTrackAudible(project, track) {

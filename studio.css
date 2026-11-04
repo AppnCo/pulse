@@ -3805,3 +3805,9 @@ body[data-left-tool="fade"] .timeline-tracks .clip { cursor: ew-resize; }
 .ana-narrow .lim-sb .ana-read { font-size: 10px; line-height: 1.35; }
 /* Solo « hérité » (comme Logic) : la piste s'entend parce que son groupe ou son dossier est en solo */
 .t-mini.m-s.implied { border-color: #22D3EE; color: #22D3EE; background: #22D3EE22; }
+/* Table de mixage : M / S sur chaque tranche, tranches de bus choisies (comme Logic) */
+.strip-ms { display: flex; gap: 4px; justify-content: center; margin: 2px 0 4px; }
+.strip-ms button { width: 26px; height: 18px; border-radius: 4px; border: 1px solid #ffffff22; background: #ffffff0a; color: #cfc6e6; font-size: 10px; font-weight: 700; cursor: pointer; padding: 0; }
+.strip-ms .strip-m.active { background: #f59e0b; border-color: #f59e0b; color: #000; }
+.strip-ms .strip-s.active { background: #22D3EE; border-color: #22D3EE; color: #000; }
+.strip-ms .strip-s.implied { border-color: #22D3EE; color: #22D3EE; background: #22D3EE22; }
