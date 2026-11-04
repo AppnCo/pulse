@@ -1041,6 +1041,142 @@ impl L670 {
     }
 }
 
+// ===== Détresse : le compresseur couteau suisse (esprit « Détresse ») =====
+// Comme la machine : Entrée et Sortie de 0 à 10, Attaque et Relâchement de 0 à 10, huit ratios : 1:1 (pas de compression,
+// juste la couleur), 2, 3, 4, 6, 10, 20 et « Nuke » (tout écraser). Les petits ratios ont un genou très doux (façon optique),
+// les grands sont francs (façon FET). Détecteur : coupe-bas (le grave ne déclenche plus) et accentuation des aigus (dé-esseur).
+// Distorsion : Propre, « 2 » (lampe, harmonique 2), « 3 » (bande, harmonique 3) — elle monte avec l'entrée.
+pub const DTR_RATIO: [f64; 8] = [1.0, 2.0, 3.0, 4.0, 6.0, 10.0, 20.0, 60.0];
+const DTR_KNEE: [f64; 8] = [0.0, 15.0, 15.0, 8.0, 8.0, 4.0, 2.0, 1.0];
+
+#[derive(Clone, Debug)]
+pub struct DtrParams {
+    pub input: f64,
+    pub output: f64,
+    pub attack: f64,
+    pub release: f64,
+    /// index DTR_RATIO (0 = 1:1, 7 = Nuke)
+    pub ratio: usize,
+    /// détecteur : coupe-bas, accentuation des aigus
+    pub det_hp: bool,
+    pub det_band: bool,
+    /// distorsion : 0 propre, 1 « 2 », 2 « 3 »
+    pub dist: usize,
+    pub mix: f64,
+}
+impl Default for DtrParams {
+    fn default() -> Self { Self { input: 5.0, output: 5.0, attack: 5.0, release: 5.0, ratio: 3, det_hp: false, det_band: false, dist: 0, mix: 100.0 } }
+}
+impl From<&crate::model::DtrJson> for DtrParams {
+    fn from(j: &crate::model::DtrJson) -> Self {
+        let d = Self::default();
+        let idx = |v: Option<f64>, def: usize, max: usize| v.map_or(def, |v| (v.round().max(0.0) as usize).min(max));
+        Self { input: j.input.unwrap_or(d.input), output: j.output.unwrap_or(d.output), attack: j.attack.unwrap_or(d.attack), release: j.release.unwrap_or(d.release),
+            ratio: idx(j.ratio, d.ratio, 7), det_hp: j.det_hp.unwrap_or(0.0) >= 0.5, det_band: j.det_band.unwrap_or(0.0) >= 0.5, dist: idx(j.dist, 0, 2), mix: j.mix.unwrap_or(100.0) }
+    }
+}
+impl DtrParams {
+    pub fn set_key(&mut self, k: &str, v: f64) -> bool {
+        let ix = |v: f64, m: usize| (v.round().max(0.0) as usize).min(m);
+        match k { "input" => self.input = v, "output" => self.output = v, "attack" => self.attack = v, "release" => self.release = v, "mix" => self.mix = v,
+            "ratio" => self.ratio = ix(v, 7), "detHp" => self.det_hp = v >= 0.5, "detBand" => self.det_band = v >= 0.5, "dist" => self.dist = ix(v, 2), _ => return false }
+        true
+    }
+}
+/// Seuil fixe (dBFS, Entrée à 5) et marge de l'étage de distorsion (−12 dB)
+const DTR_THR: f64 = -18.0;
+const HRD: f64 = 0.251_188_643_150_958;
+
+pub struct Dtr {
+    sr: f64,
+    gin: f64,
+    gout: f64,
+    slope: f64,
+    knee: f64,
+    nuke: bool,
+    att: f64,
+    rel: f64,
+    mix: f64,
+    a2: f64,
+    h3: f64,
+    drive: f64,
+    gr: f64,
+    hp: [(f64, f64); 2],
+    hpa: f64,
+    band: [Biquad; 2],
+    use_band: bool,
+    os: [Os4; 2],
+    dc: [(f64, f64); 2],
+    dry: [[f64; 40]; 2],
+}
+impl Dtr {
+    pub const LATENCY: usize = 31;
+    pub fn new(p: &DtrParams, sr: f64) -> Self {
+        let b = eq_matched("peaking", 6_000.0, 1.0, 10.0, sr);
+        let mut s = Self { sr, gin: 1.0, gout: 1.0, slope: 0.0, knee: 0.0, nuke: false, att: 0.0, rel: 0.0, mix: 1.0, a2: 0.0, h3: 0.0, drive: 1.0, gr: 0.0,
+            hp: [(0.0, 0.0); 2], hpa: (-2.0 * PI * 100.0 / sr).exp(), band: [b, b], use_band: false, os: [Os4::new(), Os4::new()], dc: [(0.0, 0.0); 2], dry: [[0.0; 40]; 2] };
+        s.set(p);
+        s
+    }
+    pub fn set(&mut self, p: &DtrParams) {
+        let sr = self.sr;
+        let co = |t: f64| 1.0 - (-1.0 / (t * sr)).exp();
+        self.gin = 10f64.powf((p.input.clamp(0.0, 10.0) * 3.0 - 15.0) / 20.0);
+        self.gout = 10f64.powf((p.output.clamp(0.0, 10.0) - 5.0) * 3.0 / 20.0);
+        let r = p.ratio.min(7);
+        self.slope = 1.0 - 1.0 / DTR_RATIO[r];
+        self.knee = DTR_KNEE[r];
+        self.nuke = r == 7;
+        // attaque 0 (50 µs) à 10 (30 ms), relâchement 0 (50 ms) à 10 (3,5 s), en logarithmique
+        self.att = co(50e-6 * (30e-3f64 / 50e-6).powf(p.attack.clamp(0.0, 10.0) / 10.0) * if self.nuke { 0.5 } else { 1.0 });
+        self.rel = co(0.05 * (3.5f64 / 0.05).powf(p.release.clamp(0.0, 10.0) / 10.0));
+        self.mix = (p.mix / 100.0).clamp(0.0, 1.0);
+        // la distorsion monte avec l'entrée
+        let d = (p.input.clamp(0.0, 10.0) / 10.0).powi(2);
+        (self.a2, self.h3) = match p.dist.min(2) { 1 => (0.05 + 0.5 * d, 0.0), 2 => (0.0, 0.05 + 0.5 * d), _ => (0.02, 0.0) };
+        self.drive = 1.0 + 0.5 * d;
+        self.use_band = p.det_band;
+        if !p.det_hp { self.hpa = 0.0; } else { self.hpa = (-2.0 * PI * 100.0 / sr).exp(); }
+    }
+    fn curve(&self, lvl: f64) -> f64 {
+        if self.slope <= 0.0 { return 0.0; }
+        let over = lvl - DTR_THR;
+        let k = self.knee;
+        let gr = if over <= -k / 2.0 { 0.0 } else if over >= k / 2.0 { over * self.slope } else { self.slope * (over + k / 2.0).powi(2) / (2.0 * k) };
+        // Nuke : un peu plus que tout écraser
+        if self.nuke { gr * 1.08 } else { gr }
+    }
+    pub fn reduction(&self) -> f64 { self.gr }
+    pub fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
+        let mut pk = 0.0f64;
+        for ch in 0..nc {
+            let mut v = x[ch] * self.gin;
+            if self.hpa > 0.0 { let (xp, yp) = self.hp[ch]; let y = self.hpa * (yp + v - xp); self.hp[ch] = (v, y); v = y; }
+            if self.use_band { v = self.band[ch].tick(v); }
+            pk = pk.max(v.abs());
+        }
+        let want = self.curve(20.0 * (pk + 1e-12).log10());
+        self.gr += (want - self.gr) * if want > self.gr { self.att } else { self.rel };
+        let g = 10f64.powf(-self.gr / 20.0);
+        let (a2, h3, dr) = (self.a2, self.h3, self.drive);
+        for ch in 0..nc {
+            let mut y = self.os[ch].run(x[ch] * self.gin * g, |u| {
+                let c = u * HRD * dr;
+                let c = c + a2 * c * c - h3 * c * c * c;
+                (c.tanh()) / dr / HRD
+            });
+            let (xp, yp) = self.dc[ch];
+            let o = y - xp + 0.9995 * yp;
+            self.dc[ch] = (y, o);
+            y = o * self.gout;
+            let d = &mut self.dry[ch];
+            d.copy_within(0..39, 1);
+            d[0] = x[ch];
+            x[ch] = if self.mix < 1.0 { d[Self::LATENCY] + (y - d[Self::LATENCY]) * self.mix } else { y };
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1327,5 +1463,30 @@ mod tests {
         let (o, _) = run670(&L670Params { thr: 8.0, input: 10.0, output: -10.0, tc: 1, ..Default::default() }, 0.5, 200.0, 48_000);
         let s2 = &o[24_000..];
         assert!(harm(s2, 200.0, 3) > harm(s2, 200.0, 2) * 2.0, "push-pull : h3 > h2");
+    }
+
+    fn rundtr(p: &DtrParams, amp: f64, f: f64, n: usize) -> (Vec<f64>, Dtr) {
+        let mut c = Dtr::new(p, SR);
+        let o = (0..n).map(|i| { let mut x = [amp * (2.0 * PI * f * i as f64 / SR).sin(), 0.0]; c.tick(&mut x, 1); x[0] }).collect();
+        (o, c)
+    }
+    /// Détresse : 1:1 ne compresse pas ; les ratios écrasent dans l'ordre jusqu'à Nuke ; le coupe-bas du détecteur ignore le grave ;
+    /// « 2 » ajoute de l'harmonique 2, « 3 » de l'harmonique 3
+    #[test]
+    fn detresse_ratios_detecteur_distorsion() {
+        let a = 10f64.powf(-6.0 / 20.0);
+        let mut prev = -1.0;
+        for r in 0..8 {
+            let (_, c) = rundtr(&DtrParams { ratio: r, attack: 2.0, release: 3.0, ..Default::default() }, a, 1000.0, 48_000);
+            if r == 0 { assert!(c.reduction() < 0.01, "1:1 : {:.2}", c.reduction()); }
+            assert!(c.reduction() > prev, "ratio {r} : {:.1} dB (avant {prev:.1})", c.reduction());
+            prev = c.reduction();
+        }
+        let (_, lo) = rundtr(&DtrParams { ratio: 5, ..Default::default() }, 0.5, 40.0, 48_000);
+        let (_, lohp) = rundtr(&DtrParams { ratio: 5, det_hp: true, ..Default::default() }, 0.5, 40.0, 48_000);
+        assert!(lohp.reduction() < lo.reduction() - 4.0, "coupe-bas du détecteur : {:.1} contre {:.1}", lohp.reduction(), lo.reduction());
+        let h = |dist: usize, k: usize| { let (o, _) = rundtr(&DtrParams { ratio: 0, input: 8.0, output: 2.0, dist, ..Default::default() }, 0.3, 200.0, 48_000); let s = &o[24_000..]; 20.0 * (harm(s, 200.0, k) / harm(s, 200.0, 1)).log10() };
+        assert!(h(1, 2) > h(0, 2) + 6.0, "« 2 » : h2 {:.1} contre {:.1}", h(1, 2), h(0, 2));
+        assert!(h(2, 3) > h(0, 3) + 6.0, "« 3 » : h3 {:.1} contre {:.1}", h(2, 3), h(0, 3));
     }
 }

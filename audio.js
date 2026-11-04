@@ -1109,6 +1109,65 @@ window.PulseAudio = (function() {
             }
         }
         registerProcessor('pulse-l670', pulseAuto(PulseL670, (s, v) => { let ch = false; for (const k in v) if (k in s.p && s.p[k] !== v[k]) { s.p[k] = v[k]; ch = true; } if (ch) s.set(); }));
+        // Détresse : le compresseur couteau suisse (8 ratios de 1:1 à Nuke, détecteur coupe-bas / aigus, distorsions « 2 » / « 3 »). Même calcul que Dtr (analog.rs).
+        const DTR_RATIO = [1, 2, 3, 4, 6, 10, 20, 60], DTR_KNEE = [0, 15, 15, 8, 8, 4, 2, 1], DTR_THR = -18, HRD = 0.251188643150958;
+        class PulseDtr extends AudioWorkletProcessor {
+            constructor(o) {
+                super();
+                const p = (o && o.processorOptions) || {};
+                this.p = { input: p.input ?? 5, output: p.output ?? 5, attack: p.attack ?? 5, release: p.release ?? 5, ratio: p.ratio ?? 3, detHp: p.detHp ?? 0, detBand: p.detBand ?? 0, dist: p.dist ?? 0, mix: p.mix ?? 100 };
+                this.gr = 0; this.hp = [[0, 0], [0, 0]]; this.band = eqMatched('peaking', 6000, 1, 10, sampleRate); this.bst = [[0, 0, 0, 0], [0, 0, 0, 0]];
+                this.os = [new AnaOs(), new AnaOs()]; this.dc = [[0, 0], [0, 0]]; this.dry = [new Float64Array(40), new Float64Array(40)];
+                this.report = !!p.report; this.mN = 0; this.mS = 0; this.mGr = 0;
+                this.set();
+            }
+            set() {
+                const p = this.p, sr = sampleRate, cl = (v, a, b) => Math.max(a, Math.min(b, v)), co = (t) => 1 - Math.exp(-1 / (t * sr)), r = Math.min(7, Math.max(0, Math.round(p.ratio)));
+                this.gin = Math.pow(10, (cl(p.input, 0, 10) * 3 - 15) / 20); this.gout = Math.pow(10, (cl(p.output, 0, 10) - 5) * 3 / 20);
+                this.slope = 1 - 1 / DTR_RATIO[r]; this.knee = DTR_KNEE[r]; this.nuke = r === 7;
+                this.att = co(50e-6 * Math.pow(30e-3 / 50e-6, cl(p.attack, 0, 10) / 10) * (this.nuke ? 0.5 : 1));
+                this.rel = co(0.05 * Math.pow(3.5 / 0.05, cl(p.release, 0, 10) / 10));
+                this.mix = cl(p.mix / 100, 0, 1);
+                const d = Math.pow(cl(p.input, 0, 10) / 10, 2), ds = Math.min(2, Math.max(0, Math.round(p.dist)));
+                [this.a2, this.h3] = ds === 1 ? [0.05 + 0.5 * d, 0] : ds === 2 ? [0, 0.05 + 0.5 * d] : [0.02, 0];
+                this.drive = 1 + 0.5 * d; this.useBand = p.detBand >= 0.5; this.hpa = p.detHp >= 0.5 ? Math.exp(-2 * Math.PI * 100 / sr) : 0;
+            }
+            curve(lvl) {
+                if (this.slope <= 0) return 0;
+                const over = lvl - DTR_THR, k = this.knee, gr = over <= -k / 2 ? 0 : over >= k / 2 ? over * this.slope : this.slope * (over + k / 2) ** 2 / (2 * k);
+                return this.nuke ? gr * 1.08 : gr;
+            }
+            process(inputs, outputs) {
+                const inp = inputs[0], out = outputs[0];
+                if (!inp || !inp.length) return true;
+                const n = inp[0].length, nc = Math.min(inp.length, out.length, 2), a2 = this.a2, h3 = this.h3, dr = this.drive;
+                const sh = (u) => { let c = u * HRD * dr; c = c + a2 * c * c - h3 * c * c * c; return Math.tanh(c) / dr / HRD; };
+                for (let i = 0; i < n; i++) {
+                    let pk = 0;
+                    for (let ch = 0; ch < nc; ch++) {
+                        let v = inp[ch][i] * this.gin;
+                        if (this.hpa > 0) { const h = this.hp[ch], y = this.hpa * (h[1] + v - h[0]); h[0] = v; h[1] = y; v = y; }
+                        if (this.useBand) v = biqRun(this.band, this.bst[ch], v);
+                        pk = Math.max(pk, Math.abs(v));
+                    }
+                    const want = this.curve(20 * Math.log10(pk + 1e-12));
+                    this.gr += (want - this.gr) * (want > this.gr ? this.att : this.rel);
+                    const g = Math.pow(10, -this.gr / 20);
+                    for (let ch = 0; ch < nc; ch++) {
+                        const x = inp[ch][i];
+                        let y = this.os[ch].run(x * this.gin * g, sh);
+                        const dc = this.dc[ch], o = y - dc[0] + 0.9995 * dc[1]; dc[0] = y; dc[1] = o; y = o * this.gout;
+                        const d = this.dry[ch]; d.copyWithin(1, 0, 39); d[0] = x;
+                        out[ch][i] = this.mix < 1 ? d[ANA_LAT] + (y - d[ANA_LAT]) * this.mix : y;
+                        if (this.report && ch === 0) { this.mS += out[0][i] * out[0][i]; this.mN++; }
+                    }
+                    if (this.report) this.mGr = Math.max(this.mGr, this.gr);
+                }
+                if (this.report && this.mN >= 1920) { this.port.postMessage({ gr: this.mGr, out: 10 * Math.log10(this.mS / this.mN + 1e-12) }); this.mN = 0; this.mS = 0; this.mGr = 0; }
+                return true;
+            }
+        }
+        registerProcessor('pulse-dtr', pulseAuto(PulseDtr, (s, v) => { let ch = false; for (const k in v) if (k in s.p && s.p[k] !== v[k]) { s.p[k] = v[k]; ch = true; } if (ch) s.set(); }));
         registerProcessor('pulse-deesser', pulseAuto(PulseDeesser, (s, v) => { if (v.amount !== undefined) { const a = Math.max(0, Math.min(100, v.amount)); s.maxRed = a * 0.24; s.slope = a / 100 * 3; } }));
 
         // Gate : coupe le bruit entre deux phrases. Mêmes calculs que Gate dans engine/src/fx.rs.
@@ -1786,7 +1845,7 @@ window.PulseAudio = (function() {
 
     // Exemplaire d'un effet : « comp#2 » → type « comp » (même calcul que fx_type dans model.rs)
     const fxType = (id) => String(id).split('#')[0];
-    const FX_CHAIN = ['pitch', 'filter', 'pre73', 'gate', 'eq', 'eqp1', 'tape', 'sat', 'msat', 'crush', 'deess', 'fet76', 'opto2a', 'l670', 'comp', 'mband', 'busg', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'reverb']; // ordre habituel des effets
+    const FX_CHAIN = ['pitch', 'filter', 'pre73', 'gate', 'eq', 'eqp1', 'tape', 'sat', 'msat', 'crush', 'deess', 'fet76', 'opto2a', 'l670', 'dtr', 'comp', 'mband', 'busg', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'reverb']; // ordre habituel des effets
     const SEND_REVERB_TRIM = 1 / 3; // la reverb seule sort 3 fois trop fort par rapport au son direct : on la ramène à niveau
 
     // Paliers de tempo [{ sec, bpm }] quand le tempo change en cours de morceau (sinon null) — Project::tempo_segments côté Rust
@@ -2534,7 +2593,7 @@ window.PulseAudio = (function() {
             return !!(p.semi || p.formant) || Object.keys(auto || {}).some(k => k.startsWith(`fx:${e}:`));
         }).length;
         // machines Analogiques : 31 échantillons (suréchantillonnage) ; la Bande 80 en plus sa ligne de pleurage (48)
-        const na = (effects || []).reduce((s, e) => s + (['fet76', 'pre73', 'opto2a', 'eqp1', 'busg', 'l670'].includes(fxType(e)) ? 31 : fxType(e) === 'tape' ? 79 : 0), 0);
+        const na = (effects || []).reduce((s, e) => s + (['fet76', 'pre73', 'opto2a', 'eqp1', 'busg', 'l670', 'dtr'].includes(fxType(e)) ? 31 : fxType(e) === 'tape' ? 79 : 0), 0);
         return np * pitchLatency(sr) / sr + na / sr;
     }
     // Retard des groupes sur le trajet de sortie d'une piste (un stem seul contourne les groupes). Même calcul que bus_latency (render.rs).
@@ -3494,6 +3553,15 @@ window.PulseAudio = (function() {
         B.pre73 = () => node('pulse-pre73', 'pre73');
         B.eqp1 = () => node('pulse-eqp1', 'eqp1');
         B.tape = () => node('pulse-tape', 'tape');
+        // Détresse : aiguille de réduction (clé « dtr|t0 »)
+        B.dtr = () => {
+            if (!enabled.includes('dtr') || !fxReady.has(actx)) return;
+            const live = !!params.grKey && !(typeof OfflineAudioContext !== 'undefined' && actx instanceof OfflineAudioContext);
+            const n = new AudioWorkletNode(actx, 'pulse-dtr', { numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max',
+                processorOptions: { kind: 'dtr', ...(params.dtr || {}), report: live, ...autoAll('dtr') } });
+            if (live) { const k = 'dtr|' + gk('dtr'); n.port.onmessage = (e) => { compGR.set(k, e.data); compGRts.set(k, performance.now()); }; }
+            connect(n);
+        };
         // Lampe 670 : aiguille de réduction (clé « l670|t0 »)
         B.l670 = () => {
             if (!enabled.includes('l670') || !fxReady.has(actx)) return;

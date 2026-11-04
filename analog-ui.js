@@ -11,7 +11,7 @@ const ANA_STRIPS = {
     hf73: { n: 61, px: 144, a0: -150, a1: 150, span: 2.4 }, mid73: { n: 61, px: 160, a0: -150, a1: 150, span: 2.4 },
     midf73: { n: 6, px: 160, a0: -100, a1: 100, span: 2.4 }, low73: { n: 61, px: 160, a0: -150, a1: 150, span: 2.4 },
     lowf73: { n: 4, px: 160, a0: -90, a1: 90, span: 2.4 }, hpf73: { n: 5, px: 112, a0: -120, a1: 120, span: 2.4 },
-    'black-big': { n: 61, px: 200, a0: -150, a1: 150, span: 2.4 }, sel7: { n: 7, px: 128, a0: -90, a1: 90, span: 2.4 }, sel3: { n: 3, px: 128, a0: -45, a1: 45, span: 2.4 }, sel4: { n: 4, px: 128, a0: -60, a1: 60, span: 2.4 }, sel5: { n: 5, px: 128, a0: -90, a1: 90, span: 2.4 }, sel6: { n: 6, px: 128, a0: -100, a1: 100, span: 2.4 }, reel: { n: 1, px: 360, span: 2.1 }, 'tog-up': { n: 1, px: 128, span: 3.2 }, 'tog-down': { n: 1, px: 128, span: 3.2 }
+    'black-big': { n: 61, px: 200, a0: -150, a1: 150, span: 2.4 }, sel7: { n: 7, px: 128, a0: -90, a1: 90, span: 2.4 }, sel3: { n: 3, px: 128, a0: -45, a1: 45, span: 2.4 }, sel4: { n: 4, px: 128, a0: -60, a1: 60, span: 2.4 }, sel5: { n: 5, px: 128, a0: -90, a1: 90, span: 2.4 }, sel6: { n: 6, px: 128, a0: -100, a1: 100, span: 2.4 }, sel8: { n: 8, px: 128, a0: -105, a1: 105, span: 2.4 }, reel: { n: 1, px: 360, span: 2.1 }, 'tog-up': { n: 1, px: 128, span: 3.2 }, 'tog-down': { n: 1, px: 128, span: 3.2 }
 };
 // Couleurs de façade (variantes) : dégradé du panneau, gravures, sous-titres, grain du brossé
 const ANA_SKINS = {
@@ -752,6 +752,76 @@ function openL670Panel(trackIdx, anchorEl) {
     anaSkin(svg, 'gris');
     say();
     makePlugWindow(panel, t, 'l670', trackIdx);
+}
+
+
+// ===== Détresse : le compresseur couteau suisse (esprit « Détresse ») : façade noire, LED de réduction =====
+function openDtrPanel(trackIdx, anchorEl) {
+    closeTransientPanels();
+    const t = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;
+    if (!t) return;
+    const already = findPlugWin(t, 'dtr');
+    if (already) { plugFront(already); return; }
+    t.effectParams = t.effectParams || {};
+    if (!t.effectParams.dtr) t.effectParams.dtr = { input: 5, output: 5, attack: 5, release: 5, ratio: 3, detHp: 0, detBand: 0, dist: 0, mix: 100 };
+    const P = () => t.effectParams.dtr, ed = anaEdit(t, 'dtr');
+    const W = 940, H = 230;
+    const { panel, svg } = anaWindow(t, 'dtr', 'Détresse', W, H, anchorEl, trackIdx, 940, 'noir');
+    const L = { style: 'paint-order:stroke', 'stroke-opacity': '.5', 'stroke-width': '.6', stroke: '#000' };
+    anaText(svg, 44, 40, 'PULSE · DÉTRESSE', { ...L, 'text-anchor': 'start', 'font-size': 14, 'font-weight': 700, 'letter-spacing': 3 });
+    anaText(svg, 44, 56, 'COMPRESSEUR À TOUT FAIRE', { class: 'ana-sub', 'text-anchor': 'start', 'letter-spacing': 2.5 });
+    const RAT = ['1:1', '2', '3', '4', '6', '10', '20', 'NUKE'];
+    const read = panel.querySelector('.ana-read');
+    const say = () => { const p = P(); read.innerHTML = `Ratio <b>${RAT[p.ratio ?? 3]}</b> · Entrée <b>${p.input}</b> · Attaque <b>${p.attack}</b> · Relâche <b>${p.release}</b> · Sortie <b>${p.output}</b>${(p.dist ?? 0) ? ` · Distorsion <b>${p.dist === 1 ? '2' : '3'}</b>` : ''}`; };
+    const knob = (o) => anaKnob(svg, { ...o, get: () => P()[o.key] ?? o.def, set: (v) => { P()[o.key] = Math.round(v * 10) / 10; ed.touch(o.key); say(); }, onStart: ed.start, onEnd: ed.end });
+    const CY = 130, ten = ['0', '', '', '', '', '5', '', '', '', '', '10'];
+    [['input', 90, 'ENTRÉE', 'Entrée : pousse dans le compresseur (le seuil est fixe) et dans la distorsion'], ['output', 420, 'SORTIE', 'Sortie : remet le niveau']].forEach(([key, cx, lab, tip]) => {
+        anaTicks(svg, cx, CY, 40, 11, -150, 150, ten, 7); knob({ strip: 'alu-big', cx, cy: CY, d: 66, key, min: 0, max: 10, def: 5, tip }); anaText(svg, cx, CY + 66, lab, { ...L, 'font-size': 9 }); });
+    [['attack', 205, 'ATTAQUE', 'Attaque : 0 = 50 µs (écrase les coups) … 10 = 30 ms'], ['release', 300, 'RELÂCHE', 'Relâchement : 0 = 50 ms … 10 = 3,5 s']].forEach(([key, cx, lab, tip]) => {
+        anaTicks(svg, cx, CY, 24, 11, -150, 150, ten, 6.5); knob({ strip: 'bakelite', cx, cy: CY, d: 36, key, min: 0, max: 10, def: 5, tip }); anaText(svg, cx, CY + 66, lab, { ...L, 'font-size': 9 }); });
+    RAT.forEach((tx, i) => { const a = (-105 + 30 * i) * Math.PI / 180; anaText(svg, 540 + Math.sin(a) * 44, CY - Math.cos(a) * 44 + 3, tx, { 'font-size': 7.5, 'letter-spacing': 0 }); });
+    anaKnob(svg, { strip: 'sel8', cx: 540, cy: CY, d: 50, key: 'ratio', min: 0, max: 7, def: 3, steps: [0, 1, 2, 3, 4, 5, 6, 7], get: () => P().ratio ?? 3, set: (v) => { P().ratio = v; say(); }, onStart: ed.start, onEnd: ed.end,
+        tip: 'Ratio : 1:1 = pas de compression (juste la couleur), 2 et 3 doux, 10 et 20 francs, Nuke = tout écraser' }).g.classList.remove('pk');
+    anaText(svg, 540, CY + 66, 'RATIO', { ...L, 'font-size': 9 });
+    // réduction en LED (colonne de 10 diodes, comme la machine)
+    const leds = [1, 2, 3, 4, 6, 8, 10, 14, 20, 30].map((db, i) => { anaText(svg, 640, 72 + i * 13 + 3, String(db), { 'font-size': 6.5, 'letter-spacing': 0, 'text-anchor': 'end' }); return anaEl('circle', { cx: 652, cy: 72 + i * 13, r: 4.2, fill: '#1c1426', stroke: '#000' }, svg); });
+    anaText(svg, 652, 214, 'RÉDUCTION', { ...L, 'font-size': 7, 'letter-spacing': .8 });
+    // boutons : détecteur et distorsion
+    const pg = anaEl('g', {}, svg);
+    const BTN = [['detHp', 'DÉT. COUPE-BAS', 'Le grave ne déclenche plus la compression'], ['detBand', 'DÉT. AIGUS', 'Les « s » et les aigus déclenchent plus : dé-esseur'], ['dist2', 'DISTO 2', 'Distorsion « 2 » : harmonique 2, façon lampe'], ['dist3', 'DISTO 3', 'Distorsion « 3 » : harmonique 3, façon bande']];
+    const drawBtn = () => {
+        pg.innerHTML = '';
+        BTN.forEach(([k, txt, tip], i) => {
+            const on = k === 'dist2' ? P().dist === 1 : k === 'dist3' ? P().dist === 2 : (P()[k] ?? 0) >= 0.5;
+            const x = 720 + (i % 2) * 96, y = 92 + Math.floor(i / 2) * 44, g = anaEl('g', { class: 'ana-push', 'data-k': k }, pg);
+            anaEl('rect', { x: x - 42, y: y - 10, width: 84, height: 20, rx: 4, fill: on ? '#7c3aed' : '#1c1426', stroke: '#3a2b52', ...(on ? { filter: 'url(#anaGlow)' } : {}) }, g);
+            anaText(g, x, y + 3.5, txt, { fill: on ? '#fff' : '#a78bfa', 'font-size': 7.5, 'letter-spacing': .6, class: '' });
+            anaEl('title', {}, g).textContent = tip;
+        });
+    };
+    pg.addEventListener('click', (e) => {
+        const b = e.target.closest('[data-k]'); if (!b) return; const k = b.dataset.k, p = P();
+        ed.start();
+        if (k === 'dist2') p.dist = p.dist === 1 ? 0 : 1; else if (k === 'dist3') p.dist = p.dist === 2 ? 0 : 2; else p[k] = (p[k] ?? 0) >= 0.5 ? 0 : 1;
+        ed.end(); drawBtn(); say();
+    });
+    drawBtn();
+    anaTicks(svg, 768, 190, 15, 5, -135, 135, null);
+    knob({ strip: 'bakelite', cx: 768, cy: 190, d: 22, key: 'mix', min: 0, max: 100, def: 100, tip: 'Mélange avec le son d\'origine (compression parallèle)' });
+    anaText(svg, 810, 193, 'MÉLANGE', { ...L, 'font-size': 7, 'letter-spacing': 1, 'text-anchor': 'start' });
+    const key = 'dtr|' + fxKeyOf(trackIdx, t);
+    const tick = () => {
+        if (!panel.isConnected) return;
+        const on = (t.effects || []).includes('dtr');
+        const m = on && (state.playing || state.recording) && PulseAudio.getCompReduction ? PulseAudio.getCompReduction(key) : null;
+        const gr = m ? (m.gr || 0) : 0;
+        [1, 2, 3, 4, 6, 8, 10, 14, 20, 30].forEach((db, i) => leds[i].setAttribute('fill', gr >= db ? (db >= 14 ? '#f0abfc' : '#a855f7') : '#1c1426'));
+        requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+    panel.querySelector('.fx-bypass').addEventListener('change', (e) => { pushUndo(); setFxOn(t, 'dtr', e.target.checked); refreshPlaybackSoon(); saveProject(); refreshStrips(); });
+    say();
+    makePlugWindow(panel, t, 'dtr', trackIdx);
 }
 
 // Styles de la façade (ici pour garder la gamme dans un seul fichier)

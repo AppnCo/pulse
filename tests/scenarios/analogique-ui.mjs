@@ -105,6 +105,13 @@ export default async (c) => {
   await click('.fx-add-menu .fam-range', 'Analogique');
   check('menu : Lampe 670 cliquée', await click('.fx-add-menu .fam-fx', 'Lampe 670')); await sleep(500);
   check('Lampe 670 : façade', await J(ev, `return !!document.querySelector('.fx-panel.plug-win[data-fx="l670"] .ana-k[data-key="thr"]')`) === true);
+  // Détresse : façade, ratio Nuke, distorsion « 3 »
+  await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
+  await click('#inspector .slot-plus[data-plus="fx"]');
+  await click('.fx-add-menu .fam-range', 'Analogique');
+  check('menu : Détresse cliquée', await click('.fx-add-menu .fam-fx', 'Détresse')); await sleep(500);
+  await click('.fx-panel.plug-win[data-fx="dtr"] [data-k="dist3"] rect');
+  check('Détresse : distorsion « 3 »', await J(ev, `return state.project.tracks[0].effectParams.dtr.dist`) === 2);
   // ---- Envois façon Logic
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   await click('#inspector .slot-plus[data-plus="send"]');

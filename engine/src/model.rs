@@ -142,6 +142,7 @@ pub struct EffectParams {
     pub busg: Option<BusGJson>,
     pub tape: Option<TapeJson>,
     pub l670: Option<L670Json>,
+    pub dtr: Option<DtrJson>,
     /// Exemplaires en plus d'un même effet (« comp#2 », « eq#3»…), réglages bruts : lus par `EffectParams::instance`
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
@@ -255,6 +256,21 @@ pub struct Opto2AJson {
     pub limit: Option<f64>,
     pub emph: Option<f64>,
     pub variant: Option<f64>,
+    pub mix: Option<f64>,
+}
+
+/// Détresse : input/output/attack/release 0-10, ratio 0-7 (1:1, 2, 3, 4, 6, 10, 20, Nuke), detHp/detBand 0/1, dist 0 propre · 1 « 2 » · 2 « 3 », mix %
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct DtrJson {
+    pub input: Option<f64>,
+    pub output: Option<f64>,
+    pub attack: Option<f64>,
+    pub release: Option<f64>,
+    pub ratio: Option<f64>,
+    pub det_hp: Option<f64>,
+    pub det_band: Option<f64>,
+    pub dist: Option<f64>,
     pub mix: Option<f64>,
 }
 

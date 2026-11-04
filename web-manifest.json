@@ -1,6 +1,6 @@
 {
 "files": {
-"analog-ui.js": "c4beb9612e4c685439b02aca98ec4f2defcf32333d93a40e9dfb5cfbfbfc6a62",
+"analog-ui.js": "206795cf8867e90dfca4d581eac4d4ef288663b701c1c0210d817170a8a33ab5",
 "assets/analog/alu-big.webp": "0584094c7144ed41bb2986eec3078dc6432530b908e0d11a5d462d82e39728df",
 "assets/analog/bakelite.webp": "7d509c304170a44d0736daf6a026b6ff7c481ab62d59fc85addd22ee63294974",
 "assets/analog/black-big.webp": "7c547fb34efadf15c59b21abda2f85c81bdb08955e1453917b235331208eee45",
@@ -22,13 +22,14 @@
 "assets/analog/sel5.webp": "793e054e1adb3363df39ecd952ac442e190e15f193192a2efc3e7e48c8ea44d1",
 "assets/analog/sel6.webp": "89d37ae917157a21efc5a505383f58289aa6715bfd087693e1f0881a3c444aba",
 "assets/analog/sel7.webp": "a54ff79dd22167daca6021dccce5fdd50e5dda61ca90af2e5c459c0904a68f30",
+"assets/analog/sel8.webp": "b83baff0b7eea2fc33a3a050593248f3e0518c216869cf981b25d90be381083d",
 "assets/analog/tog-down.webp": "24593be71f9af7de2df085981cc70daa91c00e3f71cc5495e78d41eae5d38612",
 "assets/analog/tog-up.webp": "5b020a7cb6a1f80e1bf191f7106fbc43305afdf8b7deb55df66d255a1c8f5664",
 "assets/analog/trim73.webp": "cf347e89c1ea16839b52093fd8ebca8b510195743a8b5f834b9eb563286403bf",
 "assets/icon.svg": "72b5c27f134d23017550f44d8b4413d7c2a6bbb18c178b855f98af38d4700c4c",
 "assets/logo.svg": "91e45f0e09dcc7434f4231f622bda56ae8a7a696f9f3071e71d37008cdd61b78",
-"audio.js": "c7615e89b93a149b29a0a750294c52128ec2f16a036c641097f46f4ec9f5dde2",
-"automation.js": "ab5aaf5d580c3d987e6b3a3a593295d54678c98ea358ecbfb0887ddaadeca5c0",
+"audio.js": "e1bf4941146a77b7628904683cc722435a3ba5fa539270101bd43165000dcbbd",
+"automation.js": "ca840f4a9a2ceb7a8e0814c9253ea3291e831dfd1e7164158c032d504c151de2",
 "compteur.js": "cf3470a9fdadf52299a1c984654b1db75556986ffea64ec9c9ceda5137ad3ff3",
 "i18n/build-en-texts.js": "898f4c22a37e442dbbecef48a9835b7e2639013a0d61dbf24d7f68a11d72a60b",
 "i18n/en-extra.js": "6f7a113b83941e8e0148633a53c28a1456ea51decb604a14bce4d8b357e6b6d2",
@@ -48,7 +49,7 @@
 "script.js": "db3e98a56222a9e7297b9764201671e632aeaf9e22acaf311b56c3b9be541390",
 "studio.css": "e617aa31e34cf2e81f12b79ec929ff1e591a64be4dbead7dc4736feeb7882b80",
 "studio.html": "220c3db97ab2dd431ac5f54829d623fe883d3187ab04ba97d7bf6de5fefa00f6",
-"studio.js": "1896a1ef20e458e16fd3157e8fad6562e0bf09cf74a2f75910c5c0e28af24c80",
+"studio.js": "dd1bfcdb943801ae472b66097b69fb3bca4940b0772307c445e94efe392f2e55",
 "styles.css": "9040ad9ca17969d48b7cc98c58afab3190dab1db6b986d245b71d0f9c438705c",
 "synth.js": "3daafe1a68a4e2abff7717bdce0af9880279f119b3e5fc52b55018b824726a8d",
 "tempo.js": "1ad0200f61ad3db6f6f5c47500b5c5ff042a585607c713ca324f752d27e33ca3",
@@ -58,5 +59,5 @@
 "vendor/lame.min.js": "15d285e2587b3bdbfd18a68de6ce07cc074f7480a82c3815da2dc1c348ec6df4",
 "warp.js": "209bb3114410db48c37af5bf718a4cd482fcb95cc5bbf7ae6f024e3420bf6f3e"
 },
-"version": "2026-11-04 08:28"
+"version": "2026-11-04 08:57"
 }
