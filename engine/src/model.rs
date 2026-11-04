@@ -145,6 +145,7 @@ pub struct EffectParams {
     pub dtr: Option<DtrJson>,
     pub stripe: Option<StripEJson>,
     pub eq550: Option<Eq550Json>,
+    pub comp25: Option<Comp25Json>,
     /// Exemplaires en plus d'un même effet (« comp#2 », « eq#3»…), réglages bruts : lus par `EffectParams::instance`
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
@@ -259,6 +260,14 @@ pub struct Opto2AJson {
     pub emph: Option<f64>,
     pub variant: Option<f64>,
     pub mix: Option<f64>,
+}
+
+/// Comp 25 : thr (dBFS −20…10), ratio (0-6 : 1,5/2/3/4/6/10/∞), attack (0-6), release (0-5, 6 = Variable → relVar s), knee (0-2), thrust (0-2), feedback (0/1), makeup (dB), mix %
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Comp25Json {
+    pub thr: Option<f64>, pub ratio: Option<f64>, pub attack: Option<f64>, pub release: Option<f64>, pub rel_var: Option<f64>,
+    pub knee: Option<f64>, pub thrust: Option<f64>, pub feedback: Option<f64>, pub makeup: Option<f64>, pub mix: Option<f64>,
 }
 
 /// EQ 550 : lf/mf/hf (dB, crans de 2), lfF (0-4), mfF (0-4), hfF (0-5), lfPeak/hfPeak, band (filtre 50 Hz-15 kHz), on, output (dB)

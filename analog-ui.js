@@ -972,6 +972,83 @@ function openEq550Panel(trackIdx, anchorEl) {
     makePlugWindow(panel, t, 'eq550', trackIdx);
 }
 
+
+// ===== Comp 25 : compresseur de bus « américain » (esprit « 25 ») : façade graphite, sélecteurs à crans, vumètre =====
+function openComp25Panel(trackIdx, anchorEl) {
+    closeTransientPanels();
+    const t = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;
+    if (!t) return;
+    const already = findPlugWin(t, 'comp25');
+    if (already) { plugFront(already); return; }
+    t.effectParams = t.effectParams || {};
+    if (!t.effectParams.comp25) t.effectParams.comp25 = { thr: -10, ratio: 3, attack: 3, release: 3, relVar: 0.3, knee: 1, thrust: 1, feedback: 0, makeup: 0, mix: 100 };
+    const P = () => t.effectParams.comp25, ed = anaEdit(t, 'comp25');
+    const W = 1000, H = 260;
+    const { panel, svg } = anaWindow(t, 'comp25', 'Comp 25', W, H, anchorEl, trackIdx, 1000, 'graphite');
+    const L = { style: 'paint-order:stroke', 'stroke-opacity': '.5', 'stroke-width': '.6', stroke: '#000' };
+    anaText(svg, 44, 40, 'PULSE · COMP 25', { ...L, 'text-anchor': 'start', 'font-size': 14, 'font-weight': 700, 'letter-spacing': 3 });
+    anaText(svg, 44, 56, 'COMPRESSEUR DE BUS', { fill: '#c4b5fd', 'text-anchor': 'start', 'letter-spacing': 2.5, class: '' });
+    const RAT = ['1,5', '2', '3', '4', '6', '10', '∞'], ATT = [',03', ',1', ',3', '1', '3', '10', '30'], REL = [',05', ',1', ',2', ',5', '1', '2', 'VAR'], KNEE = ['FRANC', 'MOYEN', 'DOUX'], THR = ['NORM.', 'MOY.', 'FORTE'];
+    const read = panel.querySelector('.ana-read');
+    const say = () => { const p = P(); read.innerHTML = `Seuil <b>${p.thr} dB</b> · Ratio <b>${RAT[p.ratio ?? 3]}:1</b> · Attaque <b>${ATT[p.attack ?? 3]} ms</b> · Relâche <b>${REL[p.release ?? 3]}</b> · Genou ${KNEE[p.knee ?? 1].toLowerCase()} · Poussée ${THR[p.thrust ?? 1].toLowerCase()} · ${(p.feedback ?? 0) >= 0.5 ? 'contre-réaction' : 'en avant'}`; };
+    const knob = (o) => anaKnob(svg, { ...o, get: () => P()[o.key] ?? o.def, set: (v) => { P()[o.key] = Math.round(v * 10) / 10; ed.touch(o.key); say(); }, onStart: ed.start, onEnd: ed.end });
+    const CY = 140;
+    const pick = (cx, key, strip, labels, a0, a1, def, lab, tip, d = 42) => {
+        labels.forEach((tx, i) => { const a = (a0 + (a1 - a0) * i / (labels.length - 1)) * Math.PI / 180; anaText(svg, cx + Math.sin(a) * (d / 2 + 16), CY - Math.cos(a) * (d / 2 + 16) + 3, tx, { 'font-size': 7, 'letter-spacing': 0 }); });
+        anaKnob(svg, { strip, cx, cy: CY, d, key, min: 0, max: labels.length - 1, def, steps: labels.map((_, i) => i), get: () => P()[key] ?? def, set: (v) => { P()[key] = v; say(); }, onStart: ed.start, onEnd: ed.end, tip }).g.classList.remove('pk');
+        anaText(svg, cx, CY + 66, lab, { ...L, 'font-size': 8.5 });
+    };
+    anaTicks(svg, 95, CY, 36, 7, -150, 150, ['−20', '', '', '−5', '', '', '+10'], 7);
+    knob({ strip: 'hf73', cx: 95, cy: CY, d: 54, key: 'thr', min: -20, max: 10, def: -10, tip: 'Seuil (dBFS)' });
+    anaText(svg, 95, CY + 66, 'SEUIL', { ...L, 'font-size': 8.5 });
+    pick(200, 'ratio', 'sel7', RAT, -90, 90, 3, 'RATIO', 'Ratio : 1,5 à l\'infini');
+    pick(305, 'attack', 'sel7', ATT, -90, 90, 3, 'ATTAQUE ms', 'Attaque : 0,03 à 30 ms');
+    pick(410, 'release', 'sel7', REL, -90, 90, 3, 'RELÂCHE s', 'Relâchement : 0,05 à 2 s, ou VAR (le petit bouton dessous)');
+    anaTicks(svg, 410, CY + 96, 12, 5, -135, 135, null);
+    anaKnob(svg, { strip: 'bakelite', cx: 410, cy: CY + 96, d: 18, key: 'relVar', min: 0.05, max: 3, def: 0.3, get: () => P().relVar ?? 0.3, set: (v) => { P().relVar = Math.round(v * 100) / 100; say(); }, onStart: ed.start, onEnd: ed.end, tip: 'Relâchement variable (s), quand le sélecteur est sur VAR' }).g.classList.remove('pk');
+    pick(510, 'knee', 'sel3', KNEE, -45, 45, 1, 'GENOU', 'Genou : franc, moyen ou doux');
+    pick(600, 'thrust', 'sel3', THR, -45, 45, 1, 'POUSSÉE', 'Poussée : le grave fait de moins en moins réagir le compresseur (le mix garde son poids)');
+    // type : levier en avant / contre-réaction
+    const tg = anaEl('g', { class: 'ana-push' }, svg);
+    const drawTog = () => { tg.innerHTML = ''; const fb = (P().feedback ?? 0) >= 0.5; anaSprite(tg, fb ? 'tog-down' : 'tog-up', 680, CY, 30).frame(0); anaEl('rect', { x: 664, y: CY - 24, width: 32, height: 48, fill: 'transparent' }, tg); anaEl('title', {}, tg).textContent = 'En avant (en haut : moderne, net) ou contre-réaction (en bas : ancien, plus doux)'; };
+    anaText(svg, 680, CY - 32, 'EN AVANT', { ...L, 'font-size': 6.5, 'letter-spacing': .5 }); anaText(svg, 680, CY + 40, 'RÉTRO', { ...L, 'font-size': 6.5, 'letter-spacing': .5 });
+    tg.addEventListener('click', () => { ed.start(); P().feedback = (P().feedback ?? 0) >= 0.5 ? 0 : 1; ed.end(); drawTog(); say(); });
+    drawTog();
+    // vumètre de réduction
+    const vx = 730, vy = 70, vw = 160, vh = 110, cx = vx + vw / 2, cy = vy + vh + 14, R = 90;
+    anaEl('rect', { x: vx - 5, y: vy - 5, width: vw + 10, height: vh + 10, rx: 7, fill: '#050407', stroke: '#2a2733' }, svg);
+    anaEl('rect', { x: vx, y: vy, width: vw, height: vh, rx: 4, fill: 'url(#anaVu)' }, svg);
+    const clip = anaEl('clipPath', { id: 'anaVuClip25' }, svg); anaEl('rect', { x: vx, y: vy, width: vw, height: vh, rx: 4 }, clip);
+    const vu = anaEl('g', { 'clip-path': 'url(#anaVuClip25)' }, svg);
+    const grA = (g) => -45 + 90 * Math.max(0, Math.min(1, 1 - g / 20));
+    [20, 10, 6, 3, 0].forEach((g) => { const a = grA(g) * Math.PI / 180; anaEl('line', { x1: cx + Math.sin(a) * R, y1: cy - Math.cos(a) * R, x2: cx + Math.sin(a) * (R + 7), y2: cy - Math.cos(a) * (R + 7), stroke: '#e9d5ff', 'stroke-width': 1.2 }, vu);
+        anaText(vu, cx + Math.sin(a) * (R + 15), cy - Math.cos(a) * (R + 15) + 3, String(g), { fill: '#e9d5ff', 'font-size': 7.5, 'letter-spacing': 0, class: '' }); });
+    const needle = anaEl('line', { x1: cx, y1: cy, x2: cx, y2: cy - R - 3, stroke: '#fff', 'stroke-width': 1.5, filter: 'url(#anaGlow)' }, vu);
+    anaEl('rect', { x: vx, y: vy, width: vw, height: vh, rx: 4, fill: 'url(#anaGlass)', 'pointer-events': 'none' }, svg);
+    anaTicks(svg, 940, 110, 24, 7, -150, 150, ['0', '', '', '10', '', '', '20'], 6.5);
+    knob({ strip: 'hf73', cx: 940, cy: 110, d: 38, key: 'makeup', min: 0, max: 20, def: 0, tip: 'Gain de compensation (dB)' });
+    anaText(svg, 940, 148, 'GAIN', { ...L, 'font-size': 8 });
+    anaTicks(svg, 940, 196, 15, 5, -135, 135, null);
+    knob({ strip: 'bakelite', cx: 940, cy: 196, d: 22, key: 'mix', min: 0, max: 100, def: 100, tip: 'Mélange avec le son d\'origine (compression parallèle)' });
+    anaText(svg, 940, 224, 'MÉLANGE', { ...L, 'font-size': 7, 'letter-spacing': 1 });
+    let ang = grA(0), last = performance.now();
+    const key = 'comp25|' + fxKeyOf(trackIdx, t);
+    const tick = (now) => {
+        if (!panel.isConnected) return;
+        const on = (t.effects || []).includes('comp25');
+        const m = on && (state.playing || state.recording) && PulseAudio.getCompReduction ? PulseAudio.getCompReduction(key) : null;
+        const target = grA(m ? (m.gr || 0) : 0);
+        const dt = Math.min(0.1, (now - last) / 1000); last = now;
+        ang += (target - ang) * (1 - Math.exp(-dt / 0.05));
+        needle.setAttribute('transform', `rotate(${ang.toFixed(2)} ${cx} ${cy})`);
+        requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+    panel.querySelector('.fx-bypass').addEventListener('change', (e) => { pushUndo(); setFxOn(t, 'comp25', e.target.checked); refreshPlaybackSoon(); saveProject(); refreshStrips(); });
+    say();
+    makePlugWindow(panel, t, 'comp25', trackIdx);
+}
+
 // Styles de la façade (ici pour garder la gamme dans un seul fichier)
 (() => {
     const st = document.createElement('style');

@@ -1358,6 +1358,8 @@ mod tests {
             ("stripe", r#"{"variant":1,"lpf":12,"hmf":8,"hmfF":2000,"hmfQ":2,"hfBell":1,"hf":-4,"hfF":6000,"gthr":-40,"grange":20,"cthr":-20,"cratio":20,"cfast":1,"dynPre":1,"output":4}"#, [0.070925, 0.070925, 0.010359]),
             ("eq550", r#"{"lf":4,"lfF":1,"mf":6,"mfF":3,"hf":4,"hfF":3}"#, [0.131791, 0.131791, 0.053026]),
             ("eq550", r#"{"lf":-6,"lfF":2,"lfPeak":1,"mf":-4,"mfF":1,"hf":8,"hfF":5,"hfPeak":1,"band":1,"output":-3}"#, [0.054618, 0.054618, 0.034231]),
+            ("comp25", r#"{"thr":-18,"ratio":3,"attack":3,"release":3,"knee":1,"thrust":1,"makeup":6}"#, [0.114105, 0.114101, 0.033354]),
+            ("comp25", r#"{"thr":-14,"ratio":5,"attack":1,"release":6,"relVar":0.8,"knee":0,"thrust":2,"feedback":1,"makeup":8,"mix":70}"#, [0.141093, 0.141094, 0.042066]),
             ("opto2a", r#"{"peak":60,"gain":55,"variant":0}"#, [0.086484, 0.082398, 0.018677]),
             ("opto2a", r#"{"peak":45,"limit":1,"emph":50,"variant":2,"mix":80}"#, [0.055303, 0.053787, 0.016746])] {
             let t = format!(r#"{{"volume":100,"clips":[{{"id":"a","start":0,"duration":3,"offset":0}}],"effects":["{fx}"],"effectParams":{{"{fx}":{pp}}}}}"#);

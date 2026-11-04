@@ -1410,6 +1410,131 @@ impl Eq550 {
     }
 }
 
+// ===== Comp 25 : compresseur de bus « américain » (esprit « 25 ») =====
+// Comme la machine : Seuil, sept ratios (1,5 à l'infini), attaques 0,03 à 30 ms, relâchements 0,05 à 2 s ou Variable,
+// Genou (franc, moyen, doux), Poussée (le grave fait de moins en moins réagir le détecteur : le mix pompe moins et garde son poids),
+// Type : en avant (moderne, net) ou en contre-réaction (ancien, plus doux), Gain ; et la touche Pulse : Mélange.
+pub const C25_RATIO: [f64; 7] = [1.5, 2.0, 3.0, 4.0, 6.0, 10.0, 60.0];
+pub const C25_ATT: [f64; 7] = [0.00003, 0.0001, 0.0003, 0.001, 0.003, 0.01, 0.03];
+pub const C25_REL: [f64; 6] = [0.05, 0.1, 0.2, 0.5, 1.0, 2.0];
+
+#[derive(Clone, Debug)]
+pub struct Comp25Params {
+    pub thr: f64,
+    pub ratio: usize,
+    pub attack: usize,
+    /// index C25_REL, 6 = Variable (rel_var en s)
+    pub release: usize,
+    pub rel_var: f64,
+    /// 0 franc, 1 moyen, 2 doux
+    pub knee: usize,
+    /// 0 normale, 1 moyenne, 2 forte
+    pub thrust: usize,
+    /// en contre-réaction (sinon en avant)
+    pub feedback: bool,
+    pub makeup: f64,
+    pub mix: f64,
+}
+impl Default for Comp25Params {
+    fn default() -> Self { Self { thr: -10.0, ratio: 3, attack: 3, release: 3, rel_var: 0.3, knee: 1, thrust: 1, feedback: false, makeup: 0.0, mix: 100.0 } }
+}
+impl From<&crate::model::Comp25Json> for Comp25Params {
+    fn from(j: &crate::model::Comp25Json) -> Self {
+        let d = Self::default();
+        let idx = |v: Option<f64>, def: usize, max: usize| v.map_or(def, |v| (v.round().max(0.0) as usize).min(max));
+        Self { thr: j.thr.unwrap_or(d.thr), ratio: idx(j.ratio, d.ratio, 6), attack: idx(j.attack, d.attack, 6), release: idx(j.release, d.release, 6), rel_var: j.rel_var.unwrap_or(d.rel_var),
+            knee: idx(j.knee, d.knee, 2), thrust: idx(j.thrust, d.thrust, 2), feedback: j.feedback.unwrap_or(0.0) >= 0.5, makeup: j.makeup.unwrap_or(0.0), mix: j.mix.unwrap_or(100.0) }
+    }
+}
+impl Comp25Params {
+    pub fn set_key(&mut self, k: &str, v: f64) -> bool {
+        let ix = |v: f64, m: usize| (v.round().max(0.0) as usize).min(m);
+        match k { "thr" => self.thr = v, "makeup" => self.makeup = v, "mix" => self.mix = v, "relVar" => self.rel_var = v, "ratio" => self.ratio = ix(v, 6), "attack" => self.attack = ix(v, 6),
+            "release" => self.release = ix(v, 6), "knee" => self.knee = ix(v, 2), "thrust" => self.thrust = ix(v, 2), "feedback" => self.feedback = v >= 0.5, _ => return false }
+        true
+    }
+}
+
+pub struct Comp25 {
+    sr: f64,
+    thr: f64,
+    ratio: f64,
+    knee: f64,
+    att: f64,
+    rel: f64,
+    fb: bool,
+    tk: f64,
+    gmk: f64,
+    mix: f64,
+    gr: f64,
+    lp: [f64; 2],
+    lpa: f64,
+    os: [Os4; 2],
+    iron: [Iron; 2],
+    ik: (f64, f64),
+    dc: [(f64, f64); 2],
+    dry: [[f64; 40]; 2],
+}
+impl Comp25 {
+    pub const LATENCY: usize = 31;
+    pub fn new(p: &Comp25Params, sr: f64) -> Self {
+        let mut s = Self { sr, thr: -10.0, ratio: 3.0, knee: 6.0, att: 0.0, rel: 0.0, fb: false, tk: 0.0, gmk: 1.0, mix: 1.0, gr: 0.0, lp: [0.0; 2],
+            lpa: 1.0 - (-2.0 * PI * 200.0 / sr).exp(), os: [Os4::new(), Os4::new()], iron: [Iron::default(); 2], ik: iron_k(sr), dc: [(0.0, 0.0); 2], dry: [[0.0; 40]; 2] };
+        s.set(p);
+        s
+    }
+    pub fn set(&mut self, p: &Comp25Params) {
+        let sr = self.sr;
+        let co = |t: f64| 1.0 - (-1.0 / (t * sr)).exp();
+        self.thr = p.thr.clamp(-20.0, 10.0);
+        self.ratio = C25_RATIO[p.ratio.min(6)];
+        self.knee = [0.0, 6.0, 12.0][p.knee.min(2)];
+        self.att = co(C25_ATT[p.attack.min(6)]);
+        self.rel = co(if p.release >= 6 { p.rel_var.clamp(0.05, 3.0) } else { C25_REL[p.release] });
+        self.fb = p.feedback;
+        self.tk = [0.0, 0.5, 0.85][p.thrust.min(2)];
+        self.gmk = 10f64.powf(p.makeup.clamp(0.0, 20.0) / 20.0);
+        self.mix = (p.mix / 100.0).clamp(0.0, 1.0);
+    }
+    /// réduction voulue pour un dépassement : en avant pente 1 − 1/r ; en contre-réaction (r − 1) × dépassement de sortie
+    fn curve(&self, over: f64) -> f64 {
+        let s = if self.fb { self.ratio - 1.0 } else { 1.0 - 1.0 / self.ratio };
+        let k = self.knee;
+        if k <= 0.0 { return over.max(0.0) * s; }
+        if over <= -k / 2.0 { 0.0 } else if over >= k / 2.0 { over * s } else { s * (over + k / 2.0).powi(2) / (2.0 * k) }
+    }
+    pub fn reduction(&self) -> f64 { self.gr }
+    pub fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
+        // détecteur : la Poussée retire une part du grave (sous 200 Hz) avant de mesurer
+        let mut pk = 0.0f64;
+        for ch in 0..nc {
+            self.lp[ch] += (x[ch] - self.lp[ch]) * self.lpa;
+            pk = pk.max((x[ch] - self.tk * self.lp[ch]).abs());
+        }
+        let lvl = 20.0 * (pk + 1e-12).log10() - if self.fb { self.gr } else { 0.0 };
+        let want = self.curve(lvl - self.thr);
+        let a = if self.fb { self.att / self.ratio } else { self.att };
+        self.gr += (want - self.gr) * if want > self.gr { a } else { self.rel };
+        let g = 10f64.powf(-self.gr / 20.0) * self.gmk;
+        let (iw, il) = self.ik;
+        for ch in 0..nc {
+            let iron = &mut self.iron[ch];
+            let y = self.os[ch].run(x[ch] * g, |u| {
+                let c = u * HR550;
+                let c = c + 0.03 * c * c / HR550 * 0.1;
+                iron.run((1.2 * c).tanh() / 1.2, iw, il, IRON550) / HR550
+            });
+            let (xp, yp) = self.dc[ch];
+            let o = y - xp + 0.9998 * yp;
+            self.dc[ch] = (y, o);
+            let d = &mut self.dry[ch];
+            d.copy_within(0..39, 1);
+            d[0] = x[ch];
+            x[ch] = if self.mix < 1.0 { d[Self::LATENCY] + (o - d[Self::LATENCY]) * self.mix } else { o };
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1757,5 +1882,23 @@ mod tests {
         let p4 = Eq550Params { mf: 4.0, mf_f: 2, ..Default::default() };
         // une octave au-dessus : la cloche de +4 garde une plus grande part de son gain que celle de +12
         assert!(lv(&p4, 3000.0) / 4.0 > lv(&p12, 3000.0) / 12.0 + 0.1, "largeur proportionnelle : {:.2} / {:.2}", lv(&p4, 3000.0) / 4.0, lv(&p12, 3000.0) / 12.0);
+    }
+
+    fn run25(p: &Comp25Params, amp: f64, f: f64, n: usize) -> Comp25 {
+        let mut c = Comp25::new(p, SR);
+        for i in 0..n { let mut x = [amp * (2.0 * PI * f * i as f64 / SR).sin(), 0.0]; c.tick(&mut x, 1); }
+        c
+    }
+    /// Comp 25 : ratio 4 → pente 3/4 (en avant comme en contre-réaction à l'équilibre) ; la Poussée réduit la réaction au grave
+    #[test]
+    fn comp25_ratio_poussee() {
+        let a = 10f64.powf(-2.0 / 20.0) * 2f64.sqrt() * 0.5; // crête ≈ −5 dBFS
+        let lvl = 20.0 * a.log10();
+        for fb in [false, true] {
+            let c = run25(&Comp25Params { thr: lvl - 12.0, ratio: 3, knee: 0, thrust: 0, feedback: fb, attack: 2, release: 2, ..Default::default() }, a, 1000.0, 48_000);
+            assert!((c.reduction() - 9.0).abs() < 1.0, "ratio 4 ({}) : {:.1} dB", if fb { "contre-réaction" } else { "en avant" }, c.reduction());
+        }
+        let lo = |t: usize| run25(&Comp25Params { thr: -20.0, thrust: t, ..Default::default() }, 0.5, 60.0, 48_000).reduction();
+        assert!(lo(2) < lo(0) - 3.0, "Poussée forte : {:.1} contre {:.1} dB sur le grave", lo(2), lo(0));
     }
 }

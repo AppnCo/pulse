@@ -137,6 +137,14 @@ export default async (c) => {
   if (m5) { await mouse('mouseMoved', { x: m5.x + 26, y: m5.y }, { buttons: 0 }); await mouse('mousePressed', { x: m5.x + 26, y: m5.y }); for (let i = 1; i <= 6; i++) { await mouse('mouseMoved', { x: m5.x + 26, y: m5.y - i * 10 }); await sleep(20); } await mouse('mouseReleased', { x: m5.x + 26, y: m5.y - 60 }); await sleep(200); }
   const mfv = await J(ev, `return state.project.tracks[0].effectParams.eq550.mf`);
   check('EQ 550 : médiums montés, par crans de 2', mfv > 0 && mfv % 2 === 0, String(mfv));
+  // Comp 25 : façade, type contre-réaction
+  await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
+  await click('#inspector .slot-plus[data-plus="fx"]');
+  await click('.fx-add-menu .fam-range', 'Analogique');
+  check('menu : Comp 25 cliqué', await click('.fx-add-menu .fam-fx', 'Comp 25')); await sleep(500);
+  const tg25 = await pos('.fx-panel.plug-win[data-fx="comp25"] .ana-push rect');
+  if (tg25) { await mouse('mouseMoved', tg25, { buttons: 0 }); await mouse('mousePressed', tg25); await mouse('mouseReleased', tg25); await sleep(200); }
+  check('Comp 25 : contre-réaction', await J(ev, `return state.project.tracks[0].effectParams.comp25.feedback`) === 1);
   // ---- Envois façon Logic
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   await click('#inspector .slot-plus[data-plus="send"]');

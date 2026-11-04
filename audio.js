@@ -1282,6 +1282,54 @@ window.PulseAudio = (function() {
             }
         }
         registerProcessor('pulse-eq550', pulseAuto(PulseEq550, (s, v) => { let ch = false; for (const k in v) if (k in s.p && s.p[k] !== v[k]) { s.p[k] = v[k]; ch = true; } if (ch) s.set(); }));
+        // Comp 25 : compresseur de bus « américain » (genou, Poussée, en avant / contre-réaction). Même calcul que Comp25 (analog.rs).
+        const C25_RATIO = [1.5, 2, 3, 4, 6, 10, 60], C25_ATT = [0.00003, 0.0001, 0.0003, 0.001, 0.003, 0.01, 0.03], C25_REL = [0.05, 0.1, 0.2, 0.5, 1, 2];
+        class PulseComp25 extends AudioWorkletProcessor {
+            constructor(o) {
+                super();
+                const p = (o && o.processorOptions) || {};
+                this.p = { thr: p.thr ?? -10, ratio: p.ratio ?? 3, attack: p.attack ?? 3, release: p.release ?? 3, relVar: p.relVar ?? 0.3, knee: p.knee ?? 1, thrust: p.thrust ?? 1, feedback: p.feedback ?? 0, makeup: p.makeup ?? 0, mix: p.mix ?? 100 };
+                this.gr = 0; this.lp = [0, 0]; this.lpa = 1 - Math.exp(-2 * Math.PI * 200 / sampleRate); this.os = [new AnaOs(), new AnaOs()]; this.iron = [[0], [0]]; this.ik = ironK(sampleRate);
+                this.dc = [[0, 0], [0, 0]]; this.dry = [new Float64Array(40), new Float64Array(40)];
+                this.report = !!p.report; this.mN = 0; this.mS = 0; this.mGr = 0;
+                this.set();
+            }
+            set() {
+                const p = this.p, sr = sampleRate, cl = (v, a, b) => Math.max(a, Math.min(b, v)), ix = (v, m) => Math.min(m, Math.max(0, Math.round(v))), co = (t) => 1 - Math.exp(-1 / (t * sr));
+                this.thr = cl(p.thr, -20, 10); this.ratio = C25_RATIO[ix(p.ratio, 6)]; this.knee = [0, 6, 12][ix(p.knee, 2)];
+                this.att = co(C25_ATT[ix(p.attack, 6)]); const rl = ix(p.release, 6); this.rel = co(rl >= 6 ? cl(p.relVar, 0.05, 3) : C25_REL[rl]);
+                this.fb = p.feedback >= 0.5; this.tk = [0, 0.5, 0.85][ix(p.thrust, 2)]; this.gmk = Math.pow(10, cl(p.makeup, 0, 20) / 20); this.mix = cl(p.mix / 100, 0, 1);
+            }
+            curve(over) {
+                const s = this.fb ? this.ratio - 1 : 1 - 1 / this.ratio, k = this.knee;
+                if (k <= 0) return Math.max(over, 0) * s;
+                return over <= -k / 2 ? 0 : over >= k / 2 ? over * s : s * (over + k / 2) ** 2 / (2 * k);
+            }
+            process(inputs, outputs) {
+                const inp = inputs[0], out = outputs[0];
+                if (!inp || !inp.length) return true;
+                const n = inp[0].length, nc = Math.min(inp.length, out.length, 2), [iw, il] = this.ik;
+                for (let i = 0; i < n; i++) {
+                    let pk = 0;
+                    for (let ch = 0; ch < nc; ch++) { const x = inp[ch][i]; this.lp[ch] += (x - this.lp[ch]) * this.lpa; pk = Math.max(pk, Math.abs(x - this.tk * this.lp[ch])); }
+                    const lvl = 20 * Math.log10(pk + 1e-12) - (this.fb ? this.gr : 0), want = this.curve(lvl - this.thr), a = this.fb ? this.att / this.ratio : this.att;
+                    this.gr += (want - this.gr) * (want > this.gr ? a : this.rel);
+                    const g = Math.pow(10, -this.gr / 20) * this.gmk;
+                    for (let ch = 0; ch < nc; ch++) {
+                        const x = inp[ch][i], ir = this.iron[ch];
+                        const y = this.os[ch].run(x * g, (u) => { let c = u * HR550; c = c + 0.03 * c * c / HR550 * 0.1; return ironRun(ir, Math.tanh(1.2 * c) / 1.2, iw, il, IRON550) / HR550; });
+                        const dc = this.dc[ch], o = y - dc[0] + 0.9998 * dc[1]; dc[0] = y; dc[1] = o;
+                        const d = this.dry[ch]; d.copyWithin(1, 0, 39); d[0] = x;
+                        out[ch][i] = this.mix < 1 ? d[ANA_LAT] + (o - d[ANA_LAT]) * this.mix : o;
+                        if (this.report && ch === 0) { this.mS += out[0][i] * out[0][i]; this.mN++; }
+                    }
+                    if (this.report) this.mGr = Math.max(this.mGr, this.gr);
+                }
+                if (this.report && this.mN >= 1920) { this.port.postMessage({ gr: this.mGr, out: 10 * Math.log10(this.mS / this.mN + 1e-12) }); this.mN = 0; this.mS = 0; this.mGr = 0; }
+                return true;
+            }
+        }
+        registerProcessor('pulse-comp25', pulseAuto(PulseComp25, (s, v) => { let ch = false; for (const k in v) if (k in s.p && s.p[k] !== v[k]) { s.p[k] = v[k]; ch = true; } if (ch) s.set(); }));
         registerProcessor('pulse-deesser', pulseAuto(PulseDeesser, (s, v) => { if (v.amount !== undefined) { const a = Math.max(0, Math.min(100, v.amount)); s.maxRed = a * 0.24; s.slope = a / 100 * 3; } }));
 
         // Gate : coupe le bruit entre deux phrases. Mêmes calculs que Gate dans engine/src/fx.rs.
@@ -1959,7 +2007,7 @@ window.PulseAudio = (function() {
 
     // Exemplaire d'un effet : « comp#2 » → type « comp » (même calcul que fx_type dans model.rs)
     const fxType = (id) => String(id).split('#')[0];
-    const FX_CHAIN = ['pitch', 'filter', 'pre73', 'stripe', 'gate', 'eq', 'eqp1', 'eq550', 'tape', 'sat', 'msat', 'crush', 'deess', 'fet76', 'opto2a', 'l670', 'dtr', 'comp', 'mband', 'busg', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'reverb']; // ordre habituel des effets
+    const FX_CHAIN = ['pitch', 'filter', 'pre73', 'stripe', 'gate', 'eq', 'eqp1', 'eq550', 'tape', 'sat', 'msat', 'crush', 'deess', 'fet76', 'opto2a', 'l670', 'dtr', 'comp25', 'comp', 'mband', 'busg', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'reverb']; // ordre habituel des effets
     const SEND_REVERB_TRIM = 1 / 3; // la reverb seule sort 3 fois trop fort par rapport au son direct : on la ramène à niveau
 
     // Paliers de tempo [{ sec, bpm }] quand le tempo change en cours de morceau (sinon null) — Project::tempo_segments côté Rust
@@ -2707,7 +2755,7 @@ window.PulseAudio = (function() {
             return !!(p.semi || p.formant) || Object.keys(auto || {}).some(k => k.startsWith(`fx:${e}:`));
         }).length;
         // machines Analogiques : 31 échantillons (suréchantillonnage) ; la Bande 80 en plus sa ligne de pleurage (48)
-        const na = (effects || []).reduce((s, e) => s + (['fet76', 'pre73', 'opto2a', 'eqp1', 'busg', 'l670', 'dtr', 'stripe', 'eq550'].includes(fxType(e)) ? 31 : fxType(e) === 'tape' ? 79 : 0), 0);
+        const na = (effects || []).reduce((s, e) => s + (['fet76', 'pre73', 'opto2a', 'eqp1', 'busg', 'l670', 'dtr', 'stripe', 'eq550', 'comp25'].includes(fxType(e)) ? 31 : fxType(e) === 'tape' ? 79 : 0), 0);
         return np * pitchLatency(sr) / sr + na / sr;
     }
     // Retard des groupes sur le trajet de sortie d'une piste (un stem seul contourne les groupes). Même calcul que bus_latency (render.rs).
@@ -3668,6 +3716,15 @@ window.PulseAudio = (function() {
         B.eqp1 = () => node('pulse-eqp1', 'eqp1');
         B.tape = () => node('pulse-tape', 'tape');
         B.eq550 = () => node('pulse-eq550', 'eq550');
+        // Comp 25 : aiguille de réduction (clé « comp25|t0 »)
+        B.comp25 = () => {
+            if (!enabled.includes('comp25') || !fxReady.has(actx)) return;
+            const live = !!params.grKey && !(typeof OfflineAudioContext !== 'undefined' && actx instanceof OfflineAudioContext);
+            const n = new AudioWorkletNode(actx, 'pulse-comp25', { numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max',
+                processorOptions: { kind: 'comp25', ...(params.comp25 || {}), report: live, ...autoAll('comp25') } });
+            if (live) { const k = 'comp25|' + gk('comp25'); n.port.onmessage = (e) => { compGR.set(k, e.data); compGRts.set(k, performance.now()); }; }
+            connect(n);
+        };
         // Tranche E : aiguille du compresseur (clé « stripe|t0 »)
         B.stripe = () => {
             if (!enabled.includes('stripe') || !fxReady.has(actx)) return;
