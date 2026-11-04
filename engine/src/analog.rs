@@ -1650,6 +1650,112 @@ impl Bus33 {
     }
 }
 
+// ===== EQ Massif : égaliseur à lampes de mastering (esprit « Massif ») =====
+// Comme la machine : quatre bandes très larges qui se chevauchent (1 : 22 Hz-1 kHz, 2 : 82 Hz-3,9 kHz, 3 : 220 Hz-10 kHz, 4 : 560 Hz-27 kHz),
+// chacune avec gain (±20 dB), fréquence et largeur ; les bandes 1 et 4 en plateau ou en cloche (le plateau fait une petite bosse :
+// passif). Coupe-bas (22/39/68/120 Hz) et coupe-haut (18/12/8,2/6,8 kHz), étage à lampe pour rattraper le niveau. L'air du mastering.
+pub const MAS_RANGE: [(f64, f64); 4] = [(22.0, 1_000.0), (82.0, 3_900.0), (220.0, 10_000.0), (560.0, 27_000.0)];
+pub const MAS_HPF: [f64; 4] = [22.0, 39.0, 68.0, 120.0];
+pub const MAS_LPF: [f64; 4] = [18_000.0, 12_000.0, 8_200.0, 6_800.0];
+
+#[derive(Clone, Debug)]
+pub struct MassifParams {
+    /// par bande : gain (dB), fréquence (Hz), largeur 0 (large) à 10 (serrée), plateau (bandes 1 et 4)
+    pub g: [f64; 4],
+    pub f: [f64; 4],
+    pub bw: [f64; 4],
+    pub shelf1: bool,
+    pub shelf4: bool,
+    /// coupe-bas / coupe-haut : −1 = éteint, sinon index
+    pub hpf: i32,
+    pub lpf: i32,
+    pub on: bool,
+    pub output: f64,
+}
+impl Default for MassifParams {
+    fn default() -> Self { Self { g: [0.0; 4], f: [100.0, 500.0, 2_500.0, 12_000.0], bw: [5.0; 4], shelf1: true, shelf4: true, hpf: -1, lpf: -1, on: true, output: 0.0 } }
+}
+impl From<&crate::model::MassifJson> for MassifParams {
+    fn from(j: &crate::model::MassifJson) -> Self {
+        let d = Self::default();
+        let o = |v: Option<f64>, def: f64| v.unwrap_or(def);
+        let b = |v: Option<f64>, def: bool| v.map_or(def, |v| v >= 0.5);
+        Self { g: [o(j.g1, 0.0), o(j.g2, 0.0), o(j.g3, 0.0), o(j.g4, 0.0)], f: [o(j.f1, d.f[0]), o(j.f2, d.f[1]), o(j.f3, d.f[2]), o(j.f4, d.f[3])],
+            bw: [o(j.bw1, 5.0), o(j.bw2, 5.0), o(j.bw3, 5.0), o(j.bw4, 5.0)], shelf1: b(j.shelf1, true), shelf4: b(j.shelf4, true),
+            hpf: j.hpf.map_or(-1, |v| (v.round() as i32).clamp(-1, 3)), lpf: j.lpf.map_or(-1, |v| (v.round() as i32).clamp(-1, 3)), on: b(j.on, true), output: o(j.output, 0.0) }
+    }
+}
+impl MassifParams {
+    pub fn set_key(&mut self, k: &str, v: f64) -> bool {
+        let n = |s: &str| s[1..].parse::<usize>().ok().filter(|i| (1..=4).contains(i)).map(|i| i - 1);
+        match k {
+            "shelf1" => self.shelf1 = v >= 0.5, "shelf4" => self.shelf4 = v >= 0.5, "on" => self.on = v >= 0.5, "output" => self.output = v,
+            "hpf" => self.hpf = (v.round() as i32).clamp(-1, 3), "lpf" => self.lpf = (v.round() as i32).clamp(-1, 3),
+            _ if k.starts_with('g') && n(k).is_some() => self.g[n(k).unwrap()] = v,
+            _ if k.starts_with('f') && n(k).is_some() => self.f[n(k).unwrap()] = v,
+            _ if k.starts_with("bw") && k[1..].starts_with('w') => { if let Ok(i) = k[2..].parse::<usize>() { if (1..=4).contains(&i) { self.bw[i - 1] = v; } } }
+            _ => return false }
+        true
+    }
+}
+const HRM: f64 = 0.125_892_541_179_416_72;
+
+pub struct Massif {
+    sr: f64,
+    eq: Vec<[Biquad; 2]>,
+    gout: f64,
+    os: [Os4; 2],
+    iron: [Iron; 2],
+    ik: (f64, f64),
+    dc: [(f64, f64); 2],
+}
+impl Massif {
+    pub const LATENCY: usize = 31;
+    pub fn new(p: &MassifParams, sr: f64) -> Self {
+        let mut s = Self { sr, eq: Vec::new(), gout: 1.0, os: [Os4::new(), Os4::new()], iron: [Iron::default(); 2], ik: iron_k(sr), dc: [(0.0, 0.0); 2] };
+        s.set(p);
+        s
+    }
+    pub fn set(&mut self, p: &MassifParams) {
+        let sr = self.sr;
+        let mut eq: Vec<Biquad> = Vec::new();
+        if p.hpf >= 0 { eq.push(eq_matched("highpass", MAS_HPF[p.hpf as usize], 0.707, 0.0, sr)); }
+        if p.lpf >= 0 { eq.push(eq_matched("lowpass", MAS_LPF[p.lpf as usize], 0.707, 0.0, sr)); }
+        if p.on {
+            for i in 0..4 {
+                let g = p.g[i].clamp(-20.0, 20.0);
+                if g.abs() < 1e-6 { continue; }
+                let (lo, hi) = MAS_RANGE[i];
+                let f = p.f[i].clamp(lo, hi);
+                let bw = p.bw[i].clamp(0.0, 10.0);
+                let shelf = (i == 0 && p.shelf1) || (i == 3 && p.shelf4);
+                eq.push(if shelf {
+                    // plateau passif : un peu de bosse (Q > 0,7) qui grandit quand on serre la largeur
+                    eq_matched(if i == 0 { "lowshelf" } else { "highshelf" }, f, 0.6 + 0.06 * bw, g, sr)
+                } else { eq_matched("peaking", f, 0.3 * 10f64.powf(bw / 10.0), g, sr) });
+            }
+        }
+        if self.eq.len() == eq.len() { for (a, n) in self.eq.iter_mut().zip(eq) { a[0].retune(n); a[1].retune(n); } } else { self.eq = eq.into_iter().map(|b| [b, b]).collect(); }
+        self.gout = 10f64.powf(p.output.clamp(-12.0, 12.0) / 20.0);
+    }
+    pub fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
+        let (iw, il) = self.ik;
+        for ch in 0..nc {
+            let mut v = x[ch];
+            for b in self.eq.iter_mut() { v = b[ch].tick(v); }
+            let (iron, dc) = (&mut self.iron[ch], &mut self.dc[ch]);
+            let y = self.os[ch].run(v, |u| {
+                let c = u * HRM;
+                let c = c + 0.08 * c * c;
+                iron.run((1.1 * c).tanh() / 1.1, iw, il, 0.03) / HRM
+            });
+            let o = y - dc.0 + 0.9998 * dc.1;
+            *dc = (y, o);
+            x[ch] = o * self.gout;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2032,5 +2138,20 @@ mod tests {
             let o: Vec<f64> = (0..48_000).map(|i| { let mut x = [0.4 * (2.0 * PI * 200.0 * i as f64 / SR).sin(), 0.0]; b.tick(&mut x, 1); x[0] }).collect();
             let s = &o[24_000..]; 20.0 * (harm(s, 200.0, 3) / harm(s, 200.0, 1)).log10() };
         assert!(h3(-25.0) > h3(10.0) + 3.0, "la réduction ajoute de l'harmonique 3 : {:.1} contre {:.1}", h3(-25.0), h3(10.0));
+    }
+
+    /// EQ Massif : à plat transparent ; cloche à sa fréquence ; largeur serrée = cloche plus étroite ; plateau aigu
+    #[test]
+    fn massif_bandes() {
+        let lv = |p: &MassifParams, f: f64| { let mut c = Massif::new(p, SR); let n = 48_000;
+            let o: Vec<f64> = (0..n).map(|i| { let mut x = [0.05 * (2.0 * PI * f * i as f64 / SR).sin(), 0.0]; c.tick(&mut x, 1); x[0] }).collect();
+            let r: Vec<f64> = (0..n).map(|i| 0.05 * (2.0 * PI * f * i as f64 / SR).sin()).collect(); 20.0 * (harm(&o[24_000..], f, 1) / harm(&r[24_000..], f, 1)).log10() };
+        assert!(lv(&MassifParams::default(), 1000.0).abs() < 0.15, "à plat");
+        let mut p = MassifParams::default(); p.g[2] = 8.0; p.f[2] = 2_000.0; p.bw[2] = 2.0;
+        assert!((lv(&p, 2000.0) - 8.0).abs() < 0.6, "bande 3 : +8 à 2 kHz ({:.1})", lv(&p, 2000.0));
+        let mut q = p.clone(); q.bw[2] = 9.0;
+        assert!(lv(&q, 4000.0) < lv(&p, 4000.0) - 2.0, "largeur serrée : {:.1} contre {:.1} dB à 4 kHz", lv(&q, 4000.0), lv(&p, 4000.0));
+        let mut a = MassifParams::default(); a.g[3] = 6.0; a.f[3] = 10_000.0;
+        assert!(lv(&a, 18_000.0) > 4.0, "air : {:.1} dB à 18 kHz", lv(&a, 18_000.0));
     }
 }

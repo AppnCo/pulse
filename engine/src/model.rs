@@ -147,6 +147,7 @@ pub struct EffectParams {
     pub eq550: Option<Eq550Json>,
     pub comp25: Option<Comp25Json>,
     pub bus33: Option<Bus33Json>,
+    pub massif: Option<MassifJson>,
     /// Exemplaires en plus d'un même effet (« comp#2 », « eq#3»…), réglages bruts : lus par `EffectParams::instance`
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
@@ -261,6 +262,16 @@ pub struct Opto2AJson {
     pub emph: Option<f64>,
     pub variant: Option<f64>,
     pub mix: Option<f64>,
+}
+
+/// EQ Massif : g1-g4 (dB ±20), f1-f4 (Hz), bw1-bw4 (0 large-10 serrée), shelf1/shelf4, hpf/lpf (−1 éteint, 0-3), on, output (dB)
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct MassifJson {
+    pub g1: Option<f64>, pub g2: Option<f64>, pub g3: Option<f64>, pub g4: Option<f64>,
+    pub f1: Option<f64>, pub f2: Option<f64>, pub f3: Option<f64>, pub f4: Option<f64>,
+    pub bw1: Option<f64>, pub bw2: Option<f64>, pub bw3: Option<f64>, pub bw4: Option<f64>,
+    pub shelf1: Option<f64>, pub shelf4: Option<f64>, pub hpf: Option<f64>, pub lpf: Option<f64>, pub on: Option<f64>, pub output: Option<f64>,
 }
 
 /// Bus 33 : con/cthr (dBFS)/cratio (0-4)/crec (0-5 : 0,1/0,4/0,8/1,5 s, A1, A2), lon/lthr (dBFS)/lrec (0-5), makeup (dB), mix %

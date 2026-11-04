@@ -152,6 +152,14 @@ export default async (c) => {
   check('menu : Bus 33 cliqué', await click('.fx-add-menu .fam-fx', 'Bus 33')); await sleep(500);
   await click('.fx-panel.plug-win[data-fx="bus33"] [data-k="lon"] rect');
   check('Bus 33 : limiteur en service', await J(ev, `return state.project.tracks[0].effectParams.bus33.lon`) === 1);
+  // EQ Massif : façade, bande 4 en cloche
+  await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
+  await click('#inspector .slot-plus[data-plus="fx"]');
+  await click('.fx-add-menu .fam-range', 'Analogique');
+  await click('.fx-add-menu .fam-cat', 'Préamplis'); await sleep(100);
+  check('menu : EQ Massif cliqué', await click('.fx-add-menu .fam-fx', 'EQ Massif')); await sleep(500);
+  await click('.fx-panel.plug-win[data-fx="massif"] [data-k="shelf4"] rect');
+  check('EQ Massif : bande 4 en cloche', await J(ev, `return state.project.tracks[0].effectParams.massif.shelf4`) === 0);
   // ---- Envois façon Logic
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   await click('#inspector .slot-plus[data-plus="send"]');

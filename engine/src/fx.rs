@@ -1527,6 +1527,7 @@ pub struct Chain {
     eq550: Option<(crate::analog::Eq550, crate::analog::Eq550Params)>,
     comp25: Option<(crate::analog::Comp25, crate::analog::Comp25Params)>,
     bus33: Option<(crate::analog::Bus33, crate::analog::Bus33Params)>,
+    massif: Option<(crate::analog::Massif, crate::analog::MassifParams)>,
     l670: Option<(crate::analog::L670, crate::analog::L670Params)>,
     order: Vec<Stage>,
     /// Automation des réglages d'effet (même liste de réglages que le navigateur, voir AUTO_FX dans studio.js)
@@ -1629,6 +1630,8 @@ fn auto_range(fx: &str, key: &str) -> Option<(f64, f64, bool)> {
         ("bus33", "lthr") => (-12.0, 0.0, false),
         ("bus33", "makeup") => (0.0, 20.0, false),
         ("bus33", "mix") => (0.0, 100.0, false),
+        ("massif", "g1") | ("massif", "g2") | ("massif", "g3") | ("massif", "g4") => (-20.0, 20.0, false),
+        ("massif", "output") => (-12.0, 12.0, false),
         ("busg", "thr") => (-30.0, 0.0, false),
         ("tape", "input") => (-12.0, 18.0, false),
         ("l670", "input") => (-10.0, 20.0, false),
@@ -1907,8 +1910,9 @@ impl Chain {
         let eq550 = has("eq550").then(|| { let p = crate::analog::Eq550Params::from(&effect_params.eq550.clone().unwrap_or_default()); (crate::analog::Eq550::new(&p, sr), p) });
         let comp25 = has("comp25").then(|| { let p = crate::analog::Comp25Params::from(&effect_params.comp25.clone().unwrap_or_default()); (crate::analog::Comp25::new(&p, sr), p) });
         let bus33 = has("bus33").then(|| { let p = crate::analog::Bus33Params::from(&effect_params.bus33.clone().unwrap_or_default()); (crate::analog::Bus33::new(&p, sr), p) });
+        let massif = has("massif").then(|| { let p = crate::analog::MassifParams::from(&effect_params.massif.clone().unwrap_or_default()); (crate::analog::Massif::new(&p, sr), p) });
         let comp_p = effect_params.comp.clone().unwrap_or_default();
-        Self { cut, filters, dyn_eq, sat, gate, crush, util, width, modfx, deess, deess2, mband, msat, comp, master, limit, delay, reverb, pitch, fet76, pre73, opto2a, eqp1, busg, tape, l670, dtr, stripe, eq550, comp25, bus33, order: Stage::DEFAULT.to_vec(),
+        Self { cut, filters, dyn_eq, sat, gate, crush, util, width, modfx, deess, deess2, mband, msat, comp, master, limit, delay, reverb, pitch, fet76, pre73, opto2a, eqp1, busg, tape, l670, dtr, stripe, eq550, comp25, bus33, massif, order: Stage::DEFAULT.to_vec(),
             auto: Vec::new(), auto_from: 0.0, pos: 0, tempo: Vec::new(), tempo_i: 0, sr, comp_p, eq_bands, cut_kinds, names: effects.to_vec(), deess_freq: de.freq.unwrap_or(5500.0) }
     }
     /// Tempo qui change en cours de morceau : l'écho calé sur le rythme (1/4, 1/8…) suit le tempo de l'endroit joué.
@@ -2013,6 +2017,7 @@ impl Chain {
             ("eq550", k) => if let Some((m, p)) = &mut self.eq550 { if p.set_key(k, v) { m.set(p); } },
             ("comp25", k) => if let Some((m, p)) = &mut self.comp25 { if p.set_key(k, v) { m.set(p); } },
             ("bus33", k) => if let Some((m, p)) = &mut self.bus33 { if p.set_key(k, v) { m.set(p); } },
+            ("massif", k) => if let Some((m, p)) = &mut self.massif { if p.set_key(k, v) { m.set(p); } },
             ("busg", k) => if let Some((m, p)) = &mut self.busg { if p.set_key(k, v) { m.set(p); } },
             ("tape", k) => if let Some((m, p)) = &mut self.tape { if p.set_key(k, v) { m.set(p); } },
             ("l670", k) => if let Some((m, p)) = &mut self.l670 { if p.set_key(k, v) { m.set(p); } },
@@ -2063,7 +2068,7 @@ impl Chain {
         if m.gate.is_none() && m.deess.is_none() && m.mband.is_none() && m.limit.is_none() { None } else { Some(m) }
     }
     pub fn is_empty(&self) -> bool {
-        self.cut.is_empty() && self.filters.is_empty() && self.dyn_eq.is_empty() && self.sat.is_none() && self.gate.is_none() && self.crush.is_none() && self.util.is_none() && self.width.is_none() && self.modfx.is_empty() && self.deess.is_none() && self.deess2.is_none() && self.mband.is_none() && self.msat.is_none() && self.comp.is_none() && self.master.is_none() && self.limit.is_none() && self.delay.is_none() && self.reverb.is_none() && self.pitch.is_none() && self.fet76.is_none() && self.pre73.is_none() && self.opto2a.is_none() && self.eqp1.is_none() && self.busg.is_none() && self.bus33.is_none() && self.comp25.is_none() && self.eq550.is_none() && self.stripe.is_none() && self.dtr.is_none() && self.tape.is_none() && self.l670.is_none()
+        self.cut.is_empty() && self.filters.is_empty() && self.dyn_eq.is_empty() && self.sat.is_none() && self.gate.is_none() && self.crush.is_none() && self.util.is_none() && self.width.is_none() && self.modfx.is_empty() && self.deess.is_none() && self.deess2.is_none() && self.mband.is_none() && self.msat.is_none() && self.comp.is_none() && self.master.is_none() && self.limit.is_none() && self.delay.is_none() && self.reverb.is_none() && self.pitch.is_none() && self.fet76.is_none() && self.pre73.is_none() && self.opto2a.is_none() && self.eqp1.is_none() && self.busg.is_none() && self.massif.is_none() && self.bus33.is_none() && self.comp25.is_none() && self.eq550.is_none() && self.stripe.is_none() && self.dtr.is_none() && self.tape.is_none() && self.l670.is_none()
     }
     /// Une piste avec reverb sort toujours en stéréo, même si ses sons sont mono.
     pub fn makes_stereo(&self) -> bool {
@@ -2213,6 +2218,9 @@ impl Chain {
                     Stage::Bus33 => {
                         if let Some((m, _)) = &mut self.bus33 { m.tick(&mut x, nc); }
                     }
+                    Stage::Massif => {
+                        if let Some((m, _)) = &mut self.massif { m.tick(&mut x, nc); }
+                    }
                     Stage::BusG => {
                         if let Some((m, _)) = &mut self.busg { m.tick(&mut x, nc); }
                     }
@@ -2269,6 +2277,7 @@ enum Stage {
     Opto2A,
     EqP1,
     BusG,
+    Massif,
     Bus33,
     Comp25,
     Eq550,
@@ -2279,7 +2288,7 @@ enum Stage {
 }
 
 impl Stage {
-    const DEFAULT: [Stage; 34] = [Stage::Pitch, Stage::Filter, Stage::Pre73, Stage::StripE, Stage::Gate, Stage::Eq, Stage::EqP1, Stage::Eq550, Stage::Tape, Stage::Sat, Stage::Msat, Stage::Crush, Stage::Deess, Stage::Fet76, Stage::Opto2A, Stage::L670, Stage::Dtr, Stage::Comp25, Stage::Comp, Stage::Mband, Stage::Bus33, Stage::BusG, Stage::Util, Stage::Width, Stage::Tremolo, Stage::Phaser, Stage::Flanger, Stage::Chorus, Stage::Doubler, Stage::Slapback, Stage::Master, Stage::Limit, Stage::Delay, Stage::Reverb];
+    const DEFAULT: [Stage; 35] = [Stage::Pitch, Stage::Filter, Stage::Pre73, Stage::StripE, Stage::Gate, Stage::Eq, Stage::EqP1, Stage::Eq550, Stage::Massif, Stage::Tape, Stage::Sat, Stage::Msat, Stage::Crush, Stage::Deess, Stage::Fet76, Stage::Opto2A, Stage::L670, Stage::Dtr, Stage::Comp25, Stage::Comp, Stage::Mband, Stage::Bus33, Stage::BusG, Stage::Util, Stage::Width, Stage::Tremolo, Stage::Phaser, Stage::Flanger, Stage::Chorus, Stage::Doubler, Stage::Slapback, Stage::Master, Stage::Limit, Stage::Delay, Stage::Reverb];
     fn parse(name: &str) -> Option<Stage> {
         Some(match name {
             "filter" => Stage::Filter,
@@ -2309,6 +2318,7 @@ impl Stage {
             "opto2a" => Stage::Opto2A,
             "eqp1" => Stage::EqP1,
             "busg" => Stage::BusG,
+            "massif" => Stage::Massif,
             "bus33" => Stage::Bus33,
             "comp25" => Stage::Comp25,
             "eq550" => Stage::Eq550,
@@ -2606,7 +2616,7 @@ impl FxChain {
             for id in &ids {
                 let one = params.instance(id);
                 macro_rules! take { ($($f:ident),*) => { $( if one.$f.is_some() { ep.$f = one.$f; } )* } }
-                take!(filter, gate, chorus, flanger, phaser, tremolo, doubler, slapback, crush, util, width, eq, sat, deess, comp, mband, msat, reverb, delay, master, limit, pitch, fet76, pre73, opto2a, eqp1, busg, tape, l670, dtr, stripe, eq550, comp25, bus33);
+                take!(filter, gate, chorus, flanger, phaser, tremolo, doubler, slapback, crush, util, width, eq, sat, deess, comp, mband, msat, reverb, delay, master, limit, pitch, fet76, pre73, opto2a, eqp1, busg, tape, l670, dtr, stripe, eq550, comp25, bus33, massif);
             }
             let types: Vec<String> = ids.iter().map(|i| crate::model::fx_type(i).to_owned()).collect();
             (Chain::new(&types, &ep, sr, bpm, ceiling_db).with_order(&types), ids)

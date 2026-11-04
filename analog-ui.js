@@ -1120,6 +1120,65 @@ function openBus33Panel(trackIdx, anchorEl) {
     makePlugWindow(panel, t, 'bus33', trackIdx);
 }
 
+
+// ===== EQ Massif : égaliseur à lampes de mastering (esprit « Massif ») : 4 bandes en colonnes, filtres, sortie =====
+function openMassifPanel(trackIdx, anchorEl) {
+    closeTransientPanels();
+    const t = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;
+    if (!t) return;
+    const already = findPlugWin(t, 'massif');
+    if (already) { plugFront(already); return; }
+    t.effectParams = t.effectParams || {};
+    if (!t.effectParams.massif) t.effectParams.massif = { g1: 0, g2: 0, g3: 0, g4: 0, f1: 100, f2: 500, f3: 2500, f4: 12000, bw1: 5, bw2: 5, bw3: 5, bw4: 5, shelf1: 1, shelf4: 1, hpf: -1, lpf: -1, on: 1, output: 0 };
+    const P = () => t.effectParams.massif, ed = anaEdit(t, 'massif');
+    const W = 1000, H = 320;
+    const { panel, svg } = anaWindow(t, 'massif', 'EQ Massif', W, H, anchorEl, trackIdx, 1000, 'noir');
+    const L = { style: 'paint-order:stroke', 'stroke-opacity': '.5', 'stroke-width': '.6', stroke: '#000' };
+    anaText(svg, 44, 38, 'PULSE · EQ MASSIF', { ...L, 'text-anchor': 'start', 'font-size': 14, 'font-weight': 700, 'letter-spacing': 3 });
+    anaText(svg, 44, 54, 'ÉGALISEUR À LAMPES DE MASTERING', { fill: '#a78bfa', 'text-anchor': 'start', 'letter-spacing': 2.5, class: '' });
+    const RANGE = [[22, 1000], [82, 3900], [220, 10000], [560, 27000]];
+    const fmtF = (f) => f >= 1000 ? (Math.round(f / 100) / 10).toString().replace('.', ',') + ' k' : Math.round(f) + ' Hz';
+    const read = panel.querySelector('.ana-read');
+    const say = () => { const p = P(); read.innerHTML = [1, 2, 3, 4].map(i => `B${i} <b>${p['g' + i] > 0 ? '+' : ''}${p['g' + i]}</b> à ${fmtF(p['f' + i])}`).join(' · '); };
+    const push = (g, x, y, w, txt, on, tip) => { anaEl('rect', { x: x - w / 2, y: y - 8, width: w, height: 16, rx: 3, fill: on ? '#7c3aed' : '#1c1426', stroke: '#3a2b52', ...(on ? { filter: 'url(#anaGlow)' } : {}) }, g); anaText(g, x, y + 3, txt, { fill: on ? '#fff' : '#a78bfa', 'font-size': 7, 'letter-spacing': .5, class: '' }); anaEl('title', {}, g).textContent = tip; };
+    [0, 1, 2, 3].forEach(i => {
+        const x = 110 + i * 170, n = i + 1, [lo, hi] = RANGE[i];
+        anaText(svg, x, 82, 'BANDE ' + n, { fill: '#a78bfa', 'font-size': 8, 'letter-spacing': 2, class: '' });
+        anaTicks(svg, x, 130, 36, 9, -150, 150, ['−20', '', '', '', '0', '', '', '', '+20'], 7);
+        anaKnob(svg, { strip: 'black-big', cx: x, cy: 130, d: 56, key: 'g' + n, min: -20, max: 20, def: 0, tip: `Bande ${n} : gain (dB)`, get: () => P()['g' + n] ?? 0, set: (v) => { P()['g' + n] = Math.round(v * 2) / 2; ed.touch('g' + n); say(); }, onStart: ed.start, onEnd: ed.end });
+        const toN = (f) => Math.log(Math.max(lo, f) / lo) / Math.log(hi / lo);
+        anaTicks(svg, x - 34, 222, 18, 9, -150, 150, null);
+        anaKnob(svg, { strip: 'bakelite', cx: x - 34, cy: 222, d: 28, key: 'f' + n, min: 0, max: 1, def: toN(([100, 500, 2500, 12000])[i]), tip: `Bande ${n} : fréquence (${fmtF(lo)} à ${fmtF(hi)})`, get: () => toN(P()['f' + n]),
+            set: (v) => { let f = lo * Math.pow(hi / lo, v); f = f >= 1000 ? Math.round(f / 10) * 10 : Math.round(f); P()['f' + n] = f; say(); }, onStart: ed.start, onEnd: ed.end }).g.classList.remove('pk');
+        anaText(svg, x - 34, 252, 'FRÉQ.', { ...L, 'font-size': 7, 'letter-spacing': .8 });
+        anaTicks(svg, x + 34, 222, 18, 9, -150, 150, null);
+        anaKnob(svg, { strip: 'bakelite', cx: x + 34, cy: 222, d: 28, key: 'bw' + n, min: 0, max: 10, def: 5, tip: `Bande ${n} : largeur (0 large, 10 serrée)`, get: () => P()['bw' + n] ?? 5, set: (v) => { P()['bw' + n] = Math.round(v * 10) / 10; say(); }, onStart: ed.start, onEnd: ed.end }).g.classList.remove('pk');
+        anaText(svg, x + 34, 252, 'LARGEUR', { ...L, 'font-size': 7, 'letter-spacing': .8 });
+        if (i < 3) anaEl('line', { x1: x + 85, y1: 74, x2: x + 85, y2: 296, stroke: '#ffffff12' }, svg);
+    });
+    const pg = anaEl('g', {}, svg);
+    const drawP = () => { pg.innerHTML = '';
+        [['shelf1', 110, 'PLATEAU', 'Bande 1 en plateau (sinon cloche)'], ['shelf4', 620, 'PLATEAU', 'Bande 4 en plateau (sinon cloche)'], ['on', 900, 'EN SERVICE', 'EQ en service']].forEach(([k, x, txt, tip]) => {
+            const g = anaEl('g', { class: 'ana-push', 'data-k': k }, pg); push(g, x, 284, k === 'on' ? 72 : 60, txt, (P()[k] ?? 1) >= 0.5, tip); }); };
+    pg.addEventListener('click', (e) => { const b = e.target.closest('[data-k]'); if (!b) return; const k = b.dataset.k; ed.start(); P()[k] = (P()[k] ?? 1) >= 0.5 ? 0 : 1; ed.end(); drawP(); });
+    drawP();
+    // filtres et sortie
+    const HP = ['ARRÊT', '22', '39', '68', '120'], LP = ['ARRÊT', '18k', '12k', '8,2k', '6,8k'];
+    const sel = (cx, cy, key, labels, tip, lab) => {
+        labels.forEach((tx, i) => { const a = (-90 + 45 * i) * Math.PI / 180; anaText(svg, cx + Math.sin(a) * 30, cy - Math.cos(a) * 30 + 3, tx, { 'font-size': 6.5, 'letter-spacing': 0 }); });
+        anaKnob(svg, { strip: 'sel5', cx, cy, d: 34, key, min: -1, max: 3, def: -1, steps: [-1, 0, 1, 2, 3], get: () => P()[key] ?? -1, set: (v) => { P()[key] = v; say(); }, onStart: ed.start, onEnd: ed.end, tip }).g.classList.remove('pk');
+        anaText(svg, cx, cy + 34, lab, { ...L, 'font-size': 7, 'letter-spacing': .8 });
+    };
+    sel(845, 110, 'hpf', HP, 'Coupe-bas : arrêt, 22, 39, 68, 120 Hz', 'COUPE-BAS Hz');
+    sel(950, 110, 'lpf', LP, 'Coupe-haut : arrêt, 18, 12, 8,2, 6,8 kHz', 'COUPE-HAUT');
+    anaTicks(svg, 905, 210, 22, 7, -150, 150, ['−12', '', '', '0', '', '', '+12'], 6.5);
+    anaKnob(svg, { strip: 'alu-big', cx: 905, cy: 210, d: 36, key: 'output', min: -12, max: 12, def: 0, tip: 'Sortie (dB)', get: () => P().output ?? 0, set: (v) => { P().output = Math.round(v * 2) / 2; ed.touch('output'); say(); }, onStart: ed.start, onEnd: ed.end });
+    anaText(svg, 905, 248, 'SORTIE', { ...L, 'font-size': 7.5 });
+    panel.querySelector('.fx-bypass').addEventListener('change', (e) => { pushUndo(); setFxOn(t, 'massif', e.target.checked); refreshPlaybackSoon(); saveProject(); refreshStrips(); });
+    say();
+    makePlugWindow(panel, t, 'massif', trackIdx);
+}
+
 // Styles de la façade (ici pour garder la gamme dans un seul fichier)
 (() => {
     const st = document.createElement('style');
