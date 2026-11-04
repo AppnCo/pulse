@@ -57,6 +57,10 @@ export default async (c) => {
   const gain = await J(ev, `return state.project.tracks[0].effectParams.pre73.gain`);
   check('gain à crans (multiple de 5, > 0)', gain > 0 && gain % 5 === 0, String(gain));
   await click('.fx-panel.plug-win[data-fx="pre73"] .ana-var[data-v="1"]'); await sleep(300);
+  // bouton double du 73 : le bord attrape les médiums (niveau), le centre la fréquence
+  const mid = await pos('.fx-panel.plug-win[data-fx="pre73"] .ana-k[data-key="mid"] circle');
+  if (mid) { await mouse('mouseMoved', { x: mid.x + 24, y: mid.y }, { buttons: 0 }); await mouse('mousePressed', { x: mid.x + 24, y: mid.y }); for (let i = 1; i <= 4; i++) { await mouse('mouseMoved', { x: mid.x + 24, y: mid.y - i * 10 }); await sleep(20); } await mouse('mouseReleased', { x: mid.x + 24, y: mid.y - 40 }); await sleep(200); }
+  check('73 : le bord du bouton double règle les médiums', await J(ev, `return state.project.tracks[0].effectParams.pre73.mid`) > 0);
   const v84 = JSON.parse(await J(ev, `const p=document.querySelector('.fx-panel.plug-win[data-fx="pre73"]'); return JSON.stringify({ v: state.project.tracks[0].effectParams.pre73.variant, title: p && p.querySelector('.fx-title').textContent, lmid: !!(p && p.querySelector('.ana-k[data-key="lmid"]')), gain: state.project.tracks[0].effectParams.pre73.gain })`));
   check('variante 84 : façade redessinée avec les bas-médiums, réglages gardés', v84.v === 1 && /84/.test(v84.title) && v84.lmid && v84.gain === gain, JSON.stringify(v84));
   // Optique 2A : variantes (la façade change de couleur, réglages gardés), Compression / Limitation
@@ -123,6 +127,16 @@ export default async (c) => {
   check('Tranche E : hauts-médiums poussés', await J(ev, `return state.project.tracks[0].effectParams.stripe.hmf`) > 0);
   await click('.fx-panel.plug-win[data-fx="stripe"] .ana-var[data-v="1"] rect');
   check('Tranche E : Noir', await J(ev, `return state.project.tracks[0].effectParams.stripe.variant`) === 1);
+  // EQ 550 : façade, médiums par crans de 2
+  await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
+  await click('#inspector .slot-plus[data-plus="fx"]');
+  await click('.fx-add-menu .fam-range', 'Analogique');
+  await click('.fx-add-menu .fam-cat', 'Préamplis'); await sleep(100);
+  check('menu : EQ 550 cliqué', await click('.fx-add-menu .fam-fx', 'EQ 550')); await sleep(500);
+  const m5 = await pos('.fx-panel.plug-win[data-fx="eq550"] .ana-k[data-key="mf"] circle');
+  if (m5) { await mouse('mouseMoved', { x: m5.x + 26, y: m5.y }, { buttons: 0 }); await mouse('mousePressed', { x: m5.x + 26, y: m5.y }); for (let i = 1; i <= 6; i++) { await mouse('mouseMoved', { x: m5.x + 26, y: m5.y - i * 10 }); await sleep(20); } await mouse('mouseReleased', { x: m5.x + 26, y: m5.y - 60 }); await sleep(200); }
+  const mfv = await J(ev, `return state.project.tracks[0].effectParams.eq550.mf`);
+  check('EQ 550 : médiums montés, par crans de 2', mfv > 0 && mfv % 2 === 0, String(mfv));
   // ---- Envois façon Logic
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   await click('#inspector .slot-plus[data-plus="send"]');

@@ -11,7 +11,7 @@ const ANA_STRIPS = {
     hf73: { n: 61, px: 144, a0: -150, a1: 150, span: 2.4 }, mid73: { n: 61, px: 160, a0: -150, a1: 150, span: 2.4 },
     midf73: { n: 6, px: 160, a0: -100, a1: 100, span: 2.4 }, low73: { n: 61, px: 160, a0: -150, a1: 150, span: 2.4 },
     lowf73: { n: 4, px: 160, a0: -90, a1: 90, span: 2.4 }, hpf73: { n: 5, px: 112, a0: -120, a1: 120, span: 2.4 },
-    'black-big': { n: 61, px: 200, a0: -150, a1: 150, span: 2.4 }, sel7: { n: 7, px: 128, a0: -90, a1: 90, span: 2.4 }, sel3: { n: 3, px: 128, a0: -45, a1: 45, span: 2.4 }, sel4: { n: 4, px: 128, a0: -60, a1: 60, span: 2.4 }, sel5: { n: 5, px: 128, a0: -90, a1: 90, span: 2.4 }, sel6: { n: 6, px: 128, a0: -100, a1: 100, span: 2.4 }, sel8: { n: 8, px: 128, a0: -105, a1: 105, span: 2.4 }, reel: { n: 1, px: 360, span: 2.1 }, 'tog-up': { n: 1, px: 128, span: 3.2 }, 'tog-down': { n: 1, px: 128, span: 3.2 }
+    'black-big': { n: 61, px: 200, a0: -150, a1: 150, span: 2.4 }, sel7: { n: 7, px: 128, a0: -90, a1: 90, span: 2.4 }, sel3: { n: 3, px: 128, a0: -45, a1: 45, span: 2.4 }, sel4: { n: 4, px: 128, a0: -60, a1: 60, span: 2.4 }, sel5: { n: 5, px: 128, a0: -90, a1: 90, span: 2.4 }, sel6: { n: 6, px: 128, a0: -100, a1: 100, span: 2.4 }, sel8: { n: 8, px: 128, a0: -105, a1: 105, span: 2.4 }, k550: { n: 13, px: 200, a0: -150, a1: 150, span: 2.4 }, k550f5: { n: 5, px: 200, a0: -100, a1: 100, span: 2.4 }, k550f6: { n: 6, px: 200, a0: -100, a1: 100, span: 2.4 }, reel: { n: 1, px: 360, span: 2.1 }, 'tog-up': { n: 1, px: 128, span: 3.2 }, 'tog-down': { n: 1, px: 128, span: 3.2 }
 };
 // Couleurs de façade (variantes) : dégradé du panneau, gravures, sous-titres, grain du brossé
 const ANA_SKINS = {
@@ -55,10 +55,12 @@ const anaText = (parent, x, y, txt, attrs = {}) => { const e = anaEl('text', { x
 // Bouton tournant : glisser vers le haut / le bas (Maj = fin), molette, double-clic = valeur de départ.
 // `steps` = valeurs permises (bouton à crans) ; sinon continu entre min et max. Le bouton porte la classe .pk + data-key :
 // en mode automation, le toucher affiche sa courbe sur la piste (autoTargetOf), et il suit la courbe pendant la lecture (_pkShow).
-function anaKnob(parent, { strip, cx, cy, d, key, min, max, def, steps, get, set, fmt, onStart, onEnd, tip }) {
+function anaKnob(parent, { strip, cx, cy, d, key, min, max, def, steps, get, set, fmt, onStart, onEnd, tip, hitR }) {
     const g = anaEl('g', { class: 'pk ana-k', 'data-key': key }, parent);
     const sp = anaSprite(g, strip, cx, cy, d);
-    const hit = anaEl('circle', { cx, cy, r: d / 2 + 4, fill: 'transparent' }, g);
+    // bouton concentrique : le petit bouton du centre n'attrape que le centre (le grand autour reste accessible)
+    if (!hitR && /^(midf73|lowf73|k550f\d)$/.test(strip)) hitR = d * 0.22;
+    const hit = anaEl('circle', { cx, cy, r: hitR || d / 2 + 4, fill: 'transparent' }, g);
     if (tip) anaEl('title', {}, hit).textContent = tip;
     const frac = (v) => steps ? Math.max(0, steps.indexOf(steps.reduce((b, s) => Math.abs(s - v) < Math.abs(b - v) ? s : b, steps[0]))) / (steps.length - 1) : (v - min) / (max - min);
     const draw = (v = get()) => sp.frame(frac(v) * (sp.n - 1));
@@ -920,6 +922,54 @@ function openStripEPanel(trackIdx, anchorEl) {
     panel.querySelector('.fx-bypass').addEventListener('change', (e) => { pushUndo(); setFxOn(t, 'stripe', e.target.checked); refreshPlaybackSoon(); saveProject(); refreshStrips(); });
     say();
     makePlugWindow(panel, t, 'stripe', trackIdx);
+}
+
+
+// ===== EQ 550 : égaliseur à crans 3 bandes (esprit « 550 ») : module vertical, boutons doubles (gain autour, fréquence au centre) =====
+function openEq550Panel(trackIdx, anchorEl) {
+    closeTransientPanels();
+    const t = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;
+    if (!t) return;
+    const already = findPlugWin(t, 'eq550');
+    if (already) { plugFront(already); return; }
+    t.effectParams = t.effectParams || {};
+    if (!t.effectParams.eq550) t.effectParams.eq550 = { lf: 0, lfF: 1, lfPeak: 0, mf: 0, mfF: 2, hf: 0, hfF: 3, hfPeak: 0, band: 0, on: 1, output: 0 };
+    const P = () => t.effectParams.eq550, ed = anaEdit(t, 'eq550');
+    const W = 340, H = 560;
+    const { panel, svg } = anaWindow(t, 'eq550', 'EQ 550', W, H, anchorEl, trackIdx, 400, 'noir');
+    const L = { style: 'paint-order:stroke', 'stroke-opacity': '.5', 'stroke-width': '.6', stroke: '#000' };
+    anaText(svg, W / 2, 38, 'PULSE · EQ 550', { ...L, 'font-size': 13, 'font-weight': 700, 'letter-spacing': 3 });
+    anaText(svg, W / 2, 52, 'ÉGALISEUR À CRANS', { fill: '#a78bfa', 'font-size': 8, class: '' });
+    const LF = ['50', '100', '200', '300', '400'], MF = ['400', '800', '1,5k', '3k', '5k'], HF = ['2,5k', '5k', '7,5k', '10k', '12,5k', '15k'];
+    const read = panel.querySelector('.ana-read');
+    const sg = (v) => (v > 0 ? '+' : '') + v;
+    const say = () => { const p = P();
+        svg.querySelectorAll('.e550f').forEach(e => { const on = +e.dataset.i === (p[e.dataset.fk] ?? 0); e.setAttribute('fill', on ? '#fff' : '#7c6aa0'); e.setAttribute('font-weight', on ? 700 : 400); if (on) e.setAttribute('filter', 'url(#anaGlow)'); else e.removeAttribute('filter'); });
+        read.innerHTML = `Aigus <b>${sg(p.hf)}</b> à ${HF[p.hfF ?? 3]} · Médiums <b>${sg(p.mf)}</b> à ${MF[p.mfF ?? 2]} · Graves <b>${sg(p.lf)}</b> à ${LF[p.lfF ?? 1]}`; };
+    const GAINS = [-12, -10, -8, -6, -4, -2, 0, 2, 4, 6, 8, 10, 12];
+    const band = (cy, gk, fk, fl, inner, lab) => {
+        anaTicks(svg, W / 2 - 40, cy, 38, 13, -150, 150, ['−12', '', '', '', '', '', '0', '', '', '', '', '', '+12'], 6.5);
+        anaKnob(svg, { strip: 'k550', cx: W / 2 - 40, cy, d: 64, key: gk, min: -12, max: 12, def: 0, steps: GAINS, get: () => P()[gk] ?? 0, set: (v) => { P()[gk] = v; ed.touch(gk); say(); }, onStart: ed.start, onEnd: ed.end, tip: `${lab} : gain par crans de 2 dB` });
+        anaKnob(svg, { strip: inner, cx: W / 2 - 40, cy, d: 64, key: fk, min: 0, max: fl.length - 1, def: 0, steps: fl.map((_, i) => i), get: () => P()[fk] ?? 0, set: (v) => { P()[fk] = v; say(); }, onStart: ed.start, onEnd: ed.end, tip: `${lab} : fréquence (au centre)` }).g.classList.remove('pk');
+        // la liste des fréquences, celle choisie allumée
+        fl.forEach((tx, i) => { anaText(svg, W / 2 + 62, cy - 34 + i * 12, tx, { fill: '#a78bfa', 'font-size': 7.5, 'letter-spacing': 0, 'text-anchor': 'start', class: 'e550f', 'data-fk': fk, 'data-i': i }); });
+        anaText(svg, W / 2 - 40, cy + 54, lab, { ...L, 'font-size': 9 });
+    };
+    band(130, 'hf', 'hfF', HF, 'k550f6', 'AIGUS');
+    band(270, 'mf', 'mfF', MF, 'k550f5', 'MÉDIUMS');
+    band(410, 'lf', 'lfF', LF, 'k550f5', 'GRAVES');
+    const pg = anaEl('g', {}, svg);
+    const push = (g, x, y, w, txt, on, tip) => { anaEl('rect', { x: x - w / 2, y: y - 8, width: w, height: 16, rx: 3, fill: on ? '#7c3aed' : '#1c1426', stroke: '#3a2b52', ...(on ? { filter: 'url(#anaGlow)' } : {}) }, g); anaText(g, x, y + 3, txt, { fill: on ? '#fff' : '#a78bfa', 'font-size': 7, 'letter-spacing': .5, class: '' }); anaEl('title', {}, g).textContent = tip; };
+    const drawP = () => {
+        pg.innerHTML = '';
+        [['hfPeak', 252, 175, 'CLOCHE', 'Aigus en cloche (sinon plateau)'], ['lfPeak', 252, 455, 'CLOCHE', 'Graves en cloche (sinon plateau)'], ['band', 110, 500, 'FILTRE', 'Filtre de bande : coupe sous 50 Hz et au-dessus de 15 kHz'], ['on', 230, 500, 'EN SERVICE', 'EQ en service']].forEach(([k, x, y, txt, tip]) => {
+            const g = anaEl('g', { class: 'ana-push', 'data-k': k }, pg); push(g, x, y, 70, txt, (P()[k] ?? (k === 'on' ? 1 : 0)) >= 0.5, tip); });
+    };
+    pg.addEventListener('click', (e) => { const b = e.target.closest('[data-k]'); if (!b) return; const k = b.dataset.k; ed.start(); P()[k] = (P()[k] ?? (k === 'on' ? 1 : 0)) >= 0.5 ? 0 : 1; ed.end(); drawP(); });
+    drawP();
+    panel.querySelector('.fx-bypass').addEventListener('change', (e) => { pushUndo(); setFxOn(t, 'eq550', e.target.checked); refreshPlaybackSoon(); saveProject(); refreshStrips(); });
+    say();
+    makePlugWindow(panel, t, 'eq550', trackIdx);
 }
 
 // Styles de la façade (ici pour garder la gamme dans un seul fichier)

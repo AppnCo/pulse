@@ -1239,6 +1239,49 @@ window.PulseAudio = (function() {
             }
         }
         registerProcessor('pulse-stripe', pulseAuto(PulseStripE, (s, v) => { let ch = false; for (const k in v) if (k in s.p && s.p[k] !== v[k]) { s.p[k] = v[k]; ch = true; } if (ch) s.set(); }));
+        // EQ 550 : 3 bandes à crans, largeur proportionnelle, ampli discret. Même calcul que Eq550 (analog.rs).
+        const E550_LF = [50, 100, 200, 300, 400], E550_MF = [400, 800, 1500, 3000, 5000], E550_HF = [2500, 5000, 7500, 10000, 12500, 15000], HR550 = 0.15848931924611135, IRON550 = 0.04;
+        class PulseEq550 extends AudioWorkletProcessor {
+            constructor(o) {
+                super();
+                const p = (o && o.processorOptions) || {};
+                this.p = { lf: p.lf ?? 0, lfF: p.lfF ?? 1, lfPeak: p.lfPeak ?? 0, mf: p.mf ?? 0, mfF: p.mfF ?? 2, hf: p.hf ?? 0, hfF: p.hfF ?? 3, hfPeak: p.hfPeak ?? 0, band: p.band ?? 0, on: p.on ?? 1, output: p.output ?? 0 };
+                this.eq = []; this.st = [[], []]; this.os = [new AnaOs(), new AnaOs()]; this.iron = [[0], [0]]; this.ik = ironK(sampleRate); this.dc = [[0, 0], [0, 0]];
+                this.set();
+            }
+            set() {
+                const p = this.p, sr = sampleRate, cl = (v, a, b) => Math.max(a, Math.min(b, v)), ix = (v, m) => Math.min(m, Math.max(0, Math.round(v))), q = (g) => 0.5 + 0.12 * Math.abs(g);
+                const eq = [];
+                if (p.on >= 0.5) {
+                    let g = cl(p.lf, -12, 12);
+                    if (Math.abs(g) > 1e-6) { const f = E550_LF[ix(p.lfF, 4)]; eq.push(p.lfPeak >= 0.5 ? eqMatched('peaking', f, q(g), g, sr) : eqMatched('lowshelf', f, 0.7, g, sr)); }
+                    g = cl(p.mf, -12, 12);
+                    if (Math.abs(g) > 1e-6) eq.push(eqMatched('peaking', E550_MF[ix(p.mfF, 4)], q(g), g, sr));
+                    g = cl(p.hf, -12, 12);
+                    if (Math.abs(g) > 1e-6) { const f = E550_HF[ix(p.hfF, 5)]; eq.push(p.hfPeak >= 0.5 ? eqMatched('peaking', f, q(g), g, sr) : eqMatched('highshelf', f, 0.7, g, sr)); }
+                    if (p.band >= 0.5) { eq.push(eqMatched('highpass', 50, 0.707, 0, sr)); eq.push(eqMatched('lowpass', 15000, 0.707, 0, sr)); }
+                }
+                if (eq.length !== this.eq.length) this.st = [eq.map(() => [0, 0, 0, 0]), eq.map(() => [0, 0, 0, 0])];
+                this.eq = eq; this.gout = Math.pow(10, cl(p.output, -12, 12) / 20);
+            }
+            process(inputs, outputs) {
+                const inp = inputs[0], out = outputs[0];
+                if (!inp || !inp.length) return true;
+                const n = inp[0].length, nc = Math.min(inp.length, out.length, 2), eq = this.eq, [iw, il] = this.ik;
+                for (let ch = 0; ch < nc; ch++) {
+                    const a = inp[ch], o = out[ch], st = this.st[ch], ir = this.iron[ch], dc = this.dc[ch], os = this.os[ch];
+                    const f = (u) => { let c = u * HR550; c = c + 0.03 * c * c / HR550 * 0.1; return ironRun(ir, Math.tanh(1.2 * c) / 1.2, iw, il, IRON550) / HR550; };
+                    for (let i = 0; i < n; i++) {
+                        let v = a[i];
+                        for (let j = 0; j < eq.length; j++) v = biqRun(eq[j], st[j], v);
+                        const y = os.run(v, f), z = y - dc[0] + 0.9998 * dc[1]; dc[0] = y; dc[1] = z;
+                        o[i] = z * this.gout;
+                    }
+                }
+                return true;
+            }
+        }
+        registerProcessor('pulse-eq550', pulseAuto(PulseEq550, (s, v) => { let ch = false; for (const k in v) if (k in s.p && s.p[k] !== v[k]) { s.p[k] = v[k]; ch = true; } if (ch) s.set(); }));
         registerProcessor('pulse-deesser', pulseAuto(PulseDeesser, (s, v) => { if (v.amount !== undefined) { const a = Math.max(0, Math.min(100, v.amount)); s.maxRed = a * 0.24; s.slope = a / 100 * 3; } }));
 
         // Gate : coupe le bruit entre deux phrases. Mêmes calculs que Gate dans engine/src/fx.rs.
@@ -1916,7 +1959,7 @@ window.PulseAudio = (function() {
 
     // Exemplaire d'un effet : « comp#2 » → type « comp » (même calcul que fx_type dans model.rs)
     const fxType = (id) => String(id).split('#')[0];
-    const FX_CHAIN = ['pitch', 'filter', 'pre73', 'stripe', 'gate', 'eq', 'eqp1', 'tape', 'sat', 'msat', 'crush', 'deess', 'fet76', 'opto2a', 'l670', 'dtr', 'comp', 'mband', 'busg', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'reverb']; // ordre habituel des effets
+    const FX_CHAIN = ['pitch', 'filter', 'pre73', 'stripe', 'gate', 'eq', 'eqp1', 'eq550', 'tape', 'sat', 'msat', 'crush', 'deess', 'fet76', 'opto2a', 'l670', 'dtr', 'comp', 'mband', 'busg', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'reverb']; // ordre habituel des effets
     const SEND_REVERB_TRIM = 1 / 3; // la reverb seule sort 3 fois trop fort par rapport au son direct : on la ramène à niveau
 
     // Paliers de tempo [{ sec, bpm }] quand le tempo change en cours de morceau (sinon null) — Project::tempo_segments côté Rust
@@ -2664,7 +2707,7 @@ window.PulseAudio = (function() {
             return !!(p.semi || p.formant) || Object.keys(auto || {}).some(k => k.startsWith(`fx:${e}:`));
         }).length;
         // machines Analogiques : 31 échantillons (suréchantillonnage) ; la Bande 80 en plus sa ligne de pleurage (48)
-        const na = (effects || []).reduce((s, e) => s + (['fet76', 'pre73', 'opto2a', 'eqp1', 'busg', 'l670', 'dtr', 'stripe'].includes(fxType(e)) ? 31 : fxType(e) === 'tape' ? 79 : 0), 0);
+        const na = (effects || []).reduce((s, e) => s + (['fet76', 'pre73', 'opto2a', 'eqp1', 'busg', 'l670', 'dtr', 'stripe', 'eq550'].includes(fxType(e)) ? 31 : fxType(e) === 'tape' ? 79 : 0), 0);
         return np * pitchLatency(sr) / sr + na / sr;
     }
     // Retard des groupes sur le trajet de sortie d'une piste (un stem seul contourne les groupes). Même calcul que bus_latency (render.rs).
@@ -3624,6 +3667,7 @@ window.PulseAudio = (function() {
         B.pre73 = () => node('pulse-pre73', 'pre73');
         B.eqp1 = () => node('pulse-eqp1', 'eqp1');
         B.tape = () => node('pulse-tape', 'tape');
+        B.eq550 = () => node('pulse-eq550', 'eq550');
         // Tranche E : aiguille du compresseur (clé « stripe|t0 »)
         B.stripe = () => {
             if (!enabled.includes('stripe') || !fxReady.has(actx)) return;

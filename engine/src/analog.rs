@@ -1317,6 +1317,99 @@ impl StripE {
     }
 }
 
+// ===== EQ 550 : égaliseur à crans 3 bandes (esprit « 550 ») =====
+// Comme la machine : trois bandes à crans de 2 dB (±12), fréquences fixes, graves et aigus en plateau ou en cloche, filtre de bande
+// (coupe-bas 50 Hz + coupe-haut 15 kHz). Largeur « proportionnelle » : douce quand on touche à peine, serrée quand on pousse fort
+// — c'est le son « américain », punchy, des médiums en avant. L'ampli de sortie (discret) colore un peu.
+pub const E550_LF: [f64; 5] = [50.0, 100.0, 200.0, 300.0, 400.0];
+pub const E550_MF: [f64; 5] = [400.0, 800.0, 1_500.0, 3_000.0, 5_000.0];
+pub const E550_HF: [f64; 6] = [2_500.0, 5_000.0, 7_500.0, 10_000.0, 12_500.0, 15_000.0];
+
+#[derive(Clone, Debug)]
+pub struct Eq550Params {
+    pub lf: f64, pub lf_f: usize, pub lf_peak: bool,
+    pub mf: f64, pub mf_f: usize,
+    pub hf: f64, pub hf_f: usize, pub hf_peak: bool,
+    pub band: bool,
+    pub on: bool,
+    pub output: f64,
+}
+impl Default for Eq550Params {
+    fn default() -> Self { Self { lf: 0.0, lf_f: 1, lf_peak: false, mf: 0.0, mf_f: 2, hf: 0.0, hf_f: 3, hf_peak: false, band: false, on: true, output: 0.0 } }
+}
+impl From<&crate::model::Eq550Json> for Eq550Params {
+    fn from(j: &crate::model::Eq550Json) -> Self {
+        let d = Self::default();
+        let idx = |v: Option<f64>, def: usize, max: usize| v.map_or(def, |v| (v.round().max(0.0) as usize).min(max));
+        let b = |v: Option<f64>, def: bool| v.map_or(def, |v| v >= 0.5);
+        Self { lf: j.lf.unwrap_or(0.0), lf_f: idx(j.lf_f, d.lf_f, 4), lf_peak: b(j.lf_peak, false), mf: j.mf.unwrap_or(0.0), mf_f: idx(j.mf_f, d.mf_f, 4),
+            hf: j.hf.unwrap_or(0.0), hf_f: idx(j.hf_f, d.hf_f, 5), hf_peak: b(j.hf_peak, false), band: b(j.band, false), on: b(j.on, true), output: j.output.unwrap_or(0.0) }
+    }
+}
+impl Eq550Params {
+    pub fn set_key(&mut self, k: &str, v: f64) -> bool {
+        let ix = |v: f64, m: usize| (v.round().max(0.0) as usize).min(m);
+        match k { "lf" => self.lf = v, "mf" => self.mf = v, "hf" => self.hf = v, "output" => self.output = v, "lfF" => self.lf_f = ix(v, 4), "mfF" => self.mf_f = ix(v, 4),
+            "hfF" => self.hf_f = ix(v, 5), "lfPeak" => self.lf_peak = v >= 0.5, "hfPeak" => self.hf_peak = v >= 0.5, "band" => self.band = v >= 0.5, "on" => self.on = v >= 0.5, _ => return false }
+        true
+    }
+}
+/// Marge de l'ampli discret (−16 dB) et son fer
+const HR550: f64 = 0.158_489_319_246_111_35;
+const IRON550: f64 = 0.04;
+
+pub struct Eq550 {
+    gout: f64,
+    eq: Vec<[Biquad; 2]>,
+    os: [Os4; 2],
+    iron: [Iron; 2],
+    ik: (f64, f64),
+    dc: [(f64, f64); 2],
+    sr: f64,
+}
+impl Eq550 {
+    pub const LATENCY: usize = 31;
+    pub fn new(p: &Eq550Params, sr: f64) -> Self {
+        let mut s = Self { gout: 1.0, eq: Vec::new(), os: [Os4::new(), Os4::new()], iron: [Iron::default(); 2], ik: iron_k(sr), dc: [(0.0, 0.0); 2], sr };
+        s.set(p);
+        s
+    }
+    pub fn set(&mut self, p: &Eq550Params) {
+        let sr = self.sr;
+        // largeur proportionnelle : Q = 0,5 à peine touché … ≈ 1,9 à ±12
+        let q = |g: f64| 0.5 + 0.12 * g.abs();
+        let mut eq: Vec<Biquad> = Vec::new();
+        if p.on {
+            let g = p.lf.clamp(-12.0, 12.0);
+            if g.abs() > 1e-6 { let f = E550_LF[p.lf_f.min(4)]; eq.push(if p.lf_peak { eq_matched("peaking", f, q(g), g, sr) } else { eq_matched("lowshelf", f, 0.7, g, sr) }); }
+            let g = p.mf.clamp(-12.0, 12.0);
+            if g.abs() > 1e-6 { eq.push(eq_matched("peaking", E550_MF[p.mf_f.min(4)], q(g), g, sr)); }
+            let g = p.hf.clamp(-12.0, 12.0);
+            if g.abs() > 1e-6 { let f = E550_HF[p.hf_f.min(5)]; eq.push(if p.hf_peak { eq_matched("peaking", f, q(g), g, sr) } else { eq_matched("highshelf", f, 0.7, g, sr) }); }
+            if p.band { eq.push(eq_matched("highpass", 50.0, 0.707, 0.0, sr)); eq.push(eq_matched("lowpass", 15_000.0, 0.707, 0.0, sr)); }
+        }
+        if self.eq.len() == eq.len() { for (a, n) in self.eq.iter_mut().zip(eq) { a[0].retune(n); a[1].retune(n); } } else { self.eq = eq.into_iter().map(|b| [b, b]).collect(); }
+        self.gout = 10f64.powf(p.output.clamp(-12.0, 12.0) / 20.0);
+    }
+    pub fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
+        let (iw, il) = self.ik;
+        for ch in 0..nc {
+            let mut v = x[ch];
+            for b in self.eq.iter_mut() { v = b[ch].tick(v); }
+            let (iron, dc) = (&mut self.iron[ch], &mut self.dc[ch]);
+            let y = self.os[ch].run(v, |u| {
+                // ampli discret : un peu d'harmonique 2 et 3 (le « punch »), transfo de sortie
+                let c = u * HR550;
+                let c = c + 0.03 * c * c / HR550 * 0.1;
+                iron.run((1.2 * c).tanh() / 1.2, iw, il, IRON550) / HR550
+            });
+            let o = y - dc.0 + 0.9998 * dc.1;
+            *dc = (y, o);
+            x[ch] = o * self.gout;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1650,5 +1743,19 @@ mod tests {
         let (o, _) = rune(&StripEParams { gthr: -30.0, grange: 30.0, grel: 0.1, ..Default::default() }, 0.003, 1000.0, 48_000);
         let rms = (o[24_000..].iter().map(|v| v * v).sum::<f64>() / 24_000.0).sqrt();
         assert!(rms < 0.003 / 2f64.sqrt() * 0.05, "gate fermée : {rms:.6}");
+    }
+
+    /// EQ 550 : à plat = transparent ; +12 à 1,5 kHz ; largeur proportionnelle (à +4 bien plus large qu'à +12, en proportion)
+    #[test]
+    fn eq550_crans_et_largeur() {
+        let lv = |p: &Eq550Params, f: f64| { let mut c = Eq550::new(p, SR); let n = 48_000;
+            let o: Vec<f64> = (0..n).map(|i| { let mut x = [0.05 * (2.0 * PI * f * i as f64 / SR).sin(), 0.0]; c.tick(&mut x, 1); x[0] }).collect();
+            let r: Vec<f64> = (0..n).map(|i| 0.05 * (2.0 * PI * f * i as f64 / SR).sin()).collect(); 20.0 * (harm(&o[24_000..], f, 1) / harm(&r[24_000..], f, 1)).log10() };
+        assert!(lv(&Eq550Params::default(), 1000.0).abs() < 0.15, "à plat");
+        let p12 = Eq550Params { mf: 12.0, mf_f: 2, ..Default::default() };
+        assert!((lv(&p12, 1500.0) - 12.0).abs() < 0.6, "+12 à 1,5 kHz : {:.1}", lv(&p12, 1500.0));
+        let p4 = Eq550Params { mf: 4.0, mf_f: 2, ..Default::default() };
+        // une octave au-dessus : la cloche de +4 garde une plus grande part de son gain que celle de +12
+        assert!(lv(&p4, 3000.0) / 4.0 > lv(&p12, 3000.0) / 12.0 + 0.1, "largeur proportionnelle : {:.2} / {:.2}", lv(&p4, 3000.0) / 4.0, lv(&p12, 3000.0) / 12.0);
     }
 }
