@@ -143,6 +143,7 @@ pub struct EffectParams {
     pub tape: Option<TapeJson>,
     pub l670: Option<L670Json>,
     pub dtr: Option<DtrJson>,
+    pub stripe: Option<StripEJson>,
     /// Exemplaires en plus d'un même effet (« comp#2 », « eq#3»…), réglages bruts : lus par `EffectParams::instance`
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
@@ -257,6 +258,22 @@ pub struct Opto2AJson {
     pub emph: Option<f64>,
     pub variant: Option<f64>,
     pub mix: Option<f64>,
+}
+
+/// Tranche E : hpf (Hz, < 16 = éteint), lpf (kHz, ≥ 22 = éteint), lf/lfF/lfBell, lmf/lmfF/lmfQ, hmf/hmfF/hmfQ, hf/hfF/hfBell, eq, variant (0 Brun · 1 Noir),
+/// cthr (dBFS)/cratio (1-20, 20 = ∞)/crel (s)/cfast, gthr (dBFS, −80 = éteint)/grange (dB)/grel (s), dynPre, output (dB)
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct StripEJson {
+    pub hpf: Option<f64>, pub lpf: Option<f64>,
+    pub lf: Option<f64>, pub lf_f: Option<f64>, pub lf_bell: Option<f64>,
+    pub lmf: Option<f64>, pub lmf_f: Option<f64>, pub lmf_q: Option<f64>,
+    pub hmf: Option<f64>, pub hmf_f: Option<f64>, pub hmf_q: Option<f64>,
+    pub hf: Option<f64>, pub hf_f: Option<f64>, pub hf_bell: Option<f64>,
+    pub eq: Option<f64>, pub variant: Option<f64>,
+    pub cthr: Option<f64>, pub cratio: Option<f64>, pub crel: Option<f64>, pub cfast: Option<f64>,
+    pub gthr: Option<f64>, pub grange: Option<f64>, pub grel: Option<f64>,
+    pub dyn_pre: Option<f64>, pub output: Option<f64>,
 }
 
 /// Détresse : input/output/attack/release 0-10, ratio 0-7 (1:1, 2, 3, 4, 6, 10, 20, Nuke), detHp/detBand 0/1, dist 0 propre · 1 « 2 » · 2 « 3 », mix %

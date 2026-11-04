@@ -1177,6 +1177,146 @@ impl Dtr {
     }
 }
 
+// ===== Tranche E : tranche de console complète (esprit « E ») =====
+// Comme une voie de la console : filtres coupe-bas (18 dB/oct, 16-350 Hz) et coupe-haut (12 dB/oct, 3-22 kHz), EQ 4 bandes
+// (graves 30-450 Hz plateau ou cloche, bas-médiums 200-2,5 k et hauts-médiums 0,6-7 k avec leur largeur, aigus 1,5-16 k plateau
+// ou cloche), compresseur (seuil, ratio jusqu'à l'infini, relâchement, attaque rapide) et gate (seuil, profondeur, relâchement),
+// la dynamique avant ou après l'EQ. Variantes : Brun (l'EQ doux, largeur fixe) et Noir (les cloches se resserrent quand on pousse).
+#[derive(Clone, Debug)]
+pub struct StripEParams {
+    pub hpf: f64,
+    pub lpf: f64,
+    pub lf: f64, pub lf_f: f64, pub lf_bell: bool,
+    pub lmf: f64, pub lmf_f: f64, pub lmf_q: f64,
+    pub hmf: f64, pub hmf_f: f64, pub hmf_q: f64,
+    pub hf: f64, pub hf_f: f64, pub hf_bell: bool,
+    pub eq: bool,
+    pub variant: usize,
+    pub cthr: f64, pub cratio: f64, pub crel: f64, pub cfast: bool,
+    pub gthr: f64, pub grange: f64, pub grel: f64,
+    pub dyn_pre: bool,
+    pub output: f64,
+}
+impl Default for StripEParams {
+    fn default() -> Self { Self { hpf: 0.0, lpf: 22.0, lf: 0.0, lf_f: 100.0, lf_bell: false, lmf: 0.0, lmf_f: 600.0, lmf_q: 1.0, hmf: 0.0, hmf_f: 2500.0, hmf_q: 1.0,
+        hf: 0.0, hf_f: 8000.0, hf_bell: false, eq: true, variant: 0, cthr: 10.0, cratio: 1.0, crel: 0.3, cfast: false, gthr: -80.0, grange: 20.0, grel: 0.3, dyn_pre: false, output: 0.0 } }
+}
+impl From<&crate::model::StripEJson> for StripEParams {
+    fn from(j: &crate::model::StripEJson) -> Self {
+        let d = Self::default();
+        let b = |v: Option<f64>, def: bool| v.map_or(def, |v| v >= 0.5);
+        Self { hpf: j.hpf.unwrap_or(d.hpf), lpf: j.lpf.unwrap_or(d.lpf), lf: j.lf.unwrap_or(0.0), lf_f: j.lf_f.unwrap_or(d.lf_f), lf_bell: b(j.lf_bell, false),
+            lmf: j.lmf.unwrap_or(0.0), lmf_f: j.lmf_f.unwrap_or(d.lmf_f), lmf_q: j.lmf_q.unwrap_or(d.lmf_q), hmf: j.hmf.unwrap_or(0.0), hmf_f: j.hmf_f.unwrap_or(d.hmf_f), hmf_q: j.hmf_q.unwrap_or(d.hmf_q),
+            hf: j.hf.unwrap_or(0.0), hf_f: j.hf_f.unwrap_or(d.hf_f), hf_bell: b(j.hf_bell, false), eq: b(j.eq, true), variant: j.variant.map_or(0, |v| (v.round().max(0.0) as usize).min(1)),
+            cthr: j.cthr.unwrap_or(d.cthr), cratio: j.cratio.unwrap_or(d.cratio), crel: j.crel.unwrap_or(d.crel), cfast: b(j.cfast, false),
+            gthr: j.gthr.unwrap_or(d.gthr), grange: j.grange.unwrap_or(d.grange), grel: j.grel.unwrap_or(d.grel), dyn_pre: b(j.dyn_pre, false), output: j.output.unwrap_or(0.0) }
+    }
+}
+impl StripEParams {
+    pub fn set_key(&mut self, k: &str, v: f64) -> bool {
+        match k {
+            "hpf" => self.hpf = v, "lpf" => self.lpf = v, "lf" => self.lf = v, "lfF" => self.lf_f = v, "lfBell" => self.lf_bell = v >= 0.5,
+            "lmf" => self.lmf = v, "lmfF" => self.lmf_f = v, "lmfQ" => self.lmf_q = v, "hmf" => self.hmf = v, "hmfF" => self.hmf_f = v, "hmfQ" => self.hmf_q = v,
+            "hf" => self.hf = v, "hfF" => self.hf_f = v, "hfBell" => self.hf_bell = v >= 0.5, "eq" => self.eq = v >= 0.5, "variant" => self.variant = (v.round().max(0.0) as usize).min(1),
+            "cthr" => self.cthr = v, "cratio" => self.cratio = v, "crel" => self.crel = v, "cfast" => self.cfast = v >= 0.5,
+            "gthr" => self.gthr = v, "grange" => self.grange = v, "grel" => self.grel = v, "dynPre" => self.dyn_pre = v >= 0.5, "output" => self.output = v,
+            _ => return false }
+        true
+    }
+}
+/// Marge de la voie de console (−20 dB : elle ne chauffe qu'à peine, comme la vraie)
+const HRE: f64 = 0.1;
+
+pub struct StripE {
+    sr: f64,
+    filt: Vec<[Biquad; 2]>,
+    eq: Vec<[Biquad; 2]>,
+    dyn_pre: bool,
+    // compresseur
+    cthr: f64, cslope: f64, catt: f64, crel: f64, cgr: f64, con: bool,
+    // gate
+    gthr: f64, gfloor: f64, grel: f64, gatt: f64, gg: f64, gon: bool, ghold: usize, gcount: usize,
+    gout: f64,
+    os: [Os4; 2],
+}
+impl StripE {
+    pub const LATENCY: usize = 31;
+    pub fn new(p: &StripEParams, sr: f64) -> Self {
+        let mut s = Self { sr, filt: Vec::new(), eq: Vec::new(), dyn_pre: false, cthr: 10.0, cslope: 0.0, catt: 0.0, crel: 0.0, cgr: 0.0, con: false,
+            gthr: -80.0, gfloor: 1.0, grel: 0.0, gatt: 0.0, gg: 1.0, gon: false, ghold: 0, gcount: 0, gout: 1.0, os: [Os4::new(), Os4::new()] };
+        s.set(p);
+        s
+    }
+    pub fn set(&mut self, p: &StripEParams) {
+        let sr = self.sr;
+        let co = |t: f64| 1.0 - (-1.0 / (t * sr)).exp();
+        let mut filt: Vec<Biquad> = Vec::new();
+        if p.hpf >= 16.0 { let f = p.hpf.min(350.0); filt.push(eq_matched("highpass", f, 1.0, 0.0, sr)); filt.push(Biquad::highpass(sr, f, 0.0)); }
+        if p.lpf < 21.9 { filt.push(eq_matched("lowpass", p.lpf.clamp(3.0, 22.0) * 1000.0, 0.707, 0.0, sr)); }
+        let mut eq: Vec<Biquad> = Vec::new();
+        if p.eq {
+            let noir = p.variant == 1;
+            // Noir : largeur proportionnelle (plus on pousse, plus la cloche se resserre)
+            let pq = |q: f64, g: f64| if noir { q * (1.0 + g.abs() / 10.0) } else { q };
+            if p.lf.abs() > 1e-6 { let f = p.lf_f.clamp(30.0, 450.0); let g = p.lf.clamp(-16.5, 16.5); eq.push(if p.lf_bell { eq_matched("peaking", f, pq(0.8, g), g, sr) } else { eq_matched("lowshelf", f, 0.7, g, sr) }); }
+            if p.lmf.abs() > 1e-6 { let g = p.lmf.clamp(-15.0, 15.0); eq.push(eq_matched("peaking", p.lmf_f.clamp(200.0, 2500.0), pq(p.lmf_q.clamp(0.5, 2.5), g), g, sr)); }
+            if p.hmf.abs() > 1e-6 { let g = p.hmf.clamp(-15.0, 15.0); eq.push(eq_matched("peaking", p.hmf_f.clamp(600.0, 7000.0), pq(p.hmf_q.clamp(0.5, 2.5), g), g, sr)); }
+            if p.hf.abs() > 1e-6 { let f = p.hf_f.clamp(1500.0, 16000.0); let g = p.hf.clamp(-16.5, 16.5); eq.push(if p.hf_bell { eq_matched("peaking", f, pq(0.8, g), g, sr) } else { eq_matched("highshelf", f, 0.7, g, sr) }); }
+        }
+        let keep = |old: &mut Vec<[Biquad; 2]>, new: Vec<Biquad>| { if old.len() == new.len() { for (a, n) in old.iter_mut().zip(new) { a[0].retune(n); a[1].retune(n); } } else { *old = new.into_iter().map(|b| [b, b]).collect(); } };
+        keep(&mut self.filt, filt);
+        keep(&mut self.eq, eq);
+        self.dyn_pre = p.dyn_pre;
+        // compresseur : ratio 1 (rien) à 20 (au bout : l'infini)
+        let r = p.cratio.clamp(1.0, 20.0);
+        self.con = r > 1.0 + 1e-6 && p.cthr < 10.0;
+        self.cslope = if r >= 19.99 { 1.0 } else { 1.0 - 1.0 / r };
+        self.cthr = p.cthr.clamp(-30.0, 10.0);
+        self.catt = co(if p.cfast { 0.001 } else { 0.003 });
+        self.crel = co(p.crel.clamp(0.1, 4.0));
+        // gate : seuil (−80 = éteint), profondeur (dB), relâchement ; attaque 0,1 ms, maintien 20 ms
+        self.gon = p.gthr > -79.9;
+        self.gthr = 10f64.powf(p.gthr.clamp(-80.0, 0.0) / 20.0);
+        self.gfloor = 10f64.powf(-p.grange.clamp(0.0, 40.0) / 20.0);
+        self.grel = co(p.grel.clamp(0.1, 4.0));
+        self.gatt = co(0.0001);
+        self.ghold = (0.02 * sr) as usize;
+        self.gout = 10f64.powf(p.output.clamp(-20.0, 20.0) / 20.0);
+    }
+    pub fn reduction(&self) -> f64 { self.cgr }
+    fn dynamics(&mut self, x: &mut [f64; 2], nc: usize) {
+        let mut pk = 0.0f64;
+        for ch in 0..nc { pk = pk.max(x[ch].abs()); }
+        if self.gon {
+            if pk > self.gthr { self.gcount = self.ghold; }
+            let target = if self.gcount > 0 { self.gcount -= 1; 1.0 } else { self.gfloor };
+            self.gg += (target - self.gg) * if target > self.gg { self.gatt } else { self.grel };
+        } else { self.gg = 1.0; }
+        if self.con {
+            let over = 20.0 * (pk + 1e-12).log10() - self.cthr;
+            // genou doux de 6 dB
+            let want = if over <= -3.0 { 0.0 } else if over >= 3.0 { over * self.cslope } else { self.cslope * (over + 3.0).powi(2) / 12.0 };
+            self.cgr += (want - self.cgr) * if want > self.cgr { self.catt } else { self.crel };
+        } else { self.cgr = 0.0; }
+        let g = self.gg * 10f64.powf(-self.cgr / 20.0);
+        for ch in 0..nc { x[ch] *= g; }
+    }
+    pub fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
+        if self.dyn_pre { self.dynamics(x, nc); }
+        for ch in 0..nc {
+            let mut v = x[ch];
+            for b in self.filt.iter_mut() { v = b[ch].tick(v); }
+            for b in self.eq.iter_mut() { v = b[ch].tick(v); }
+            x[ch] = v;
+        }
+        if !self.dyn_pre { self.dynamics(x, nc); }
+        for ch in 0..nc {
+            // étage de sortie de la voie : très propre, il n'arrondit que les crêtes extrêmes
+            x[ch] = self.os[ch].run(x[ch], |u| (u * HRE).tanh() / HRE) * self.gout;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1488,5 +1628,27 @@ mod tests {
         let h = |dist: usize, k: usize| { let (o, _) = rundtr(&DtrParams { ratio: 0, input: 8.0, output: 2.0, dist, ..Default::default() }, 0.3, 200.0, 48_000); let s = &o[24_000..]; 20.0 * (harm(s, 200.0, k) / harm(s, 200.0, 1)).log10() };
         assert!(h(1, 2) > h(0, 2) + 6.0, "« 2 » : h2 {:.1} contre {:.1}", h(1, 2), h(0, 2));
         assert!(h(2, 3) > h(0, 3) + 6.0, "« 3 » : h3 {:.1} contre {:.1}", h(2, 3), h(0, 3));
+    }
+
+    fn rune(p: &StripEParams, amp: f64, f: f64, n: usize) -> (Vec<f64>, StripE) {
+        let mut c = StripE::new(p, SR);
+        let o = (0..n).map(|i| { let mut x = [amp * (2.0 * PI * f * i as f64 / SR).sin(), 0.0]; c.tick(&mut x, 1); x[0] }).collect();
+        (o, c)
+    }
+    /// Tranche E : à plat = transparente ; EQ à sa fréquence ; Noir plus serrée que Brun ; compresseur au ratio ; gate qui ferme
+    #[test]
+    fn tranche_e() {
+        let lv = |p: &StripEParams, f: f64| { let (o, _) = rune(p, 0.05, f, 48_000); let r: Vec<f64> = (0..48_000).map(|i| 0.05 * (2.0 * PI * f * i as f64 / SR).sin()).collect(); 20.0 * (harm(&o[24_000..], f, 1) / harm(&r[24_000..], f, 1)).log10() };
+        let flat = StripEParams::default();
+        assert!(lv(&flat, 1000.0).abs() < 0.1, "à plat : {:.2} dB", lv(&flat, 1000.0));
+        let b = StripEParams { hmf: 12.0, hmf_f: 3000.0, ..Default::default() };
+        assert!((lv(&b, 3000.0) - 12.0).abs() < 0.6, "HMF +12 à 3 kHz : {:.1}", lv(&b, 3000.0));
+        let n = StripEParams { variant: 1, ..b.clone() };
+        assert!(lv(&n, 4500.0) < lv(&b, 4500.0) - 1.0, "Noir plus serrée : {:.1} contre {:.1} dB à 4,5 kHz", lv(&n, 4500.0), lv(&b, 4500.0));
+        let (_, c) = rune(&StripEParams { cthr: -20.0, cratio: 4.0, ..Default::default() }, 10f64.powf(-8.0 / 20.0), 1000.0, 48_000);
+        assert!((c.reduction() - 9.0).abs() < 1.0, "4:1, 12 dB au-dessus : {:.1} dB de réduction", c.reduction());
+        let (o, _) = rune(&StripEParams { gthr: -30.0, grange: 30.0, grel: 0.1, ..Default::default() }, 0.003, 1000.0, 48_000);
+        let rms = (o[24_000..].iter().map(|v| v * v).sum::<f64>() / 24_000.0).sqrt();
+        assert!(rms < 0.003 / 2f64.sqrt() * 0.05, "gate fermée : {rms:.6}");
     }
 }

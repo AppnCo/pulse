@@ -112,6 +112,17 @@ export default async (c) => {
   check('menu : Détresse cliquée', await click('.fx-add-menu .fam-fx', 'Détresse')); await sleep(500);
   await click('.fx-panel.plug-win[data-fx="dtr"] [data-k="dist3"] rect');
   check('Détresse : distorsion « 3 »', await J(ev, `return state.project.tracks[0].effectParams.dtr.dist`) === 2);
+  // Tranche E : façade, gain des hauts-médiums tourné, variante Noir
+  await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
+  await click('#inspector .slot-plus[data-plus="fx"]');
+  await click('.fx-add-menu .fam-range', 'Analogique');
+  await click('.fx-add-menu .fam-cat', 'Préamplis'); await sleep(100);
+  check('menu : Tranche E cliquée', await click('.fx-add-menu .fam-fx', 'Tranche E')); await sleep(500);
+  const hm = await pos('.fx-panel.plug-win[data-fx="stripe"] .ana-k[data-key="hmf"] circle');
+  if (hm) { await mouse('mouseMoved', hm, { buttons: 0 }); await mouse('mousePressed', hm); for (let i = 1; i <= 5; i++) { await mouse('mouseMoved', { x: hm.x, y: hm.y - i * 10 }); await sleep(20); } await mouse('mouseReleased', { x: hm.x, y: hm.y - 50 }); await sleep(200); }
+  check('Tranche E : hauts-médiums poussés', await J(ev, `return state.project.tracks[0].effectParams.stripe.hmf`) > 0);
+  await click('.fx-panel.plug-win[data-fx="stripe"] .ana-var[data-v="1"] rect');
+  check('Tranche E : Noir', await J(ev, `return state.project.tracks[0].effectParams.stripe.variant`) === 1);
   // ---- Envois façon Logic
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   await click('#inspector .slot-plus[data-plus="send"]');

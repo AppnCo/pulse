@@ -2164,8 +2164,8 @@ function migrateProject() {
 
 // === Tranche à gauche (inspecteur) : la piste sélectionnée et, à sa droite, là où elle sort ===
 // Évite d'ouvrir le mixer pour voir les effets d'une piste ou régler son volume.
-const FX_NAMES = { msat: 'Saturation multibande', mband: 'Multibande', pitch: 'Pitch', crush: 'Bitcrusher', util: 'Utilitaire', width: 'Largeur', tremolo: 'Trémolo', phaser: 'Phaser', flanger: 'Flanger', chorus: 'Chorus', doubler: 'Doubleur', slapback: 'Slapback', filter: 'Filtre', gate: 'Gate', eq: 'EQ', sat: 'Saturation', deess: 'De-esser', comp: 'Compresseur', master: 'Finition', limit: 'Limiteur', delay: 'Écho', reverb: 'Reverb', fet76: 'Éclair 76', pre73: 'Pulse 73', opto2a: 'Optique 2A', eqp1: 'Égaliseur P1', busg: 'Bus G', tape: 'Bande 80', l670: 'Lampe 670', dtr: 'Détresse' };
-const FX_ORDER = ['pitch', 'filter', 'pre73', 'gate', 'eq', 'eqp1', 'tape', 'sat', 'msat', 'crush', 'deess', 'fet76', 'opto2a', 'l670', 'dtr', 'comp', 'mband', 'busg', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'reverb'];
+const FX_NAMES = { msat: 'Saturation multibande', mband: 'Multibande', pitch: 'Pitch', crush: 'Bitcrusher', util: 'Utilitaire', width: 'Largeur', tremolo: 'Trémolo', phaser: 'Phaser', flanger: 'Flanger', chorus: 'Chorus', doubler: 'Doubleur', slapback: 'Slapback', filter: 'Filtre', gate: 'Gate', eq: 'EQ', sat: 'Saturation', deess: 'De-esser', comp: 'Compresseur', master: 'Finition', limit: 'Limiteur', delay: 'Écho', reverb: 'Reverb', fet76: 'Éclair 76', pre73: 'Pulse 73', opto2a: 'Optique 2A', eqp1: 'Égaliseur P1', busg: 'Bus G', tape: 'Bande 80', l670: 'Lampe 670', dtr: 'Détresse', stripe: 'Tranche E' };
+const FX_ORDER = ['pitch', 'filter', 'pre73', 'stripe', 'gate', 'eq', 'eqp1', 'tape', 'sat', 'msat', 'crush', 'deess', 'fet76', 'opto2a', 'l670', 'dtr', 'comp', 'mband', 'busg', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'reverb'];
 function inspectorOpen() { try { return localStorage.getItem('pulse_inspector') !== '0'; } catch { return true; } }
 function setInspectorOpen(open) {
     try { localStorage.setItem('pulse_inspector', open ? '1' : '0'); } catch {}
@@ -2886,7 +2886,7 @@ function openOutputMenu(anchor, kind, x, idx) {
 const ADD_FX_CHOICES = [['crush', 'Bitcrusher (son lo-fi)'], ['util', 'Utilitaire (gain, mono, phase)'], ['width', 'Largeur stéréo'],
     ['tremolo', 'Trémolo (volume qui pulse)'], ['phaser', 'Phaser'], ['flanger', 'Flanger'], ['chorus', 'Chorus'],
     ['doubler', 'Doubleur de voix'], ['slapback', 'Slapback (écho court)'], ['gate', 'Gate (coupe le bruit entre les phrases)'], ['filter', 'Filtre (coupe-bas / coupe-haut)'], ['eq', 'EQ'], ['comp', 'Compresseur'], ['mband', 'Multibande'], ['deess', 'De-esser'], ['sat', 'Saturation'], ['msat', 'Saturation multibande'], ['delay', 'Écho'], ['reverb', 'Reverb'],
-    ['fet76', 'Éclair 76 (compresseur FET)'], ['pre73', 'Pulse 73 (préampli + EQ de console)'], ['opto2a', 'Optique 2A (compresseur optique à lampes)'], ['eqp1', 'Égaliseur P1 (égaliseur passif à lampes)'], ['busg', 'Bus G (compresseur de bus de console)'], ['tape', 'Bande 80 (magnétophone à bande)'], ['l670', 'Lampe 670 (compresseur à lampes variable-mu)'], ['dtr', 'Détresse (compresseur à tout faire)']];
+    ['fet76', 'Éclair 76 (compresseur FET)'], ['pre73', 'Pulse 73 (préampli + EQ de console)'], ['opto2a', 'Optique 2A (compresseur optique à lampes)'], ['eqp1', 'Égaliseur P1 (égaliseur passif à lampes)'], ['busg', 'Bus G (compresseur de bus de console)'], ['tape', 'Bande 80 (magnétophone à bande)'], ['l670', 'Lampe 670 (compresseur à lampes variable-mu)'], ['dtr', 'Détresse (compresseur à tout faire)'], ['stripe', 'Tranche E (voie de console complète)']];
 // Rangés par catégorie comme dans Logic (voir PLUGINS-CATALOGUE.md) : un nouvel effet = une ligne dans sa catégorie
 const ADD_FX_CATEGORIES = [
     ['Dynamique', ['comp', 'mband', 'deess', 'gate']],
@@ -2901,7 +2901,7 @@ const ADD_FX_CATEGORIES = [
 // Gamme Analogique : les machines de studio reprises à notre sauce (façades 3D, analog-ui.js) — rangée à part dans le menu
 const ADD_FX_CATEGORIES_ANA = [
     ['Compresseurs', ['fet76', 'opto2a', 'busg', 'l670', 'dtr']],
-    ['Préamplis et EQ', ['pre73', 'eqp1']],
+    ['Préamplis et EQ', ['pre73', 'eqp1', 'stripe']],
     ['Bandes et couleur', ['tape']]
 ];
 // Une phrase par effet dans le menu « + Effet », et les mots qu'on tape pour le trouver
@@ -2916,11 +2916,12 @@ const FX_DESC = { msat: 'chaleur et grain par zone : des graves ronds, des médi
     busg: 'le compresseur de bus de console : il « colle » le mix ou la batterie (Gris, Noir)',
     tape: 'le magnétophone à bande : saturation douce, grave des têtes, souffle et pleurage (½ pouce, 2 pouces, cassette)',
     l670: 'le compresseur à lampes des disques soul : épais, chaud, il colle sans se voir',
-    dtr: 'le compresseur à tout faire : de la couleur seule à tout écraser, avec ses distorsions' };
+    dtr: 'le compresseur à tout faire : de la couleur seule à tout écraser, avec ses distorsions',
+    stripe: 'une voie de console complète : filtres, EQ 4 bandes, compresseur et gate (Brun, Noir)' };
 const FX_WORDS = { msat: 'saturation multiband multibande saturn distortion drive chaleur tape tube', mband: 'multiband multibande compressor dynamic dynamique', pitch: 'pitch shift hauteur transpose alterboy grave aigu', comp: 'compressor compression dynamique', deess: 'deesser sibilance', gate: 'noise gate bruit', eq: 'equalizer egaliseur', filter: 'hpf lpf high pass low pass coupe-bas coupe-haut',
     sat: 'saturation distortion saturator drive', crush: 'bitcrusher lofi', delay: 'delay echo', reverb: 'reverb reverberation', slapback: 'slap delay echo',
     chorus: 'modulation', flanger: 'modulation', phaser: 'modulation', tremolo: 'modulation', doubler: 'doubler double', width: 'stereo imager', util: 'utility gain mono phase', tune: 'autotune pitch justesse',
-    fet76: 'analogique 1176 fet compressor compresseur limiting vintage', pre73: 'analogique 1073 preamp preampli console eq neve vintage', opto2a: 'analogique la2a la-2a opto optical leveling amplifier tube lampe compresseur teletronix', eqp1: 'analogique pultec eqp1a eqp-1a passive eq egaliseur lampe tube', busg: 'analogique ssl g bus compressor glue colle console mix bus', tape: 'analogique tape bande magneto studer ampex atr cassette lofi saturation wow flutter', l670: 'analogique fairchild 670 660 variable mu tube lampe compresseur mastering', dtr: 'analogique distressor empirical labs el8 compresseur nuke distorsion deesser' };
+    fet76: 'analogique 1176 fet compressor compresseur limiting vintage', pre73: 'analogique 1073 preamp preampli console eq neve vintage', opto2a: 'analogique la2a la-2a opto optical leveling amplifier tube lampe compresseur teletronix', eqp1: 'analogique pultec eqp1a eqp-1a passive eq egaliseur lampe tube', busg: 'analogique ssl g bus compressor glue colle console mix bus', tape: 'analogique tape bande magneto studer ampex atr cassette lofi saturation wow flutter', l670: 'analogique fairchild 670 660 variable mu tube lampe compresseur mastering', dtr: 'analogique distressor empirical labs el8 compresseur nuke distorsion deesser', stripe: 'analogique ssl e channel strip console tranche voie eq gate compresseur 4000' };
 const FX_START = {
     limit: { tp: 1 },    // pic réel allumé sur un limiteur neuf (les anciens projets gardent leur son)
     eq: { bands: [] },   // un EQ neuf s'ouvre sans aucun point : on les pose soi-même
@@ -2934,7 +2935,8 @@ const FX_START = {
     busg: { thr: -10, ratio: 4, attack: 3, release: 4, makeup: 0, scHpf: 0, mix: 100, variant: 0 },
     tape: { input: 0, output: 0, speed: 0, machine: 0, bias: 0, noise: 20, wow: 50, mix: 100 },
     l670: { input: 0, thr: 4, tc: 1, output: 0, mix: 100 },
-    dtr: { input: 5, output: 5, attack: 5, release: 5, ratio: 3, detHp: 0, detBand: 0, dist: 0, mix: 100 } };
+    dtr: { input: 5, output: 5, attack: 5, release: 5, ratio: 3, detHp: 0, detBand: 0, dist: 0, mix: 100 },
+    stripe: { hpf: 0, lpf: 22, lf: 0, lfF: 100, lfBell: 0, lmf: 0, lmfF: 600, lmfQ: 1, hmf: 0, hmfF: 2500, hmfQ: 1, hf: 0, hfF: 8000, hfBell: 0, eq: 1, variant: 0, cthr: 10, cratio: 1, crel: 0.3, cfast: 0, gthr: -80, grange: 20, grel: 0.3, dynPre: 0, output: 0 } };
 function openAddEffectMenu(anchor, target, x) {
     closeAllMenus();
     const r = anchor.getBoundingClientRect();
@@ -10101,6 +10103,14 @@ const FX_PANEL_DEFS = {
         { key: 'mid',    label: 'Médiums', unit: ' dB', min: -18, max: 18, def: 0, step: 0.5 },
         { key: 'low',    label: 'Graves',  unit: ' dB', min: -16, max: 16, def: 0, step: 0.5 }
     ],
+    stripe: [
+        { key: 'lf',     label: 'Graves',       unit: ' dB', min: -16.5, max: 16.5, def: 0, step: 0.1 },
+        { key: 'lmf',    label: 'Bas-médiums',  unit: ' dB', min: -15, max: 15, def: 0, step: 0.1 },
+        { key: 'hmf',    label: 'Hauts-médiums', unit: ' dB', min: -15, max: 15, def: 0, step: 0.1 },
+        { key: 'hf',     label: 'Aigus',        unit: ' dB', min: -16.5, max: 16.5, def: 0, step: 0.1 },
+        { key: 'cthr',   label: 'Seuil comp.',  unit: ' dB', min: -30, max: 10, def: 10, step: 0.5 },
+        { key: 'output', label: 'Sortie',       unit: ' dB', min: -20, max: 20, def: 0, step: 0.5 }
+    ],
     dtr: [
         { key: 'input',   label: 'Entrée',   unit: '', min: 0, max: 10, def: 5, step: 0.1 },
         { key: 'output',  label: 'Sortie',   unit: '', min: 0, max: 10, def: 5, step: 0.1 },
@@ -10177,6 +10187,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
     if (fxName === 'tape') return openTapePanel(trackIdx, anchorEl);
     if (fxName === 'l670') return openL670Panel(trackIdx, anchorEl);
     if (fxName === 'dtr') return openDtrPanel(trackIdx, anchorEl);
+    if (fxName === 'stripe') return openStripEPanel(trackIdx, anchorEl);
     if (['chorus', 'flanger', 'phaser', 'tremolo'].includes(fxName)) return openModPanel(trackIdx, fxName, anchorEl);
     if (['doubler', 'slapback', 'width'].includes(fxName)) return openStereoPanel(trackIdx, fxName, anchorEl);
     if (fxName === 'crush' || fxName === 'util') return openCrushUtilPanel(trackIdx, fxName, anchorEl);

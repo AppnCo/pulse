@@ -824,6 +824,104 @@ function openDtrPanel(trackIdx, anchorEl) {
     makePlugWindow(panel, t, 'dtr', trackIdx);
 }
 
+
+// ===== Tranche E : voie de console complète (esprit « E ») : filtres, EQ 4 bandes, dynamique, sortie =====
+function openStripEPanel(trackIdx, anchorEl) {
+    closeTransientPanels();
+    const t = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;
+    if (!t) return;
+    const already = findPlugWin(t, 'stripe');
+    if (already) { plugFront(already); return; }
+    t.effectParams = t.effectParams || {};
+    if (!t.effectParams.stripe) t.effectParams.stripe = { hpf: 0, lpf: 22, lf: 0, lfF: 100, lfBell: 0, lmf: 0, lmfF: 600, lmfQ: 1, hmf: 0, hmfF: 2500, hmfQ: 1, hf: 0, hfF: 8000, hfBell: 0, eq: 1, variant: 0, cthr: 10, cratio: 1, crel: 0.3, cfast: 0, gthr: -80, grange: 20, grel: 0.3, dynPre: 0, output: 0 };
+    const P = () => t.effectParams.stripe, ed = anaEdit(t, 'stripe');
+    const W = 1000, H = 330, SK = ['gris', 'noir'], NM = ['Brun', 'Noir'];
+    const { panel, svg } = anaWindow(t, 'stripe', 'Tranche E', W, H, anchorEl, trackIdx, 1000, SK[Math.round(P().variant ?? 0)]);
+    const L = { style: 'paint-order:stroke', 'stroke-opacity': '.35', 'stroke-width': '.6', stroke: '#000' };
+    anaText(svg, 44, 36, 'PULSE · TRANCHE E', { ...L, 'text-anchor': 'start', 'font-size': 14, 'font-weight': 700, 'letter-spacing': 3 });
+    const sub = anaText(svg, 44, 52, '', { class: 'ana-sub', 'text-anchor': 'start', 'letter-spacing': 2.5 });
+    const read = panel.querySelector('.ana-read');
+    const fmtF = (f) => f >= 1000 ? (Math.round(f / 100) / 10).toString().replace('.', ',') + ' k' : Math.round(f) + ' Hz';
+    const say = () => { const p = P(); read.innerHTML = `${NM[Math.round(p.variant ?? 0)]} · Graves <b>${p.lf}</b> · Bas-méd. <b>${p.lmf}</b> · Hauts-méd. <b>${p.hmf}</b> · Aigus <b>${p.hf}</b>${p.cratio > 1 ? ` · Comp ${Math.round(p.cratio * 10) / 10}:1 à ${p.cthr} dB` : ''}${p.gthr > -79.9 ? ` · Gate ${p.gthr} dB` : ''}`; };
+    // bouton linéaire (gain, seuil…) ou en fréquence (logarithmique)
+    const lin = (cx, cy, key, mn, mx, def, lab, tip, strip = 'hf73', d = 34) => {
+        anaTicks(svg, cx, cy, d / 2 + 6, 11, -150, 150, null);
+        anaKnob(svg, { strip, cx, cy, d, key, min: mn, max: mx, def, tip, get: () => P()[key] ?? def, set: (v) => { P()[key] = Math.round(v * 10) / 10; ed.touch(key); say(); }, onStart: ed.start, onEnd: ed.end });
+        anaText(svg, cx, cy + d / 2 + 15, lab, { ...L, 'font-size': 7, 'letter-spacing': .8 });
+    };
+    const freq = (cx, cy, key, fmin, fmax, def, lab, tip, off) => {
+        anaTicks(svg, cx, cy, 23, 11, -150, 150, null);
+        const toN = (f) => Math.log(Math.max(fmin, f) / fmin) / Math.log(fmax / fmin);
+        anaKnob(svg, { strip: 'bakelite', cx, cy, d: 30, key, min: 0, max: 1, def: toN(def), tip, get: () => toN(P()[key] ?? def),
+            set: (v) => { let f = fmin * Math.pow(fmax / fmin, v); f = f >= 1000 ? Math.round(f / 10) * 10 : Math.round(f); P()[key] = f; say(); }, onStart: ed.start, onEnd: ed.end }).g.classList.remove('pk');
+        anaText(svg, cx, cy + 30, lab, { ...L, 'font-size': 7, 'letter-spacing': .8 });
+    };
+    const push = (g, x, y, w, txt, on, tip) => { anaEl('rect', { x: x - w / 2, y: y - 8, width: w, height: 16, rx: 3, fill: on ? '#7c3aed' : '#1c1426', stroke: '#3a2b52', ...(on ? { filter: 'url(#anaGlow)' } : {}) }, g); anaText(g, x, y + 3, txt, { fill: on ? '#fff' : '#a78bfa', 'font-size': 7, 'letter-spacing': .5, class: '' }); anaEl('title', {}, g).textContent = tip; };
+    const sep = (x) => anaEl('line', { x1: x, y1: 66, x2: x, y2: 312, stroke: '#00000044' }, svg);
+    const section = (x, txt) => anaText(svg, x, 76, txt, { class: 'ana-sub', 'font-size': 8, 'letter-spacing': 2 });
+    // filtres
+    section(70, 'FILTRES');
+    freq(70, 125, 'hpf', 16, 350, 16, 'COUPE-BAS', 'Coupe-bas 18 dB/oct : tout à gauche = éteint, jusqu\'à 350 Hz');
+    freq(70, 215, 'lpf', 3, 22, 22, 'COUPE-HAUT', 'Coupe-haut 12 dB/oct : tout à droite = éteint, jusqu\'à 3 kHz');
+    sep(130);
+    // EQ 4 bandes
+    section(395, 'ÉGALISEUR');
+    const bands = [['lf', 'lfF', 30, 450, 'GRAVES', 'lfBell'], ['lmf', 'lmfF', 200, 2500, 'BAS-MÉD.', 'lmfQ'], ['hmf', 'hmfF', 600, 7000, 'HAUTS-MÉD.', 'hmfQ'], ['hf', 'hfF', 1500, 16000, 'AIGUS', 'hfBell']];
+    const pushes = anaEl('g', {}, svg);
+    bands.forEach(([g, f, fmin, fmax, lab, extra], i) => {
+        const x = 190 + i * 70, lim = (g === 'lf' || g === 'hf') ? 16.5 : 15;
+        lin(x, 120, g, -lim, lim, 0, lab, `${lab.toLowerCase()} : gain (dB)`);
+        freq(x, 195, f, fmin, fmax, ({ lf: 100, lmf: 600, hmf: 2500, hf: 8000 })[g], 'FRÉQ.', `Fréquence (${fmin} Hz à ${fmax >= 1000 ? fmax / 1000 + ' kHz' : fmax + ' Hz'})`);
+        if (extra.endsWith('Q')) lin(x, 262, extra, 0.5, 2.5, 1, 'LARGEUR', 'Largeur : 0,5 large … 2,5 serrée', 'bakelite', 26);
+    });
+    const drawPush = () => {
+        pushes.innerHTML = '';
+        [['lfBell', 190, 'CLOCHE', 'Graves en cloche (sinon plateau)'], ['hfBell', 400, 'CLOCHE', 'Aigus en cloche (sinon plateau)'], ['eq', 470, 'EQ', 'EQ en service']].forEach(([k, x, txt, tip]) => {
+            const g = anaEl('g', { class: 'ana-push', 'data-k': k }, pushes); push(g, x, 262, 44, txt, (P()[k] ?? (k === 'eq' ? 1 : 0)) >= 0.5, tip); });
+        [0, 1].forEach(i => { const g = anaEl('g', { class: 'ana-push ana-var', 'data-v': i }, pushes); push(g, 445 + i * 50, 296, 44, NM[i].toUpperCase(), Math.round(P().variant ?? 0) === i, i ? 'Noir : les cloches se resserrent quand on pousse (précis, plus agressif)' : 'Brun : largeur fixe, l\'EQ doux et musical'); });
+        [['cfast', 600, 262, 'RAPIDE', 'Attaque rapide (1 ms au lieu de 3 ms)'], ['dynPre', 690, 296, 'DYN. AVANT EQ', 'La dynamique avant l\'EQ (sinon après)']].forEach(([k, x, y, txt, tip]) => {
+            const g = anaEl('g', { class: 'ana-push', 'data-k': k }, pushes); push(g, x, y, k === 'dynPre' ? 84 : 50, txt, (P()[k] ?? 0) >= 0.5, tip); });
+        sub.textContent = 'VOIE DE CONSOLE · ' + NM[Math.round(P().variant ?? 0)].toUpperCase();
+        anaSkin(svg, SK[Math.round(P().variant ?? 0)]);
+    };
+    pushes.addEventListener('click', (e) => {
+        const v = e.target.closest('.ana-var'), b = e.target.closest('[data-k]');
+        if (!v && !b) return;
+        ed.start();
+        if (v) P().variant = +v.dataset.v; else { const k = b.dataset.k; P()[k] = (P()[k] ?? (k === 'eq' ? 1 : 0)) >= 0.5 ? 0 : 1; }
+        ed.end(); drawPush(); say();
+    });
+    sep(525);
+    // dynamique
+    section(650, 'DYNAMIQUE');
+    lin(560, 120, 'cthr', -30, 10, 10, 'SEUIL', 'Compresseur : seuil (dBFS) ; tout à droite = éteint');
+    lin(620, 120, 'cratio', 1, 20, 1, 'RATIO', 'Ratio : 1 (rien) … 20 (l\'infini)');
+    lin(560, 195, 'crel', 0.1, 4, 0.3, 'RELÂCHE', 'Relâchement : 0,1 à 4 s', 'bakelite', 28);
+    lin(700, 120, 'gthr', -80, 0, -80, 'GATE SEUIL', 'Gate : seuil (dBFS) ; tout à gauche = éteint');
+    lin(760, 120, 'grange', 0, 40, 20, 'PROFONDEUR', 'Gate : de combien il baisse (dB)', 'bakelite', 28);
+    lin(730, 195, 'grel', 0.1, 4, 0.3, 'G. RELÂCHE', 'Gate : relâchement (s)', 'bakelite', 28);
+    const leds = [1, 3, 6, 10, 14, 20].map((db, i) => { anaText(svg, 640, 182 + i * 13 + 3, String(db), { 'font-size': 6.5, 'letter-spacing': 0, 'text-anchor': 'end' }); return anaEl('circle', { cx: 652, cy: 182 + i * 13, r: 4, fill: '#1c1426', stroke: '#000' }, svg); });
+    sep(800);
+    section(900, 'SORTIE');
+    anaTicks(svg, 900, 150, 38, 9, -150, 150, ['−20', '', '', '', '0', '', '', '', '+20'], 7);
+    anaKnob(svg, { strip: 'alu-big', cx: 900, cy: 150, d: 62, key: 'output', min: -20, max: 20, def: 0, tip: 'Sortie (dB)', get: () => P().output ?? 0, set: (v) => { P().output = Math.round(v * 2) / 2; ed.touch('output'); say(); }, onStart: ed.start, onEnd: ed.end });
+    anaText(svg, 900, 214, 'SORTIE', { ...L, 'font-size': 9 });
+    drawPush();
+    const key = 'stripe|' + fxKeyOf(trackIdx, t);
+    const tick = () => {
+        if (!panel.isConnected) return;
+        const on = (t.effects || []).includes('stripe');
+        const m = on && (state.playing || state.recording) && PulseAudio.getCompReduction ? PulseAudio.getCompReduction(key) : null;
+        const gr = m ? (m.gr || 0) : 0;
+        [1, 3, 6, 10, 14, 20].forEach((db, i) => leds[i].setAttribute('fill', gr >= db ? (db >= 14 ? '#f0abfc' : '#a855f7') : '#1c1426'));
+        requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+    panel.querySelector('.fx-bypass').addEventListener('change', (e) => { pushUndo(); setFxOn(t, 'stripe', e.target.checked); refreshPlaybackSoon(); saveProject(); refreshStrips(); });
+    say();
+    makePlugWindow(panel, t, 'stripe', trackIdx);
+}
+
 // Styles de la façade (ici pour garder la gamme dans un seul fichier)
 (() => {
     const st = document.createElement('style');
