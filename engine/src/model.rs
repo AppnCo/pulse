@@ -148,6 +148,7 @@ pub struct EffectParams {
     pub comp25: Option<Comp25Json>,
     pub bus33: Option<Bus33Json>,
     pub massif: Option<MassifJson>,
+    pub horizon: Option<HorizonJson>,
     /// Exemplaires en plus d'un même effet (« comp#2 », « eq#3»…), réglages bruts : lus par `EffectParams::instance`
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
@@ -263,6 +264,11 @@ pub struct Opto2AJson {
     pub variant: Option<f64>,
     pub mix: Option<f64>,
 }
+
+/// EQ Horizon : clés plates (on1…on5, typ, f, g, q, ch ; hpOn/hpF/hpS ; lpOn/lpF/lpS ; earth, air, char, strength, input, output), lues par horizon.rs
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(transparent)]
+pub struct HorizonJson(pub Option<serde_json::Map<String, serde_json::Value>>);
 
 /// EQ Massif : g1-g4 (dB ±20), f1-f4 (Hz), bw1-bw4 (0 large-10 serrée), shelf1/shelf4, hpf/lpf (−1 éteint, 0-3), on, output (dB)
 #[derive(Debug, Clone, Deserialize, Default)]

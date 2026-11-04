@@ -2,6 +2,7 @@
 pub mod analog;
 pub mod file;
 pub mod fx;
+pub mod horizon;
 pub mod model;
 pub mod monitor;
 pub mod pitch;
@@ -1364,6 +1365,8 @@ mod tests {
             ("bus33", r#"{"cthr":-16,"cratio":4,"crec":1,"lon":1,"lthr":-6,"lrec":5,"makeup":8,"mix":80}"#, [0.171531, 0.171500, 0.050472]),
             ("massif", r#"{"g1":3,"f1":60,"bw1":4,"g2":-2,"f2":300,"bw2":3,"g3":3,"f3":3000,"bw3":5,"g4":4,"f4":16000,"bw4":6,"hpf":0}"#, [0.108726, 0.108726, 0.045409]),
             ("massif", r#"{"g1":-4,"f1":200,"shelf1":0,"bw1":7,"g4":-3,"f4":8000,"shelf4":0,"bw4":2,"lpf":1,"output":2}"#, [0.118539, 0.118539, 0.020230]),
+            ("horizon", r#"{"g1":3,"f1":60,"g3":-2,"f3":400,"q3":1.5,"g4":3,"f4":3000,"typ4":1,"g5":2,"f5":12000,"earth":4,"air":5,"char":0.5,"hpOn":1,"hpF":30,"hpS":3}"#, [0.119347, 0.119347, 0.066285]),
+            ("horizon", r#"{"g2":5,"f2":200,"q2":0.8,"g3":4,"f3":2500,"ch3":1,"char":-0.7,"strength":130,"lpOn":1,"lpF":9000,"lpS":0,"input":-3,"output":2}"#, [0.193790, 0.193790, 0.016294]),
             ("opto2a", r#"{"peak":60,"gain":55,"variant":0}"#, [0.086484, 0.082398, 0.018677]),
             ("opto2a", r#"{"peak":45,"limit":1,"emph":50,"variant":2,"mix":80}"#, [0.055303, 0.053787, 0.016746])] {
             let t = format!(r#"{{"volume":100,"clips":[{{"id":"a","start":0,"duration":3,"offset":0}}],"effects":["{fx}"],"effectParams":{{"{fx}":{pp}}}}}"#);

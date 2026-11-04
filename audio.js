@@ -1428,6 +1428,37 @@ window.PulseAudio = (function() {
             }
         }
         registerProcessor('pulse-massif', pulseAuto(PulseMassif, (s, v) => { let ch = false; for (const k in v) if (k in s.p && s.p[k] !== v[k]) { s.p[k] = v[k]; ch = true; } if (ch) s.set(); }));
+        // EQ Horizon : moderne, linéaire, sans retard ; centre / côtés par bande. Mêmes filtres que horizon_filters (horizon.rs).
+        ${horizonCoefs.toString()}
+        class PulseHorizon extends AudioWorkletProcessor {
+            constructor(o) {
+                super();
+                const p = (o && o.processorOptions) || {};
+                this.p = {}; for (const k in p) if (typeof p[k] === 'number') this.p[k] = p[k];
+                this.f = []; this.set();
+            }
+            set() {
+                const n = horizonCoefs(this.p, sampleRate);
+                if (n.length === this.f.length && n.every((x, i) => x.ch === this.f[i].ch)) n.forEach((x, i) => { this.f[i].k = x.k; });
+                else this.f = n.map(x => ({ k: x.k, ch: x.ch, sm: [0, 0, 0, 0], ss: [0, 0, 0, 0] }));
+                const cl = (v, a, b) => Math.max(a, Math.min(b, v));
+                this.gin = Math.pow(10, cl(this.p.input ?? 0, -18, 18) / 20); this.gout = Math.pow(10, cl(this.p.output ?? 0, -18, 18) / 20);
+            }
+            process(inputs, outputs) {
+                const inp = inputs[0], out = outputs[0];
+                if (!inp || !inp.length) return true;
+                const n = inp[0].length, nc = Math.min(inp.length, out.length, 2), f = this.f, gi = this.gin, go = this.gout;
+                for (let i = 0; i < n; i++) {
+                    if (nc < 2) { let m = inp[0][i] * gi; for (let j = 0; j < f.length; j++) if (f[j].ch !== 2) m = biqRun(f[j].k, f[j].sm, m); out[0][i] = m * go; continue; }
+                    const l = inp[0][i] * gi, r = inp[1][i] * gi;
+                    let m = (l + r) * 0.5, s = (l - r) * 0.5;
+                    for (let j = 0; j < f.length; j++) { const b = f[j]; if (b.ch !== 2) m = biqRun(b.k, b.sm, m); if (b.ch !== 1) s = biqRun(b.k, b.ss, s); }
+                    out[0][i] = (m + s) * go; out[1][i] = (m - s) * go;
+                }
+                return true;
+            }
+        }
+        registerProcessor('pulse-horizon', pulseAuto(PulseHorizon, (s, v) => { let ch = false; for (const k in v) if (s.p[k] !== v[k]) { s.p[k] = v[k]; ch = true; } if (ch) s.set(); }));
         registerProcessor('pulse-deesser', pulseAuto(PulseDeesser, (s, v) => { if (v.amount !== undefined) { const a = Math.max(0, Math.min(100, v.amount)); s.maxRed = a * 0.24; s.slope = a / 100 * 3; } }));
 
         // Gate : coupe le bruit entre deux phrases. Mêmes calculs que Gate dans engine/src/fx.rs.
@@ -2105,7 +2136,7 @@ window.PulseAudio = (function() {
 
     // Exemplaire d'un effet : « comp#2 » → type « comp » (même calcul que fx_type dans model.rs)
     const fxType = (id) => String(id).split('#')[0];
-    const FX_CHAIN = ['pitch', 'filter', 'pre73', 'stripe', 'gate', 'eq', 'eqp1', 'eq550', 'massif', 'tape', 'sat', 'msat', 'crush', 'deess', 'fet76', 'opto2a', 'l670', 'dtr', 'comp25', 'comp', 'mband', 'bus33', 'busg', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'reverb']; // ordre habituel des effets
+    const FX_CHAIN = ['pitch', 'filter', 'pre73', 'stripe', 'gate', 'eq', 'eqp1', 'horizon', 'eq550', 'massif', 'tape', 'sat', 'msat', 'crush', 'deess', 'fet76', 'opto2a', 'l670', 'dtr', 'comp25', 'comp', 'mband', 'bus33', 'busg', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'reverb']; // ordre habituel des effets
     const SEND_REVERB_TRIM = 1 / 3; // la reverb seule sort 3 fois trop fort par rapport au son direct : on la ramène à niveau
 
     // Paliers de tempo [{ sec, bpm }] quand le tempo change en cours de morceau (sinon null) — Project::tempo_segments côté Rust
@@ -2791,6 +2822,38 @@ window.PulseAudio = (function() {
         if (!inv) return c;
         // inverse : on échange zéros et pôles (le filtre est à phase minimale, l'inverse reste stable)
         return [1 / c[0], a1 / c[0], a2 / c[0], c[1] / c[0], c[2] / c[0]];
+    }
+    // EQ Horizon : les filtres (coefficients + 0 partout / 1 centre / 2 côtés). Même calcul que horizon_filters (engine/src/horizon.rs) ;
+    // sert au worklet pulse-horizon et à la courbe de sa fenêtre.
+    function horizonCoefs(p, sr) {
+        const cl = (v, a, b) => Math.max(a, Math.min(b, v)), ix = (v, m) => Math.min(m, Math.max(0, Math.round(v))), out = [];
+        const first = (hp, f) => { const k = Math.tan(Math.PI * cl(f, 1, sr * 0.49) / sr), a1 = (k - 1) / (k + 1); if (hp) { const b0 = 1 / (1 + k); return [b0, -b0, 0, a1, 0]; } const b0 = k / (1 + k); return [b0, b0, 0, a1, 0]; };
+        const SQ = [[], [0.707106781], [1.0], [0.5411961, 1.306563], [0.5176381, 0.707106781, 1.9318516]];
+        for (const [on, f0, s0, hp] of [[p.hpOn, p.hpF ?? 30, p.hpS ?? 1, true], [p.lpOn, p.lpF ?? 20000, p.lpS ?? 1, false]]) {
+            if (!(on >= 0.5)) continue;
+            const f = Math.min(cl(f0, 10, 30000), sr * 0.45), s = ix(s0, 4);
+            if (s === 0 || s === 2) out.push({ k: first(hp, f), ch: 0 });
+            for (const q of SQ[s]) out.push({ k: eqMatched(hp ? 'highpass' : 'lowpass', f, q, 0, sr), ch: 0 });
+        }
+        const K = cl(p.strength ?? 100, 0, 150) / 100, c = cl(p.char ?? 0, -1, 1), DF = [60, 250, 1000, 4000, 12000];
+        for (let i = 0; i < 5; i++) {
+            const n = i + 1, on = (p['on' + n] ?? 1) >= 0.5, typ = ix(p['typ' + n] ?? ((i === 0 || i === 4) ? 2 : 0), 2), ch = ix(p['ch' + n] ?? 0, 2);
+            const g = cl(p['g' + n] ?? 0, -18, 18) * K;
+            if (!on || Math.abs(g) < 1e-6) continue;
+            const f = Math.min(cl(p['f' + n] ?? DF[i], 10, 30000), sr * 0.45), q0 = cl(p['q' + n] ?? 0.7, 0.1, 7);
+            if (typ === 2 && (i === 0 || i === 4)) { out.push({ k: eqMatched(i === 0 ? 'lowshelf' : 'highshelf', f, Math.max(0.4, 0.707 * (1 + 0.4 * c)), g, sr), ch }); continue; }
+            const q = typ === 1 ? q0 * 4 : q0;
+            if (c >= 0) out.push({ k: eqMatched('peaking', f, q * (1 + c), g, sr), ch });
+            else {
+                const r = 1 + 0.35 * (-c), g1 = g * (1 + c * 0.5), g2 = (g - g1) / 2;
+                if (Math.abs(g1) > 1e-9) out.push({ k: eqMatched('peaking', f, q, g1, sr), ch });
+                out.push({ k: eqMatched('peaking', f / r, q * 1.2, g2, sr), ch });
+                out.push({ k: eqMatched('peaking', f * r, q * 1.2, g2, sr), ch });
+            }
+        }
+        const e = cl(p.earth ?? 0, 0, 10) * 0.9 * K; if (e > 1e-6) out.push({ k: eqMatched('lowshelf', 45, 0.9, e, sr), ch: 0 });
+        const a = cl(p.air ?? 0, 0, 10) * 0.8 * K; if (a > 1e-6) out.push({ k: eqMatched('highshelf', Math.min(14000, sr * 0.4), 0.5, a, sr), ch: 0 });
+        return out;
     }
     // Les filtres (coefficients) d'une bande d'EQ, à la fréquence d'échantillonnage donnée
     function eqBandCoefs(bd, sr) {
@@ -3815,6 +3878,7 @@ window.PulseAudio = (function() {
         B.tape = () => node('pulse-tape', 'tape');
         B.eq550 = () => node('pulse-eq550', 'eq550');
         B.massif = () => node('pulse-massif', 'massif');
+        B.horizon = () => node('pulse-horizon', 'horizon');
         // Bus 33 : aiguille de réduction (clé « bus33|t0 »)
         B.bus33 = () => {
             if (!enabled.includes('bus33') || !fxReady.has(actx)) return;
@@ -4440,7 +4504,7 @@ window.PulseAudio = (function() {
         startRecording, stopRecording, takeRecRescue, clearRecRescue,
         registerBuffer, hasBuffer, getBuffer, getBufferDuration, clearBuffers, computePeaks,
         play, stopAll, getPlaybackPosition, setNativeBackend, isNative, setBeatsPerBar,
-        updateTrackVolume, updateTrackPan, updateComp, setAutoRanges, eqSections, eqIsDynamic, getEqDyn, eqBandCoefs, getLimiterMeter, getGateMeter, getDeessMeter, getMbandMeter, refreshAudibility, clearLiveNodes,
+        updateTrackVolume, updateTrackPan, updateComp, setAutoRanges, eqSections, horizonCoefs, eqMatched, eqIsDynamic, getEqDyn, eqBandCoefs, getLimiterMeter, getGateMeter, getDeessMeter, getMbandMeter, refreshAudibility, clearLiveNodes,
         getTrackAnalyser, getTrackMeters, trackChannelCount, getMasterAnalyser, getTrackSpectrum, getBusSpectrum, getCompReduction, setMasterVolume,
         setMetronome, setMetronomeBpm, setCountIn, isCountInEnabled,
         startMetronome, stopMetronome, playCountIn, stopCountIn, isCountingIn,
