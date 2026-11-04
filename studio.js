@@ -2190,6 +2190,14 @@ function migrateProject() {
 // Évite d'ouvrir le mixer pour voir les effets d'une piste ou régler son volume.
 const FX_NAMES = { msat: 'Saturation multibande', mband: 'Multibande', pitch: 'Pitch', crush: 'Bitcrusher', util: 'Utilitaire', width: 'Largeur', tremolo: 'Trémolo', phaser: 'Phaser', flanger: 'Flanger', chorus: 'Chorus', doubler: 'Doubleur', slapback: 'Slapback', filter: 'Filtre', gate: 'Gate', eq: 'EQ', sat: 'Saturation', deess: 'De-esser', comp: 'Compresseur', master: 'Finition', limit: 'Limiteur', delay: 'Écho', reverb: 'Reverb', fet76: 'Éclair 76', pre73: 'Pulse 73', opto2a: 'Optique 2A', eqp1: 'Égaliseur P1', busg: 'Bus G', tape: 'Bande 80', l670: 'Lampe 670', dtr: 'Détresse', stripe: 'Tranche E', eq550: 'EQ 550', comp25: 'Comp 25', bus33: 'Bus 33', massif: 'EQ Massif', horizon: 'EQ Horizon', plate: 'Plaque 140', techo: 'Écho à bande', hall80: 'Salle 80', h910: 'Harmoniseur 910', dim: 'Dimension', prev76: 'Préampli 76V', eclat: 'Éclat', souffle: 'Souffle' };
 const FX_ORDER = ['pitch', 'filter', 'pre73', 'prev76', 'stripe', 'gate', 'eq', 'eqp1', 'horizon', 'souffle', 'eq550', 'massif', 'tape', 'eclat', 'sat', 'msat', 'crush', 'deess', 'fet76', 'opto2a', 'l670', 'dtr', 'comp25', 'comp', 'mband', 'bus33', 'busg', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'dim', 'doubler', 'slapback', 'master', 'limit', 'delay', 'techo', 'h910', 'plate', 'hall80', 'reverb'];
+// V (comme Logic) : cache toutes les fenêtres de plugins ouvertes, puis les remontre au même endroit
+function togglePlugWindows() {
+    const open = [...document.querySelectorAll('.fx-panel.plug-win')].filter(w => w.style.display !== 'none');
+    if (open.length) { open.forEach(w => { w.style.display = 'none'; w.dataset.vHidden = '1'; }); flash(`${open.length} fenêtre${open.length > 1 ? 's' : ''} de plugin cachée${open.length > 1 ? 's' : ''} (V pour les remontrer)`); return; }
+    const hid = [...document.querySelectorAll('.fx-panel.plug-win[data-v-hidden="1"]')];
+    hid.forEach(w => { w.style.display = ''; delete w.dataset.vHidden; });
+    if (!hid.length) flash('Aucune fenêtre de plugin ouverte');
+}
 function inspectorOpen() { try { return localStorage.getItem('pulse_inspector') !== '0'; } catch { return true; } }
 function setInspectorOpen(open) {
     try { localStorage.setItem('pulse_inspector', open ? '1' : '0'); } catch {}
@@ -5186,9 +5194,20 @@ function paintMixerSelection() {
 function mixChosenTracks() { return state._mixNoTrack ? [] : selectedTrackIdxs(); }
 function mixChosenBuses() { const ids = state.mixBuses instanceof Set ? state.mixBuses : new Set(); return (state.project.buses || []).filter(b => ids.has(b.id)); }
 // M / S depuis la table de mixage (piste ou bus) : la tranche cliquée, ou toutes les choisies si elle en fait partie
-function mixerFlag(kind, i, flag) {
+function mixerFlag(kind, i, flag, e = {}) {
     const tIdx = mixChosenTracks(), bs = mixChosenBuses();
     const src = kind === 'track' ? state.project.tracks[i] : state.project.buses[i]; if (!src) return;
+    // ⌥ + clic sur un S : cette tranche seule en solo (ou plus aucun solo si elle l'était) ; ⌘ + clic sur un M : tous les M dans le même état
+    if (flag === 'solo' && e.altKey) {
+        const was = !!src.solo; pushUndo(); clearSoloFlags(); if (!was) src.solo = true;
+        PulseAudio.refreshAudibility(state.project); renderTracksPanel(); bindTrackEvents(); renderMixer(); bindMixerEvents(); saveProject(); return;
+    }
+    if (flag === 'mute' && (e.metaKey || e.ctrlKey)) {
+        const st = !!src.muted; pushUndo();
+        state.project.tracks.forEach(t => { if (!!t.muted === st) t.muted = !st; });
+        (state.project.buses || []).forEach(b => { if (b.premaster || !!b.muted !== st) return; b.muted = !st; PulseAudio.updateBusVolume(b.id, b.muted ? 0 : (b.volume ?? 100)); });
+        PulseAudio.refreshAudibility(state.project); renderTracksPanel(); bindTrackEvents(); renderMixer(); bindMixerEvents(); saveProject(); return;
+    }
     const inSel = kind === 'track' ? tIdx.includes(i) : bs.includes(src);
     const key = flag === 'mute' ? 'muted' : 'solo', want = !src[key];
     pushUndo();
@@ -5330,7 +5349,9 @@ const SHORTCUT_GROUPS = [
                         ['E / Z', 'Zoomer / dézoomer : le curseur (de base si tu as cliqué) se met au milieu de l\'écran'],
             ['⇧F', 'Zoom sur le clip sélectionné (ou tout le projet)'],
             ['⌘⇧F', 'Voir tout le morceau'],
-            ['X', 'Ouvrir / fermer le mixeur']
+            ['X', 'Ouvrir / fermer le mixeur'],
+            ['I', 'Afficher / cacher l\'inspecteur'],
+            ['V', 'Cacher / remontrer toutes les fenêtres de plugins']
         ]
     },
     {
@@ -11597,7 +11618,24 @@ function bindMixerEvents() {
     // M / S sur chaque tranche : sur toutes les tranches choisies si on clique l'une d'elles (comme Logic)
     document.querySelectorAll('.mixer-strips .strip .strip-m, .mixer-strips .strip .strip-s').forEach(btn => {
         const strip = btn.closest('.strip'), kind = strip.dataset.kind, i = parseInt(strip.dataset.i), mute = btn.classList.contains('strip-m');
-        pressBtn(btn, () => mixerFlag(kind, i, mute ? 'mute' : 'solo'));
+        pressBtn(btn, (e) => mixerFlag(kind, i, mute ? 'mute' : 'solo', e));
+        // glisser sur les M / S de la table de mixage (à l'horizontale) : toutes les tranches survolées prennent le même état
+        btn.addEventListener('mousedown', (e) => {
+            if (e.button !== 0 || e.altKey || e.metaKey || e.ctrlKey) return;
+            const key = mute ? 'muted' : 'solo', src = kind === 'track' ? state.project.tracks[i] : state.project.buses[i]; if (!src) return;
+            const want = !!src[key], seen = new Set([kind + i]);
+            const mv = (ev) => {
+                const st = document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.('.mixer-strips .strip[data-kind="track"], .mixer-strips .strip[data-kind="bus"]'); if (!st) return;
+                const k = st.dataset.kind, j = parseInt(st.dataset.i); if (seen.has(k + j)) return; seen.add(k + j);
+                const x = k === 'track' ? state.project.tracks[j] : state.project.buses[j]; if (!x || !!x[key] === want || x.premaster) return;
+                if (want) x[key] = true; else if (k === 'bus') delete x[key]; else x[key] = false;
+                if (k === 'bus' && key === 'muted') PulseAudio.updateBusVolume(x.id, x.muted ? 0 : (x.volume ?? 100));
+                const b = st.querySelector(mute ? '.strip-m' : '.strip-s'); if (b) b.classList.toggle('active', want);
+                PulseAudio.refreshAudibility(state.project);
+            };
+            const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); if (seen.size > 1) { renderTracksPanel(); bindTrackEvents(); renderMixer(); bindMixerEvents(); saveProject(); } };
+            document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
+        });
     });
     paintMixerSelection();
     // Envois : dose par piste, retours, ajout
@@ -15899,6 +15937,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         // Mixer
         if (k === 'x' && !mod) { e.preventDefault(); toggleMixer(); return; }
+        // Comme Logic : I = afficher / cacher l'inspecteur ; V = cacher / remontrer toutes les fenêtres de plugins
+        if (k === 'i' && !mod && !e.altKey) { e.preventDefault(); setInspectorOpen(!inspectorOpen()); return; }
+        if (k === 'v' && !mod && !e.altKey) { e.preventDefault(); togglePlugWindows(); return; }
 
         // Marqueurs (Alt+M = poser, Alt+← = marqueur précédent, Alt+→ = suivant)
         if (e.altKey && k === 'm') { e.preventDefault(); addMarker(state.playhead); return; }

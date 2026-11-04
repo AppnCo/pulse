@@ -53,4 +53,16 @@ export default async (c) => {
   await ev(`[...document.querySelectorAll('.track-ctx-menu .ctx-item')].find(e=>e.textContent==='Supprimer le bus').dispatchEvent(new MouseEvent('mousedown',{bubbles:true}))`); await sleep(200);
   const after = JSON.parse(await J(ev, `return JSON.stringify({ buses: state.project.buses.map(b=>b.name), out: state.project.tracks[1].output, sends: state.project.tracks[0].busSends })`));
   check('bus supprimé : la piste ressort au master, l\'envoi disparaît', after.buses.join() === 'Bus 2' && after.out === 'master' && !after.sends.b1, JSON.stringify(after));
+  // glisser sur les S de la table de mixage (horizontal) : A, B, C en solo
+  await ev(`state.project.tracks.forEach(t=>{t.solo=false;t.muted=false}); state.project.buses.forEach(b=>{delete b.solo; b.muted=false}); renderMixer(); bindMixerEvents()`); await sleep(150);
+  const s0 = await at('.mixer-strips .strip[data-kind="track"][data-i="0"] .strip-s'), s2 = await at('.mixer-strips .strip[data-kind="track"][data-i="2"] .strip-s');
+  await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: s0.x, y: s0.y }); await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: s0.x, y: s0.y, button: 'left', clickCount: 1 });
+  for (let k = 1; k <= 10; k++) { await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: s0.x + (s2.x - s0.x) * k / 10, y: s0.y, buttons: 1 }); await sleep(25); }
+  await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: s2.x, y: s2.y, button: 'left', clickCount: 1 }); await sleep(200);
+  check('glisser sur les S de la table : 3 pistes en solo', await J(ev, `return state.project.tracks.every(t=>t.solo)`));
+  await clickAt(await at('.mixer-strips .strip[data-kind="track"][data-i="1"] .strip-s'), 1);
+  check('⌥ + clic sur un S allumé (table) : plus aucun solo', await J(ev, `return state.project.tracks.every(t=>!t.solo)`));
+  await clickAt(await at('.mixer-strips .strip[data-kind="track"][data-i="1"] .strip-s'), 1);
+  const sol = await J(ev, `return JSON.stringify([state.project.tracks.map(t=>!!t.solo), state.project.buses.map(b=>!!b.solo)])`); check('⌥ + clic S (table) : B seule en solo', JSON.parse(sol)[0].join() === 'false,true,false', sol);
+  check('M qui clignotent dans la table', await J(ev, `return document.querySelectorAll('.mixer-strips .strip-m.solo-off').length`) === 2);
 };
