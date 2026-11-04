@@ -17,7 +17,7 @@ export default async (c) => {
   check('gamme Pulse : pas de machines analogiques dans ses catégories', pulseCats.includes('Dynamique') && !pulseCats.includes('Compresseurs'), pulseCats);
   await click('.fx-add-menu .fam-range', 'Analogique');
   const anaCats = await J(ev, `return [...document.querySelectorAll('.fx-add-menu .fam-cat')].filter(e=>!e.hidden).map(e=>e.textContent.trim()).join(',')`);
-  check('gamme Analogique : ses catégories seules', anaCats === 'Compresseurs,Préamplis et EQ,Bandes et couleur', anaCats);
+  check('gamme Analogique : ses catégories seules', anaCats === 'Compresseurs,Préamplis et EQ,Bandes et couleur,Espace', anaCats);
   check('menu : Éclair 76 cliqué', await click('.fx-add-menu .fam-fx', 'Éclair 76'));
   await sleep(600);
   const f = JSON.parse(await J(ev, `const p=document.querySelector('.fx-panel.plug-win[data-fx="fet76"]'); const imgs=p?[...p.querySelectorAll('image')]:[];
@@ -160,6 +160,14 @@ export default async (c) => {
   check('menu : EQ Massif cliqué', await click('.fx-add-menu .fam-fx', 'EQ Massif')); await sleep(500);
   await click('.fx-panel.plug-win[data-fx="massif"] [data-k="shelf4"] rect');
   check('EQ Massif : bande 4 en cloche', await J(ev, `return state.project.tracks[0].effectParams.massif.shelf4`) === 0);
+  // Plaque 140 : dans « Espace », façade avec la plaque, variante Chaude
+  await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
+  await click('#inspector .slot-plus[data-plus="fx"]');
+  await click('.fx-add-menu .fam-range', 'Analogique');
+  await click('.fx-add-menu .fam-cat', 'Espace'); await sleep(100);
+  check('menu : Plaque 140 cliquée', await click('.fx-add-menu .fam-fx', 'Plaque 140')); await sleep(500);
+  await click('.fx-panel.plug-win[data-fx="plate"] .ana-var[data-v="1"] rect');
+  check('Plaque 140 : Chaude', await J(ev, `return state.project.tracks[0].effectParams.plate.variant`) === 1);
   // ---- Envois façon Logic
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   await click('#inspector .slot-plus[data-plus="send"]');

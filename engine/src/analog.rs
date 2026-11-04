@@ -1756,6 +1756,136 @@ impl Massif {
     }
 }
 
+// ===== Plaque 140 : réverbe à plaque (esprit « 140 ») =====
+// Une plaque d'acier tendue qui vibre : départ très dense, brillant, sans « pièce » ; le registre (amortisseur) règle la durée.
+// Algorithme de J. Dattorro (« Effect Design », 1997), pensé justement d'après une plaque : diffuseurs d'entrée puis un réservoir
+// à deux branches croisées (diffuseurs modulés, retards, amortissement des aigus). Réglages : Durée (0,4-6 s), Pré-délai,
+// Brillance, Coupe-bas d'entrée, Largeur, Mélange ; variantes Claire (plaque neuve) et Chaude (plaque ancienne, aigus plus amortis).
+const PLATE_FS: f64 = 29_761.0;
+#[derive(Clone, Debug)]
+pub struct PlateParams { pub decay: f64, pub pre: f64, pub bright: f64, pub lowcut: f64, pub width: f64, pub mix: f64, pub variant: usize }
+impl Default for PlateParams {
+    fn default() -> Self { Self { decay: 2.0, pre: 20.0, bright: 60.0, lowcut: 100.0, width: 100.0, mix: 25.0, variant: 0 } }
+}
+impl From<&crate::model::PlateJson> for PlateParams {
+    fn from(j: &crate::model::PlateJson) -> Self {
+        let d = Self::default();
+        Self { decay: j.decay.unwrap_or(d.decay), pre: j.pre.unwrap_or(d.pre), bright: j.bright.unwrap_or(d.bright), lowcut: j.lowcut.unwrap_or(d.lowcut),
+            width: j.width.unwrap_or(d.width), mix: j.mix.unwrap_or(d.mix), variant: j.variant.map_or(0, |v| (v.round().max(0.0) as usize).min(1)) }
+    }
+}
+impl PlateParams {
+    pub fn set_key(&mut self, k: &str, v: f64) -> bool {
+        match k { "decay" => self.decay = v, "pre" => self.pre = v, "bright" => self.bright = v, "lowcut" => self.lowcut = v, "width" => self.width = v, "mix" => self.mix = v,
+            "variant" => self.variant = (v.round().max(0.0) as usize).min(1), _ => return false }
+        true
+    }
+}
+/// Ligne de retard circulaire (lecture entière ou interpolée)
+#[derive(Clone)]
+struct Dl { b: Vec<f64>, i: usize }
+impl Dl {
+    fn new(n: usize) -> Self { Self { b: vec![0.0; n.max(2)], i: 0 } }
+    fn push(&mut self, v: f64) { self.i = (self.i + 1) % self.b.len(); self.b[self.i] = v; }
+    /// valeur d'il y a `d` échantillons (0 = la dernière écrite)
+    fn at(&self, d: usize) -> f64 { let n = self.b.len(); self.b[(self.i + n - d.min(n - 1)) % n] }
+    fn atf(&self, d: f64) -> f64 { let d = d.clamp(0.0, (self.b.len() - 2) as f64); let i0 = d.floor(); let f = d - i0; let a = self.at(i0 as usize); let b = self.at(i0 as usize + 1); a + (b - a) * f }
+}
+/// Passe-tout de Schroeder : sortie = −g·x + retard ; retard ← x + g·sortie
+#[derive(Clone)]
+struct Ap { d: Dl, n: usize }
+impl Ap {
+    fn new(n: usize) -> Self { Self { d: Dl::new(n + 2), n } }
+    fn run(&mut self, x: f64, g: f64) -> f64 { let z = self.d.at(self.n - 1); let w = x + g * z; let y = z - g * w; self.d.push(w); y }
+    fn run_mod(&mut self, x: f64, g: f64, dm: f64) -> f64 { let z = self.d.atf(self.n as f64 - 1.0 + dm); let w = x + g * z; let y = z - g * w; self.d.push(w); y }
+    fn tap(&self, k: usize) -> f64 { self.d.at(k) }
+}
+pub struct Plate {
+    sr: f64, sc: f64,
+    pre: Dl, pre_n: usize,
+    hp: (f64, f64), hpa: f64,
+    bw: f64, bwz: f64,
+    ap_in: [Ap; 4],
+    lap1: Ap, ld1: Dl, lap2: Ap, ld2: Dl, ldz: f64,
+    rap1: Ap, rd1: Dl, rap2: Ap, rd2: Dl, rdz: f64,
+    decay: f64, damp: f64, ph: f64, exc: f64,
+    width: f64, mix: f64,
+    lfb: f64, rfb: f64,
+}
+impl Plate {
+    pub fn new(p: &PlateParams, sr: f64) -> Self {
+        let sc = sr / PLATE_FS;
+        let n = |v: f64| (v * sc).round() as usize;
+        let mut s = Self { sr, sc, pre: Dl::new((0.25 * sr) as usize + 4), pre_n: 0, hp: (0.0, 0.0), hpa: 0.0, bw: 0.9995, bwz: 0.0,
+            ap_in: [Ap::new(n(142.0)), Ap::new(n(107.0)), Ap::new(n(379.0)), Ap::new(n(277.0))],
+            lap1: Ap::new(n(672.0) + 40), ld1: Dl::new(n(4453.0) + 2), lap2: Ap::new(n(1800.0)), ld2: Dl::new(n(3720.0) + 2), ldz: 0.0,
+            rap1: Ap::new(n(908.0) + 40), rd1: Dl::new(n(4217.0) + 2), rap2: Ap::new(n(2656.0)), rd2: Dl::new(n(3163.0) + 2), rdz: 0.0,
+            decay: 0.5, damp: 0.0005, ph: 0.0, exc: 16.0 * sc, width: 1.0, mix: 0.25, lfb: 0.0, rfb: 0.0 };
+        // longueur « vraie » des passe-tout modulés (la marge sert à la modulation)
+        s.lap1.n = n(672.0); s.rap1.n = n(908.0);
+        s.set(p);
+        s
+    }
+    pub fn set(&mut self, p: &PlateParams) {
+        let sr = self.sr;
+        self.pre_n = ((p.pre.clamp(0.0, 200.0) / 1000.0) * sr) as usize;
+        let f = p.lowcut.clamp(20.0, 500.0);
+        self.hpa = (-2.0 * PI * f / sr).exp();
+        // durée → gain par passage : un tour de branche ≈ 0,358 s à la cadence de Dattorro, deux gains « decay » par tour
+        let loop_s = (4453.0 + 3720.0 + 672.0 + 1800.0) / PLATE_FS;
+        self.decay = 10f64.powf(-3.0 * loop_s / (2.0 * p.decay.clamp(0.4, 6.0))).min(0.98);
+        // brillance : amortissement des aigus dans le réservoir (Chaude = plus amortie)
+        let b = (p.bright.clamp(0.0, 100.0) / 100.0) * if p.variant == 1 { 0.75 } else { 1.0 };
+        self.damp = 0.7 * (1.0 - b) + 0.0005;
+        self.bw = if p.variant == 1 { 0.75 } else { 0.9995 };
+        self.width = p.width.clamp(0.0, 150.0) / 100.0;
+        self.mix = (p.mix / 100.0).clamp(0.0, 1.0);
+    }
+    pub fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
+        let sc = self.sc;
+        let n = |v: f64| (v * sc).round() as usize;
+        let inp = if nc > 1 { 0.5 * (x[0] + x[1]) } else { x[0] };
+        // pré-délai, coupe-bas (1er ordre), bande passante d'entrée
+        self.pre.push(inp);
+        let v = self.pre.at(self.pre_n);
+        let (xp, yp) = self.hp; let h = self.hpa * (yp + v - xp); self.hp = (v, h);
+        self.bwz += (h - self.bwz) * self.bw;
+        let mut d = self.bwz;
+        d = self.ap_in[0].run(d, 0.75); d = self.ap_in[1].run(d, 0.75); d = self.ap_in[2].run(d, 0.625); d = self.ap_in[3].run(d, 0.625);
+        // réservoir : deux branches croisées, diffuseurs modulés (excursion lente, ≈ 1 Hz)
+        self.ph += 2.0 * PI * 1.0 / self.sr; if self.ph > 2.0 * PI { self.ph -= 2.0 * PI; }
+        let m = self.exc * self.ph.sin();
+        let (dec, dmp) = (self.decay, self.damp);
+        // branche gauche
+        let a = self.lap1.run_mod(d + self.rfb * dec, -0.7, m);
+        self.ld1.push(a);
+        let b = self.ld1.at(n(4453.0) - 1);
+        self.ldz += (b - self.ldz) * (1.0 - dmp);
+        let c = self.lap2.run(self.ldz * dec, 0.5);
+        self.ld2.push(c);
+        let lout = self.ld2.at(n(3720.0) - 1);
+        // branche droite
+        let a2 = self.rap1.run_mod(d + self.lfb * dec, -0.7, -m);
+        self.rd1.push(a2);
+        let b2 = self.rd1.at(n(4217.0) - 1);
+        self.rdz += (b2 - self.rdz) * (1.0 - dmp);
+        let c2 = self.rap2.run(self.rdz * dec, 0.5);
+        self.rd2.push(c2);
+        let rout = self.rd2.at(n(3163.0) - 1);
+        self.lfb = lout; self.rfb = rout;
+        // prises de sortie (Dattorro)
+        let yl = self.rd1.at(n(266.0)) + self.rd1.at(n(2974.0)) - self.rap2.tap(n(1913.0)) + self.rd2.at(n(1996.0)) - self.ld1.at(n(1990.0)) - self.lap2.tap(n(187.0)) - self.ld2.at(n(1066.0));
+        let yr = self.ld1.at(n(353.0)) + self.ld1.at(n(3627.0)) - self.lap2.tap(n(1228.0)) + self.ld2.at(n(2673.0)) - self.rd1.at(n(2111.0)) - self.rap2.tap(n(335.0)) - self.rd2.at(n(121.0));
+        let (yl, yr) = (yl * 0.3, yr * 0.3);
+        // largeur : 0 = mono, 1 = la plaque telle quelle, 1,5 = plus large
+        let (mm, ss) = ((yl + yr) * 0.5, (yl - yr) * 0.5 * self.width);
+        let (wl, wr) = (mm + ss, mm - ss);
+        let (dl, dr) = if nc > 1 { (x[0], x[1]) } else { (x[0], x[0]) };
+        x[0] = dl * (1.0 - self.mix) + wl * self.mix;
+        x[1] = dr * (1.0 - self.mix) + wr * self.mix;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2153,5 +2283,26 @@ mod tests {
         assert!(lv(&q, 4000.0) < lv(&p, 4000.0) - 2.0, "largeur serrée : {:.1} contre {:.1} dB à 4 kHz", lv(&q, 4000.0), lv(&p, 4000.0));
         let mut a = MassifParams::default(); a.g[3] = 6.0; a.f[3] = 10_000.0;
         assert!(lv(&a, 18_000.0) > 4.0, "air : {:.1} dB à 18 kHz", lv(&a, 18_000.0));
+    }
+
+    /// Plaque : une impulsion → une queue stéréo qui décroît en à peu près la Durée réglée ; plus longue si Durée plus grande
+    #[test]
+    fn plaque_queue() {
+        let rt = |dec: f64| {
+            let mut p = Plate::new(&PlateParams { decay: dec, pre: 0.0, mix: 100.0, ..Default::default() }, SR);
+            let n = (8.0 * SR) as usize; let mut e = vec![0.0f64; n];
+            let mut side = 0.0;
+            for i in 0..n { let mut x = [if i == 0 { 1.0 } else { 0.0 }, 0.0]; p.tick(&mut x, 1); e[i] = x[0] * x[0] + x[1] * x[1]; side += (x[0] - x[1]).powi(2); }
+            // énergie restante (intégrale à rebours) : temps pour perdre 30 dB après le début, ×2 = RT60
+            let mut acc = vec![0.0; n + 1]; for i in (0..n).rev() { acc[i] = acc[i + 1] + e[i]; }
+            let t0 = (0.05 * SR) as usize; let ref0 = acc[t0];
+            let t30 = (t0..n).find(|&i| acc[i] < ref0 * 1e-3).unwrap_or(n);
+            (2.0 * (t30 - t0) as f64 / SR, side)
+        };
+        let (a, side) = rt(1.5);
+        let (b, _) = rt(4.0);
+        assert!(side > 1e-3, "queue stéréo");
+        assert!(b > a * 1.8, "durée plus grande = queue plus longue ({a:.2} s → {b:.2} s)");
+        assert!((a - 1.5).abs() < 0.8, "Durée 1,5 s : RT60 ≈ {a:.2} s");
     }
 }

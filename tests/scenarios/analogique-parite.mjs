@@ -30,6 +30,8 @@ const CASES = [
   ['massif', { g1: -4, f1: 200, shelf1: 0, bw1: 7, g4: -3, f4: 8000, shelf4: 0, bw4: 2, lpf: 1, output: 2 }, [0.118539, 0.118539, 0.020230]],
   ['horizon', { g1: 3, f1: 60, g3: -2, f3: 400, q3: 1.5, g4: 3, f4: 3000, typ4: 1, g5: 2, f5: 12000, earth: 4, air: 5, char: 0.5, hpOn: 1, hpF: 30, hpS: 3 }, [0.119347, 0.119347, 0.066285]],
   ['horizon', { g2: 5, f2: 200, q2: 0.8, g3: 4, f3: 2500, ch3: 1, char: -0.7, strength: 130, lpOn: 1, lpF: 9000, lpS: 0, input: -3, output: 2 }, [0.193790, 0.193790, 0.016294]],
+  ['plate', { decay: 2.5, pre: 30, bright: 70, lowcut: 120, mix: 40 }, [0.134996, 0.135534, 0.035645]],
+  ['plate', { decay: 1.2, pre: 0, bright: 40, lowcut: 60, width: 140, mix: 60, variant: 1 }, [0.059170, 0.062295, 0.026672]],
   ['opto2a', { peak: 60, gain: 55, variant: 0 }, [0.086484, 0.082398, 0.018677]],
   ['opto2a', { peak: 45, limit: 1, emph: 50, variant: 2, mix: 80 }, [0.055303, 0.053787, 0.016746]],
 ];

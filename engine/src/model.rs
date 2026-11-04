@@ -149,6 +149,7 @@ pub struct EffectParams {
     pub bus33: Option<Bus33Json>,
     pub massif: Option<MassifJson>,
     pub horizon: Option<HorizonJson>,
+    pub plate: Option<PlateJson>,
     /// Exemplaires en plus d'un même effet (« comp#2 », « eq#3»…), réglages bruts : lus par `EffectParams::instance`
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
@@ -264,6 +265,11 @@ pub struct Opto2AJson {
     pub variant: Option<f64>,
     pub mix: Option<f64>,
 }
+
+/// Plaque 140 : decay (s), pre (ms), bright (0-100), lowcut (Hz), width (%), mix (%), variant (0 Claire · 1 Chaude)
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct PlateJson { pub decay: Option<f64>, pub pre: Option<f64>, pub bright: Option<f64>, pub lowcut: Option<f64>, pub width: Option<f64>, pub mix: Option<f64>, pub variant: Option<f64> }
 
 /// EQ Horizon : clés plates (on1…on5, typ, f, g, q, ch ; hpOn/hpF/hpS ; lpOn/lpF/lpS ; earth, air, char, strength, input, output), lues par horizon.rs
 #[derive(Debug, Clone, Deserialize, Default)]

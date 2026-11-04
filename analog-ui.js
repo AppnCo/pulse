@@ -1180,6 +1180,74 @@ function openMassifPanel(trackIdx, anchorEl) {
     makePlugWindow(panel, t, 'massif', trackIdx);
 }
 
+
+// ===== Plaque 140 : réverbe à plaque (esprit « 140 ») : la plaque d'acier dans son cadre, qui ondule pendant la lecture =====
+function openPlatePanel(trackIdx, anchorEl) {
+    closeTransientPanels();
+    const t = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;
+    if (!t) return;
+    const already = findPlugWin(t, 'plate');
+    if (already) { plugFront(already); return; }
+    t.effectParams = t.effectParams || {};
+    if (!t.effectParams.plate) t.effectParams.plate = { decay: 2, pre: 20, bright: 60, lowcut: 100, width: 100, mix: 25, variant: 0 };
+    const P = () => t.effectParams.plate, ed = anaEdit(t, 'plate');
+    const W = 900, H = 340, NM = ['Claire', 'Chaude'];
+    const { panel, svg } = anaWindow(t, 'plate', 'Plaque 140', W, H, anchorEl, trackIdx, 900, 'gris');
+    const L = { style: 'paint-order:stroke', 'stroke-opacity': '.35', 'stroke-width': '.6', stroke: '#fff' };
+    anaText(svg, 44, 38, 'PULSE · PLAQUE 140', { ...L, 'text-anchor': 'start', 'font-size': 14, 'font-weight': 700, 'letter-spacing': 3 });
+    const sub = anaText(svg, 44, 54, '', { class: 'ana-sub', 'text-anchor': 'start', 'letter-spacing': 2.5 });
+    // la plaque : tôle d'acier tendue par des ressorts dans son cadre, les deux capteurs ; elle ondule pendant la lecture
+    const px = 60, py = 72, pw = 500, ph = 170;
+    const defs = svg.querySelector('defs');
+    defs.insertAdjacentHTML('beforeend', `<linearGradient id="plSteel" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#d9dbe0"/><stop offset=".45" stop-color="#9da1a8"/><stop offset=".55" stop-color="#c3c6cc"/><stop offset="1" stop-color="#7f838a"/></linearGradient>
+        <filter id="plBrush" x="0" y="0" width="100%" height="100%"><feTurbulence type="fractalNoise" baseFrequency="0.02 0.9" numOctaves="2" seed="7" result="n"/><feColorMatrix in="n" type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 .12 0"/></filter>`);
+    anaEl('rect', { x: px - 14, y: py - 14, width: pw + 28, height: ph + 28, rx: 6, fill: '#1b1a20', stroke: '#000' }, svg);
+    for (let k = 0; k <= 10; k++) { const x = px + k * pw / 10; anaEl('line', { x1: x, y1: py - 12, x2: x, y2: py - 2, stroke: '#888', 'stroke-width': 1.4 }, svg); anaEl('line', { x1: x, y1: py + ph + 2, x2: x, y2: py + ph + 12, stroke: '#888', 'stroke-width': 1.4 }, svg); }
+    const sheet = anaEl('g', {}, svg);
+    anaEl('rect', { x: px, y: py, width: pw, height: ph, fill: 'url(#plSteel)' }, sheet);
+    anaEl('rect', { x: px, y: py, width: pw, height: ph, filter: 'url(#plBrush)' }, sheet);
+    const waves = anaEl('g', { opacity: 0 }, sheet);
+    [0, 1, 2, 3].forEach(i => anaEl('ellipse', { class: 'pl-w', cx: px + pw * 0.3, cy: py + ph * 0.45, rx: 10, ry: 6, fill: 'none', stroke: '#7c3aed', 'stroke-width': 1.4, opacity: 0.6 }, waves));
+    [[px + pw * 0.3, py + ph * 0.45, 'EXCITATEUR'], [px + pw * 0.72, py + ph * 0.3, 'CAPTEUR G'], [px + pw * 0.78, py + ph * 0.7, 'CAPTEUR D']].forEach(([x, y, lab], i) => {
+        anaEl('circle', { cx: x, cy: y, r: 7, fill: i ? '#2b2a31' : '#7c3aed', stroke: '#000', ...(i ? {} : { filter: 'url(#anaGlow)' }) }, sheet);
+        anaText(sheet, x, y + 20, lab, { fill: '#2b2a31', 'font-size': 6.5, 'letter-spacing': 1, class: '' }); });
+    // le registre (amortisseur) : la grosse molette de la durée
+    const read = panel.querySelector('.ana-read');
+    const say = () => { const p = P(); read.innerHTML = `${NM[Math.round(p.variant ?? 0)]} · Durée <b>${(Math.round(p.decay * 10) / 10).toString().replace('.', ',')} s</b> · Pré-délai <b>${Math.round(p.pre)} ms</b> · Mélange <b>${Math.round(p.mix)} %</b>`; };
+    const knob = (o) => anaKnob(svg, { ...o, get: () => P()[o.key] ?? o.def, set: (v) => { P()[o.key] = Math.round(v * (o.r || 1)) / (o.r || 1); ed.touch(o.key); say(); }, onStart: ed.start, onEnd: ed.end });
+    anaTicks(svg, 700, 150, 56, 11, -150, 150, ['0,4', '', '', '', '', '3', '', '', '', '', '6'], 7.5);
+    knob({ strip: 'black-big', cx: 700, cy: 150, d: 92, key: 'decay', min: 0.4, max: 6, def: 2, r: 10, tip: 'Durée (le registre de la plaque) : 0,4 à 6 s' });
+    anaText(svg, 700, 228, 'DURÉE · s', { ...L, 'font-size': 10 });
+    const small = [['pre', 'PRÉ-DÉLAI', 0, 200, 20, 'Pré-délai (ms) : la voix sort avant la réverbe'], ['bright', 'BRILLANCE', 0, 100, 60, 'Brillance : la plaque garde plus ou moins ses aigus'],
+        ['lowcut', 'COUPE-BAS', 20, 500, 100, 'Coupe-bas à l\'entrée (Hz) : pas de grave qui bave'], ['width', 'LARGEUR', 0, 150, 100, 'Largeur stéréo (100 % = la plaque)'], ['mix', 'MÉLANGE', 0, 100, 25, 'Mélange (en bus : 100 %)']];
+    small.forEach(([key, lab, mn, mx, def, tip], i) => { const x = 80 + i * 105; anaTicks(svg, x, 292, 18, 7, -150, 150, null); knob({ strip: 'bakelite', cx: x, cy: 292, d: 30, key, min: mn, max: mx, def, tip }); anaText(svg, x, 322, lab, { ...L, 'font-size': 7.5, 'letter-spacing': 1 }); });
+    const vg = anaEl('g', {}, svg);
+    const drawVar = () => { vg.innerHTML = ''; const cur = Math.round(P().variant ?? 0);
+        NM.forEach((nm, i) => { const x = 660 + i * 80, on = i === cur, g = anaEl('g', { class: 'ana-push ana-var', 'data-v': i }, vg);
+            anaEl('rect', { x: x - 34, y: 284, width: 68, height: 18, rx: 4, fill: on ? '#7c3aed' : '#1c1426', stroke: '#3a2b52', ...(on ? { filter: 'url(#anaGlow)' } : {}) }, g);
+            anaText(g, x, 296.5, nm.toUpperCase(), { fill: on ? '#fff' : '#a78bfa', 'font-size': 7.5, 'letter-spacing': 1, class: '' });
+            anaEl('title', {}, g).textContent = i ? 'Chaude : plaque ancienne, aigus plus amortis' : 'Claire : plaque neuve, brillante'; });
+        sub.textContent = 'RÉVERBE À PLAQUE · ' + NM[cur].toUpperCase(); anaSkin(svg, 'gris'); };
+    vg.addEventListener('click', (e) => { const b = e.target.closest('.ana-var'); if (!b) return; ed.start(); P().variant = +b.dataset.v; ed.end(); drawVar(); say(); });
+    anaText(svg, 700, 318, 'PLAQUE', { ...L, 'font-size': 7, 'letter-spacing': 1 });
+    drawVar();
+    // ondes sur la plaque pendant la lecture
+    let ph0 = 0, last = performance.now();
+    const anim = (now) => {
+        if (!panel.isConnected) return;
+        const dt = Math.min(0.1, (now - last) / 1000); last = now;
+        const on = (t.effects || []).includes('plate') && (state.playing || state.recording);
+        waves.setAttribute('opacity', on ? 1 : 0);
+        if (on) { ph0 = (ph0 + dt / Math.max(0.4, P().decay ?? 2) * 1.2) % 1;
+            waves.querySelectorAll('.pl-w').forEach((e, i) => { const f = (ph0 + i / 4) % 1; e.setAttribute('rx', 10 + f * 260); e.setAttribute('ry', 6 + f * 110); e.setAttribute('opacity', (0.7 * (1 - f)).toFixed(2)); }); }
+        requestAnimationFrame(anim);
+    };
+    requestAnimationFrame(anim);
+    panel.querySelector('.fx-bypass').addEventListener('change', (e) => { pushUndo(); setFxOn(t, 'plate', e.target.checked); refreshPlaybackSoon(); saveProject(); refreshStrips(); });
+    say();
+    makePlugWindow(panel, t, 'plate', trackIdx);
+}
+
 // Styles de la façade (ici pour garder la gamme dans un seul fichier)
 (() => {
     const st = document.createElement('style');

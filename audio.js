@@ -1459,6 +1459,69 @@ window.PulseAudio = (function() {
             }
         }
         registerProcessor('pulse-horizon', pulseAuto(PulseHorizon, (s, v) => { let ch = false; for (const k in v) if (s.p[k] !== v[k]) { s.p[k] = v[k]; ch = true; } if (ch) s.set(); }));
+        // Plaque 140 : réverbe à plaque (algorithme de Dattorro), sortie stéréo. Même calcul que Plate (analog.rs).
+        class PlDl { constructor(n) { this.b = new Float64Array(Math.max(2, n)); this.i = 0; } push(v) { this.i = (this.i + 1) % this.b.length; this.b[this.i] = v; }
+            at(d) { const n = this.b.length; return this.b[(this.i + n - Math.min(d, n - 1)) % n]; }
+            atf(d) { d = Math.max(0, Math.min(this.b.length - 2, d)); const i0 = Math.floor(d), f = d - i0, a = this.at(i0), b = this.at(i0 + 1); return a + (b - a) * f; } }
+        class PlAp { constructor(n) { this.d = new PlDl(n + 2); this.n = n; }
+            run(x, g) { const z = this.d.at(this.n - 1), w = x + g * z, y = z - g * w; this.d.push(w); return y; }
+            runMod(x, g, dm) { const z = this.d.atf(this.n - 1 + dm), w = x + g * z, y = z - g * w; this.d.push(w); return y; }
+            tap(k) { return this.d.at(k); } }
+        class PulsePlate extends AudioWorkletProcessor {
+            constructor(o) {
+                super();
+                const p = (o && o.processorOptions) || {}, sr = sampleRate, sc = sr / 29761, n = (v) => Math.round(v * sc);
+                this.p = { decay: p.decay ?? 2, pre: p.pre ?? 20, bright: p.bright ?? 60, lowcut: p.lowcut ?? 100, width: p.width ?? 100, mix: p.mix ?? 25, variant: p.variant ?? 0 };
+                this.sc = sc; this.N = { d4453: n(4453), d3720: n(3720), d4217: n(4217), d3163: n(3163), t: [266, 2974, 1913, 1996, 1990, 187, 1066, 353, 3627, 1228, 2673, 2111, 335, 121].map(n) };
+                this.pre = new PlDl(Math.floor(0.25 * sr) + 4); this.hp = [0, 0]; this.bwz = 0;
+                this.apIn = [new PlAp(n(142)), new PlAp(n(107)), new PlAp(n(379)), new PlAp(n(277))];
+                this.lap1 = new PlAp(n(672) + 40); this.lap1.n = n(672); this.ld1 = new PlDl(n(4453) + 2); this.lap2 = new PlAp(n(1800)); this.ld2 = new PlDl(n(3720) + 2); this.ldz = 0;
+                this.rap1 = new PlAp(n(908) + 40); this.rap1.n = n(908); this.rd1 = new PlDl(n(4217) + 2); this.rap2 = new PlAp(n(2656)); this.rd2 = new PlDl(n(3163) + 2); this.rdz = 0;
+                this.ph = 0; this.exc = 16 * sc; this.lfb = 0; this.rfb = 0;
+                this.set();
+            }
+            set() {
+                const p = this.p, sr = sampleRate, cl = (v, a, b) => Math.max(a, Math.min(b, v)), v1 = Math.round(p.variant) === 1;
+                this.preN = Math.floor(cl(p.pre, 0, 200) / 1000 * sr);
+                this.hpa = Math.exp(-2 * Math.PI * cl(p.lowcut, 20, 500) / sr);
+                const loop = (4453 + 3720 + 672 + 1800) / 29761;
+                this.decay = Math.min(0.98, Math.pow(10, -3 * loop / (2 * cl(p.decay, 0.4, 6))));
+                const b = cl(p.bright, 0, 100) / 100 * (v1 ? 0.75 : 1);
+                this.damp = 0.7 * (1 - b) + 0.0005; this.bw = v1 ? 0.75 : 0.9995;
+                this.width = cl(p.width, 0, 150) / 100; this.mix = cl(p.mix / 100, 0, 1);
+            }
+            process(inputs, outputs) {
+                const inp = inputs[0], out = outputs[0];
+                if (!out || !out.length) return true;
+                const n = out[0].length, nin = inp && inp.length ? Math.min(inp.length, 2) : 0, N = this.N, t = N.t, sr = sampleRate, dec = this.decay, dmp = this.damp;
+                for (let i = 0; i < n; i++) {
+                    const xl = nin ? inp[0][i] : 0, xr = nin > 1 ? inp[1][i] : xl, x = nin > 1 ? 0.5 * (xl + xr) : xl;
+                    this.pre.push(x);
+                    const v = this.pre.at(this.preN), h = this.hpa * (this.hp[1] + v - this.hp[0]); this.hp[0] = v; this.hp[1] = h;
+                    this.bwz += (h - this.bwz) * this.bw;
+                    let d = this.bwz;
+                    d = this.apIn[0].run(d, 0.75); d = this.apIn[1].run(d, 0.75); d = this.apIn[2].run(d, 0.625); d = this.apIn[3].run(d, 0.625);
+                    this.ph += 2 * Math.PI / sr; if (this.ph > 2 * Math.PI) this.ph -= 2 * Math.PI;
+                    const m = this.exc * Math.sin(this.ph);
+                    const a = this.lap1.runMod(d + this.rfb * dec, -0.7, m); this.ld1.push(a);
+                    this.ldz += (this.ld1.at(N.d4453 - 1) - this.ldz) * (1 - dmp);
+                    const c = this.lap2.run(this.ldz * dec, 0.5); this.ld2.push(c);
+                    const lout = this.ld2.at(N.d3720 - 1);
+                    const a2 = this.rap1.runMod(d + this.lfb * dec, -0.7, -m); this.rd1.push(a2);
+                    this.rdz += (this.rd1.at(N.d4217 - 1) - this.rdz) * (1 - dmp);
+                    const c2 = this.rap2.run(this.rdz * dec, 0.5); this.rd2.push(c2);
+                    const rout = this.rd2.at(N.d3163 - 1);
+                    this.lfb = lout; this.rfb = rout;
+                    const yl = (this.rd1.at(t[0]) + this.rd1.at(t[1]) - this.rap2.tap(t[2]) + this.rd2.at(t[3]) - this.ld1.at(t[4]) - this.lap2.tap(t[5]) - this.ld2.at(t[6])) * 0.3;
+                    const yr = (this.ld1.at(t[7]) + this.ld1.at(t[8]) - this.lap2.tap(t[9]) + this.ld2.at(t[10]) - this.rd1.at(t[11]) - this.rap2.tap(t[12]) - this.rd2.at(t[13])) * 0.3;
+                    const mm = (yl + yr) * 0.5, ss = (yl - yr) * 0.5 * this.width;
+                    out[0][i] = xl * (1 - this.mix) + (mm + ss) * this.mix;
+                    if (out[1]) out[1][i] = xr * (1 - this.mix) + (mm - ss) * this.mix;
+                }
+                return true;
+            }
+        }
+        registerProcessor('pulse-plate', pulseAuto(PulsePlate, (s, v) => { let ch = false; for (const k in v) if (k in s.p && s.p[k] !== v[k]) { s.p[k] = v[k]; ch = true; } if (ch) s.set(); }));
         registerProcessor('pulse-deesser', pulseAuto(PulseDeesser, (s, v) => { if (v.amount !== undefined) { const a = Math.max(0, Math.min(100, v.amount)); s.maxRed = a * 0.24; s.slope = a / 100 * 3; } }));
 
         // Gate : coupe le bruit entre deux phrases. Mêmes calculs que Gate dans engine/src/fx.rs.
@@ -2136,7 +2199,7 @@ window.PulseAudio = (function() {
 
     // Exemplaire d'un effet : « comp#2 » → type « comp » (même calcul que fx_type dans model.rs)
     const fxType = (id) => String(id).split('#')[0];
-    const FX_CHAIN = ['pitch', 'filter', 'pre73', 'stripe', 'gate', 'eq', 'eqp1', 'horizon', 'eq550', 'massif', 'tape', 'sat', 'msat', 'crush', 'deess', 'fet76', 'opto2a', 'l670', 'dtr', 'comp25', 'comp', 'mband', 'bus33', 'busg', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'reverb']; // ordre habituel des effets
+    const FX_CHAIN = ['pitch', 'filter', 'pre73', 'stripe', 'gate', 'eq', 'eqp1', 'horizon', 'eq550', 'massif', 'tape', 'sat', 'msat', 'crush', 'deess', 'fet76', 'opto2a', 'l670', 'dtr', 'comp25', 'comp', 'mband', 'bus33', 'busg', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'plate', 'reverb']; // ordre habituel des effets
     const SEND_REVERB_TRIM = 1 / 3; // la reverb seule sort 3 fois trop fort par rapport au son direct : on la ramène à niveau
 
     // Paliers de tempo [{ sec, bpm }] quand le tempo change en cours de morceau (sinon null) — Project::tempo_segments côté Rust
@@ -3879,6 +3942,12 @@ window.PulseAudio = (function() {
         B.eq550 = () => node('pulse-eq550', 'eq550');
         B.massif = () => node('pulse-massif', 'massif');
         B.horizon = () => node('pulse-horizon', 'horizon');
+        // Plaque 140 : sortie stéréo même pour une piste mono (comme la reverb)
+        B.plate = () => {
+            if (!enabled.includes('plate') || !fxReady.has(actx)) return;
+            connect(new AudioWorkletNode(actx, 'pulse-plate', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCountMode: 'max',
+                processorOptions: { kind: 'plate', ...(params.plate || {}), ...autoAll('plate') } }));
+        };
         // Bus 33 : aiguille de réduction (clé « bus33|t0 »)
         B.bus33 = () => {
             if (!enabled.includes('bus33') || !fxReady.has(actx)) return;
