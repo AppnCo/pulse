@@ -140,6 +140,7 @@ pub struct EffectParams {
     pub opto2a: Option<Opto2AJson>,
     pub eqp1: Option<EqP1Json>,
     pub busg: Option<BusGJson>,
+    pub tape: Option<TapeJson>,
     /// Exemplaires en plus d'un même effet (« comp#2 », « eq#3»…), réglages bruts : lus par `EffectParams::instance`
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
@@ -253,6 +254,20 @@ pub struct Opto2AJson {
     pub limit: Option<f64>,
     pub emph: Option<f64>,
     pub variant: Option<f64>,
+    pub mix: Option<f64>,
+}
+
+/// Bande 80 : input/output (dB), speed 0 = 15 · 1 = 30, machine 0 ½ pouce · 1 2 pouces · 2 cassette, bias −100…100, noise, wow (0-100), mix %
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct TapeJson {
+    pub input: Option<f64>,
+    pub output: Option<f64>,
+    pub speed: Option<f64>,
+    pub machine: Option<f64>,
+    pub bias: Option<f64>,
+    pub noise: Option<f64>,
+    pub wow: Option<f64>,
     pub mix: Option<f64>,
 }
 

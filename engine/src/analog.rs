@@ -770,6 +770,159 @@ impl BusG {
     }
 }
 
+// ===== Bande 80 : magnétophone à bande (esprit « 80 ») =====
+// Ce que fait une bande : elle sature en douceur (surtout l'harmonique 3, avec un peu de « mémoire » magnétique),
+// les têtes font une bosse dans le grave (plus haut à 30 qu'à 15), l'aigu s'arrondit, il y a un léger souffle et la bande
+// pleure un peu (vitesse qui bouge : lent = pleurage, rapide = scintillement). Polarisation (bias) : sous-polarisée = plus brillante
+// et plus sale, sur-polarisée = plus sombre et plus propre.
+// Machines : ½ pouce (brillante, nette), 2 pouces (grasse, grosse bosse), Cassette (lo-fi : bande étroite, souffle, pleurage).
+/// Retard : suréchantillonnage (31) + ligne du pleurage (48 échantillons de marge)
+pub const TAPE_WOW_BASE: usize = 48;
+
+#[derive(Clone, Debug)]
+pub struct TapeParams {
+    /// entrée (dB, −12 à +18) : plus on pousse, plus la bande sature
+    pub input: f64,
+    /// sortie (dB, ±12)
+    pub output: f64,
+    /// 0 = 15, 1 = 30 (pouces par seconde)
+    pub speed: usize,
+    /// 0 = ½ pouce, 1 = 2 pouces, 2 = cassette
+    pub machine: usize,
+    /// polarisation −100 (sous) à +100 (sur)
+    pub bias: f64,
+    /// souffle 0-100, pleurage 0-100 (50 = celui de la machine), mélange %
+    pub noise: f64,
+    pub wow: f64,
+    pub mix: f64,
+}
+impl Default for TapeParams {
+    fn default() -> Self { Self { input: 0.0, output: 0.0, speed: 0, machine: 0, bias: 0.0, noise: 20.0, wow: 50.0, mix: 100.0 } }
+}
+impl From<&crate::model::TapeJson> for TapeParams {
+    fn from(j: &crate::model::TapeJson) -> Self {
+        let d = Self::default();
+        let idx = |v: Option<f64>, def: usize, max: usize| v.map_or(def, |v| (v.round().max(0.0) as usize).min(max));
+        Self { input: j.input.unwrap_or(0.0), output: j.output.unwrap_or(0.0), speed: idx(j.speed, 0, 1), machine: idx(j.machine, 0, 2),
+            bias: j.bias.unwrap_or(0.0), noise: j.noise.unwrap_or(d.noise), wow: j.wow.unwrap_or(d.wow), mix: j.mix.unwrap_or(100.0) }
+    }
+}
+impl TapeParams {
+    pub fn set_key(&mut self, k: &str, v: f64) -> bool {
+        let ix = |v: f64, m: usize| (v.round().max(0.0) as usize).min(m);
+        match k { "input" => self.input = v, "output" => self.output = v, "bias" => self.bias = v, "noise" => self.noise = v, "wow" => self.wow = v, "mix" => self.mix = v,
+            "speed" => self.speed = ix(v, 1), "machine" => self.machine = ix(v, 2), _ => return false }
+        true
+    }
+}
+/// Marge de la bande (−12 dB : 0 dBFS pousse déjà un peu la bande)
+const HRT: f64 = 0.251_188_643_150_958;
+
+pub struct Tape {
+    sr: f64,
+    gin: f64,
+    gout: f64,
+    k: f64,
+    hyst: f64,
+    mix: f64,
+    eq: Vec<[Biquad; 2]>,
+    os: [Os4; 2],
+    mem: [f64; 2],
+    /// souffle : niveau, filtre, générateur (le même dans le navigateur)
+    hiss: f64,
+    hlp: f64,
+    hs: [f64; 2],
+    rng: u32,
+    /// pleurage : profondeurs (échantillons) et phases, ligne de retard
+    dw: f64,
+    df: f64,
+    pw: f64,
+    pf: f64,
+    line: [[f64; 128]; 2],
+    li: usize,
+    dry: [[f64; 128]; 2],
+}
+impl Tape {
+    pub const LATENCY: usize = 31 + TAPE_WOW_BASE;
+    pub fn new(p: &TapeParams, sr: f64) -> Self {
+        let mut s = Self { sr, gin: 1.0, gout: 1.0, k: 1.0, hyst: 0.0, mix: 1.0, eq: Vec::new(), os: [Os4::new(), Os4::new()], mem: [0.0; 2],
+            hiss: 0.0, hlp: 0.0, hs: [0.0; 2], rng: 0x1234_5678, dw: 0.0, df: 0.0, pw: 0.0, pf: 0.0, line: [[0.0; 128]; 2], li: 0, dry: [[0.0; 128]; 2] };
+        s.set(p);
+        s
+    }
+    pub fn set(&mut self, p: &TapeParams) {
+        let (sr, s4) = (self.sr, self.sr * 4.0);
+        let m = p.machine.min(2);
+        let fast = p.speed >= 1 && m < 2;
+        let b = (p.bias / 100.0).clamp(-1.0, 1.0);
+        self.gin = 10f64.powf(p.input.clamp(-12.0, 18.0) / 20.0);
+        self.gout = 10f64.powf(p.output.clamp(-12.0, 12.0) / 20.0);
+        // sature plus en 2 pouces et en cassette, et quand la bande est sous-polarisée
+        self.k = [1.0, 1.15, 1.6][m] * (1.0 - 0.25 * b);
+        self.hyst = 0.08 * (1.0 - 0.5 * b);
+        self.mix = (p.mix / 100.0).clamp(0.0, 1.0);
+        let mut eq: Vec<Biquad> = Vec::new();
+        // bosse des têtes et coupe du grave en dessous
+        let (fb, gb) = match (m, fast) { (2, _) => (80.0, 1.5), (1, false) => (50.0, 3.0), (1, true) => (100.0, 2.5), (_, false) => (50.0, 2.0), (_, true) => (100.0, 1.5) };
+        eq.push(eq_matched("peaking", fb, 1.0, gb, s4));
+        eq.push(eq_matched("highpass", if m == 2 { 40.0 } else if fast { 35.0 } else { 20.0 }, 0.7, 0.0, s4));
+        // aigus : arrondis selon la machine et la vitesse ; la polarisation éclaircit (sous) ou assombrit (sur)
+        let lp = match (m, fast) { (2, _) => 12_000.0, (1, false) => 18_000.0, (1, true) => 21_000.0, (_, false) => 20_000.0, (_, true) => 23_000.0 };
+        eq.push(eq_matched("lowpass", lp, if m == 2 { 0.6 } else { 0.707 }, 0.0, s4));
+        if b.abs() > 1e-6 { eq.push(eq_matched("highshelf", 8_000.0, 0.7, -2.5 * b, s4)); }
+        if self.eq.len() == eq.len() { for (a, n) in self.eq.iter_mut().zip(eq) { a[0].retune(n); a[1].retune(n); } } else { self.eq = eq.into_iter().map(|q| [q, q]).collect(); }
+        // souffle : ½ et 2 pouces de −80 à −60 dBFS, cassette de −70 à −50
+        let n = p.noise.clamp(0.0, 100.0) / 100.0;
+        self.hiss = if n > 0.0 { 10f64.powf((if m == 2 { -70.0 } else { -80.0 } + 20.0 * n) / 20.0) } else { 0.0 };
+        self.hlp = 1.0 - (-2.0 * PI * if m == 2 { 5_000.0 } else { 8_000.0 } / sr).exp();
+        // pleurage (0,5 Hz) et scintillement (6,3 Hz) : écart de vitesse → écart de temps = écart / (2π f)
+        let w = p.wow.clamp(0.0, 100.0) / 50.0;
+        let (ww, ff) = if m == 2 { (0.0012, 0.0006) } else { (0.0002, 0.0002) };
+        self.dw = (ww * w * sr / (2.0 * PI * 0.5)).min(40.0);
+        self.df = (ff * w * sr / (2.0 * PI * 6.3)).min(6.0);
+    }
+    fn rand(&mut self) -> f64 {
+        self.rng = self.rng.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        (self.rng >> 8) as f64 / 16_777_216.0 * 2.0 - 1.0
+    }
+    pub fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
+        let (k, h) = (self.k, self.hyst);
+        // pleurage : position de lecture dans la ligne de retard (au centre : TAPE_WOW_BASE)
+        self.pw += 2.0 * PI * 0.5 / self.sr; if self.pw > 2.0 * PI { self.pw -= 2.0 * PI; }
+        self.pf += 2.0 * PI * 6.3 / self.sr; if self.pf > 2.0 * PI { self.pf -= 2.0 * PI; }
+        let dly = TAPE_WOW_BASE as f64 + self.dw * self.pw.sin() + self.df * self.pf.sin();
+        let noise = if self.hiss > 0.0 { self.rand() } else { 0.0 };
+        self.li = (self.li + 1) % 128;
+        for ch in 0..nc {
+            let (eq, mem) = (&mut self.eq, &mut self.mem[ch]);
+            let y = self.os[ch].run(x[ch] * self.gin, |u| {
+                // bande : saturation douce avec un peu de mémoire magnétique (hystérésis), puis têtes (bosse, aigus)
+                let v = u * HRT;
+                let s = (k * (v + h * *mem)).tanh() / k;
+                *mem = s;
+                let mut y = s;
+                for q in eq.iter_mut() { y = q[ch].tick(y); }
+                y / HRT
+            });
+            // souffle (filtré), puis la ligne du pleurage (lecture interpolée)
+            self.hs[ch] += (noise - self.hs[ch]) * self.hlp;
+            let y = y + self.hs[ch] * self.hiss;
+            let l = &mut self.line[ch];
+            l[self.li] = y;
+            let pos = self.li as f64 + 128.0 - dly;
+            let i0 = pos.floor();
+            let fr = pos - i0;
+            let a = l[(i0 as usize) % 128];
+            let bb = l[(i0 as usize + 1) % 128];
+            let out = (a + (bb - a) * fr) * self.gout;
+            let d = &mut self.dry[ch];
+            d[self.li] = x[ch];
+            let dd = d[(self.li + 128 - Self::LATENCY) % 128];
+            x[ch] = if self.mix < 1.0 { dd + (out - dd) * self.mix } else { out };
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1018,5 +1171,22 @@ mod tests {
         assert!(c1.reduction() < c0.reduction() - 6.0, "coupe-bas du détecteur : {:.1} contre {:.1} dB", c1.reduction(), c0.reduction());
         let h3 = |v: usize| { let (o, _) = rung(&BusGParams { thr: 0.0, variant: v, ..Default::default() }, 0.7, 200.0, 48_000); let s = &o[24_000..]; 20.0 * (harm(s, 200.0, 3) / harm(s, 200.0, 1)).log10() };
         assert!(h3(1) > h3(0) + 6.0, "Noir {:.1} dB, Gris {:.1} dB", h3(1), h3(0));
+    }
+
+    fn runt(p: &TapeParams, amp: f64, f: f64, n: usize) -> Vec<f64> {
+        let mut c = Tape::new(p, SR);
+        (0..n).map(|i| { let mut x = [amp * (2.0 * PI * f * i as f64 / SR).sin(), 0.0]; c.tick(&mut x, 1); x[0] }).collect()
+    }
+    /// Bande 80 : bosse du grave (15 : 50 Hz), cassette qui coupe l'aigu, pousser l'entrée = plus d'harmonique 3
+    #[test]
+    fn bande_bosse_aigus_saturation() {
+        let quiet = TapeParams { noise: 0.0, wow: 0.0, ..Default::default() };
+        let rel = |p: &TapeParams, f: f64| { let n = 48_000; let o = runt(p, 0.05, f, n); let r: Vec<f64> = (0..n).map(|i| 0.05 * (2.0 * PI * f * i as f64 / SR).sin()).collect();
+            20.0 * (harm(&o[n / 2..], f, 1) / harm(&r[n / 2..], f, 1)).log10() };
+        assert!(rel(&quiet, 50.0) > rel(&quiet, 1000.0) + 1.0, "bosse à 50 Hz : {:.1} / {:.1}", rel(&quiet, 50.0), rel(&quiet, 1000.0));
+        let cas = TapeParams { machine: 2, ..quiet.clone() };
+        assert!(rel(&cas, 15_000.0) < -4.0, "cassette : aigus coupés ({:.1} dB à 15 kHz)", rel(&cas, 15_000.0));
+        let h3 = |inp: f64| { let o = runt(&TapeParams { input: inp, output: -inp, ..quiet.clone() }, 0.3, 200.0, 48_000); let s = &o[24_000..]; 20.0 * (harm(s, 200.0, 3) / harm(s, 200.0, 1)).log10() };
+        assert!(h3(12.0) > h3(0.0) + 8.0, "pousser la bande : h3 {:.1} → {:.1}", h3(0.0), h3(12.0));
     }
 }

@@ -1001,6 +1001,70 @@ window.PulseAudio = (function() {
             }
         }
         registerProcessor('pulse-busg', pulseAuto(PulseBusG, (s, v) => { let ch = false; for (const k in v) if (k in s.p && s.p[k] !== v[k]) { s.p[k] = v[k]; ch = true; } if (ch) s.set(); }));
+        // Bande 80 : magnétophone (saturation à mémoire, bosse des têtes, aigus, polarisation, souffle, pleurage). Même calcul que Tape dans analog.rs,
+        // y compris le générateur de souffle (même suite de nombres) : mêmes chiffres des deux côtés.
+        const HRT = 0.251188643150958, TAPE_WOW_BASE = 48, TAPE_LAT = 31 + 48;
+        class PulseTape extends AudioWorkletProcessor {
+            constructor(o) {
+                super();
+                const p = (o && o.processorOptions) || {};
+                this.p = { input: p.input ?? 0, output: p.output ?? 0, speed: p.speed ?? 0, machine: p.machine ?? 0, bias: p.bias ?? 0, noise: p.noise ?? 20, wow: p.wow ?? 50, mix: p.mix ?? 100 };
+                this.os = [new AnaOs(), new AnaOs()]; this.mem = [0, 0]; this.hs = [0, 0]; this.rng = 0x12345678; this.pw = 0; this.pf = 0;
+                this.line = [new Float64Array(128), new Float64Array(128)]; this.dry = [new Float64Array(128), new Float64Array(128)]; this.li = 0; this.eq = []; this.st = [[], []];
+                this.set();
+            }
+            set() {
+                const p = this.p, sr = sampleRate, s4 = sr * 4, cl = (v, a, b) => Math.max(a, Math.min(b, v)), ix = (v, m) => Math.min(m, Math.max(0, Math.round(v)));
+                const m = ix(p.machine, 2), fast = ix(p.speed, 1) >= 1 && m < 2, b = cl(p.bias / 100, -1, 1);
+                this.gin = Math.pow(10, cl(p.input, -12, 18) / 20); this.gout = Math.pow(10, cl(p.output, -12, 12) / 20);
+                this.k = [1, 1.15, 1.6][m] * (1 - 0.25 * b); this.hyst = 0.08 * (1 - 0.5 * b); this.mix = cl(p.mix / 100, 0, 1);
+                const [fb, gb] = m === 2 ? [80, 1.5] : m === 1 ? (fast ? [100, 2.5] : [50, 3]) : (fast ? [100, 1.5] : [50, 2]);
+                const eq = [eqMatched('peaking', fb, 1, gb, s4), eqMatched('highpass', m === 2 ? 40 : fast ? 35 : 20, 0.7, 0, s4)];
+                const lp = m === 2 ? 12000 : m === 1 ? (fast ? 21000 : 18000) : (fast ? 23000 : 20000);
+                eq.push(eqMatched('lowpass', lp, m === 2 ? 0.6 : 0.707, 0, s4));
+                if (Math.abs(b) > 1e-6) eq.push(eqMatched('highshelf', 8000, 0.7, -2.5 * b, s4));
+                if (eq.length !== this.eq.length) this.st = [eq.map(() => [0, 0, 0, 0]), eq.map(() => [0, 0, 0, 0])];
+                this.eq = eq;
+                const n = cl(p.noise, 0, 100) / 100;
+                this.hiss = n > 0 ? Math.pow(10, ((m === 2 ? -70 : -80) + 20 * n) / 20) : 0;
+                this.hlp = 1 - Math.exp(-2 * Math.PI * (m === 2 ? 5000 : 8000) / sr);
+                const w = cl(p.wow, 0, 100) / 50, [ww, ff] = m === 2 ? [0.0012, 0.0006] : [0.0002, 0.0002];
+                this.dw = Math.min(40, ww * w * sr / (2 * Math.PI * 0.5)); this.df = Math.min(6, ff * w * sr / (2 * Math.PI * 6.3));
+            }
+            rand() { this.rng = (Math.imul(this.rng, 1664525) + 1013904223) >>> 0; return (this.rng >>> 8) / 16777216 * 2 - 1; }
+            process(inputs, outputs) {
+                const inp = inputs[0], out = outputs[0];
+                if (!inp || !inp.length) return true;
+                const n = inp[0].length, nc = Math.min(inp.length, out.length, 2), k = this.k, h = this.hyst, eq = this.eq, sr = sampleRate, TP = 2 * Math.PI;
+                for (let i = 0; i < n; i++) {
+                    this.pw += TP * 0.5 / sr; if (this.pw > TP) this.pw -= TP;
+                    this.pf += TP * 6.3 / sr; if (this.pf > TP) this.pf -= TP;
+                    const dly = TAPE_WOW_BASE + this.dw * Math.sin(this.pw) + this.df * Math.sin(this.pf);
+                    const noise = this.hiss > 0 ? this.rand() : 0;
+                    this.li = (this.li + 1) % 128;
+                    for (let ch = 0; ch < nc; ch++) {
+                        const x = inp[ch][i], st = this.st[ch], mem = this.mem;
+                        let y = this.os[ch].run(x * this.gin, (u) => {
+                            const v = u * HRT, sv = Math.tanh(k * (v + h * mem[ch])) / k;
+                            mem[ch] = sv;
+                            let z = sv;
+                            for (let j = 0; j < eq.length; j++) z = biqRun(eq[j], st[j], z);
+                            return z / HRT;
+                        });
+                        this.hs[ch] += (noise - this.hs[ch]) * this.hlp;
+                        y = y + this.hs[ch] * this.hiss;
+                        const l = this.line[ch]; l[this.li] = y;
+                        const pos = this.li + 128 - dly, i0 = Math.floor(pos), fr = pos - i0;
+                        const a = l[i0 % 128], bb = l[(i0 + 1) % 128], o = (a + (bb - a) * fr) * this.gout;
+                        const d = this.dry[ch]; d[this.li] = x;
+                        const dd = d[(this.li + 128 - TAPE_LAT) % 128];
+                        out[ch][i] = this.mix < 1 ? dd + (o - dd) * this.mix : o;
+                    }
+                }
+                return true;
+            }
+        }
+        registerProcessor('pulse-tape', pulseAuto(PulseTape, (s, v) => { let ch = false; for (const k in v) if (k in s.p && s.p[k] !== v[k]) { s.p[k] = v[k]; ch = true; } if (ch) s.set(); }));
         registerProcessor('pulse-deesser', pulseAuto(PulseDeesser, (s, v) => { if (v.amount !== undefined) { const a = Math.max(0, Math.min(100, v.amount)); s.maxRed = a * 0.24; s.slope = a / 100 * 3; } }));
 
         // Gate : coupe le bruit entre deux phrases. Mêmes calculs que Gate dans engine/src/fx.rs.
@@ -1678,7 +1742,7 @@ window.PulseAudio = (function() {
 
     // Exemplaire d'un effet : « comp#2 » → type « comp » (même calcul que fx_type dans model.rs)
     const fxType = (id) => String(id).split('#')[0];
-    const FX_CHAIN = ['pitch', 'filter', 'pre73', 'gate', 'eq', 'eqp1', 'sat', 'msat', 'crush', 'deess', 'fet76', 'opto2a', 'comp', 'mband', 'busg', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'reverb']; // ordre habituel des effets
+    const FX_CHAIN = ['pitch', 'filter', 'pre73', 'gate', 'eq', 'eqp1', 'tape', 'sat', 'msat', 'crush', 'deess', 'fet76', 'opto2a', 'comp', 'mband', 'busg', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'reverb']; // ordre habituel des effets
     const SEND_REVERB_TRIM = 1 / 3; // la reverb seule sort 3 fois trop fort par rapport au son direct : on la ramène à niveau
 
     // Paliers de tempo [{ sec, bpm }] quand le tempo change en cours de morceau (sinon null) — Project::tempo_segments côté Rust
@@ -2425,8 +2489,9 @@ window.PulseAudio = (function() {
             const p = (params || {})[e] || {};
             return !!(p.semi || p.formant) || Object.keys(auto || {}).some(k => k.startsWith(`fx:${e}:`));
         }).length;
-        const na = (effects || []).filter(e => ['fet76', 'pre73', 'opto2a', 'eqp1', 'busg'].includes(fxType(e))).length;
-        return np * pitchLatency(sr) / sr + na * 31 / sr;
+        // machines Analogiques : 31 échantillons (suréchantillonnage) ; la Bande 80 en plus sa ligne de pleurage (48)
+        const na = (effects || []).reduce((s, e) => s + (['fet76', 'pre73', 'opto2a', 'eqp1', 'busg'].includes(fxType(e)) ? 31 : fxType(e) === 'tape' ? 79 : 0), 0);
+        return np * pitchLatency(sr) / sr + na / sr;
     }
     // Retard des groupes sur le trajet de sortie d'une piste (un stem seul contourne les groupes). Même calcul que bus_latency (render.rs).
     function busLatency(project, output, stem, sr) {
@@ -3384,6 +3449,7 @@ window.PulseAudio = (function() {
         };
         B.pre73 = () => node('pulse-pre73', 'pre73');
         B.eqp1 = () => node('pulse-eqp1', 'eqp1');
+        B.tape = () => node('pulse-tape', 'tape');
         // Bus G : aiguille de réduction comme le 76 (clé « busg|t0 »)
         B.busg = () => {
             if (!enabled.includes('busg') || !fxReady.has(actx)) return;

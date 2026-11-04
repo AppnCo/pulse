@@ -1315,6 +1315,13 @@ mod tests {
             c(*x).partial_cmp(&c(*y)).unwrap()
         }).unwrap();
         assert_eq!(best, 0, "73 + 76 : le son arrive décalé de {best} échantillons");
+        let tp = { let t = r#"{"volume":100,"clips":[{"id":"a","start":0,"duration":3,"offset":0}],"effects":["tape"],"effectParams":{"tape":{"noise":0,"wow":0}}}"#; Project { tracks: vec![serde_json::from_str(t).unwrap()], ..Default::default() } };
+        let wt = render(&tp, &saw, &opts()).0;
+        let bt = (-120i64..=120).max_by(|x, y| {
+            let c = |l: i64| (a..z).map(|i| dry[i] as f64 * wt[(i as i64 + l) as usize] as f64).sum::<f64>();
+            c(*x).partial_cmp(&c(*y)).unwrap()
+        }).unwrap();
+        assert_eq!(bt, 0, "Bande 80 : le son arrive décalé de {bt} échantillons");
         // pousser l'Entrée du 76 de +24 dB (automation) : ça compresse, le niveau monte bien moins que 24 dB
         let rms = |l: &[f32]| (l[a..z].iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / (z - a) as f64).sqrt();
         let mut p = mk(r#""fet76""#);
@@ -1341,6 +1348,8 @@ mod tests {
             ("eqp1", r#"{"lowF":2,"lowBoost":8,"lowAtten":6,"highF":4,"highBoost":5,"bw":3,"attenF":1,"highAtten":3}"#, [0.109054, 0.109054, 0.040556]),
             ("busg", r#"{"thr":-24,"ratio":4,"attack":2,"release":4,"makeup":6,"scHpf":1}"#, [0.076336, 0.076336, 0.022543]),
             ("busg", r#"{"thr":-20,"ratio":10,"attack":0,"release":1,"makeup":8,"variant":1,"mix":70}"#, [0.118260, 0.118260, 0.035387]),
+            ("tape", r#"{"input":8,"output":-6,"speed":0,"machine":1,"bias":-30,"noise":30,"wow":60}"#, [0.168613, 0.168633, 0.030798]),
+            ("tape", r#"{"input":4,"machine":2,"bias":20,"noise":60,"wow":80,"mix":75}"#, [0.168641, 0.175706, 0.020833]),
             ("opto2a", r#"{"peak":60,"gain":55,"variant":0}"#, [0.086484, 0.082398, 0.018677]),
             ("opto2a", r#"{"peak":45,"limit":1,"emph":50,"variant":2,"mix":80}"#, [0.055303, 0.053787, 0.016746])] {
             let t = format!(r#"{{"volume":100,"clips":[{{"id":"a","start":0,"duration":3,"offset":0}}],"effects":["{fx}"],"effectParams":{{"{fx}":{pp}}}}}"#);

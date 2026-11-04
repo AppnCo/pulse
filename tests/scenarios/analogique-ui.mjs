@@ -17,7 +17,7 @@ export default async (c) => {
   check('gamme Pulse : pas de machines analogiques dans ses catégories', pulseCats.includes('Dynamique') && !pulseCats.includes('Compresseurs'), pulseCats);
   await click('.fx-add-menu .fam-range', 'Analogique');
   const anaCats = await J(ev, `return [...document.querySelectorAll('.fx-add-menu .fam-cat')].filter(e=>!e.hidden).map(e=>e.textContent.trim()).join(',')`);
-  check('gamme Analogique : ses catégories seules', anaCats === 'Compresseurs,Préamplis et EQ', anaCats);
+  check('gamme Analogique : ses catégories seules', anaCats === 'Compresseurs,Préamplis et EQ,Bandes et couleur', anaCats);
   check('menu : Éclair 76 cliqué', await click('.fx-add-menu .fam-fx', 'Éclair 76'));
   await sleep(600);
   const f = JSON.parse(await J(ev, `const p=document.querySelector('.fx-panel.plug-win[data-fx="fet76"]'); const imgs=p?[...p.querySelectorAll('image')]:[];
@@ -90,6 +90,15 @@ export default async (c) => {
   check('menu : Bus G cliqué', await click('.fx-add-menu .fam-fx', 'Bus G')); await sleep(500);
   await click('.fx-panel.plug-win[data-fx="busg"] .ana-var[data-v="1"]');
   check('Bus G : variante Noir', await J(ev, `return state.project.tracks[0].effectParams.busg.variant`) === 1);
+  // Bande 80 : dans « Bandes et couleur », façade avec ses bobines, machine Cassette
+  await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
+  await click('#inspector .slot-plus[data-plus="fx"]');
+  await click('.fx-add-menu .fam-range', 'Analogique');
+  await click('.fx-add-menu .fam-cat', 'Bandes'); await sleep(100);
+  check('menu : Bande 80 cliquée', await click('.fx-add-menu .fam-fx', 'Bande 80')); await sleep(500);
+  check('Bande 80 : bobines', await J(ev, `return [...document.querySelectorAll('.fx-panel.plug-win[data-fx="tape"] image')].filter(i=>/reel/.test(i.getAttribute('href'))).length`) === 2);
+  await click('.fx-panel.plug-win[data-fx="tape"] .ana-var[data-v="2"]');
+  check('Bande 80 : Cassette', await J(ev, `return state.project.tracks[0].effectParams.tape.machine`) === 2);
   // ---- Envois façon Logic
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   await click('#inspector .slot-plus[data-plus="send"]');

@@ -12,6 +12,8 @@ const CASES = [
   ['eqp1', { lowF: 2, lowBoost: 8, lowAtten: 6, highF: 4, highBoost: 5, bw: 3, attenF: 1, highAtten: 3 }, [0.109054, 0.109054, 0.040556]],
   ['busg', { thr: -24, ratio: 4, attack: 2, release: 4, makeup: 6, scHpf: 1 }, [0.076336, 0.076336, 0.022543]],
   ['busg', { thr: -20, ratio: 10, attack: 0, release: 1, makeup: 8, variant: 1, mix: 70 }, [0.118260, 0.118260, 0.035387]],
+  ['tape', { input: 8, output: -6, speed: 0, machine: 1, bias: -30, noise: 30, wow: 60 }, [0.168613, 0.168633, 0.030798]],
+  ['tape', { input: 4, machine: 2, bias: 20, noise: 60, wow: 80, mix: 75 }, [0.168641, 0.175706, 0.020833]],
   ['opto2a', { peak: 60, gain: 55, variant: 0 }, [0.086484, 0.082398, 0.018677]],
   ['opto2a', { peak: 45, limit: 1, emph: 50, variant: 2, mix: 80 }, [0.055303, 0.053787, 0.016746]],
 ];
@@ -39,7 +41,9 @@ export default async (c) => {
     t.effects=['pre73','fet76']; t.effectParams={pre73:{gain:0},fet76:{input:24,output:24}}; const tr=await pcm(await PulseAudio.exportWav(state.project));
     t.effects=[]; t.effectParams={}; t.output='g'; state.project.buses=[{id:'g',name:'G',volume:100,effects:['fet76'],effectParams:{fet76:{input:24,output:24}}}];
     const bu=await pcm(await PulseAudio.exportWav(state.project));
-    return JSON.stringify([lag(dry,tr), lag(dry,bu)]) })()`));
+    t.output=undefined; state.project.buses=[]; t.effects=['tape']; t.effectParams={tape:{noise:0,wow:0}}; const tp=await pcm(await PulseAudio.exportWav(state.project));
+    return JSON.stringify([lag(dry,tr), lag(dry,bu), lag(dry,tp)]) })()`));
   check(`piste 73 + 76 : calée sur le son sec (${g[0]} échantillons)`, g[0] === 0, String(g[0]));
   check(`groupe 76 : calé sur le son sec (${g[1]} échantillons)`, g[1] === 0, String(g[1]));
+  check(`Bande 80 : calée sur le son sec (${g[2]} échantillons)`, g[2] === 0, String(g[2]));
 };

@@ -11,7 +11,7 @@ const ANA_STRIPS = {
     hf73: { n: 61, px: 144, a0: -150, a1: 150, span: 2.4 }, mid73: { n: 61, px: 160, a0: -150, a1: 150, span: 2.4 },
     midf73: { n: 6, px: 160, a0: -100, a1: 100, span: 2.4 }, low73: { n: 61, px: 160, a0: -150, a1: 150, span: 2.4 },
     lowf73: { n: 4, px: 160, a0: -90, a1: 90, span: 2.4 }, hpf73: { n: 5, px: 112, a0: -120, a1: 120, span: 2.4 },
-    'black-big': { n: 61, px: 200, a0: -150, a1: 150, span: 2.4 }, sel7: { n: 7, px: 128, a0: -90, a1: 90, span: 2.4 }, sel3: { n: 3, px: 128, a0: -45, a1: 45, span: 2.4 }, sel4: { n: 4, px: 128, a0: -60, a1: 60, span: 2.4 }, sel5: { n: 5, px: 128, a0: -90, a1: 90, span: 2.4 }, sel6: { n: 6, px: 128, a0: -100, a1: 100, span: 2.4 }, 'tog-up': { n: 1, px: 128, span: 3.2 }, 'tog-down': { n: 1, px: 128, span: 3.2 }
+    'black-big': { n: 61, px: 200, a0: -150, a1: 150, span: 2.4 }, sel7: { n: 7, px: 128, a0: -90, a1: 90, span: 2.4 }, sel3: { n: 3, px: 128, a0: -45, a1: 45, span: 2.4 }, sel4: { n: 4, px: 128, a0: -60, a1: 60, span: 2.4 }, sel5: { n: 5, px: 128, a0: -90, a1: 90, span: 2.4 }, sel6: { n: 6, px: 128, a0: -100, a1: 100, span: 2.4 }, reel: { n: 1, px: 360, span: 2.1 }, 'tog-up': { n: 1, px: 128, span: 3.2 }, 'tog-down': { n: 1, px: 128, span: 3.2 }
 };
 // Couleurs de façade (variantes) : dégradé du panneau, gravures, sous-titres, grain du brossé
 const ANA_SKINS = {
@@ -609,6 +609,81 @@ function openBusGPanel(trackIdx, anchorEl) {
     drawVar();
     say();
     makePlugWindow(panel, t, 'busg', trackIdx);
+}
+
+
+// ===== Bande 80 : magnétophone à bande (½ pouce, 2 pouces, cassette) — les bobines tournent pendant la lecture =====
+function openTapePanel(trackIdx, anchorEl) {
+    closeTransientPanels();
+    const t = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;
+    if (!t) return;
+    const already = findPlugWin(t, 'tape');
+    if (already) { plugFront(already); return; }
+    t.effectParams = t.effectParams || {};
+    if (!t.effectParams.tape) t.effectParams.tape = { input: 0, output: 0, speed: 0, machine: 0, bias: 0, noise: 20, wow: 50, mix: 100 };
+    const P = () => t.effectParams.tape, ed = anaEdit(t, 'tape');
+    const W = 900, H = 360, SK = ['argent', 'noir', 'graphite'], NM = ['½ pouce', '2 pouces', 'Cassette'], TIP = ['brillante et nette', 'grasse, la grosse bosse dans le grave', 'lo-fi : bande étroite, souffle, pleurage'];
+    const { panel, svg } = anaWindow(t, 'tape', 'Bande 80', W, H, anchorEl, trackIdx, 900, SK[Math.round(P().machine ?? 0)]);
+    const L = { style: 'paint-order:stroke', 'stroke-opacity': '.35', 'stroke-width': '.6', stroke: '#000' };
+    anaText(svg, 44, 40, 'PULSE · BANDE 80', { ...L, 'text-anchor': 'start', 'font-size': 14, 'font-weight': 700, 'letter-spacing': 3 });
+    const sub = anaText(svg, 44, 56, '', { class: 'ana-sub', 'text-anchor': 'start', 'letter-spacing': 2.5 });
+    const read = panel.querySelector('.ana-read');
+    const say = () => { const p = P(); read.innerHTML = `${NM[Math.round(p.machine ?? 0)]} · ${(p.speed ?? 0) >= 1 && (p.machine ?? 0) < 2 ? '30' : '15'} · Entrée <b>${p.input > 0 ? '+' : ''}${p.input} dB</b> · Polarisation <b>${Math.round(p.bias)}</b> · Souffle <b>${Math.round(p.noise)}</b> · Pleurage <b>${Math.round(p.wow)}</b>`; };
+    const knob = (o) => anaKnob(svg, { ...o, get: () => P()[o.key] ?? o.def, set: (v) => { P()[o.key] = Math.round(v * 2) / 2; ed.touch(o.key); say(); }, onStart: ed.start, onEnd: ed.end });
+    // les deux bobines, la bande entre elles qui passe sur le bloc des têtes
+    const R1 = { x: 240, y: 150 }, R2 = { x: 660, y: 150 }, RR = 92;
+    anaEl('path', { d: `M${R1.x - 70} ${R1.y + 60} L 400 232 L 500 232 L ${R2.x + 70} ${R2.y + 60}`, stroke: '#2b1a10', 'stroke-width': 3, fill: 'none' }, svg);
+    anaEl('rect', { x: 395, y: 214, width: 110, height: 30, rx: 5, fill: '#16151b', stroke: '#3a3842' }, svg);
+    [415, 450, 485].forEach((x, i) => { anaEl('rect', { x: x - 9, y: 220, width: 18, height: 18, rx: 3, fill: i === 1 ? '#7c3aed' : '#9a9ca3', ...(i === 1 ? { filter: 'url(#anaGlow)' } : {}) }, svg); });
+    anaText(svg, 450, 258, 'EFFACE · ENREG. · LECTURE', { 'font-size': 6.5, 'letter-spacing': .8 });
+    const reels = [R1, R2].map(r => { const g = anaEl('g', {}, svg); anaSprite(g, 'reel', r.x, r.y, RR * 2).frame(0); return g; });
+    // rangée du bas
+    const by = 310;
+    [['input', 70, 'ENTRÉE', -12, 18, 'Entrée : plus on pousse, plus la bande sature (la couleur)'], ['output', 160, 'SORTIE', -12, 12, 'Sortie : remet le niveau']].forEach(([key, cx, lab, mn, mx, tip]) => {
+        anaTicks(svg, cx, by - 18, 28, 7, -150, 150, [String(mn), '', '', '0', '', '', '+' + mx], 6.5);
+        knob({ strip: 'alu-big', cx, cy: by - 18, d: 44, key, min: mn, max: mx, def: 0, tip });
+        anaText(svg, cx, by + 26, lab, { ...L, 'font-size': 8 });
+    });
+    [['bias', 270, 'POLARISATION', -100, 100, 0, 'Polarisation : à gauche (sous) plus brillante et plus sale, à droite (sur) plus sombre et plus propre'],
+     ['noise', 350, 'SOUFFLE', 0, 100, 20, 'Souffle de la bande (0 = aucun)'], ['wow', 430, 'PLEURAGE', 0, 100, 50, 'Pleurage et scintillement : la vitesse qui bouge (50 = la machine)'],
+     ['mix', 510, 'MÉLANGE', 0, 100, 100, 'Mélange avec le son d\'origine']].forEach(([key, cx, lab, mn, mx, def, tip]) => {
+        anaTicks(svg, cx, by - 14, 18, 5, -135, 135, null);
+        knob({ strip: 'bakelite', cx, cy: by - 14, d: 28, key, min: mn, max: mx, def, tip });
+        anaText(svg, cx, by + 16, lab, { ...L, 'font-size': 7, 'letter-spacing': 1 });
+    });
+    // vitesse (levier) et machine (poussoirs)
+    const tg = anaEl('g', { class: 'ana-push' }, svg);
+    const drawTog = () => { tg.innerHTML = ''; const fast = (P().speed ?? 0) >= 1; anaSprite(tg, fast ? 'tog-up' : 'tog-down', 600, by - 14, 30).frame(0); anaEl('rect', { x: 584, y: by - 38, width: 32, height: 48, fill: 'transparent' }, tg); anaEl('title', {}, tg).textContent = 'Vitesse : 30 (en haut, aigus plus étendus, bosse plus haute) ou 15 (en bas, plus de grave)'; };
+    anaText(svg, 600, by - 44, '30', { ...L, 'font-size': 8 }); anaText(svg, 600, by + 26, '15', { ...L, 'font-size': 8 });
+    tg.addEventListener('click', () => { ed.start(); P().speed = (P().speed ?? 0) >= 1 ? 0 : 1; ed.end(); drawTog(); say(); });
+    drawTog();
+    const vg = anaEl('g', {}, svg);
+    const drawVar = () => {
+        vg.innerHTML = ''; const cur = Math.round(P().machine ?? 0);
+        NM.forEach((nm, i) => { const x = 720 + i * 62, on = i === cur, g = anaEl('g', { class: 'ana-push ana-var', 'data-v': i }, vg);
+            anaEl('rect', { x: x - 28, y: by - 22, width: 56, height: 16, rx: 4, fill: on ? '#7c3aed' : '#1c1426', stroke: '#3a2b52', ...(on ? { filter: 'url(#anaGlow)' } : {}) }, g);
+            anaText(g, x, by - 11, nm.toUpperCase(), { fill: on ? '#fff' : '#a78bfa', 'font-size': 7, 'letter-spacing': .6, class: '' });
+            anaEl('title', {}, g).textContent = `${nm} : ${TIP[i]}`; });
+        sub.textContent = 'MAGNÉTOPHONE À BANDE · ' + NM[cur].toUpperCase();
+        anaSkin(svg, SK[cur]);
+    };
+    vg.addEventListener('click', (e) => { const b = e.target.closest('.ana-var'); if (!b) return; ed.start(); P().machine = +b.dataset.v; ed.end(); drawVar(); say(); });
+    anaText(svg, 782, by + 8, 'MACHINE', { ...L, 'font-size': 7, 'letter-spacing': 1 });
+    // bobines qui tournent pendant la lecture (la droite plus vite : moins de bande dessus)
+    let a1 = 0, last = performance.now();
+    const spin = (now) => {
+        if (!panel.isConnected) return;
+        const dt = Math.min(0.1, (now - last) / 1000); last = now;
+        if ((t.effects || []).includes('tape') && (state.playing || state.recording)) { const v = ((P().speed ?? 0) >= 1 && (P().machine ?? 0) < 2) ? 2 : 1; a1 += dt * 140 * v; }
+        reels[0].setAttribute('transform', `rotate(${(-a1).toFixed(1)} ${R1.x} ${R1.y})`);
+        reels[1].setAttribute('transform', `rotate(${(-a1 * 1.35).toFixed(1)} ${R2.x} ${R2.y})`);
+        requestAnimationFrame(spin);
+    };
+    requestAnimationFrame(spin);
+    panel.querySelector('.fx-bypass').addEventListener('change', (e) => { pushUndo(); setFxOn(t, 'tape', e.target.checked); refreshPlaybackSoon(); saveProject(); refreshStrips(); });
+    drawVar();
+    say();
+    makePlugWindow(panel, t, 'tape', trackIdx);
 }
 
 // Styles de la façade (ici pour garder la gamme dans un seul fichier)
