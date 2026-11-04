@@ -56,6 +56,9 @@ export default async (c) => {
   await mouse('mouseReleased', { x: g.x, y: g.y - 96 }); await sleep(200);
   const gain = await J(ev, `return state.project.tracks[0].effectParams.pre73.gain`);
   check('gain à crans (multiple de 5, > 0)', gain > 0 && gain % 5 === 0, String(gain));
+  await click('.fx-panel.plug-win[data-fx="pre73"] .ana-var[data-v="1"]'); await sleep(300);
+  const v84 = JSON.parse(await J(ev, `const p=document.querySelector('.fx-panel.plug-win[data-fx="pre73"]'); return JSON.stringify({ v: state.project.tracks[0].effectParams.pre73.variant, title: p && p.querySelector('.fx-title').textContent, lmid: !!(p && p.querySelector('.ana-k[data-key="lmid"]')), gain: state.project.tracks[0].effectParams.pre73.gain })`));
+  check('variante 84 : façade redessinée avec les bas-médiums, réglages gardés', v84.v === 1 && /84/.test(v84.title) && v84.lmid && v84.gain === gain, JSON.stringify(v84));
   // Optique 2A : variantes (la façade change de couleur, réglages gardés), Compression / Limitation
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   await click('#inspector .slot-plus[data-plus="fx"]');
@@ -70,6 +73,16 @@ export default async (c) => {
   const tg = await pos('.fx-panel.plug-win[data-fx="opto2a"] .ana-push rect');
   await mouse('mouseMoved', tg, { buttons: 0 }); await mouse('mousePressed', tg); await mouse('mouseReleased', tg); await sleep(200);
   check('levier : Limitation', await J(ev, `return state.project.tracks[0].effectParams.opto2a.limit`) === 1);
+  // Égaliseur P1 : dans « Préamplis et EQ », façade ouverte, un bouton tourné
+  await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
+  await click('#inspector .slot-plus[data-plus="fx"]');
+  await click('.fx-add-menu .fam-range', 'Analogique');
+  await click('.fx-add-menu .fam-cat', 'Préamplis'); await sleep(100);
+  check('menu : Égaliseur P1 cliqué', await click('.fx-add-menu .fam-fx', 'Égaliseur P1')); await sleep(500);
+  const pb = await pos('.fx-panel.plug-win[data-fx="eqp1"] .ana-k[data-key="lowBoost"] circle');
+  check('P1 : façade ouverte', !!pb);
+  if (pb) { await mouse('mouseMoved', pb, { buttons: 0 }); await mouse('mousePressed', pb); for (let i = 1; i <= 6; i++) { await mouse('mouseMoved', { x: pb.x, y: pb.y - i * 10 }); await sleep(20); } await mouse('mouseReleased', { x: pb.x, y: pb.y - 60 }); await sleep(200); }
+  check('P1 : grave poussé à la souris', await J(ev, `return state.project.tracks[0].effectParams.eqp1.lowBoost`) > 0);
   // ---- Envois façon Logic
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   await click('#inspector .slot-plus[data-plus="send"]');

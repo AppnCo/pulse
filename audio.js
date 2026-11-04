@@ -797,7 +797,8 @@ window.PulseAudio = (function() {
             constructor(o) {
                 super();
                 const p = (o && o.processorOptions) || {};
-                this.p = { gain: p.gain ?? 0, output: p.output ?? 0, high: p.high ?? 0, mid: p.mid ?? 0, midF: p.midF ?? 2, low: p.low ?? 0, lowF: p.lowF ?? 1, hpf: p.hpf ?? -1, eq: p.eq ?? 1 };
+                this.p = { gain: p.gain ?? 0, output: p.output ?? 0, high: p.high ?? 0, mid: p.mid ?? 0, midF: p.midF ?? 2, low: p.low ?? 0, lowF: p.lowF ?? 1, hpf: p.hpf ?? -1, eq: p.eq ?? 1,
+                    variant: p.variant ?? 0, lmid: p.lmid ?? 0, lmidF: p.lmidF ?? 1, highF: p.highF ?? 1, hiq: p.hiq ?? 0 };
                 this.os = [new AnaOs(), new AnaOs()]; this.dc = [[0, 0], [0, 0]]; this.eq = []; this.st = [[], []]; this.iron = [[[0], [0]], [[0], [0]]]; this.ik = ironK(sampleRate);
                 this.set();
             }
@@ -810,11 +811,16 @@ window.PulseAudio = (function() {
                     const w = 2 * Math.PI * f / sr, al = Math.sin(w) / 2, c = Math.cos(w), a0 = 1 + al;
                     eq.push([(1 + c) / 2 / a0, -(1 + c) / a0, (1 + c) / 2 / a0, -2 * c / a0, (1 - al) / a0]);
                 }
+                // variantes : 0 = 73, 1 = 84 (bas-médiums, aigus 10/12/16 kHz, Q serré), 2 = 73 Vintage (aigu arrondi, grain, fer ×2)
+                const vr = ix(p.variant, 2), v84 = vr === 1;
                 if (p.eq >= 0.5) {
                     if (Math.abs(p.low) > 1e-6) eq.push(eqMatched('lowshelf', PRE73_LOW[ix(p.lowF, 3)], 0.9, cl(p.low, -16, 16), sr));
-                    if (Math.abs(p.mid) > 1e-6) eq.push(eqMatched('peaking', PRE73_MID[ix(p.midF, 5)], 0.7 + 0.02 * Math.abs(p.mid), cl(p.mid, -18, 18), sr));
-                    if (Math.abs(p.high) > 1e-6) eq.push(eqMatched('highshelf', 8500, 0.7, cl(p.high, -16, 16), sr));
+                    if (v84 && Math.abs(p.lmid) > 1e-6) eq.push(eqMatched('peaking', [220, 360, 700, 1600][ix(p.lmidF, 3)], 0.8 + 0.02 * Math.abs(p.lmid), cl(p.lmid, -16, 16), sr));
+                    if (Math.abs(p.mid) > 1e-6) eq.push(eqMatched('peaking', PRE73_MID[ix(p.midF, 5)], (0.7 + 0.02 * Math.abs(p.mid)) * (v84 && p.hiq >= 0.5 ? 2 : 1), cl(p.mid, -18, 18), sr));
+                    if (Math.abs(p.high) > 1e-6) eq.push(eqMatched('highshelf', v84 ? [7000, 8500, 11500][ix(p.highF, 2)] : 8500, 0.7, cl(p.high, -16, 16), sr));
                 }
+                if (vr === 2) { const w = 2 * Math.PI * 14000 / sr, al = Math.sin(w) / (2 * Math.pow(10, -3 / 20)), c = Math.cos(w), a0 = 1 + al; eq.push([(1 - c) / 2 / a0, (1 - c) / a0, (1 - c) / 2 / a0, -2 * c / a0, (1 - al) / a0]); }
+                this.va2 = vr === 2 ? 0.06 : 0; this.vir = vr === 2 ? 2 : 1;
                 // mémoire des filtres gardée quand seuls les coefficients changent (pas de clic)
                 if (eq.length !== this.eq.length) this.st = [eq.map(() => [0, 0, 0, 0]), eq.map(() => [0, 0, 0, 0])];
                 this.eq = eq;
@@ -823,15 +829,15 @@ window.PulseAudio = (function() {
             process(inputs, outputs) {
                 const inp = inputs[0], out = outputs[0];
                 if (!inp || !inp.length) return true;
-                const n = inp[0].length, nc = Math.min(inp.length, out.length, 2), d = this.drive, a2 = 0.08 + 0.35 * d, k = 1 + 0.3 * d, eq = this.eq, [iw, il] = this.ik;
+                const n = inp[0].length, nc = Math.min(inp.length, out.length, 2), d = this.drive, a2 = 0.08 + 0.35 * d + this.va2, k = 1 + 0.3 * d, eq = this.eq, [iw, il] = this.ik, ib = IRON73 * this.vir;
                 for (let ch = 0; ch < nc; ch++) {
                     const a = inp[ch], o = out[ch], os = this.os[ch], dc = this.dc[ch], st = this.st[ch], ir = this.iron[ch];
                     const f = (u) => {
-                        u = ironRun(ir[0], u * HR73, iw, il, IRON73);
+                        u = ironRun(ir[0], u * HR73, iw, il, ib);
                         let y = Math.tanh((u + a2 * u * u) * k) / k / HR73;
                         const z = y - dc[0] + 0.99988 * dc[1]; dc[0] = y; dc[1] = z; y = z;
                         for (let j = 0; j < eq.length; j++) y = biqRun(eq[j], st[j], y);
-                        return ironRun(ir[1], Math.tanh(1.05 * y * HR73) / 1.05, iw, il, IRON73) / HR73;
+                        return ironRun(ir[1], Math.tanh(1.05 * y * HR73) / 1.05, iw, il, ib) / HR73;
                     };
                     for (let i = 0; i < n; i++) o[i] = os.run(a[i] * this.gin, f) * this.gout;
                 }
@@ -899,6 +905,49 @@ window.PulseAudio = (function() {
             }
         }
         registerProcessor('pulse-opto2a', pulseAuto(PulseOpto2A, (s, v) => { let ch = false; for (const k in v) if (k in s.p && s.p[k] !== v[k]) { s.p[k] = v[k]; ch = true; } if (ch) s.set(); }));
+        // Égaliseur passif P1 : même calcul que EqP1 dans analog.rs (EQ à 4× la cadence entre deux transfos, étage à lampe)
+        const P1_LF = [20, 30, 60, 100], P1_HFB = [3000, 4000, 5000, 8000, 10000, 12000, 16000], P1_HFA = [5000, 10000, 20000], HRP1 = 0.15848931924611135, IRONP1 = 0.05;
+        class PulseEqP1 extends AudioWorkletProcessor {
+            constructor(o) {
+                super();
+                const p = (o && o.processorOptions) || {};
+                this.p = { lowF: p.lowF ?? 2, lowBoost: p.lowBoost ?? 0, lowAtten: p.lowAtten ?? 0, highF: p.highF ?? 4, highBoost: p.highBoost ?? 0, bw: p.bw ?? 5, attenF: p.attenF ?? 1, highAtten: p.highAtten ?? 0, output: p.output ?? 0, on: p.on ?? 1 };
+                this.os = [new AnaOs(), new AnaOs()]; this.iron = [[[0], [0]], [[0], [0]]]; this.ik = ironK(sampleRate); this.dc = [[0, 0], [0, 0]]; this.eq = []; this.st = [[], []];
+                this.set();
+            }
+            set() {
+                const p = this.p, s4 = sampleRate * 4, cl = (v, a, b) => Math.max(a, Math.min(b, v)), ix = (v, m) => Math.min(m, Math.max(0, Math.round(v)));
+                const eq = [];
+                if (p.on >= 0.5) {
+                    const f = P1_LF[ix(p.lowF, 3)], b = cl(p.lowBoost, 0, 10), a = cl(p.lowAtten, 0, 10);
+                    if (b > 1e-6) eq.push(eqMatched('lowshelf', f, 0.9, b * 1.35, s4));
+                    if (a > 1e-6) eq.push(eqMatched('lowshelf', f * 4, 0.5, -a * 0.6, s4));
+                    const hb = cl(p.highBoost, 0, 10);
+                    if (hb > 1e-6) eq.push(eqMatched('peaking', P1_HFB[ix(p.highF, 6)], 0.4 + 0.25 * cl(p.bw, 0, 10), hb * 1.8, s4));
+                    const ha = cl(p.highAtten, 0, 10);
+                    if (ha > 1e-6) eq.push(eqMatched('highshelf', P1_HFA[ix(p.attenF, 2)] * 0.75, 0.6, -ha * 1.6, s4));
+                }
+                if (eq.length !== this.eq.length) this.st = [eq.map(() => [0, 0, 0, 0]), eq.map(() => [0, 0, 0, 0])];
+                this.eq = eq; this.gout = Math.pow(10, cl(p.output, -12, 12) / 20);
+            }
+            process(inputs, outputs) {
+                const inp = inputs[0], out = outputs[0];
+                if (!inp || !inp.length) return true;
+                const n = inp[0].length, nc = Math.min(inp.length, out.length, 2), eq = this.eq, [iw, il] = this.ik;
+                for (let ch = 0; ch < nc; ch++) {
+                    const a = inp[ch], o = out[ch], os = this.os[ch], dc = this.dc[ch], st = this.st[ch], ir = this.iron[ch];
+                    const f = (u) => {
+                        let y = ironRun(ir[0], u * HRP1, iw, il, IRONP1);
+                        for (let j = 0; j < eq.length; j++) y = biqRun(eq[j], st[j], y);
+                        const c = y + 0.05 * y * y, z = c - dc[0] + 0.99988 * dc[1]; dc[0] = c; dc[1] = z;
+                        return ironRun(ir[1], Math.tanh(1.1 * z) / 1.1, iw, il, IRONP1) / HRP1;
+                    };
+                    for (let i = 0; i < n; i++) o[i] = os.run(a[i], f) * this.gout;
+                }
+                return true;
+            }
+        }
+        registerProcessor('pulse-eqp1', pulseAuto(PulseEqP1, (s, v) => { let ch = false; for (const k in v) if (k in s.p && s.p[k] !== v[k]) { s.p[k] = v[k]; ch = true; } if (ch) s.set(); }));
         registerProcessor('pulse-deesser', pulseAuto(PulseDeesser, (s, v) => { if (v.amount !== undefined) { const a = Math.max(0, Math.min(100, v.amount)); s.maxRed = a * 0.24; s.slope = a / 100 * 3; } }));
 
         // Gate : coupe le bruit entre deux phrases. Mêmes calculs que Gate dans engine/src/fx.rs.
@@ -1576,7 +1625,7 @@ window.PulseAudio = (function() {
 
     // Exemplaire d'un effet : « comp#2 » → type « comp » (même calcul que fx_type dans model.rs)
     const fxType = (id) => String(id).split('#')[0];
-    const FX_CHAIN = ['pitch', 'filter', 'pre73', 'gate', 'eq', 'sat', 'msat', 'crush', 'deess', 'fet76', 'opto2a', 'comp', 'mband', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'reverb']; // ordre habituel des effets
+    const FX_CHAIN = ['pitch', 'filter', 'pre73', 'gate', 'eq', 'eqp1', 'sat', 'msat', 'crush', 'deess', 'fet76', 'opto2a', 'comp', 'mband', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'doubler', 'slapback', 'master', 'limit', 'delay', 'reverb']; // ordre habituel des effets
     const SEND_REVERB_TRIM = 1 / 3; // la reverb seule sort 3 fois trop fort par rapport au son direct : on la ramène à niveau
 
     // Paliers de tempo [{ sec, bpm }] quand le tempo change en cours de morceau (sinon null) — Project::tempo_segments côté Rust
@@ -2323,7 +2372,7 @@ window.PulseAudio = (function() {
             const p = (params || {})[e] || {};
             return !!(p.semi || p.formant) || Object.keys(auto || {}).some(k => k.startsWith(`fx:${e}:`));
         }).length;
-        const na = (effects || []).filter(e => ['fet76', 'pre73', 'opto2a'].includes(fxType(e))).length;
+        const na = (effects || []).filter(e => ['fet76', 'pre73', 'opto2a', 'eqp1'].includes(fxType(e))).length;
         return np * pitchLatency(sr) / sr + na * 31 / sr;
     }
     // Retard des groupes sur le trajet de sortie d'une piste (un stem seul contourne les groupes). Même calcul que bus_latency (render.rs).
@@ -3281,6 +3330,7 @@ window.PulseAudio = (function() {
             connect(n);
         };
         B.pre73 = () => node('pulse-pre73', 'pre73');
+        B.eqp1 = () => node('pulse-eqp1', 'eqp1');
         // Optique 2A : même aiguille que le 76 (clé « opto2a|t0 »)
         B.opto2a = () => {
             if (!enabled.includes('opto2a') || !fxReady.has(actx)) return;

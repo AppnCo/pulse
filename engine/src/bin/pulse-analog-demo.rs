@@ -10,7 +10,7 @@ fn main() {
         hound::SampleFormat::Float => r.samples::<f32>().step_by(sp.channels as usize).map(|v| v.unwrap() as f64).collect(),
     };
     let sr = sp.sample_rate as f64;
-    let pre = Pre73Params { gain: 18.0, output: -14.0, high: 4.0, mid: 3.0, mid_f: 3, low: 0.0, low_f: 2, hpf: Some(1), eq: true };
+    let pre = Pre73Params { gain: 18.0, output: -14.0, high: 4.0, mid: 3.0, mid_f: 3, low: 0.0, low_f: 2, hpf: Some(1), eq: true, ..Default::default() };
     let (mut p73, mut f76): (Option<Pre73>, Option<Fet76>) = match a[3].as_str() {
         "pre" => (Some(Pre73::new(&pre, sr)), None),
         "fet4" => (None, Some(Fet76::new(&Fet76Params { input: 36.0, output: 30.0, attack: 3.0, release: 5.0, ratio: 4.0, mix: 100.0, variant: 0 }, sr))),

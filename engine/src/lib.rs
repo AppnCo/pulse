@@ -1334,8 +1334,11 @@ mod tests {
         for (fx, pp, want) in [("pre73", r#"{"gain":20,"output":-20,"high":4,"mid":3,"midF":3,"low":2,"lowF":1,"hpf":1}"#, [0.099128f64, 0.099128, 0.027474]),
             ("fet76", r#"{"input":36,"output":20,"attack":4,"release":5,"ratio":8}"#, [0.043774, 0.043774, 0.012732]),
             ("fet76", r#"{"input":40,"output":18,"ratio":0,"mix":70}"#, [0.051816, 0.051816, 0.016344]),
+            ("pre73", r#"{"gain":15,"output":-15,"variant":1,"lmid":6,"lmidF":2,"mid":-5,"midF":4,"hiq":1,"high":5,"highF":2,"low":3}"#, [0.145194, 0.145194, 0.046324]),
+            ("pre73", r#"{"gain":20,"output":-20,"variant":2,"high":3,"hpf":0}"#, [0.102257, 0.102257, 0.019812]),
             ("fet76", r#"{"input":36,"output":22,"ratio":12,"variant":1}"#, [0.050767, 0.050767, 0.012441]),
             ("fet76", r#"{"input":36,"output":22,"ratio":4,"variant":2,"mix":60}"#, [0.092849, 0.092849, 0.028566]),
+            ("eqp1", r#"{"lowF":2,"lowBoost":8,"lowAtten":6,"highF":4,"highBoost":5,"bw":3,"attenF":1,"highAtten":3}"#, [0.109054, 0.109054, 0.040556]),
             ("opto2a", r#"{"peak":60,"gain":55,"variant":0}"#, [0.086484, 0.082398, 0.018677]),
             ("opto2a", r#"{"peak":45,"limit":1,"emph":50,"variant":2,"mix":80}"#, [0.055303, 0.053787, 0.016746])] {
             let t = format!(r#"{{"volume":100,"clips":[{{"id":"a","start":0,"duration":3,"offset":0}}],"effects":["{fx}"],"effectParams":{{"{fx}":{pp}}}}}"#);

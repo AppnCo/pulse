@@ -261,14 +261,25 @@ pub struct Pre73Params {
     pub hpf: Option<usize>,
     /// EQ en service (comme l'interrupteur EQ de la machine)
     pub eq: bool,
+    /// 0 = 73 (noir), 1 = 84 (gris-bleu : 4 bandes, aigus 10/12/16 kHz, médiums « Q serré »), 2 = 73 Vintage (transfos fatigués)
+    pub variant: usize,
+    /// 84 : bas-médiums (dB, ±16) et leur fréquence (index dans PRE84_LMID), fréquence des aigus (index dans PRE84_HF), Q serré
+    pub lmid: f64,
+    pub lmid_f: usize,
+    pub high_f: usize,
+    pub hiq: bool,
 }
+/// 84 : bas-médiums 220 · 360 · 700 Hz · 1,6 kHz ; aigus « 10 / 12 / 16 kHz » (plein du plateau, comme le 73 : début plus bas)
+pub const PRE84_LMID: [f64; 4] = [220.0, 360.0, 700.0, 1600.0];
+pub const PRE84_HF: [f64; 3] = [7_000.0, 8_500.0, 11_500.0];
 impl From<&crate::model::Pre73Json> for Pre73Params {
     fn from(j: &crate::model::Pre73Json) -> Self {
         let d = Self::default();
         let idx = |v: Option<f64>, def: usize, max: usize| v.map_or(def, |v| (v.round().max(0.0) as usize).min(max));
         Self { gain: j.gain.unwrap_or(d.gain), output: j.output.unwrap_or(d.output), high: j.high.unwrap_or(0.0), mid: j.mid.unwrap_or(0.0),
             mid_f: idx(j.mid_f, d.mid_f, 5), low: j.low.unwrap_or(0.0), low_f: idx(j.low_f, d.low_f, 3),
-            hpf: j.hpf.filter(|v| *v >= -0.5).map(|v| (v.round() as usize).min(3)), eq: j.eq.unwrap_or(1.0) >= 0.5 }
+            hpf: j.hpf.filter(|v| *v >= -0.5).map(|v| (v.round() as usize).min(3)), eq: j.eq.unwrap_or(1.0) >= 0.5,
+            variant: idx(j.variant, 0, 2), lmid: j.lmid.unwrap_or(0.0), lmid_f: idx(j.lmid_f, 1, 3), high_f: idx(j.high_f, 1, 2), hiq: j.hiq.unwrap_or(0.0) >= 0.5 }
     }
 }
 impl Pre73Params {
@@ -276,12 +287,14 @@ impl Pre73Params {
     pub fn set_key(&mut self, k: &str, v: f64) -> bool {
         match k { "gain" => self.gain = v, "output" => self.output = v, "high" => self.high = v, "mid" => self.mid = v, "low" => self.low = v,
             "midF" => self.mid_f = (v.round().max(0.0) as usize).min(5), "lowF" => self.low_f = (v.round().max(0.0) as usize).min(3),
-            "hpf" => self.hpf = (v >= -0.5).then(|| (v.round() as usize).min(3)), "eq" => self.eq = v >= 0.5, _ => return false }
+            "hpf" => self.hpf = (v >= -0.5).then(|| (v.round() as usize).min(3)), "eq" => self.eq = v >= 0.5,
+            "variant" => self.variant = (v.round().max(0.0) as usize).min(2), "lmid" => self.lmid = v, "lmidF" => self.lmid_f = (v.round().max(0.0) as usize).min(3),
+            "highF" => self.high_f = (v.round().max(0.0) as usize).min(2), "hiq" => self.hiq = v >= 0.5, _ => return false }
         true
     }
 }
 impl Default for Pre73Params {
-    fn default() -> Self { Self { gain: 0.0, output: 0.0, high: 0.0, mid: 0.0, mid_f: 2, low: 0.0, low_f: 1, hpf: None, eq: true } }
+    fn default() -> Self { Self { gain: 0.0, output: 0.0, high: 0.0, mid: 0.0, mid_f: 2, low: 0.0, low_f: 1, hpf: None, eq: true, variant: 0, lmid: 0.0, lmid_f: 1, high_f: 1, hiq: false } }
 }
 
 pub struct Pre73 {
@@ -294,6 +307,9 @@ pub struct Pre73 {
     dc: [(f64, f64); 2],
     /// transfos d'entrée et de sortie (le fer qui donne le grave de la machine)
     iron: [[Iron; 2]; 2],
+    /// Vintage : harmonique 2 en plus, fer ×2
+    va2: f64,
+    vir: f64,
     ik: (f64, f64),
 }
 
@@ -303,35 +319,43 @@ impl Pre73 {
         let sr = sr * 4.0;
         let mut eq: Vec<Biquad> = Vec::new();
         if let Some(i) = p.hpf { for q in [1.0, 0.5] { eq.push(eq_matched("highpass", PRE73_HPF[i.min(3)], q, 0.0, sr)); } eq.push(Biquad::highpass(sr, PRE73_HPF[i.min(3)], 0.0)); }
+        let v84 = p.variant == 1;
         if p.eq {
             if p.low.abs() > 1e-6 { eq.push(eq_matched("lowshelf", PRE73_LOW[p.low_f.min(3)], 0.9, p.low.clamp(-16.0, 16.0), sr)); }
-            // cloche large et un peu plus serrée quand on pousse fort (bobine de la machine)
-            if p.mid.abs() > 1e-6 { eq.push(eq_matched("peaking", PRE73_MID[p.mid_f.min(5)], 0.7 + 0.02 * p.mid.abs(), p.mid.clamp(-18.0, 18.0), sr)); }
-            // « 12 kHz » sur la façade : le plateau atteint son plein vers 12-16 kHz
-            if p.high.abs() > 1e-6 { eq.push(eq_matched("highshelf", 8_500.0, 0.7, p.high.clamp(-16.0, 16.0), sr)); }
+            // 84 : une bande de plus, les bas-médiums (cloche large)
+            if v84 && p.lmid.abs() > 1e-6 { eq.push(eq_matched("peaking", PRE84_LMID[p.lmid_f.min(3)], 0.8 + 0.02 * p.lmid.abs(), p.lmid.clamp(-16.0, 16.0), sr)); }
+            // cloche large et un peu plus serrée quand on pousse fort (bobine de la machine) ; 84 « Q serré » = deux fois plus étroite
+            if p.mid.abs() > 1e-6 { eq.push(eq_matched("peaking", PRE73_MID[p.mid_f.min(5)], (0.7 + 0.02 * p.mid.abs()) * if v84 && p.hiq { 2.0 } else { 1.0 }, p.mid.clamp(-18.0, 18.0), sr)); }
+            // « 12 kHz » sur la façade : le plateau atteint son plein vers 12-16 kHz ; 84 : 10 / 12 / 16 kHz au choix
+            let hf = if v84 { PRE84_HF[p.high_f.min(2)] } else { 8_500.0 };
+            if p.high.abs() > 1e-6 { eq.push(eq_matched("highshelf", hf, 0.7, p.high.clamp(-16.0, 16.0), sr)); }
         }
-        Self { gin: 10f64.powf(p.gain.clamp(0.0, 30.0) / 20.0), gout: 10f64.powf(p.output.clamp(-24.0, 12.0) / 20.0), drive: p.gain.clamp(0.0, 30.0) / 30.0,
+        // Vintage : les transfos fatigués arrondissent l'aigu (−3 dB vers 14 kHz)
+        if p.variant == 2 { eq.push(Biquad::lowpass(sr, 14_000.0, -3.0)); }
+        let (va2, vir) = if p.variant == 2 { (0.06, 2.0) } else { (0.0, 1.0) };
+        Self { gin: 10f64.powf(p.gain.clamp(0.0, 30.0) / 20.0), gout: 10f64.powf(p.output.clamp(-24.0, 12.0) / 20.0), drive: p.gain.clamp(0.0, 30.0) / 30.0, va2, vir,
             eq: eq.into_iter().map(|b| [b, b]).collect(), os: [Os4::new(), Os4::new()], dc: [(0.0, 0.0); 2], iron: [[Iron::default(); 2]; 2], ik: iron_k(sr / 4.0) }
     }
     /// Nouveau réglage sans clic : mêmes filtres → seuls les coefficients changent ; sinon les filtres sont refaits
     pub fn set(&mut self, p: &Pre73Params, sr: f64) {
         let n = Pre73::new(p, sr);
-        self.gin = n.gin; self.gout = n.gout; self.drive = n.drive;
+        self.gin = n.gin; self.gout = n.gout; self.drive = n.drive; self.va2 = n.va2; self.vir = n.vir;
         if n.eq.len() == self.eq.len() {
             for (a, b) in self.eq.iter_mut().zip(n.eq) { a[0].retune(b[0]); a[1].retune(b[1]); }
         } else { self.eq = n.eq; }
     }
     pub fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
         let d = self.drive;
-        let a2 = 0.08 + 0.35 * d;
+        let a2 = 0.08 + 0.35 * d + self.va2;
         let k = 1.0 + 0.3 * d;
         let (iw, il) = self.ik;
+        let ib = IRON73 * self.vir;
         for ch in 0..nc {
             let v = x[ch] * self.gin;
             let (eq, dc, iron) = (&mut self.eq, &mut self.dc[ch], &mut self.iron[ch]);
             let y = self.os[ch].run(v, |u| {
                 // transfo d'entrée (sature dans les graves), puis préampli : étage classe A (harmonique 2, qui monte avec le gain)
-                let u = iron[0].run(u * HR73, iw, il, IRON73);
+                let u = iron[0].run(u * HR73, iw, il, ib);
                 let c = u + a2 * u * u;
                 let mut y = (c * k).tanh() / k / HR73;
                 // le zéro décalé par l'harmonique 2 est retiré (condensateur de liaison)
@@ -340,7 +364,7 @@ impl Pre73 {
                 y = o;
                 for b in eq.iter_mut() { y = b[ch].tick(y); }
                 // transfo de sortie : arrondit les crêtes (harmonique 3) et alourdit le grave
-                iron[1].run((1.05 * y * HR73).tanh() / 1.05, iw, il, IRON73) / HR73
+                iron[1].run((1.05 * y * HR73).tanh() / 1.05, iw, il, ib) / HR73
             });
             x[ch] = y * self.gout;
         }
@@ -502,6 +526,109 @@ impl Opto2A {
             d.copy_within(0..39, 1);
             d[0] = x[ch];
             x[ch] = if self.mix < 1.0 { d[Self::LATENCY] + (y - d[Self::LATENCY]) * self.mix } else { y };
+        }
+    }
+}
+
+// ===== Égaliseur passif P1 (esprit « P1 », l'égaliseur passif à lampes) =====
+// Comme la machine : grave à 20 / 30 / 60 / 100 Hz avec DEUX boutons, Pousser et Atténuer, qu'on peut monter ensemble
+// (le « truc » : le grave gonfle et un creux se forme juste au-dessus, le bas reste serré) ; aigus poussés en cloche
+// (3 à 16 kHz, largeur réglable) et atténués en plateau (5 / 10 / 20 kHz). Passif : l'étage à lampe derrière rattrape le niveau
+// et colore un peu, avec ses transfos.
+pub const P1_LF: [f64; 4] = [20.0, 30.0, 60.0, 100.0];
+pub const P1_HFB: [f64; 7] = [3_000.0, 4_000.0, 5_000.0, 8_000.0, 10_000.0, 12_000.0, 16_000.0];
+pub const P1_HFA: [f64; 3] = [5_000.0, 10_000.0, 20_000.0];
+
+#[derive(Clone, Debug)]
+pub struct EqP1Params {
+    /// fréquence du grave (index P1_LF), Pousser / Atténuer 0-10
+    pub low_f: usize,
+    pub low_boost: f64,
+    pub low_atten: f64,
+    /// aigus poussés : fréquence (index P1_HFB), 0-10, largeur 0 (large) à 10 (serrée)
+    pub high_f: usize,
+    pub high_boost: f64,
+    pub bw: f64,
+    /// aigus atténués : fréquence (index P1_HFA), 0-10
+    pub atten_f: usize,
+    pub high_atten: f64,
+    /// sortie (dB, ±12), en service
+    pub output: f64,
+    pub on: bool,
+}
+impl Default for EqP1Params {
+    fn default() -> Self { Self { low_f: 2, low_boost: 0.0, low_atten: 0.0, high_f: 4, high_boost: 0.0, bw: 5.0, atten_f: 1, high_atten: 0.0, output: 0.0, on: true } }
+}
+impl From<&crate::model::EqP1Json> for EqP1Params {
+    fn from(j: &crate::model::EqP1Json) -> Self {
+        let d = Self::default();
+        let idx = |v: Option<f64>, def: usize, max: usize| v.map_or(def, |v| (v.round().max(0.0) as usize).min(max));
+        Self { low_f: idx(j.low_f, d.low_f, 3), low_boost: j.low_boost.unwrap_or(0.0), low_atten: j.low_atten.unwrap_or(0.0),
+            high_f: idx(j.high_f, d.high_f, 6), high_boost: j.high_boost.unwrap_or(0.0), bw: j.bw.unwrap_or(d.bw),
+            atten_f: idx(j.atten_f, d.atten_f, 2), high_atten: j.high_atten.unwrap_or(0.0), output: j.output.unwrap_or(0.0), on: j.on.unwrap_or(1.0) >= 0.5 }
+    }
+}
+impl EqP1Params {
+    pub fn set_key(&mut self, k: &str, v: f64) -> bool {
+        let ix = |v: f64, m: usize| (v.round().max(0.0) as usize).min(m);
+        match k { "lowBoost" => self.low_boost = v, "lowAtten" => self.low_atten = v, "highBoost" => self.high_boost = v, "bw" => self.bw = v,
+            "highAtten" => self.high_atten = v, "output" => self.output = v, "lowF" => self.low_f = ix(v, 3), "highF" => self.high_f = ix(v, 6),
+            "attenF" => self.atten_f = ix(v, 2), "on" => self.on = v >= 0.5, _ => return false }
+        true
+    }
+}
+/// Marge de l'étage à lampe du P1 (−16 dB) et force de son fer
+const HRP1: f64 = 0.158_489_319_246_111_35;
+const IRONP1: f64 = 0.05;
+
+pub struct EqP1 {
+    gout: f64,
+    eq: Vec<[Biquad; 2]>,
+    os: [Os4; 2],
+    iron: [[Iron; 2]; 2],
+    ik: (f64, f64),
+    dc: [(f64, f64); 2],
+}
+impl EqP1 {
+    pub const LATENCY: usize = 31;
+    pub fn new(p: &EqP1Params, sr: f64) -> Self {
+        let s4 = sr * 4.0;
+        let mut eq: Vec<Biquad> = Vec::new();
+        if p.on {
+            let f = P1_LF[p.low_f.min(3)];
+            let (b, a) = (p.low_boost.clamp(0.0, 10.0), p.low_atten.clamp(0.0, 10.0));
+            // Pousser : plateau grave un peu résonant (+13,5 dB au maximum) ; Atténuer : plateau doux qui commence 2 octaves plus haut (−6 dB) :
+            // les deux à fond à 60 Hz ≈ +7 dB à 20 Hz, à plat vers 65 Hz, creux de −4,6 dB vers 120 Hz (la courbe publiée de la machine)
+            if b > 1e-6 { eq.push(eq_matched("lowshelf", f, 0.9, b * 1.35, s4)); }
+            if a > 1e-6 { eq.push(eq_matched("lowshelf", f * 4.0, 0.5, -a * 0.6, s4)); }
+            let hb = p.high_boost.clamp(0.0, 10.0);
+            if hb > 1e-6 { eq.push(eq_matched("peaking", P1_HFB[p.high_f.min(6)], 0.4 + 0.25 * p.bw.clamp(0.0, 10.0), hb * 1.8, s4)); }
+            let ha = p.high_atten.clamp(0.0, 10.0);
+            if ha > 1e-6 { eq.push(eq_matched("highshelf", P1_HFA[p.atten_f.min(2)] * 0.75, 0.6, -ha * 1.6, s4)); }
+        }
+        Self { gout: 10f64.powf(p.output.clamp(-12.0, 12.0) / 20.0), eq: eq.into_iter().map(|b| [b, b]).collect(), os: [Os4::new(), Os4::new()],
+            iron: [[Iron::default(); 2]; 2], ik: iron_k(sr), dc: [(0.0, 0.0); 2] }
+    }
+    /// Nouveau réglage sans clic : mêmes filtres → seuls les coefficients changent
+    pub fn set(&mut self, p: &EqP1Params, sr: f64) {
+        let n = EqP1::new(p, sr);
+        self.gout = n.gout;
+        if n.eq.len() == self.eq.len() { for (a, b) in self.eq.iter_mut().zip(n.eq) { a[0].retune(b[0]); a[1].retune(b[1]); } } else { self.eq = n.eq; }
+    }
+    pub fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
+        let (iw, il) = self.ik;
+        for ch in 0..nc {
+            let (eq, dc, iron) = (&mut self.eq, &mut self.dc[ch], &mut self.iron[ch]);
+            let y = self.os[ch].run(x[ch], |u| {
+                // transfo d'entrée, EQ passif, étage à lampe qui rattrape le niveau (un peu d'harmonique 2), transfo de sortie
+                let mut y = iron[0].run(u * HRP1, iw, il, IRONP1);
+                for b in eq.iter_mut() { y = b[ch].tick(y); }
+                let c = y + 0.05 * y * y;
+                let o = c - dc.0 + 0.99988 * dc.1;
+                *dc = (c, o);
+                iron[1].run((1.1 * o).tanh() / 1.1, iw, il, IRONP1) / HRP1
+            });
+            x[ch] = y * self.gout;
         }
     }
 }
@@ -698,5 +825,39 @@ mod tests {
         assert!(a > n + 3.0 && n > g + 3.0, "harmonique 2 : Argent {a:.1}, Noir {n:.1}, Graphite {g:.1}");
         let hf = |v: usize| { let (o, _) = run(&Fet76Params { variant: v, ..Default::default() }, 0.05, 15_000.0, 24_000); peak_db(&o[12_000..]) };
         assert!(hf(1) < hf(0) - 1.0, "15 kHz : Argent {:.1}, Noir {:.1}", hf(1), hf(0));
+    }
+
+    /// 84 : la bande en plus (bas-médiums) agit à sa fréquence ; Vintage : plus de grain et un aigu arrondi
+    #[test]
+    fn pre73_variantes() {
+        let lvl = |p: &Pre73Params, f: f64| { let o = run73(p, 0.05, f, 48_000); 20.0 * (harm(&o[24_000..], f, 1) / harm(&run73(&Pre73Params::default(), 0.05, f, 48_000)[24_000..], f, 1)).log10() };
+        let p84 = Pre73Params { variant: 1, lmid: 8.0, lmid_f: 2, ..Default::default() };
+        assert!((lvl(&p84, 700.0) - 8.0).abs() < 1.0, "84 : +8 dB à 700 Hz ({:.1})", lvl(&p84, 700.0));
+        let p73 = Pre73Params { variant: 0, lmid: 8.0, lmid_f: 2, ..Default::default() };
+        assert!(lvl(&p73, 700.0).abs() < 0.3, "73 : pas de bas-médiums ({:.1})", lvl(&p73, 700.0));
+        let v = Pre73Params { variant: 2, ..Default::default() };
+        assert!(lvl(&v, 16_000.0) < -2.0, "Vintage : aigu arrondi ({:.1} dB à 16 kHz)", lvl(&v, 16_000.0));
+        let h2 = |p: &Pre73Params| { let o = run73(p, 0.3, 200.0, 48_000); let s = &o[24_000..]; 20.0 * (harm(s, 200.0, 2) / harm(s, 200.0, 1)).log10() };
+        assert!(h2(&Pre73Params { variant: 2, gain: 12.0, output: -12.0, ..Default::default() }) > h2(&Pre73Params { gain: 12.0, output: -12.0, ..Default::default() }) + 2.0, "Vintage : plus de grain");
+    }
+
+    fn runp1(p: &EqP1Params, amp: f64, f: f64, n: usize) -> Vec<f64> {
+        let mut c = EqP1::new(p, SR);
+        (0..n).map(|i| { let mut x = [amp * (2.0 * PI * f * i as f64 / SR).sin(), 0.0]; c.tick(&mut x, 1); x[0] }).collect()
+    }
+    /// P1 : tout à 0 = à plat ; Pousser + Atténuer au même grave = le grave gonfle et un creux se forme au-dessus
+    #[test]
+    fn p1_le_truc_du_grave() {
+        let gain = |p: &EqP1Params, f: f64| { let n = (SR * 0.6) as usize; let o = runp1(p, 0.05, f, n); let r = runp1(&EqP1Params::default(), 0.05, f, n);
+            20.0 * (harm(&o[n / 2..], f, 1) / harm(&r[n / 2..], f, 1)).log10() };
+        let flat = EqP1Params::default();
+        let o = runp1(&flat, 0.05, 1000.0, 24_000); let inp: Vec<f64> = (0..24_000).map(|i| 0.05 * (2.0 * PI * 1000.0 * i as f64 / SR).sin()).collect();
+        assert!((harm(&o[12_000..], 1000.0, 1) / harm(&inp[12_000..], 1000.0, 1) - 1.0).abs() < 0.03, "à plat : même niveau");
+        let t = EqP1Params { low_boost: 10.0, low_atten: 10.0, ..Default::default() };
+        let (g40, g250) = (gain(&t, 40.0), gain(&t, 250.0));
+        assert!(g40 > 3.0, "le grave gonfle ({g40:.1} dB à 40 Hz)");
+        assert!(g250 < -1.0, "creux au-dessus ({g250:.1} dB à 250 Hz)");
+        let hb = EqP1Params { high_boost: 8.0, high_f: 4, ..Default::default() };
+        assert!((gain(&hb, 10_000.0) - 14.4).abs() < 1.5, "aigus poussés à 10 kHz : {:.1} dB", gain(&hb, 10_000.0));
     }
 }

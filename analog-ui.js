@@ -11,13 +11,16 @@ const ANA_STRIPS = {
     hf73: { n: 61, px: 144, a0: -150, a1: 150, span: 2.4 }, mid73: { n: 61, px: 160, a0: -150, a1: 150, span: 2.4 },
     midf73: { n: 6, px: 160, a0: -100, a1: 100, span: 2.4 }, low73: { n: 61, px: 160, a0: -150, a1: 150, span: 2.4 },
     lowf73: { n: 4, px: 160, a0: -90, a1: 90, span: 2.4 }, hpf73: { n: 5, px: 112, a0: -120, a1: 120, span: 2.4 },
-    'black-big': { n: 61, px: 200, a0: -150, a1: 150, span: 2.4 }, 'tog-up': { n: 1, px: 128, span: 3.2 }, 'tog-down': { n: 1, px: 128, span: 3.2 }
+    'black-big': { n: 61, px: 200, a0: -150, a1: 150, span: 2.4 }, sel7: { n: 7, px: 128, a0: -90, a1: 90, span: 2.4 }, sel3: { n: 3, px: 128, a0: -45, a1: 45, span: 2.4 }, sel4: { n: 4, px: 128, a0: -60, a1: 60, span: 2.4 }, 'tog-up': { n: 1, px: 128, span: 3.2 }, 'tog-down': { n: 1, px: 128, span: 3.2 }
 };
 // Couleurs de façade (variantes) : dégradé du panneau, gravures, sous-titres, grain du brossé
 const ANA_SKINS = {
     noir:   { stops: ['#1b1a1f', '#121116', '#0b0a0e'], txt: '#d8c8f5', sub: '#a78bfa', tick: '#c4b5fd', grain: '.055', stroke: '#000' },
     gris:   { stops: ['#878b90', '#71757a', '#575b60'], txt: '#1a1426', sub: '#3b0764', tick: '#2e1065', grain: '.07', stroke: '#fff' },
     argent: { stops: ['#eceef1', '#d5d7dc', '#aeb1b8'], txt: '#1a1426', sub: '#5b21b6', tick: '#4c1d95', grain: '.09', stroke: '#fff' },
+    bleugris: { stops: ['#647f90', '#4f6878', '#3a4f5c'], txt: '#eef4ff', sub: '#e0d4ff', tick: '#e8f0ff', grain: '.07', stroke: '#000' },
+    grisbleu: { stops: ['#617281', '#4d5b68', '#37424c'], txt: '#eef0ff', sub: '#d8c8f5', tick: '#e4dcff', grain: '.07', stroke: '#000' },
+    brun:     { stops: ['#6d5a4a', '#57473b', '#3e322a'], txt: '#f6ece2', sub: '#e9d5ff', tick: '#efdccd', grain: '.08', stroke: '#000' },
     graphite: { stops: ['#3d3c44', '#2c2b32', '#1d1c22'], txt: '#e4dcf5', sub: '#c4b5fd', tick: '#d8c8f5', grain: '.08', stroke: '#000' }
 };
 const ANA_NS = 'http://www.w3.org/2000/svg';
@@ -276,18 +279,21 @@ function openPre73Panel(trackIdx, anchorEl) {
     const already = findPlugWin(t, 'pre73');
     if (already) { plugFront(already); return; }
     t.effectParams = t.effectParams || {};
-    if (!t.effectParams.pre73) t.effectParams.pre73 = { gain: 0, output: 0, high: 0, mid: 0, midF: 2, low: 0, lowF: 1, hpf: -1, eq: 1 };
+    if (!t.effectParams.pre73) t.effectParams.pre73 = { gain: 0, output: 0, high: 0, mid: 0, midF: 2, low: 0, lowF: 1, hpf: -1, eq: 1, variant: 0 };
     const P = () => t.effectParams.pre73, ed = anaEdit(t, 'pre73');
-    const W = 460, H = 520;
-    const { panel, svg } = anaWindow(t, 'pre73', 'Pulse 73', W, H, anchorEl, trackIdx, 540);
+    // variantes : 73 (noir), 84 (gris-bleu, 4 bandes), 73 Vintage (brun, transfos fatigués) — la façade se redessine
+    const V = Math.round(P().variant ?? 0), v84 = V === 1, yy = (a, b) => v84 ? b : a;
+    const VNM = ['73', '84', 'Vintage'], VSK = ['noir', 'grisbleu', 'brun'], VTIP = ['le classique : 3 bandes aux fréquences de la machine', 'la grande sœur : 4 bandes, aigus 10 / 12 / 16 kHz, médiums « Q serré »', 'transfos fatigués : grave plus rond, aigus adoucis, plus de grain'];
+    const W = 460, H = yy(560, 600);
+    const { panel, svg } = anaWindow(t, 'pre73', 'Pulse ' + (v84 ? '84' : '73'), W, H, anchorEl, trackIdx, 540, VSK[V]);
     const L = { fill: '#d8c8f5', style: 'paint-order:stroke', stroke: '#000', 'stroke-opacity': '.5', 'stroke-width': '.6' };
     const MID = [360, 700, 1600, 3200, 4800, 7200], LOW = [35, 60, 110, 220], HPF = [-1, 0, 1, 2, 3], HPFL = ['', '50', '80', '160', '300'];
     const khz = (f) => f >= 1000 ? String(f / 1000).replace('.', ',') + ' k' : String(f);
     const read = panel.querySelector('.ana-read');
-    const say = () => { const p = P(); read.innerHTML = `Gain <b>+${p.gain}</b> · Aigus <b>${p.high > 0 ? '+' : ''}${p.high}</b> · Médiums <b>${p.mid > 0 ? '+' : ''}${p.mid}</b> à ${khz(MID[p.midF ?? 2])}Hz · Graves <b>${p.low > 0 ? '+' : ''}${p.low}</b> à ${LOW[p.lowF ?? 1]} Hz${p.hpf >= 0 ? ` · coupe-bas ${HPFL[p.hpf + 1]} Hz` : ''}`; };
+    const say = () => { const p = P(); read.innerHTML = `${['73', '84', 'Vintage'][Math.round(p.variant ?? 0)]} · Gain <b>+${p.gain}</b> · Aigus <b>${p.high > 0 ? '+' : ''}${p.high}</b> · Médiums <b>${p.mid > 0 ? '+' : ''}${p.mid}</b> à ${khz(MID[p.midF ?? 2])}Hz · Graves <b>${p.low > 0 ? '+' : ''}${p.low}</b> à ${LOW[p.lowF ?? 1]} Hz${p.hpf >= 0 ? ` · coupe-bas ${HPFL[p.hpf + 1]} Hz` : ''}`; };
     const knob = (o) => anaKnob(svg, { ...o, get: () => P()[o.key] ?? o.def, set: (v) => { P()[o.key] = Math.round(v * 2) / 2; ed.touch(o.key); say(); }, onStart: ed.start, onEnd: ed.end });
-    anaText(svg, W / 2, 40, 'PULSE 73', { ...L, 'font-size': 13, 'font-weight': 700, 'letter-spacing': 3 });
-    anaText(svg, W / 2, 54, 'PRÉAMPLI · EQ', { fill: '#a78bfa', 'font-size': 8 });
+    anaText(svg, W / 2, 40, 'PULSE ' + (v84 ? '84' : '73'), { ...L, 'font-size': 13, 'font-weight': 700, 'letter-spacing': 3 });
+    anaText(svg, W / 2, 54, 'PRÉAMPLI · EQ' + (V === 2 ? ' · VINTAGE' : v84 ? ' · 4 BANDES' : ''), { fill: '#a78bfa', 'font-size': 8 });
     // colonne gauche : préampli (gain à crans + sortie) ; colonne droite : l'EQ et le coupe-bas
     const X1 = 125, X2 = 335;
     anaTicks(svg, X1, 150, 47, 7, -140, 140, ['0', '5', '10', '15', '20', '25', '30'], 7);
@@ -310,19 +316,49 @@ function openPre73Panel(trackIdx, anchorEl) {
     anaText(svg, X1, 450, 'EN SERVICE', { fill: '#c4b5fd', 'font-size': 7, 'letter-spacing': 1 });
     // EQ : aigus (12 kHz), médiums et graves concentriques (niveau autour, fréquence au centre), coupe-bas
     const eqK = (cy, d, strip, key, lim, lab) => { anaTicks(svg, X2, cy, d / 2 + 6, 11, -150, 150, null); knob({ strip, cx: X2, cy, d, key, min: -lim, max: lim, def: 0, tip: lab }); };
-    eqK(100, 50, 'hf73', 'high', 16, 'Aigus 12 kHz (plateau)');
-    anaText(svg, X2, 150, 'AIGUS 12 kHz', { ...L, 'font-size': 8.5, 'letter-spacing': 1 });
-    eqK(205, 58, 'mid73', 'mid', 18, 'Médiums : niveau (bague) — fréquence au centre');
-    anaKnob(svg, { strip: 'midf73', cx: X2, cy: 205, d: 58, key: 'midF', min: 0, max: 5, def: 2, steps: [0, 1, 2, 3, 4, 5], get: () => P().midF ?? 2, set: (v) => { P().midF = v; say(); }, onStart: ed.start, onEnd: ed.end, tip: 'Fréquence des médiums : 360 Hz, 700 Hz, 1,6 · 3,2 · 4,8 · 7,2 kHz' }).g.classList.remove('pk');
-    MID.forEach((f, i) => { const a = (-100 + 40 * i) * Math.PI / 180; anaText(svg, X2 + Math.sin(a) * 48, 205 - Math.cos(a) * 48 + 3, khz(f).replace(' k', 'k'), { fill: '#a78bfa', 'font-size': 6.5, 'letter-spacing': 0 }); });
-    anaText(svg, X2, 260, 'MÉDIUMS', { ...L, 'font-size': 8.5, 'letter-spacing': 1 });
-    eqK(318, 58, 'low73', 'low', 16, 'Graves : niveau (bague) — fréquence au centre');
-    anaKnob(svg, { strip: 'lowf73', cx: X2, cy: 318, d: 58, key: 'lowF', min: 0, max: 3, def: 1, steps: [0, 1, 2, 3], get: () => P().lowF ?? 1, set: (v) => { P().lowF = v; say(); }, onStart: ed.start, onEnd: ed.end, tip: 'Fréquence des graves : 35, 60, 110, 220 Hz' }).g.classList.remove('pk');
-    LOW.forEach((f, i) => { const a = (-90 + 60 * i) * Math.PI / 180; anaText(svg, X2 + Math.sin(a) * 48, 318 - Math.cos(a) * 48 + 3, String(f), { fill: '#a78bfa', 'font-size': 6.5, 'letter-spacing': 0 }); });
-    anaText(svg, X2, 373, 'GRAVES', { ...L, 'font-size': 8.5, 'letter-spacing': 1 });
-    anaTicks(svg, X2, 430, 26, 5, -120, 120, ['ARRÊT', '50', '80', '160', '300'], 6.5);
-    anaKnob(svg, { strip: 'hpf73', cx: X2, cy: 430, d: 40, key: 'hpf', min: -1, max: 3, def: -1, steps: HPF, get: () => P().hpf ?? -1, set: (v) => { P().hpf = v; say(); }, onStart: ed.start, onEnd: ed.end, tip: 'Coupe-bas 18 dB/octave : arrêt, 50, 80, 160, 300 Hz' }).g.classList.remove('pk');
-    anaText(svg, X2, 482, 'COUPE-BAS', { ...L, 'font-size': 8.5, 'letter-spacing': 1 });
+    const HFL = ['10', '12', '16'];
+    const YM = yy(205, 300), YL = yy(318, 400), YH = yy(430, 492);
+    eqK(100, 50, 'hf73', 'high', 16, v84 ? 'Aigus (plateau) : 10, 12 ou 16 kHz au choix' : 'Aigus 12 kHz (plateau)');
+    anaText(svg, X2, 150, v84 ? 'AIGUS kHz' : 'AIGUS 12 kHz', { ...L, 'font-size': 8.5, 'letter-spacing': 1 });
+    // 84 : petits poussoirs de fréquence des aigus, bande des bas-médiums, médiums « Q serré »
+    const smallPush = (g, x, y, w, txt, on, tip) => { anaEl('rect', { x: x - w / 2, y: y - 7, width: w, height: 14, rx: 3, fill: on ? '#7c3aed' : '#1c1426', stroke: '#3a2b52', ...(on ? { filter: 'url(#anaGlow)' } : {}) }, g); anaText(g, x, y + 3, txt, { fill: on ? '#fff' : '#a78bfa', 'font-size': 7, 'letter-spacing': .5, class: '' }); anaEl('title', {}, g).textContent = tip; };
+    if (v84) {
+        const hg = anaEl('g', {}, svg);
+        const drawHf = () => { hg.innerHTML = ''; HFL.forEach((h, i) => { const g = anaEl('g', { class: 'ana-push', 'data-h': i }, hg); smallPush(g, X2 + 58, 82 + i * 18, 26, h, (P().highF ?? 1) === i, `Aigus à ${h} kHz`); }); };
+        hg.addEventListener('click', (e) => { const b = e.target.closest('[data-h]'); if (!b) return; ed.start(); P().highF = +b.dataset.h; ed.end(); drawHf(); say(); });
+        drawHf();
+        const LM = [220, 360, 700, 1600];
+        eqK(200, 54, 'mid73', 'lmid', 16, 'Bas-médiums : niveau (bague) — fréquence au centre');
+        anaKnob(svg, { strip: 'lowf73', cx: X2, cy: 200, d: 54, key: 'lmidF', min: 0, max: 3, def: 1, steps: [0, 1, 2, 3], get: () => P().lmidF ?? 1, set: (v) => { P().lmidF = v; say(); }, onStart: ed.start, onEnd: ed.end, tip: 'Fréquence des bas-médiums : 220, 360, 700 Hz, 1,6 kHz' }).g.classList.remove('pk');
+        LM.forEach((f, i) => { const a = (-90 + 60 * i) * Math.PI / 180; anaText(svg, X2 + Math.sin(a) * 45, 200 - Math.cos(a) * 45 + 3, khz(f).replace(' k', 'k'), { fill: '#a78bfa', 'font-size': 6.5, 'letter-spacing': 0 }); });
+        anaText(svg, X2, 252, 'BAS-MÉDIUMS', { ...L, 'font-size': 8.5, 'letter-spacing': 1 });
+        const qg = anaEl('g', { class: 'ana-push' }, svg);
+        const drawQ = () => { qg.innerHTML = ''; smallPush(qg, X2 + 76, YM + 42, 40, 'Q SERRÉ', (P().hiq ?? 0) >= 0.5, 'Médiums deux fois plus étroits (pour corriger précisément)'); };
+        qg.addEventListener('click', () => { ed.start(); P().hiq = (P().hiq ?? 0) >= 0.5 ? 0 : 1; ed.end(); drawQ(); });
+        drawQ();
+    }
+    eqK(YM, 58, 'mid73', 'mid', 18, 'Médiums : niveau (bague) — fréquence au centre');
+    anaKnob(svg, { strip: 'midf73', cx: X2, cy: YM, d: 58, key: 'midF', min: 0, max: 5, def: 2, steps: [0, 1, 2, 3, 4, 5], get: () => P().midF ?? 2, set: (v) => { P().midF = v; say(); }, onStart: ed.start, onEnd: ed.end, tip: 'Fréquence des médiums : 360 Hz, 700 Hz, 1,6 · 3,2 · 4,8 · 7,2 kHz' }).g.classList.remove('pk');
+    MID.forEach((f, i) => { const a = (-100 + 40 * i) * Math.PI / 180; anaText(svg, X2 + Math.sin(a) * 48, YM - Math.cos(a) * 48 + 3, khz(f).replace(' k', 'k'), { fill: '#a78bfa', 'font-size': 6.5, 'letter-spacing': 0 }); });
+    anaText(svg, X2, YM + 55, 'MÉDIUMS', { ...L, 'font-size': 8.5, 'letter-spacing': 1 });
+    eqK(YL, 58, 'low73', 'low', 16, 'Graves : niveau (bague) — fréquence au centre');
+    anaKnob(svg, { strip: 'lowf73', cx: X2, cy: YL, d: 58, key: 'lowF', min: 0, max: 3, def: 1, steps: [0, 1, 2, 3], get: () => P().lowF ?? 1, set: (v) => { P().lowF = v; say(); }, onStart: ed.start, onEnd: ed.end, tip: 'Fréquence des graves : 35, 60, 110, 220 Hz' }).g.classList.remove('pk');
+    LOW.forEach((f, i) => { const a = (-90 + 60 * i) * Math.PI / 180; anaText(svg, X2 + Math.sin(a) * 48, YL - Math.cos(a) * 48 + 3, String(f), { fill: '#a78bfa', 'font-size': 6.5, 'letter-spacing': 0 }); });
+    anaText(svg, X2, YL + 55, 'GRAVES', { ...L, 'font-size': 8.5, 'letter-spacing': 1 });
+    anaTicks(svg, X2, YH, 26, 5, -120, 120, ['ARRÊT', '50', '80', '160', '300'], 6.5);
+    anaKnob(svg, { strip: 'hpf73', cx: X2, cy: YH, d: 40, key: 'hpf', min: -1, max: 3, def: -1, steps: HPF, get: () => P().hpf ?? -1, set: (v) => { P().hpf = v; say(); }, onStart: ed.start, onEnd: ed.end, tip: 'Coupe-bas 18 dB/octave : arrêt, 50, 80, 160, 300 Hz' }).g.classList.remove('pk');
+    anaText(svg, X2, YH + 52, 'COUPE-BAS', { ...L, 'font-size': 8.5, 'letter-spacing': 1 });
+    // choix de la variante (en bas à gauche) : les réglages restent, la façade se redessine à la même place
+    const vg = anaEl('g', {}, svg);
+    VNM.forEach((nm, i) => { const g = anaEl('g', { class: 'ana-push ana-var', 'data-v': i }, vg); smallPush(g, X1 - 52 + i * 52, H - 50, 48, nm.toUpperCase(), i === V, `${nm} : ${VTIP[i]}`); });
+    anaText(svg, X1, H - 30, 'VARIANTE', { fill: '#c4b5fd', 'font-size': 7, 'letter-spacing': 1 });
+    vg.addEventListener('click', (e) => {
+        const b = e.target.closest('.ana-var'); if (!b || +b.dataset.v === V) return;
+        ed.start(); P().variant = +b.dataset.v; ed.end();
+        const { left, top } = panel.style; panel.remove();
+        openPre73Panel(trackIdx, anchorEl);
+        const np = findPlugWin(t, 'pre73'); if (np) { np.style.left = left; np.style.top = top; }
+    });
     panel.querySelector('.fx-bypass').addEventListener('change', (e) => { pushUndo(); setFxOn(t, 'pre73', e.target.checked); refreshPlaybackSoon(); saveProject(); refreshStrips(); });
     say();
     makePlugWindow(panel, t, 'pre73', trackIdx);
@@ -429,6 +465,62 @@ function openOpto2APanel(trackIdx, anchorEl) {
     anaSkin(svg, OPTO_SKINS[Math.round(P().variant ?? 1)]);
     say();
     makePlugWindow(panel, t, 'opto2a', trackIdx);
+}
+
+
+// ===== Égaliseur passif P1 (esprit « P1 », l'égaliseur passif à lampes) : façade bleu-gris, en largeur comme la machine =====
+function openEqP1Panel(trackIdx, anchorEl) {
+    closeTransientPanels();
+    const t = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;
+    if (!t) return;
+    const already = findPlugWin(t, 'eqp1');
+    if (already) { plugFront(already); return; }
+    t.effectParams = t.effectParams || {};
+    if (!t.effectParams.eqp1) t.effectParams.eqp1 = { lowF: 2, lowBoost: 0, lowAtten: 0, highF: 4, highBoost: 0, bw: 5, attenF: 1, highAtten: 0, output: 0, on: 1 };
+    const P = () => t.effectParams.eqp1, ed = anaEdit(t, 'eqp1');
+    const W = 1000, H = 250;
+    const { panel, svg } = anaWindow(t, 'eqp1', 'Égaliseur P1', W, H, anchorEl, trackIdx, 1000, 'bleugris');
+    const L = { style: 'paint-order:stroke', 'stroke-opacity': '.35', 'stroke-width': '.6', stroke: '#000' };
+    anaText(svg, 44, 40, 'PULSE · ÉGALISEUR P1', { ...L, 'text-anchor': 'start', 'font-size': 14, 'font-weight': 700, 'letter-spacing': 3 });
+    anaText(svg, 44, 56, 'ÉGALISEUR PASSIF À LAMPES', { class: 'ana-sub', 'text-anchor': 'start', 'letter-spacing': 2.5 });
+    const LF = [20, 30, 60, 100], HFB = ['3', '4', '5', '8', '10', '12', '16'], HFA = ['5', '10', '20'];
+    const read = panel.querySelector('.ana-read');
+    const say = () => { const p = P(); read.innerHTML = `Grave ${LF[p.lowF ?? 2]} Hz : pousser <b>${p.lowBoost}</b>, atténuer <b>${p.lowAtten}</b> · Aigus ${HFB[p.highF ?? 4]} kHz <b>${p.highBoost}</b> · atténués ${HFA[p.attenF ?? 1]} kHz <b>${p.highAtten}</b>`; };
+    const knob = (o) => anaKnob(svg, { ...o, get: () => P()[o.key] ?? o.def, set: (v) => { P()[o.key] = Math.round(v * 2) / 2; ed.touch(o.key); say(); }, onStart: ed.start, onEnd: ed.end });
+    const sel = (o) => anaKnob(svg, { ...o, get: () => P()[o.key] ?? o.def, set: (v) => { P()[o.key] = v; say(); }, onStart: ed.start, onEnd: ed.end }).g.classList.remove('pk');
+    const CY = 140, ten = ['0', '', '', '', '', '5', '', '', '', '', '10'];
+    const big = (cx, key, lab, tip) => { anaTicks(svg, cx, CY, 40, 11, -150, 150, ten, 7.5); knob({ strip: 'black-big', cx, cy: CY, d: 64, key, min: 0, max: 10, def: 0, tip }); anaText(svg, cx, CY + 70, lab, { ...L, 'font-size': 9 }); };
+    const pick = (cx, key, strip, labels, a0, a1, def, lab, tip) => {
+        labels.forEach((tx, i) => { const a = (a0 + (a1 - a0) * i / (labels.length - 1)) * Math.PI / 180; anaText(svg, cx + Math.sin(a) * 34, CY - Math.cos(a) * 34 + 3, tx, { 'font-size': 8, 'letter-spacing': 0 }); });
+        sel({ strip, cx, cy: CY, d: 40, key, min: 0, max: labels.length - 1, def, steps: labels.map((_, i) => i), tip });
+        anaText(svg, cx, CY + 70, lab, { ...L, 'font-size': 9 });
+    };
+    // grave
+    pick(90, 'lowF', 'sel4', ['20', '30', '60', '100'], -60, 60, 2, 'GRAVE Hz', 'Fréquence du grave : 20, 30, 60 ou 100 Hz');
+    big(190, 'lowBoost', 'POUSSER', 'Pousse le grave (le plateau gonfle un peu à la fréquence)');
+    big(290, 'lowAtten', 'ATTÉNUER', 'Atténue le grave, plus haut que là où il pousse : les deux ensemble = grave plein, bas serré (le « truc » de la machine)');
+    anaEl('line', { x1: 352, y1: 78, x2: 352, y2: 222, stroke: '#00000044', 'stroke-width': 1 }, svg);
+    // aigus poussés
+    pick(420, 'highF', 'sel7', HFB, -90, 90, 4, 'AIGUS kHz', 'Fréquence des aigus poussés : 3 à 16 kHz');
+    big(520, 'highBoost', 'POUSSER', 'Pousse les aigus en cloche');
+    big(620, 'bw', 'LARGE ← → SERRÉ', 'Largeur de la cloche des aigus : 0 = large et douce, 10 = serrée');
+    anaEl('line', { x1: 682, y1: 78, x2: 682, y2: 222, stroke: '#00000044', 'stroke-width': 1 }, svg);
+    // aigus atténués
+    big(750, 'highAtten', 'ATTÉNUER', 'Atténue les aigus en plateau');
+    pick(850, 'attenF', 'sel3', HFA, -45, 45, 1, 'ATTÉN. kHz', 'Où commence l\'atténuation des aigus : 5, 10 ou 20 kHz');
+    // en service + sortie
+    const tg = anaEl('g', { class: 'ana-push' }, svg);
+    const drawTog = () => { tg.innerHTML = ''; const on = (P().on ?? 1) >= 0.5; anaSprite(tg, on ? 'tog-up' : 'tog-down', 945, 110, 30).frame(0); anaEl('rect', { x: 929, y: 86, width: 32, height: 48, fill: 'transparent' }, tg); anaEl('title', {}, tg).textContent = 'EQ en service (en haut) ou contourné (en bas) : la lampe reste'; };
+    tg.addEventListener('click', () => { ed.start(); P().on = (P().on ?? 1) >= 0.5 ? 0 : 1; ed.end(); drawTog(); });
+    drawTog();
+    anaText(svg, 945, 78, 'EN SERVICE', { ...L, 'font-size': 7, 'letter-spacing': 1 });
+    anaTicks(svg, 945, 186, 15, 5, -135, 135, null);
+    knob({ strip: 'bakelite', cx: 945, cy: 186, d: 22, key: 'output', min: -12, max: 12, def: 0, tip: 'Sortie (dB)' });
+    anaText(svg, 945, 214, 'SORTIE', { ...L, 'font-size': 7, 'letter-spacing': 1 });
+    panel.querySelector('.fx-bypass').addEventListener('change', (e) => { pushUndo(); setFxOn(t, 'eqp1', e.target.checked); refreshPlaybackSoon(); saveProject(); refreshStrips(); });
+    anaSkin(svg, 'bleugris');
+    say();
+    makePlugWindow(panel, t, 'eqp1', trackIdx);
 }
 
 // Styles de la façade (ici pour garder la gamme dans un seul fichier)

@@ -138,6 +138,7 @@ pub struct EffectParams {
     pub fet76: Option<Fet76Json>,
     pub pre73: Option<Pre73Json>,
     pub opto2a: Option<Opto2AJson>,
+    pub eqp1: Option<EqP1Json>,
     /// Exemplaires en plus d'un même effet (« comp#2 », « eq#3»…), réglages bruts : lus par `EffectParams::instance`
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
@@ -254,6 +255,23 @@ pub struct Opto2AJson {
     pub mix: Option<f64>,
 }
 
+/// Égaliseur passif P1 : lowF (0-3 : 20/30/60/100 Hz), lowBoost, lowAtten, highF (0-6 : 3/4/5/8/10/12/16 kHz), highBoost, bw (0 large-10 serré),
+/// attenF (0-2 : 5/10/20 kHz), highAtten (tous 0-10), output (dB), on (0/1)
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct EqP1Json {
+    pub low_f: Option<f64>,
+    pub low_boost: Option<f64>,
+    pub low_atten: Option<f64>,
+    pub high_f: Option<f64>,
+    pub high_boost: Option<f64>,
+    pub bw: Option<f64>,
+    pub atten_f: Option<f64>,
+    pub high_atten: Option<f64>,
+    pub output: Option<f64>,
+    pub on: Option<f64>,
+}
+
 /// Préampli « 73 » : gain 0-30 dB, sortie dB, aigus / médiums / graves en dB, fréquences en index (midF 0-5, lowF 0-3),
 /// coupe-bas : index 0-3 (absent ou < 0 = éteint), eq : 0 = EQ hors service
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -268,6 +286,12 @@ pub struct Pre73Json {
     pub low_f: Option<f64>,
     pub hpf: Option<f64>,
     pub eq: Option<f64>,
+    /// 0 = 73 · 1 = 84 · 2 = 73 Vintage ; 84 : lmid (dB), lmidF (0-3), highF (0-2), hiq (0/1)
+    pub variant: Option<f64>,
+    pub lmid: Option<f64>,
+    pub lmid_f: Option<f64>,
+    pub high_f: Option<f64>,
+    pub hiq: Option<f64>,
 }
 
 /// Filtre : coupe-bas `hpf` et coupe-haut `lpf` en Hz (≤ 20 et ≥ 20 000 = éteint), pente 12 ou 24 dB par octave.

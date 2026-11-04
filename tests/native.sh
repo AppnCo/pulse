@@ -2,6 +2,11 @@
 # Test de l'appli de bureau : le studio joue par le moteur Rust, fenetre invisible. Affiche le journal du test.
 set -e
 cd "$(dirname "$0")/.."
+# L'appli joue pour de vrai par la sortie du Mac : on coupe le son du Mac pendant le test (et on le remet comme avant après),
+# sinon on entend des bips et des bouts de musique la nuit (vécu le 04/11)
+WAS_MUTED=$(osascript -e 'output muted of (get volume settings)' 2>/dev/null || echo false)
+osascript -e 'set volume output muted true' 2>/dev/null || true
+trap 'osascript -e "set volume output muted $WAS_MUTED" 2>/dev/null || true' EXIT
 export PATH=$HOME/.cargo/bin:$PATH CARGO_TARGET_DIR=$HOME/pulse-build/tauri-target
 ./make-web.sh >/dev/null
 cp tests/native/selftest.html web-dist/selftest.html

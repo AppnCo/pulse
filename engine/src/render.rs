@@ -174,7 +174,7 @@ fn fx_latency(effects: &[String], params: &crate::model::EffectParams, auto: Opt
         p.pitch.as_ref().is_some_and(|p| p.semi.unwrap_or(0.0) != 0.0 || p.formant.unwrap_or(0.0) != 0.0)
             || auto.is_some_and(|a| a.other.keys().any(|k| k.starts_with(&format!("fx:{e}:"))))
     }).count() as f64;
-    let analog = effects.iter().filter(|e| matches!(crate::model::fx_type(e), "fet76" | "pre73" | "opto2a")).count() as f64;
+    let analog = effects.iter().filter(|e| matches!(crate::model::fx_type(e), "fet76" | "pre73" | "opto2a" | "eqp1")).count() as f64;
     pitch * crate::pitch::Pitch::latency_for(sr) as f64 / sr + analog * crate::analog::Fet76::LATENCY as f64 / sr
 }
 /// Retard des groupes sur le trajet de sortie d'une piste (groupe → groupe → master). Même calcul que busLatency dans audio.js.
