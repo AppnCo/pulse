@@ -9,6 +9,8 @@ pub struct Project {
     pub bpm: f64,
     pub tracks: Vec<Track>,
     pub buses: Vec<Bus>,
+    /// Dossiers (rangement) : seul leur solo compte pour le son
+    pub folders: Vec<Folder>,
     /// Envois : effets communs à 100 % d'effet, dosés piste par piste
     pub sends: Vec<Send>,
     /// Plafond du limiteur de sécurité en dB (-0,3 par défaut)
@@ -75,6 +77,8 @@ pub struct Send {
 #[serde(rename_all = "camelCase", default)]
 pub struct Track {
     pub name: String,
+    /// Dossier qui range la piste (id)
+    pub folder: Option<String>,
     /// Délai de piste en ms (+ = plus tard, − = plus tôt) : décale le son, pas l'automation (comme audio.js)
     pub delay_ms: Option<f64>,
     pub volume: Option<f64>, // 0–100, défaut 100 (0 dB)
@@ -766,6 +770,11 @@ pub struct ClipFx {
     pub fx_order: Vec<String>,
 }
 
+/// Dossier de rangement (on ne lit que son solo)
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Folder { pub id: String, pub solo: bool }
+
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Bus {
@@ -774,6 +783,8 @@ pub struct Bus {
     pub output: Option<String>,
     pub volume: Option<f64>, // 0–100, défaut 100
     pub muted: bool,
+    /// Solo du groupe (comme Logic : le groupe passe en solo, ses pistes l'entendent sans que leur S s'allume)
+    pub solo: bool,
     /// Effets communs du groupe (mêmes noms que sur une piste)
     pub effects: Vec<String>,
     pub fx_order: Vec<String>,
@@ -824,8 +835,19 @@ impl Project {
     }
 
     pub fn is_audible(&self, track: &Track) -> bool {
-        let any_solo = self.tracks.iter().any(|t| t.solo);
-        !track.muted && (!any_solo || track.solo)
+        let any_solo = self.tracks.iter().any(|t| t.solo) || self.buses.iter().any(|b| b.solo) || self.folders.iter().any(|f| f.solo);
+        !track.muted && (!any_solo || track.solo || self.group_solo(track))
+    }
+    /// La piste est dans un groupe (en remontant les sorties) ou un dossier mis en solo (même calcul que groupSolo dans audio.js)
+    pub fn group_solo(&self, track: &Track) -> bool {
+        let mut out = track.output.clone();
+        for _ in 0..8 {
+            let Some(id) = out else { break };
+            let Some(b) = self.buses.iter().find(|b| b.id == id) else { break };
+            if b.solo { return true; }
+            out = b.output.clone();
+        }
+        track.folder.as_ref().is_some_and(|f| self.folders.iter().any(|x| &x.id == f && x.solo))
     }
 
     /// Gain cumulé de la chaîne de groupes d'une piste jusqu'au master.

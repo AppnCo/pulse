@@ -3114,9 +3114,17 @@ window.PulseAudio = (function() {
         buffers.clear();
     }
 
+    // Solo comme Logic : une piste, un groupe (en remontant les sorties) ou un dossier peut être en solo ;
+    // les pistes d'un groupe en solo l'entendent sans que leur propre S s'allume (même calcul que is_audible dans model.rs)
+    function groupSolo(project, track) {
+        const buses = project.buses || [];
+        let out = track.output;
+        for (let n = 0; n < 8 && out; n++) { const b = buses.find(x => x.id === out); if (!b) break; if (b.solo) return true; out = b.output; }
+        return !!(track.folder && (project.folders || []).some(f => f.id === track.folder && f.solo));
+    }
     function isTrackAudible(project, track) {
-        const anySolo = project.tracks.some(t => t.solo);
-        return !track.muted && (!anySolo || track.solo);
+        const anySolo = project.tracks.some(t => t.solo) || (project.buses || []).some(b => b.solo) || (project.folders || []).some(f => f.solo);
+        return !track.muted && (!anySolo || track.solo || groupSolo(project, track));
     }
 
     function volumePoints(track) {

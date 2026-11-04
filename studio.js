@@ -406,7 +406,7 @@ function groupColor(bus) { return bus.color || '#A855F7'; }
 function renderGroupHeader(bus) {
     if (isFolder(bus)) return renderFolderHeader(bus);
     const members = groupTracksDeep(bus);
-    const allSolo = members.length > 0 && members.every(i => state.project.tracks[i].solo);
+    const allSolo = !!bus.solo;   // comme Logic : le groupe a son propre solo
     const n = members.length;
     const depth = groupChain(bus).length - 1;
     const isRow = !isVisibleGroup(bus);
@@ -427,7 +427,7 @@ function renderGroupHeader(bus) {
 
 function renderFolderHeader(f) {
     const members = groupTracksDeep(f).map(i => state.project.tracks[i]);
-    const allSolo = members.length > 0 && members.every(t => t.solo);
+    const allSolo = !!f.solo;
     const allMute = members.length > 0 && members.every(t => t.muted);
     const depth = groupChain(f).length - 1;
     return `
@@ -570,7 +570,7 @@ function bindGroupEvents() {
             e.stopPropagation();
             if (bus.premaster) openMasterPanel(bus, e.currentTarget); else openSoundPanel(bus, e.currentTarget);
         });
-        h.querySelector('.g-m').addEventListener('click', (e) => {
+        h.querySelector('.g-m') && pressBtn(h.querySelector('.g-m'), (e) => {
             e.stopPropagation();
             bus.muted = !bus.muted;
             PulseAudio.updateBusVolume(bus.id, bus.muted ? 0 : (bus.volume ?? 100));
@@ -584,11 +584,12 @@ function bindGroupEvents() {
             state.selectedBus = bus.id; state._selBusTrack = state.selectedTrack;
             renderTracksPanel(); bindTrackEvents();
         });
-        h.querySelector('.g-s').addEventListener('click', (e) => {
+        h.querySelector('.g-s') && pressBtn(h.querySelector('.g-s'), (e) => {
             e.stopPropagation();
-            const members = groupTracksDeep(bus).map(i => state.project.tracks[i]);
-            const allSolo = members.every(t => t.solo);
-            members.forEach(t => { t.solo = !allSolo; });
+            // comme Logic : le groupe passe en solo (ses pistes l'entendent, leur S reste éteint) — ⌘ + clic = ce groupe seul
+            const was = !!bus.solo;
+            if (e.metaKey || e.ctrlKey) clearSoloFlags();
+            if (was) delete bus.solo; else bus.solo = true;
             PulseAudio.refreshAudibility(state.project);
             renderTracksPanel(); bindTrackEvents(); saveProject();
         });
@@ -649,16 +650,17 @@ function bindGroupEvents() {
 function bindFolderHeader(h, f) {
     const members = () => groupTracksDeep(f);
     h.querySelector('.group-toggle').addEventListener('click', (e) => { e.stopPropagation(); f.collapsed = !f.collapsed; rerenderTracks(); saveProject(); });
-    h.querySelector('.g-m').addEventListener('click', (e) => {
+    h.querySelector('.g-m') && pressBtn(h.querySelector('.g-m'), (e) => {
         e.stopPropagation();
         const m = members(), all = m.length && m.every(i => state.project.tracks[i].muted);
         m.forEach(i => { if (!!state.project.tracks[i].muted === all) toggleMute(i); });
         renderTracksPanel(); bindTrackEvents(); saveProject();
     });
-    h.querySelector('.g-s').addEventListener('click', (e) => {
+    h.querySelector('.g-s') && pressBtn(h.querySelector('.g-s'), (e) => {
         e.stopPropagation();
-        const ts = members().map(i => state.project.tracks[i]), all = ts.length && ts.every(t => t.solo);
-        ts.forEach(t => { t.solo = !all; });
+        const was = !!f.solo;
+        if (e.metaKey || e.ctrlKey) clearSoloFlags();
+        if (was) delete f.solo; else f.solo = true;
         PulseAudio.refreshAudibility(state.project);
         renderTracksPanel(); bindTrackEvents(); saveProject();
     });
@@ -1028,7 +1030,7 @@ function renderTracksPanel() {
                 <div class="track-name" contenteditable="${!t.isCapture}" data-i="${i}">${esc(t.name)}${t.isCapture ? '<span class="chip" contenteditable="false"> LIVE</span>' : ''}</div>
                 <div class="track-buttons">
                     <button class="t-mini m-m ${t.muted?'active':''}" data-flag="mute" data-i="${i}" data-tooltip="Mute (M) — ⌥+clic = toutes les pistes">M</button>
-                    <button class="t-mini m-s ${t.solo?'active':''}" data-flag="solo" data-i="${i}" data-tooltip="Solo (S) — ⌘+clic = exclusif · ⌥+clic = toutes les pistes">S</button>
+                    <button class="t-mini m-s ${t.solo?'active':''} ${!t.solo && trackGroups(t).some(g => g.solo) ? 'implied' : ''}" data-flag="solo" data-i="${i}" data-tooltip="Solo (S) — ⌘+clic = exclusif · ⌥+clic = toutes les pistes">S</button>
                     <button class="t-mini m-r ${t.armed?'active':''}" data-flag="rec" data-i="${i}" data-tooltip="${t.armed ? 'Prête à enregistrer : la prochaine prise ira ici (clic pour désarmer)' : 'Prête à enregistrer : clique pour que la prochaine prise aille ici'}">R</button>
                     <button class="t-mini m-i ${trackMonitored(t)?'active':''}" data-flag="mon" data-i="${i}" data-tooltip="${trackMonitored(t) ? 'Retour casque : tu t\'entends (clic pour couper)' : 'Retour casque coupé (clic pour t\'entendre)'}">i</button>
                     ${trackTakeNumbers(t).length ? `<button class="takes-toggle ${t.takesOpen ? 'active' : ''}" data-takes="${i}" data-tooltip="${t.takesOpen ? 'Cacher les prises' : 'Voir les prises mises de côté'}"><svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>${trackTakeNumbers(t).length}</button>` : ''}
@@ -5035,6 +5037,12 @@ function toggleMute(trackIdx) {
     saveProject();
 }
 
+// Bouton qui réagit dès l'appui (comme Logic) : un appui suivi d'un petit glissé ne se perd plus ; un clic programmé marche encore
+function pressBtn(el, fn) {
+    if (!el) return;
+    el.addEventListener('mousedown', (e) => { if (e.button !== 0) return; e.stopPropagation(); e.preventDefault(); el._downDone = true; fn(e); });
+    el.addEventListener('click', (e) => { e.stopPropagation(); if (el._downDone) { el._downDone = false; return; } fn(e); });
+}
 // exclusiveMode = Ctrl+clic → solo exclusif (tous les autres coupés)
 function toggleSolo(trackIdx, exclusiveMode = false) {
     const t = state.project.tracks[trackIdx];
@@ -5042,6 +5050,7 @@ function toggleSolo(trackIdx, exclusiveMode = false) {
     if (exclusiveMode) {
         // Solo exclusif : solo seulement cette piste, toutes les autres à false
         const wasSoloAlone = t.solo && state.project.tracks.every((tr, i) => i === trackIdx || !tr.solo);
+        clearSoloFlags();
         state.project.tracks.forEach((tr, i) => { tr.solo = !wasSoloAlone && i === trackIdx; });
         renderTracksPanel(); bindTrackEvents();
     } else {
@@ -5068,8 +5077,15 @@ function setTracksFlag(key) {
     if (state.mixerOpen) { renderMixer(); bindMixerEvents(); }
     saveProject();
 }
-function clearAllSolos() {
+// Tous les solos à zéro : pistes, groupes, dossiers
+function clearSoloFlags() {
     state.project.tracks.forEach(t => t.solo = false);
+    (state.project.buses || []).forEach(b => { delete b.solo; });
+    (state.project.folders || []).forEach(f => { delete f.solo; });
+}
+function clearAllSolos() {
+    clearSoloFlags();
+    renderTracksPanel(); bindTrackEvents();
     document.querySelectorAll('.track-item .m-s').forEach(btn => btn.classList.remove('active'));
     PulseAudio.refreshAudibility(state.project);
     saveProject();
@@ -13015,8 +13031,11 @@ function bindTrackEvents() {
     });
 
     document.querySelectorAll('.t-mini').forEach(el => {
-        el.addEventListener('click', e => {
-            e.stopPropagation();
+        // Comme Logic : M / S / R réagissent dès l'appui. Avant, l'appui choisissait d'abord la piste et redessinait la liste :
+        // le bouton était remplacé avant le relâché, le clic se perdait (il fallait cliquer deux fois).
+        el.addEventListener('mousedown', e => { if (e.button !== 0) return; e.stopPropagation(); e.preventDefault(); el._downDone = true; act(e); });
+        el.addEventListener('click', e => { e.stopPropagation(); if (el._downDone) { el._downDone = false; return; } act(e); });
+        const act = (e) => {
             const i = parseInt(el.dataset.i);
             const flag = el.dataset.flag;
             const t = state.project.tracks[i];
@@ -13056,7 +13075,7 @@ function bindTrackEvents() {
             if (flag === 'rec') { el.classList.toggle('active'); syncMonitor(); renderTracksPanel(); bindTrackEvents(); }
             else el.classList.toggle('active');
             saveProject();
-        });
+        };
     });
 }
 

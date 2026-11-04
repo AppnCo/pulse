@@ -1065,6 +1065,19 @@ mod tests {
         }
     }
 
+    /// Solo de groupe / dossier (comme Logic) : les pistes du groupe s'entendent, les autres non, sans que leur S s'allume
+    #[test]
+    fn solo_de_groupe() {
+        let p: crate::model::Project = serde_json::from_str(r#"{"tracks":[{"name":"G1","output":"g"},{"name":"G2","output":"g"},{"name":"V","folder":"f"},{"name":"B"}],
+            "buses":[{"id":"g","name":"Guitares","solo":true}],"folders":[{"id":"f","solo":false}]}"#).unwrap();
+        let a: Vec<bool> = p.tracks.iter().map(|t| p.is_audible(t)).collect();
+        assert_eq!(a, vec![true, true, false, false]);
+        let q: crate::model::Project = serde_json::from_str(r#"{"tracks":[{"name":"G1","output":"g"},{"name":"V","folder":"f"},{"name":"B"}],
+            "buses":[{"id":"g","name":"Guitares"}],"folders":[{"id":"f","solo":true}]}"#).unwrap();
+        let b: Vec<bool> = q.tracks.iter().map(|t| q.is_audible(t)).collect();
+        assert_eq!(b, vec![false, true, false]);
+    }
+
     /// Mouvement calé sur le tempo : trémolo au 1/8 à 120 BPM = trémolo à 4 Hz ; la vitesse automatisée est ignorée en mode note
     #[test]
     fn mouvement_cale_sur_le_tempo() {

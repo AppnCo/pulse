@@ -3803,3 +3803,5 @@ body[data-left-tool="fade"] .timeline-tracks .clip { cursor: ew-resize; }
 /* Façades fines (Pulse 73 / 84) : pas de phrase d'aide en bas, juste les valeurs */
 .ana-narrow .lim-sb > span:first-child, .ana-narrow .lim-sb .lim-spacer { display: none; }
 .ana-narrow .lim-sb .ana-read { font-size: 10px; line-height: 1.35; }
+/* Solo « hérité » (comme Logic) : la piste s'entend parce que son groupe ou son dossier est en solo */
+.t-mini.m-s.implied { border-color: #22D3EE; color: #22D3EE; background: #22D3EE22; }
