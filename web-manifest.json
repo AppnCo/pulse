@@ -1,6 +1,6 @@
 {
 "files": {
-"analog-ui.js": "130ccea6f571130775c6afc50c27369c8d1d3a85c4e4e24f058c4816dc697e1c",
+"analog-ui.js": "9251bb61cfc20f02c165dfb45ca7fc7f43c699495bd59210f5ecf9c513e30707",
 "assets/analog/alu-big.webp": "0584094c7144ed41bb2986eec3078dc6432530b908e0d11a5d462d82e39728df",
 "assets/analog/bakelite.webp": "7d509c304170a44d0736daf6a026b6ff7c481ab62d59fc85addd22ee63294974",
 "assets/analog/black-big.webp": "7c547fb34efadf15c59b21abda2f85c81bdb08955e1453917b235331208eee45",
@@ -62,5 +62,5 @@
 "vendor/lame.min.js": "15d285e2587b3bdbfd18a68de6ce07cc074f7480a82c3815da2dc1c348ec6df4",
 "warp.js": "209bb3114410db48c37af5bf718a4cd482fcb95cc5bbf7ae6f024e3420bf6f3e"
 },
-"version": "2026-11-04 11:56"
+"version": "2026-11-04 12:04"
 }

@@ -1143,9 +1143,10 @@ function openMassifPanel(trackIdx, anchorEl) {
     const push = (g, x, y, w, txt, on, tip) => { anaEl('rect', { x: x - w / 2, y: y - 8, width: w, height: 16, rx: 3, fill: on ? '#7c3aed' : '#1c1426', stroke: '#3a2b52', ...(on ? { filter: 'url(#anaGlow)' } : {}) }, g); anaText(g, x, y + 3, txt, { fill: on ? '#fff' : '#a78bfa', 'font-size': 7, 'letter-spacing': .5, class: '' }); anaEl('title', {}, g).textContent = tip; };
     [0, 1, 2, 3].forEach(i => {
         const x = 110 + i * 170, n = i + 1, [lo, hi] = RANGE[i];
-        anaText(svg, x, 82, 'BANDE ' + n, { fill: '#a78bfa', 'font-size': 8, 'letter-spacing': 2, class: '' });
-        anaTicks(svg, x, 130, 36, 9, -150, 150, ['−20', '', '', '', '0', '', '', '', '+20'], 7);
-        anaKnob(svg, { strip: 'black-big', cx: x, cy: 130, d: 56, key: 'g' + n, min: -20, max: 20, def: 0, tip: `Bande ${n} : gain (dB)`, get: () => P()['g' + n] ?? 0, set: (v) => { P()['g' + n] = Math.round(v * 2) / 2; ed.touch('g' + n); say(); }, onStart: ed.start, onEnd: ed.end });
+        // le nom de la bande au-dessus, bien séparé du « 0 » de la graduation
+        anaText(svg, x, 76, 'BANDE ' + n, { fill: '#a78bfa', 'font-size': 8, 'letter-spacing': 2, class: '' });
+        anaTicks(svg, x, 140, 36, 9, -150, 150, ['−20', '', '', '', '0', '', '', '', '+20'], 7);
+        anaKnob(svg, { strip: 'black-big', cx: x, cy: 140, d: 56, key: 'g' + n, min: -20, max: 20, def: 0, tip: `Bande ${n} : gain (dB)`, get: () => P()['g' + n] ?? 0, set: (v) => { P()['g' + n] = Math.round(v * 2) / 2; ed.touch('g' + n); say(); }, onStart: ed.start, onEnd: ed.end });
         const toN = (f) => Math.log(Math.max(lo, f) / lo) / Math.log(hi / lo);
         anaTicks(svg, x - 34, 222, 18, 9, -150, 150, null);
         anaKnob(svg, { strip: 'bakelite', cx: x - 34, cy: 222, d: 28, key: 'f' + n, min: 0, max: 1, def: toN(([100, 500, 2500, 12000])[i]), tip: `Bande ${n} : fréquence (${fmtF(lo)} à ${fmtF(hi)})`, get: () => toN(P()['f' + n]),
