@@ -2154,6 +2154,208 @@ impl Dim {
     }
 }
 
+// ===== Préampli 76V : préampli tout à lampes des années 50 (esprit « V76 ») =====
+// Deux étages à lampe en cascade (le premier donne la couleur — harmonique 2 qui monte avec le gain —, le second, contre-réactionné,
+// arrondit), gros transfos d'entrée et de sortie (le grave épais et rond). Gain à crans de 6 dB, sortie, coupe-bas (« graves »
+// à 40 / 80 / 120 / 200 Hz, 12 dB/oct), Douceur (aigus adoucis, 1er ordre à 15 / 10 / 6 kHz). Variantes : Studio (pleine bande, chaud)
+// et Radio (la version de diffusion : bande serrée 80 Hz - 10 kHz, plus de grain, le son « poste »).
+pub const V76_LOW: [f64; 4] = [40.0, 80.0, 120.0, 200.0];
+pub const V76_SOFT: [f64; 3] = [15_000.0, 10_000.0, 6_000.0];
+const IRONV76: f64 = 0.09;
+#[derive(Clone, Debug)]
+pub struct PreV76Params { pub gain: f64, pub output: f64, pub lowcut: f64, pub soft: f64, pub variant: usize }
+impl Default for PreV76Params { fn default() -> Self { Self { gain: 12.0, output: -12.0, lowcut: -1.0, soft: -1.0, variant: 0 } } }
+impl From<&crate::model::PreV76Json> for PreV76Params {
+    fn from(j: &crate::model::PreV76Json) -> Self {
+        let d = Self::default();
+        Self { gain: j.gain.unwrap_or(d.gain), output: j.output.unwrap_or(d.output), lowcut: j.lowcut.unwrap_or(d.lowcut), soft: j.soft.unwrap_or(d.soft),
+            variant: j.variant.map_or(0, |v| (v.round().max(0.0) as usize).min(1)) }
+    }
+}
+impl PreV76Params {
+    pub fn set_key(&mut self, k: &str, v: f64) -> bool {
+        match k { "gain" => self.gain = v, "output" => self.output = v, "lowcut" => self.lowcut = v, "soft" => self.soft = v,
+            "variant" => self.variant = (v.round().max(0.0) as usize).min(1), _ => return false }
+        true
+    }
+}
+pub struct PreV76 {
+    sr: f64, gin: f64, gout: f64, a1: f64, k1: f64, a2: f64,
+    eq: Vec<[Biquad; 2]>, os: [Os4; 2], dc: [[(f64, f64); 2]; 2], iron: [[Iron; 2]; 2], ik: (f64, f64),
+}
+impl PreV76 {
+    pub const LATENCY: usize = 31;
+    fn filters(p: &PreV76Params, sr: f64) -> Vec<Biquad> {
+        let sr4 = sr * 4.0;
+        let mut eq = Vec::new();
+        if p.lowcut >= -0.5 { eq.push(Biquad::highpass(sr4, V76_LOW[(p.lowcut.round().max(0.0) as usize).min(3)], -3.0)); }
+        if p.soft >= -0.5 { eq.push(Biquad::first_order(false, V76_SOFT[(p.soft.round().max(0.0) as usize).min(2)], sr4)); }
+        if p.variant == 1 { eq.push(Biquad::highpass(sr4, 80.0, -3.0)); eq.push(Biquad::lowpass(sr4, 10_000.0, -3.0)); }
+        eq
+    }
+    pub fn new(p: &PreV76Params, sr: f64) -> Self {
+        let mut s = Self { sr, gin: 1.0, gout: 1.0, a1: 0.0, k1: 1.0, a2: 0.0, eq: Vec::new(), os: [Os4::new(), Os4::new()], dc: [[(0.0, 0.0); 2]; 2],
+            iron: [[Iron::default(); 2]; 2], ik: iron_k(sr) };
+        s.set(p);
+        s
+    }
+    pub fn set(&mut self, p: &PreV76Params) {
+        let g = p.gain.clamp(0.0, 36.0);
+        let d = g / 36.0;
+        self.gin = 10f64.powf(g / 20.0); self.gout = 10f64.powf(p.output.clamp(-36.0, 12.0) / 20.0);
+        // étage 1 : harmonique 2 qui monte avec le gain (plus en Radio) ; étage 2 : contre-réaction, plus doux
+        self.a1 = 0.12 + 0.3 * d + if p.variant == 1 { 0.1 } else { 0.0 };
+        self.k1 = 1.0 + 0.4 * d;
+        self.a2 = 0.5 * self.a1;
+        let n = Self::filters(p, self.sr);
+        if n.len() == self.eq.len() { for (a, b) in self.eq.iter_mut().zip(n) { a[0].retune(b); a[1].retune(b); } }
+        else { self.eq = n.into_iter().map(|b| [b, b]).collect(); }
+    }
+    pub fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
+        let (a1, k1, a2) = (self.a1, self.k1, self.a2);
+        let (iw, il) = self.ik;
+        for ch in 0..nc {
+            let v = x[ch] * self.gin;
+            let (eq, dc, iron) = (&mut self.eq, &mut self.dc[ch], &mut self.iron[ch]);
+            let y = self.os[ch].run(v, |u| {
+                let u = iron[0].run(u * HR73, iw, il, IRONV76);
+                let mut y = ((u + a1 * u * u) * k1).tanh() / k1;
+                let o = y - dc[0].0 + 0.99988 * dc[0].1; dc[0] = (y, o); y = o;
+                y = (y + a2 * y * y).tanh();
+                let o = y - dc[1].0 + 0.99988 * dc[1].1; dc[1] = (y, o); y = o / HR73;
+                for b in eq.iter_mut() { y = b[ch].tick(y); }
+                iron[1].run((1.1 * y * HR73).tanh() / 1.1, iw, il, IRONV76) / HR73
+            });
+            x[ch] = y * self.gout;
+        }
+    }
+}
+
+// ===== Éclat : exciteur à réducteur de bruit détourné (esprit « 36A ») =====
+// L'astuce des studios : on passe la voix dans l'encodeur d'un réducteur de bruit à 4 bandes, sans le décodeur. Chaque bande
+// remonte ses PETITS niveaux (jusqu'à +10 dB, +15 dB dans le très aigu) et s'efface quand le son est fort : les détails, le
+// souffle de la voix et l'air ressortent, soyeux, sans que les « s » ni les passages forts n'explosent. Et le souffle de fond
+// de la machine, qu'on aime entendre. Réglages : Intensité (0-10), Sortie, Souffle ; variantes Air (aigus + très aigus,
+// l'astuce voix) et Plein (les 4 bandes, plus dense).
+#[derive(Clone, Debug)]
+pub struct EclatParams { pub intensity: f64, pub output: f64, pub noise: f64, pub variant: usize }
+impl Default for EclatParams { fn default() -> Self { Self { intensity: 5.0, output: 0.0, noise: 30.0, variant: 0 } } }
+impl From<&crate::model::EclatJson> for EclatParams {
+    fn from(j: &crate::model::EclatJson) -> Self {
+        let d = Self::default();
+        Self { intensity: j.intensity.unwrap_or(d.intensity), output: j.output.unwrap_or(d.output), noise: j.noise.unwrap_or(d.noise),
+            variant: j.variant.map_or(0, |v| (v.round().max(0.0) as usize).min(1)) }
+    }
+}
+impl EclatParams {
+    pub fn set_key(&mut self, k: &str, v: f64) -> bool {
+        match k { "intensity" => self.intensity = v, "output" => self.output = v, "noise" => self.noise = v, "variant" => self.variant = (v.round().max(0.0) as usize).min(1), _ => return false }
+        true
+    }
+}
+/// gain des petits niveaux de chaque bande (+10 dB : ×2,16 ajouté ; très aigu +15 dB : ×4,62), seuil (−40 dBFS), relâchement (s)
+const ECLAT_GMAX: [f64; 4] = [2.162, 2.162, 2.162, 4.623];
+const ECLAT_REL: [f64; 4] = [0.12, 0.08, 0.06, 0.04];
+pub struct Eclat {
+    sr: f64, bands: [[Vec<Biquad>; 4]; 2], env: [[f64; 4]; 2], att: f64, rel: [f64; 4], on: [bool; 4],
+    k: f64, gout: f64, hiss: f64, hs: [f64; 2], hlp: f64, rng: u32,
+}
+impl Eclat {
+    pub fn new(p: &EclatParams, sr: f64) -> Self {
+        let mk = || [vec![Biquad::lowpass(sr, 80.0, -3.0)], vec![Biquad::highpass(sr, 80.0, -3.0), Biquad::lowpass(sr, 3000.0, -3.0)],
+            vec![Biquad::highpass(sr, 3000.0, -3.0)], vec![Biquad::highpass(sr, 9000.0f64.min(0.45 * sr), -3.0)]];
+        let mut e = Self { sr, bands: [mk(), mk()], env: [[0.0; 4]; 2], att: 1.0 - (-1.0 / (0.001 * sr)).exp(),
+            rel: ECLAT_REL.map(|t| (-1.0 / (t * sr)).exp()), on: [true; 4], k: 0.5, gout: 1.0, hiss: 0.0, hs: [0.0; 2],
+            hlp: 1.0 - (-2.0 * PI * 12_000.0f64.min(0.45 * sr) / sr).exp(), rng: 0x2468_ace1 };
+        e.set(p);
+        e
+    }
+    pub fn set(&mut self, p: &EclatParams) {
+        self.k = p.intensity.clamp(0.0, 10.0) / 10.0;
+        self.on = if p.variant == 1 { [true; 4] } else { [false, false, true, true] };
+        self.gout = 10f64.powf(p.output.clamp(-18.0, 12.0) / 20.0);
+        let n = p.noise.clamp(0.0, 100.0) / 100.0;
+        // souffle de la machine : de −84 à −60 dBFS
+        self.hiss = if n > 0.0 { 10f64.powf((-84.0 + 24.0 * n) / 20.0) } else { 0.0 };
+        let _ = self.sr;
+    }
+    fn rand(&mut self) -> f64 {
+        self.rng = self.rng.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        (self.rng >> 8) as f64 / 16_777_216.0 * 2.0 - 1.0
+    }
+    pub fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
+        let (nl, nr) = if self.hiss > 0.0 { (self.rand(), self.rand()) } else { (0.0, 0.0) };
+        for ch in 0..nc {
+            let v = x[ch];
+            let mut side = 0.0;
+            for b in 0..4 {
+                let mut s = v;
+                for f in self.bands[ch][b].iter_mut() { s = f.tick(s); }
+                let a = s.abs(); let e = &mut self.env[ch][b];
+                if a > *e { *e += (a - *e) * self.att; } else { *e *= self.rel[b]; }
+                if !self.on[b] { continue; }
+                // petits niveaux remontés, grands niveaux laissés (le gain tombe au-dessus du seuil), crêtes du côté adoucies
+                let g = ECLAT_GMAX[b] / (1.0 + *e / 0.01);
+                side += 0.05 * (g * s / 0.05).tanh();
+            }
+            let n = if ch == 0 { nl } else { nr };
+            self.hs[ch] += (n - self.hs[ch]) * self.hlp;
+            x[ch] = (v + self.k * side + self.hs[ch] * self.hiss) * self.gout;
+        }
+    }
+}
+
+// ===== Souffle : l'air dynamique (esprit « Fresh Air ») =====
+// Deux boutons : Médium-air (présence 3,5-10 kHz, avec un léger grain) et Haut-air (le très aigu, au-dessus de 10 kHz).
+// Ça ajoute de l'air SANS durcir : chaque bande se retient quand elle est déjà forte (les « s », les cymbales), et pousse
+// quand elle est discrète. Garniture de sortie.
+#[derive(Clone, Debug)]
+pub struct SouffleParams { pub mid: f64, pub high: f64, pub trim: f64 }
+impl Default for SouffleParams { fn default() -> Self { Self { mid: 30.0, high: 40.0, trim: 0.0 } } }
+impl From<&crate::model::SouffleJson> for SouffleParams {
+    fn from(j: &crate::model::SouffleJson) -> Self { let d = Self::default(); Self { mid: j.mid.unwrap_or(d.mid), high: j.high.unwrap_or(d.high), trim: j.trim.unwrap_or(d.trim) } }
+}
+impl SouffleParams {
+    pub fn set_key(&mut self, k: &str, v: f64) -> bool {
+        match k { "mid" => self.mid = v, "high" => self.high = v, "trim" => self.trim = v, _ => return false }
+        true
+    }
+}
+pub struct Souffle { bm: [[Biquad; 2]; 2], bh: [Biquad; 2], env: [[f64; 2]; 2], att: f64, rel: f64, km: f64, kh: f64, gout: f64 }
+impl Souffle {
+    pub fn new(p: &SouffleParams, sr: f64) -> Self {
+        let hp = |f: f64| Biquad::highpass(sr, f.min(0.45 * sr), -3.0);
+        let mut s = Self { bm: [[hp(3500.0), Biquad::lowpass(sr, 10_000.0f64.min(0.45 * sr), -3.0)]; 2], bh: [hp(10_000.0); 2], env: [[0.0; 2]; 2],
+            att: 1.0 - (-1.0 / (0.002 * sr)).exp(), rel: (-1.0 / (0.08 * sr)).exp(), km: 0.0, kh: 0.0, gout: 1.0 };
+        s.set(p);
+        s
+    }
+    pub fn set(&mut self, p: &SouffleParams) {
+        // jusqu'à +8 dB de présence et +12 dB d'air sur les passages discrets
+        self.km = 1.512 * p.mid.clamp(0.0, 100.0) / 100.0;
+        self.kh = 2.981 * p.high.clamp(0.0, 100.0) / 100.0;
+        self.gout = 10f64.powf(p.trim.clamp(-12.0, 12.0) / 20.0);
+    }
+    pub fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
+        for ch in 0..nc {
+            let v = x[ch];
+            let m0 = self.bm[ch][0].tick(v);
+            let m = self.bm[ch][1].tick(m0);
+            let h = self.bh[ch].tick(v);
+            let mut out = v;
+            for (i, (s, k)) in [(m, self.km), (h, self.kh)].into_iter().enumerate() {
+                let a = s.abs(); let e = &mut self.env[ch][i];
+                if a > *e { *e += (a - *e) * self.att; } else { *e *= self.rel; }
+                let dynk = k / (1.0 + *e / 0.03);
+                // présence : un léger grain (harmoniques) ; air : propre
+                let y = if i == 0 { (2.5 * s).tanh() / 2.5 } else { s };
+                out += dynk * y;
+            }
+            x[ch] = out * self.gout;
+        }
+    }
+}
+
 // ===== Écho à bande (esprit « 201 ») : trois têtes de lecture, bande en boucle, ressort =====
 // Comme la machine : Mode (quelles têtes lisent : 1, 2, 3, 1+2, 2+3, 1+3, 1+2+3), Vitesse (la bande ralentit ou accélère —
 // les répétitions s'écartent et le son « pleure » quand on tourne), Intensité (combien ça revient ; au-delà de 100 ça s'emballe),
@@ -2675,6 +2877,47 @@ mod tests {
         assert!(side > 1e-3, "queue stéréo");
         assert!(b > a * 1.8, "durée plus grande = queue plus longue ({a:.2} s → {b:.2} s)");
         assert!((a - 1.5).abs() < 0.8, "Durée 1,5 s : RT60 ≈ {a:.2} s");
+    }
+
+    /// Éclat : petits niveaux d'aigus remontés (≈ +10 dB), forts niveaux presque pas ; Air ne touche pas au grave ; Souffle : air sur un aigu discret, retenu sur un aigu fort
+    #[test]
+    fn eclat_et_souffle() {
+        let gain = |f: f64, a: f64, p: EclatParams| { let mut e = Eclat::new(&EclatParams { noise: 0.0, ..p }, SR); let n = SR as usize; let (mut ei, mut eo) = (0.0, 0.0);
+            for i in 0..n { let s = a * (2.0 * PI * f * i as f64 / SR).sin(); let mut x = [s, 0.0]; e.tick(&mut x, 1); if i > 9600 { ei += s * s; eo += x[0] * x[0]; } } 10.0 * (eo / ei).log10() };
+        let full = EclatParams { intensity: 10.0, ..Default::default() };
+        let (q, l) = (gain(6000.0, 0.001, full.clone()), gain(6000.0, 0.5, full.clone()));
+        assert!(q > 6.0 && l < 2.0, "aigus : faibles +{q:.1} dB, forts +{l:.1} dB");
+        assert!(gain(200.0, 0.001, full.clone()).abs() < 0.5, "Air : grave intact");
+        assert!(gain(200.0, 0.001, EclatParams { variant: 1, ..full.clone() }) > 6.0, "Plein : grave remonté");
+        let mut e = Eclat::new(&EclatParams { intensity: 0.0, noise: 100.0, ..Default::default() }, SR);
+        let mut hs = 0.0; for _ in 0..48_000 { let mut x = [0.0, 0.0]; e.tick(&mut x, 2); hs += x[0] * x[0]; }
+        let hdb = 10.0 * (hs / 48_000.0).log10(); assert!(hdb > -75.0 && hdb < -55.0, "souffle {hdb:.1} dBFS");
+        let sg = |a: f64| { let mut s = Souffle::new(&SouffleParams { mid: 0.0, high: 100.0, trim: 0.0 }, SR); let (mut ei, mut eo) = (0.0, 0.0);
+            for i in 0..48_000 { let v = a * (2.0 * PI * 14_000.0 * i as f64 / SR).sin(); let mut x = [v, 0.0]; s.tick(&mut x, 1); if i > 9600 { ei += v * v; eo += x[0] * x[0]; } } 10.0 * (eo / ei).log10() };
+        let (q, l) = (sg(0.002), sg(0.5));
+        assert!(q > 9.0 && l < q - 5.0, "Souffle : discret +{q:.1} dB, fort +{l:.1} dB");
+    }
+
+    /// Préampli 76V : gain unité à petit niveau (gain 12, sortie −12), harmonique 2 qui monte avec le gain, Radio coupe le grave
+    #[test]
+    fn preampli_v76() {
+        let run = |p: PreV76Params, f: f64, a: f64| {
+            let mut m = PreV76::new(&p, SR);
+            let n = SR as usize; let mut o = vec![0.0f64; n];
+            for i in 0..n { let mut x = [a * (2.0 * PI * f * i as f64 / SR).sin(), 0.0]; m.tick(&mut x, 1); o[i] = x[0]; }
+            o
+        };
+        let h = |o: &Vec<f64>, f: f64| { let (mut c, mut s) = (0.0, 0.0); for (i, v) in o.iter().enumerate().skip(4800) { let w = 2.0 * PI * f * i as f64 / SR; c += v * w.cos(); s += v * w.sin(); } 2.0 * (c * c + s * s).sqrt() / (o.len() - 4800) as f64 };
+        let o = run(PreV76Params::default(), 1000.0, 0.01);
+        assert!((h(&o, 1000.0) / 0.01 - 1.0).abs() < 0.12, "gain unité ({:.3})", h(&o, 1000.0) / 0.01);
+        let lo = run(PreV76Params { gain: 6.0, output: -6.0, ..Default::default() }, 200.0, 0.2);
+        let hi = run(PreV76Params { gain: 30.0, output: -30.0, ..Default::default() }, 200.0, 0.2);
+        let (r_lo, r_hi) = (h(&lo, 400.0) / h(&lo, 200.0), h(&hi, 400.0) / h(&hi, 200.0));
+        assert!(r_hi > 2.0 * r_lo && r_hi > 0.003, "harmonique 2 : {r_lo:.4} → {r_hi:.4}");
+        let st = run(PreV76Params::default(), 40.0, 0.05);
+        let ra = run(PreV76Params { variant: 1, ..Default::default() }, 40.0, 0.05);
+        assert!(h(&ra, 40.0) < 0.4 * h(&st, 40.0), "Radio : grave coupé");
+        assert!(o.iter().all(|v| v.is_finite()));
     }
 
     /// Dimension : le son direct reste, l'image s'élargit (G ≠ D), le niveau ne bouge presque pas, en mono (G + D) la modulation se tient

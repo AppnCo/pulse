@@ -154,6 +154,9 @@ pub struct EffectParams {
     pub hall80: Option<Hall80Json>,
     pub h910: Option<H910Json>,
     pub dim: Option<DimJson>,
+    pub prev76: Option<PreV76Json>,
+    pub eclat: Option<EclatJson>,
+    pub souffle: Option<SouffleJson>,
     /// Exemplaires en plus d'un même effet (« comp#2 », « eq#3»…), réglages bruts : lus par `EffectParams::instance`
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
@@ -274,6 +277,20 @@ pub struct Opto2AJson {
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 pub struct TapeEchoJson { pub mode: Option<f64>, pub rate: Option<f64>, pub intensity: Option<f64>, pub bass: Option<f64>, pub treble: Option<f64>, pub echo: Option<f64>, pub spring: Option<f64>, pub input: Option<f64>, pub wow: Option<f64> }
+
+/// Éclat : intensity (0-10), output (dB), noise (0-100), variant (0 Air · 1 Plein)
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct EclatJson { pub intensity: Option<f64>, pub output: Option<f64>, pub noise: Option<f64>, pub variant: Option<f64> }
+/// Souffle : mid, high (0-100), trim (dB)
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct SouffleJson { pub mid: Option<f64>, pub high: Option<f64>, pub trim: Option<f64> }
+
+/// Préampli 76V : gain (dB, crans de 6), output (dB), lowcut (−1 arrêt, 0-3), soft (−1 arrêt, 0-2), variant (0 Studio · 1 Radio)
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct PreV76Json { pub gain: Option<f64>, pub output: Option<f64>, pub lowcut: Option<f64>, pub soft: Option<f64>, pub variant: Option<f64> }
 
 /// Dimension : mode (0-3), mix (%), width (%), variant (0 Dimension · 1 Ensemble)
 #[derive(Debug, Clone, Deserialize, Default)]

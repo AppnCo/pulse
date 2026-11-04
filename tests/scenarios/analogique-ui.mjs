@@ -209,6 +209,29 @@ export default async (c) => {
   check('Dimension : mode 4', await J(ev, `return state.project.tracks[0].effectParams.dim.mode`) === 3);
   await click('.fx-panel.plug-win[data-fx="dim"] .ana-var[data-v="1"] rect');
   check('Dimension : Ensemble', await J(ev, `return state.project.tracks[0].effectParams.dim.variant`) === 1);
+  // Préampli 76V : dans « Préamplis et EQ », tranche fine, variante Radio
+  await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
+  await click('#inspector .slot-plus[data-plus="fx"]');
+  await click('.fx-add-menu .fam-range', 'Analogique');
+  await click('.fx-add-menu .fam-cat', 'Préamplis'); await sleep(100);
+  check('menu : Préampli 76V cliqué', await click('.fx-add-menu .fam-fx', 'Préampli 76V')); await sleep(500);
+  await click('.fx-panel.plug-win[data-fx="prev76"] .ana-var[data-v="1"] rect'); await sleep(300);
+  check('Préampli 76V : Radio', await J(ev, `return state.project.tracks[0].effectParams.prev76.variant`) === 1);
+  // Éclat : dans « Bandes et couleur », variante Plein
+  await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
+  await click('#inspector .slot-plus[data-plus="fx"]');
+  await click('.fx-add-menu .fam-range', 'Analogique');
+  await click('.fx-add-menu .fam-cat', 'Bandes'); await sleep(100);
+  check('menu : Éclat cliqué', await click('.fx-add-menu .fam-fx', 'Éclat')); await sleep(500);
+  await click('.fx-panel.plug-win[data-fx="eclat"] .ana-var[data-v="1"] rect');
+  check('Éclat : Plein', await J(ev, `return state.project.tracks[0].effectParams.eclat.variant`) === 1);
+  // Souffle : gamme Pulse, « Égaliseur et filtre »
+  await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
+  await click('#inspector .slot-plus[data-plus="fx"]');
+  await click('.fx-add-menu .fam-range', 'Pulse');
+  await click('.fx-add-menu .fam-cat', 'Égaliseur'); await sleep(100);
+  check('menu : Souffle cliqué', await click('.fx-add-menu .fam-fx', 'Souffle')); await sleep(500);
+  check('Souffle : fenêtre ouverte', await J(ev, `return !!document.querySelector('.fx-panel.plug-win[data-fx="souffle"]')`));
   // ---- Envois façon Logic
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   await click('#inspector .slot-plus[data-plus="send"]');
@@ -226,6 +249,12 @@ export default async (c) => {
   check('clic sur l\'envoi : son bus à droite', await J(ev, `return document.querySelectorAll('#inspector .insp-strip')[1].querySelector('.strip-name').textContent`) === 'Bus 1');
   const lvl = await J(ev, `return state.project.tracks[0].busSends[state.project.buses.find(b=>b.name==='Bus 1').id]`);
   check('un simple clic ne change pas le dosage', lvl === 50, String(lvl));
+  // comme Logic : aller sur une autre piste puis revenir = la sortie à droite ; retoucher l'envoi = son bus
+  await ev(`state.project.tracks.push({ name: 'Kick', type: 'audio', color: '#22D3EE', volume: 100, clips: [] }); state.selectedTrack=1; renderInspector()`); await sleep(100);
+  await ev(`state.selectedTrack=0; renderInspector()`); await sleep(100);
+  check('retour sur la piste : sa sortie à droite (plus le bus)', await J(ev, `return document.querySelectorAll('#inspector .insp-strip')[1].dataset.kind`) === 'master');
+  await click('#inspector .insp-strip .send-bar-row .sb-name'); await sleep(200);
+  check('retoucher l\'envoi : son bus revient à droite', await J(ev, `return document.querySelectorAll('#inspector .insp-strip')[1].querySelector('.strip-name').textContent`) === 'Bus 1');
   await click('#inspector .slot-plus[data-plus="send"]');
   const items2 = await J(ev, `return [...document.querySelectorAll('.track-ctx-menu .ctx-item')].map(e=>e.textContent.trim()).join('|')`);
   check('2e envoi : Bus 2 proposé (Bus 1 déjà utilisé)', items2.startsWith('Bus 2 nouveau'), items2);

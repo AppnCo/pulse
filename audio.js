@@ -845,6 +845,131 @@ window.PulseAudio = (function() {
             }
         }
         registerProcessor('pulse-pre73', pulseAuto(PulsePre73, (s, v) => { let ch = false; for (const k in v) if (k in s.p && s.p[k] !== v[k]) { s.p[k] = v[k]; ch = true; } if (ch) s.set(); }));
+        // Préampli 76V : deux étages à lampe, gros transfos, coupe-bas, Douceur, Studio / Radio. Même calcul que PreV76 (analog.rs).
+        const V76_LOW = [40, 80, 120, 200], V76_SOFT = [15000, 10000, 6000], IRONV76 = 0.09;
+        class PulsePreV76 extends AudioWorkletProcessor {
+            constructor(o) {
+                super();
+                const p = (o && o.processorOptions) || {};
+                this.p = { gain: p.gain ?? 12, output: p.output ?? -12, lowcut: p.lowcut ?? -1, soft: p.soft ?? -1, variant: p.variant ?? 0 };
+                this.os = [new AnaOs(), new AnaOs()]; this.dc = [[[0, 0], [0, 0]], [[0, 0], [0, 0]]]; this.eq = []; this.st = [[], []]; this.iron = [[[0], [0]], [[0], [0]]]; this.ik = ironK(sampleRate);
+                this.set();
+            }
+            set() {
+                const p = this.p, sr = sampleRate * 4, cl = (v, a, b) => Math.max(a, Math.min(b, v)), ix = (v, m) => Math.min(m, Math.max(0, Math.round(v)));
+                const radio = ix(p.variant, 1) === 1, eq = [];
+                const hp = (f) => { const w = 2 * Math.PI * f / sr, al = Math.sin(w) / (2 * Math.pow(10, -3 / 20)), c = Math.cos(w), a0 = 1 + al; return [(1 + c) / 2 / a0, -(1 + c) / a0, (1 + c) / 2 / a0, -2 * c / a0, (1 - al) / a0]; };
+                const lp = (f) => { const w = 2 * Math.PI * f / sr, al = Math.sin(w) / (2 * Math.pow(10, -3 / 20)), c = Math.cos(w), a0 = 1 + al; return [(1 - c) / 2 / a0, (1 - c) / a0, (1 - c) / 2 / a0, -2 * c / a0, (1 - al) / a0]; };
+                const lp1 = (f) => { const k = Math.tan(Math.PI * Math.max(1, Math.min(sr * 0.49, f)) / sr), b0 = k / (1 + k); return [b0, b0, 0, (k - 1) / (k + 1), 0]; };
+                if (p.lowcut >= -0.5) eq.push(hp(V76_LOW[ix(p.lowcut, 3)]));
+                if (p.soft >= -0.5) eq.push(lp1(V76_SOFT[ix(p.soft, 2)]));
+                if (radio) { eq.push(hp(80)); eq.push(lp(10000)); }
+                if (eq.length !== this.eq.length) this.st = [eq.map(() => [0, 0, 0, 0]), eq.map(() => [0, 0, 0, 0])];
+                this.eq = eq;
+                const g = cl(p.gain, 0, 36), d = g / 36;
+                this.gin = Math.pow(10, g / 20); this.gout = Math.pow(10, cl(p.output, -36, 12) / 20);
+                this.a1 = 0.12 + 0.3 * d + (radio ? 0.1 : 0); this.k1 = 1 + 0.4 * d; this.a2 = 0.5 * this.a1;
+            }
+            process(inputs, outputs) {
+                const inp = inputs[0], out = outputs[0];
+                if (!inp || !inp.length) return true;
+                const n = inp[0].length, nc = Math.min(inp.length, out.length, 2), a1 = this.a1, k1 = this.k1, a2 = this.a2, eq = this.eq, [iw, il] = this.ik;
+                for (let ch = 0; ch < nc; ch++) {
+                    const a = inp[ch], o = out[ch], os = this.os[ch], dc = this.dc[ch], st = this.st[ch], ir = this.iron[ch];
+                    const f = (u) => {
+                        u = ironRun(ir[0], u * HR73, iw, il, IRONV76);
+                        let y = Math.tanh((u + a1 * u * u) * k1) / k1;
+                        let z = y - dc[0][0] + 0.99988 * dc[0][1]; dc[0][0] = y; dc[0][1] = z; y = z;
+                        y = Math.tanh(y + a2 * y * y);
+                        z = y - dc[1][0] + 0.99988 * dc[1][1]; dc[1][0] = y; dc[1][1] = z; y = z / HR73;
+                        for (let j = 0; j < eq.length; j++) y = biqRun(eq[j], st[j], y);
+                        return ironRun(ir[1], Math.tanh(1.1 * y * HR73) / 1.1, iw, il, IRONV76) / HR73;
+                    };
+                    for (let i = 0; i < n; i++) o[i] = os.run(a[i] * this.gin, f) * this.gout;
+                }
+                return true;
+            }
+        }
+        registerProcessor('pulse-prev76', pulseAuto(PulsePreV76, (s, v) => { let ch = false; for (const k in v) if (k in s.p && s.p[k] !== v[k]) { s.p[k] = v[k]; ch = true; } if (ch) s.set(); }));
+        // Éclat : 4 bandes qui remontent les petits niveaux (encodeur de réducteur de bruit détourné) + souffle. Même calcul que Eclat (analog.rs).
+        const bq2 = (hp, f, sr) => { const w = 2 * Math.PI * f / sr, al = Math.sin(w) / (2 * Math.pow(10, -3 / 20)), c = Math.cos(w), a0 = 1 + al;
+            return hp ? [(1 + c) / 2 / a0, -(1 + c) / a0, (1 + c) / 2 / a0, -2 * c / a0, (1 - al) / a0] : [(1 - c) / 2 / a0, (1 - c) / a0, (1 - c) / 2 / a0, -2 * c / a0, (1 - al) / a0]; };
+        const ECLAT_GMAX = [2.162, 2.162, 2.162, 4.623], ECLAT_REL = [0.12, 0.08, 0.06, 0.04];
+        class PulseEclat extends AudioWorkletProcessor {
+            constructor(o) {
+                super();
+                const p = (o && o.processorOptions) || {}, sr = sampleRate;
+                this.p = { intensity: p.intensity ?? 5, output: p.output ?? 0, noise: p.noise ?? 30, variant: p.variant ?? 0 };
+                const ks = [[bq2(false, 80, sr)], [bq2(true, 80, sr), bq2(false, 3000, sr)], [bq2(true, 3000, sr)], [bq2(true, Math.min(9000, 0.45 * sr), sr)]];
+                this.ks = ks; this.st = [0, 1].map(() => ks.map(b => b.map(() => [0, 0, 0, 0])));
+                this.env = [[0, 0, 0, 0], [0, 0, 0, 0]]; this.att = 1 - Math.exp(-1 / (0.001 * sr)); this.rel = ECLAT_REL.map(t => Math.exp(-1 / (t * sr)));
+                this.hs = [0, 0]; this.hlp = 1 - Math.exp(-2 * Math.PI * Math.min(12000, 0.45 * sr) / sr); this.rng = 0x2468ace1;
+                this.set();
+            }
+            set() {
+                const p = this.p, cl = (v, a, b) => Math.max(a, Math.min(b, v)), n = cl(p.noise, 0, 100) / 100;
+                this.k = cl(p.intensity, 0, 10) / 10; this.on = Math.round(p.variant) === 1 ? [1, 1, 1, 1] : [0, 0, 1, 1];
+                this.gout = Math.pow(10, cl(p.output, -18, 12) / 20); this.hiss = n > 0 ? Math.pow(10, (-84 + 24 * n) / 20) : 0;
+            }
+            rand() { this.rng = (Math.imul(this.rng, 1664525) + 1013904223) >>> 0; return (this.rng >>> 8) / 16777216 * 2 - 1; }
+            process(inputs, outputs) {
+                const inp = inputs[0], out = outputs[0];
+                if (!inp || !inp.length) return true;
+                const n = inp[0].length, nc = Math.min(inp.length, out.length, 2), ks = this.ks;
+                for (let i = 0; i < n; i++) {
+                    const nz = this.hiss > 0 ? [this.rand(), this.rand()] : [0, 0];
+                    for (let ch = 0; ch < nc; ch++) {
+                        const v = inp[ch][i], env = this.env[ch], st = this.st[ch];
+                        let side = 0;
+                        for (let b = 0; b < 4; b++) {
+                            let s = v; for (let j = 0; j < ks[b].length; j++) s = biqRun(ks[b][j], st[b][j], s);
+                            const a = Math.abs(s); if (a > env[b]) env[b] += (a - env[b]) * this.att; else env[b] *= this.rel[b];
+                            if (!this.on[b]) continue;
+                            const g = ECLAT_GMAX[b] / (1 + env[b] / 0.01);
+                            side += 0.05 * Math.tanh(g * s / 0.05);
+                        }
+                        this.hs[ch] += (nz[ch] - this.hs[ch]) * this.hlp;
+                        out[ch][i] = (v + this.k * side + this.hs[ch] * this.hiss) * this.gout;
+                    }
+                }
+                return true;
+            }
+        }
+        registerProcessor('pulse-eclat', pulseAuto(PulseEclat, (s, v) => { let ch = false; for (const k in v) if (k in s.p && s.p[k] !== v[k]) { s.p[k] = v[k]; ch = true; } if (ch) s.set(); }));
+        // Souffle : présence (3,5-10 kHz, léger grain) et air (> 10 kHz), qui se retiennent quand la bande est déjà forte. Même calcul que Souffle (analog.rs).
+        class PulseSouffle extends AudioWorkletProcessor {
+            constructor(o) {
+                super();
+                const p = (o && o.processorOptions) || {}, sr = sampleRate;
+                this.p = { mid: p.mid ?? 30, high: p.high ?? 40, trim: p.trim ?? 0 };
+                this.km_ = [bq2(true, Math.min(3500, 0.45 * sr), sr), bq2(false, Math.min(10000, 0.45 * sr), sr)]; this.kh_ = bq2(true, Math.min(10000, 0.45 * sr), sr);
+                this.st = [0, 1].map(() => [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]); this.env = [[0, 0], [0, 0]];
+                this.att = 1 - Math.exp(-1 / (0.002 * sr)); this.rel = Math.exp(-1 / (0.08 * sr));
+                this.set();
+            }
+            set() { const p = this.p, cl = (v, a, b) => Math.max(a, Math.min(b, v)); this.km = 1.512 * cl(p.mid, 0, 100) / 100; this.kh = 2.981 * cl(p.high, 0, 100) / 100; this.gout = Math.pow(10, cl(p.trim, -12, 12) / 20); }
+            process(inputs, outputs) {
+                const inp = inputs[0], out = outputs[0];
+                if (!inp || !inp.length) return true;
+                const n = inp[0].length, nc = Math.min(inp.length, out.length, 2);
+                for (let ch = 0; ch < nc; ch++) {
+                    const a = inp[ch], o = out[ch], st = this.st[ch], env = this.env[ch];
+                    for (let i = 0; i < n; i++) {
+                        const v = a[i], m = biqRun(this.km_[1], st[1], biqRun(this.km_[0], st[0], v)), h = biqRun(this.kh_, st[2], v);
+                        let y = v;
+                        const bands = [[m, this.km], [h, this.kh]];
+                        for (let b = 0; b < 2; b++) {
+                            const s = bands[b][0], ab = Math.abs(s);
+                            if (ab > env[b]) env[b] += (ab - env[b]) * this.att; else env[b] *= this.rel;
+                            y += bands[b][1] / (1 + env[b] / 0.03) * (b === 0 ? Math.tanh(2.5 * s) / 2.5 : s);
+                        }
+                        o[i] = y * this.gout;
+                    }
+                }
+                return true;
+            }
+        }
+        registerProcessor('pulse-souffle', pulseAuto(PulseSouffle, (s, v) => { let ch = false; for (const k in v) if (k in s.p && s.p[k] !== v[k]) { s.p[k] = v[k]; ch = true; } if (ch) s.set(); }));
         // Optique 2A : cellule optique (attaque ~10 ms, relâchement en deux temps avec mémoire), étage à lampe, 3 variantes.
         // Même calcul que Opto2A dans analog.rs.
         const OPTO_V = [[0.012, 0.080, 1.0, 8.0, 0.20, 1.25, 12000, 0.07], [0.010, 0.060, 0.5, 5.0, 0.12, 1.15, 18000, 0.05], [0.007, 0.045, 0.3, 3.0, 0.06, 1.35, 0, 0.04]];
@@ -2402,7 +2527,7 @@ window.PulseAudio = (function() {
 
     // Exemplaire d'un effet : « comp#2 » → type « comp » (même calcul que fx_type dans model.rs)
     const fxType = (id) => String(id).split('#')[0];
-    const FX_CHAIN = ['pitch', 'filter', 'pre73', 'stripe', 'gate', 'eq', 'eqp1', 'horizon', 'eq550', 'massif', 'tape', 'sat', 'msat', 'crush', 'deess', 'fet76', 'opto2a', 'l670', 'dtr', 'comp25', 'comp', 'mband', 'bus33', 'busg', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'dim', 'doubler', 'slapback', 'master', 'limit', 'delay', 'techo', 'h910', 'plate', 'hall80', 'reverb']; // ordre habituel des effets
+    const FX_CHAIN = ['pitch', 'filter', 'pre73', 'prev76', 'stripe', 'gate', 'eq', 'eqp1', 'horizon', 'souffle', 'eq550', 'massif', 'tape', 'eclat', 'sat', 'msat', 'crush', 'deess', 'fet76', 'opto2a', 'l670', 'dtr', 'comp25', 'comp', 'mband', 'bus33', 'busg', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'dim', 'doubler', 'slapback', 'master', 'limit', 'delay', 'techo', 'h910', 'plate', 'hall80', 'reverb']; // ordre habituel des effets
     const SEND_REVERB_TRIM = 1 / 3; // la reverb seule sort 3 fois trop fort par rapport au son direct : on la ramène à niveau
 
     // Paliers de tempo [{ sec, bpm }] quand le tempo change en cours de morceau (sinon null) — Project::tempo_segments côté Rust
@@ -3184,7 +3309,7 @@ window.PulseAudio = (function() {
             return !!(p.semi || p.formant) || Object.keys(auto || {}).some(k => k.startsWith(`fx:${e}:`));
         }).length;
         // machines Analogiques : 31 échantillons (suréchantillonnage) ; la Bande 80 en plus sa ligne de pleurage (48)
-        const na = (effects || []).reduce((s, e) => s + (['fet76', 'pre73', 'opto2a', 'eqp1', 'busg', 'l670', 'dtr', 'stripe', 'eq550', 'comp25', 'bus33', 'massif'].includes(fxType(e)) ? 31 : fxType(e) === 'tape' ? 79 : 0), 0);
+        const na = (effects || []).reduce((s, e) => s + (['fet76', 'pre73', 'prev76', 'opto2a', 'eqp1', 'busg', 'l670', 'dtr', 'stripe', 'eq550', 'comp25', 'bus33', 'massif'].includes(fxType(e)) ? 31 : fxType(e) === 'tape' ? 79 : 0), 0);
         return np * pitchLatency(sr) / sr + na / sr;
     }
     // Retard des groupes sur le trajet de sortie d'une piste (un stem seul contourne les groupes). Même calcul que bus_latency (render.rs).
@@ -4154,6 +4279,9 @@ window.PulseAudio = (function() {
             connect(n);
         };
         B.pre73 = () => node('pulse-pre73', 'pre73');
+        B.prev76 = () => node('pulse-prev76', 'prev76');
+        B.eclat = () => node('pulse-eclat', 'eclat');
+        B.souffle = () => node('pulse-souffle', 'souffle');
         B.eqp1 = () => node('pulse-eqp1', 'eqp1');
         B.tape = () => node('pulse-tape', 'tape');
         B.eq550 = () => node('pulse-eq550', 'eq550');

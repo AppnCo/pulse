@@ -40,6 +40,11 @@ const CASES = [
   ['h910', { pitchL: 7, pitchR: -5, delay: 40, feedback: 50, mix: 50, variant: 1 }, [0.124564, 0.125594, 0.036002]],
   ['dim', { mode: 1, mix: 100 }, [0.134686, 0.139287, 0.045639]],
   ['dim', { mode: 3, mix: 80, width: 130, variant: 1 }, [0.208333, 0.116070, 0.047483]],
+  ['prev76', { gain: 24, output: -22, lowcut: 1, soft: 1 }, [0.104485, 0.104485, 0.013591]],
+  ['prev76', { gain: 18, output: -16, variant: 1 }, [0.134893, 0.134892, 0.017656]],
+  ['eclat', { intensity: 7, output: -2, noise: 40 }, [0.097129, 0.097129, 0.038122]],
+  ['eclat', { intensity: 10, noise: 0, variant: 1 }, [0.123245, 0.123245, 0.051188]],
+  ['souffle', { mid: 60, high: 80, trim: -2 }, [0.097694, 0.097693, 0.053265]],
   ['opto2a', { peak: 60, gain: 55, variant: 0 }, [0.086484, 0.082398, 0.018677]],
   ['opto2a', { peak: 45, limit: 1, emph: 50, variant: 2, mix: 80 }, [0.055303, 0.053787, 0.016746]],
 ];
