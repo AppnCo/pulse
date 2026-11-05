@@ -3865,3 +3865,23 @@ body[data-left-tool="fade"] .timeline-tracks .clip { cursor: ew-resize; }
 /* barre du bas : types, valeurs et boutons sur une ligne ; la ligne « Dynamique » passe dessous */
 .eq-bub.dock .eq-bub-foot { order: 2; }
 .eq-bub.dock .eq-dynrow { order: 3; margin: 0; }
+
+/* Cases de plugins comme Logic : ⏻ à gauche, nom au milieu (ouvre), ⇅ à droite (remplacer) ; éteint = grisé, garde sa place */
+.insp-fx-row .fx-pow, .insp-fx-row .fx-swap { position: absolute; top: 50%; transform: translateY(-50%); display: none; place-items: center; width: 13px; height: 13px; border-radius: 3px; font-weight: 400; font-size: 9px; color: var(--text-3, #9a8cb8); cursor: pointer; background: inherit; }
+/* les icônes passent par-dessus le nom (il garde toute sa largeur), comme dans Logic */
+.insp-fx-row:has(.fx-pow) { padding-left: 16px; }
+.insp-fx-row .fx-pow { left: 2px; }
+.insp-fx-row .fx-swap { right: 16px; box-shadow: -6px 0 6px -2px color-mix(in srgb, var(--track-color) 38%, var(--bg-1)); }
+.insp-fx-row:has(.fx-pow) .insp-del { position: absolute; right: 2px; top: 50%; transform: translateY(-50%); margin: 0; display: none; background: color-mix(in srgb, var(--track-color) 38%, var(--bg-1)); }
+.insp-fx-row:has(.fx-pow):hover .insp-del { display: block; }
+.insp-fx-row span { flex: 1 1 auto; min-width: 0; }
+.insp-fx-row:hover .fx-pow, .insp-fx-row:hover .fx-swap, .insp-fx-row.is-off .fx-pow { display: grid; }
+.insp-fx-row .fx-pow { color: #c4b5fd; }
+.insp-fx-row .fx-pow:hover, .insp-fx-row .fx-swap:hover { background: rgba(255,255,255,.12); color: #fff; }
+.insp-fx-row.is-off { background: color-mix(in srgb, var(--track-color) 8%, var(--bg-1)); color: var(--text-3, #7a6b96); }
+.insp-fx-row.is-off span { text-decoration: line-through; text-decoration-color: rgba(255,255,255,.25); }
+.insp-fx-row.is-off .fx-pow { color: var(--text-3, #7a6b96); }
+.insp-fx-row .insp-del { padding: 0 3px; }
+.strip-sends-title .fx-all { margin-left: auto; margin-right: 3px; width: 16px; height: 16px; padding: 0; display: inline-grid; place-items: center; border-radius: 4px; border: 1px solid var(--border, #3a2c50); background: transparent; color: var(--text-3, #9a8cb8); cursor: pointer; }
+.strip-sends-title .fx-all.on { background: #7C3AED; border-color: #A855F7; color: #fff; }
+.strip-sends-title .fx-all + .slot-plus { margin-left: 0; }

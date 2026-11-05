@@ -2274,8 +2274,11 @@ function initInspector() {
     setInspectorOpen(inspectorOpen());
 }
 // Effets actifs d'une piste ou d'un bus, dans l'ordre où le son les traverse
+// Plugins de la tranche, dans l'ordre, ÉTEINTS compris (x.fxOff) : un plugin éteint garde sa case, grisé, comme dans Logic.
+// Le moteur, lui, ne joue que x.effects (un plugin éteint en sort, rien à changer côté son).
+function fxIsOff(x, n) { return (x.fxOff || []).includes(n) && !(x.effects || []).includes(n); }
 function chainOf(x) {
-    const on = x.effects || [];
+    const on = [...(x.effects || []), ...(x.fxOff || []).filter(n => !(x.effects || []).includes(n))];
     const order = Array.isArray(x.fxOrder) ? [...x.fxOrder, ...FX_ORDER.filter(n => !x.fxOrder.includes(n))] : FX_ORDER;
     const out = order.filter(n => on.includes(n));
     return [...out, ...on.filter(n => !out.includes(n))];   // exemplaires en plus pas encore rangés : à la fin
@@ -2285,7 +2288,7 @@ function chainOf(x) {
 const fxType = (id) => String(id).split('#')[0];
 const fxInstNum = (id) => { const m = /#(\d+)$/.exec(String(id)); return m ? +m[1] : 1; };
 function fxLabel(id) { const ty = fxType(id); return (FX_NAMES[ty] || ty) + (String(id).includes('#') ? ' ' + fxInstNum(id) : ''); }
-function nextFxInstance(o, ty) { let k = 2; while ((o.effects || []).includes(ty + '#' + k)) k++; return ty + '#' + k; }
+function nextFxInstance(o, ty) { let k = 2; while ((o.effects || []).includes(ty + '#' + k) || (o.fxOff || []).includes(ty + '#' + k)) k++; return ty + '#' + k; }
 // Vue d'un exemplaire pour les fenêtres d'effet (écrites pour « comp ») : la fenêtre lit et écrit « comp », la vue range dans « comp#2 »
 // (réglages, liste d'effets, automation). `__fxKey` = clé de ses afficheurs dans le moteur (« t0~comp#2 »).
 const _fxViews = new WeakMap();
@@ -2386,21 +2389,23 @@ function inspectorStrip(kind, x, idx) {
         ${isMaster ? '<div class="strip-output"></div>' : (x.locked ? `<div class="strip-output">→ ${esc(busLabel(x.output))}</div>` : `<button class="strip-output insp-output" data-tooltip="Où va le son de ${kind === 'bus' ? 'ce groupe' : 'cette piste'} : clique pour changer la direction">→ ${esc(busLabel(x.output))} ▾</button>`)}
     </div>`;
 }
+const FX_POW_SVG = '<svg viewBox="0 0 12 12" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M6 1.5v4"/><path d="M3.3 3.2a4 4 0 1 0 5.4 0"/></svg>';
 // Listes d'effets (inserts) et d'envois façon Logic, les mêmes dans la tranche de gauche et dans la table de mixage
 function slotListsHtml(kind, x) {
     const chain = chainOf(x);
     const sends = (kind === 'track' || (kind === 'bus' && !x.premaster && !x.locked)) ? projectSends() : [];
     const canAdd = !x.premaster && !x.locked;
     return `<div class="insp-fx">
-            <div class="strip-sends-title">Effets${canAdd ? '<button class="slot-plus" data-plus="fx" data-tooltip="Ajouter un effet (insert)">+</button>' : ''}</div>
+            <div class="strip-sends-title">Effets${canAdd && chain.some(n => n !== 'limit' && n !== 'master') ? `<button class="fx-all ${chain.some(n => n !== 'limit' && n !== 'master' && !fxIsOff(x, n)) ? 'on' : ''}" data-tooltip="Avant / après : coupe tous les plugins de la tranche d'un coup, reclique pour les rallumer">${FX_POW_SVG}</button>` : ''}${canAdd ? '<button class="slot-plus" data-plus="fx" data-tooltip="Ajouter un effet (insert)">+</button>' : ''}</div>
             <div class="insp-slots insp-fx-box" data-add="fx">
             ${kind === 'track' && showTuneSlot(x) ? `<div class="insp-fx-row insp-tune-row ${x.autotune && x.autotune.on ? 'on' : 'is-off'}" data-fx="tune" data-tooltip="${x.autotune && x.autotune.on ? 'Auto-Tune : clic pour régler' : 'Auto-Tune éteint : clic pour le régler et l\'allumer'}">
                 <span>PulseTune</span><i class="insp-del" data-tooltip="Retirer PulseTune (Auto-Tune) de cette piste">×</i>
             </div>` : ''}
             ${chain.map((n, k) => `
-            <div class="insp-fx-row ${x.premaster || n === 'limit' || n === 'master' ? '' : 'can-drag'}" data-fx="${n}" data-tooltip="Clic pour régler · clic maintenu et glisser pour changer l'ordre · clic droit pour copier ou supprimer">
+            <div class="insp-fx-row ${x.premaster || n === 'limit' || n === 'master' ? '' : 'can-drag'} ${fxIsOff(x, n) ? 'is-off' : ''}" data-fx="${n}" data-tooltip="Clic pour régler · clic maintenu et glisser pour changer l'ordre · clic droit pour copier ou supprimer">
+                ${x.premaster || x.locked || n === 'limit' || n === 'master' ? '' : `<b class="fx-pow" data-tooltip="Allumer / éteindre (clic maintenu et glisser vers le bas : plusieurs d'un coup)">${FX_POW_SVG}</b>`}
                 <span>${fxLabel(n)}</span>
-                ${x.premaster || x.locked || n === 'limit' || n === 'master' ? '' : '<i class="insp-del" data-tooltip="Supprimer cet effet">×</i>'}
+                ${x.premaster || x.locked || n === 'limit' || n === 'master' ? '' : '<b class="fx-swap" data-tooltip="Remplacer par un autre plugin">⇅</b><i class="insp-del" data-tooltip="Supprimer cet effet">×</i>'}
             </div>`).join('')}
             ${x.premaster || x.locked ? '' : Array.from({ length: Math.max(4, 8 - chain.length - (kind === 'track' && showTuneSlot(x) ? 1 : 0)) }, (_, i) => `<div class="insp-slot-empty${i === 0 ? ' insp-add-fx' : ''}" data-tooltip="Emplacement libre : clique pour mettre un effet"></div>`).join('')}
             </div>
@@ -2633,6 +2638,8 @@ function bindSlotLists(strip, kind, x, idx) {
         row.addEventListener('click', (e) => {
             if (row._dragged) { row._dragged = false; return; }   // c'était un glisser, pas un clic
             const n = row.dataset.fx;
+            if (e.target.closest('.fx-pow')) { e.stopPropagation(); return; }   // géré au mousedown (glisser sur plusieurs)
+            if (e.target.closest('.fx-swap')) { e.stopPropagation(); openAddEffectMenu(row, kind === 'track' ? idx : x, x, n); return; }
             if (e.target.closest('.insp-del')) { e.stopPropagation(); removeFx(n, x); return; }
             if (n === 'tune') { const r = row.getBoundingClientRect(); openTunePanel(idx, -1, r.left - 290, r.top - 20, true); return; }
             if (kind === 'bus' && x.premaster) openMasterPanel(x, row);
@@ -2645,6 +2652,26 @@ function bindSlotLists(strip, kind, x, idx) {
         row.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); openFxCopyMenu(e.clientX, e.clientY, row.dataset.fx, x); });
     });
     bindFxDrag(strip, x);
+    // ⏻ comme Logic : clic = allumer / éteindre ; clic maintenu et glisser sur les autres ⏻ = même état pour tous (un seul ⌘Z)
+    strip.querySelectorAll('.insp-fx-row .fx-pow').forEach(pw => pw.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        e.preventDefault(); e.stopPropagation();
+        const first = pw.closest('.insp-fx-row').dataset.fx, want = fxIsOff(x, first);
+        pushUndo();
+        const done = new Set();
+        const apply = (row) => {
+            const n = row && row.dataset.fx; if (!n || done.has(n) || !row.querySelector('.fx-pow')) return;
+            done.add(n); setFxOn(x, n, want);
+            row.classList.toggle('is-off', !want);
+            refreshPlaybackSoon();
+        };
+        apply(pw.closest('.insp-fx-row'));
+        const box = pw.closest('.insp-fx-box');
+        const mv = (ev) => { const el = document.elementFromPoint(ev.clientX, ev.clientY); const row = el && el.closest('.insp-fx-row'); if (row && box.contains(row)) apply(row); };
+        const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); saveProject(); refreshFxViews(); };
+        document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
+    }));
+    { const all = strip.querySelector('.fx-all'); if (all) all.addEventListener('click', (e) => { e.stopPropagation(); toggleAllFx(x); }); }
     strip.querySelectorAll('.insp-send').forEach(sl => {
         const srow = sl.closest('.strip-send-row');
         const isBusSend = !!srow.dataset.bsend, id = srow.dataset.send || srow.dataset.bsend;
@@ -2904,13 +2931,54 @@ function addFxTo(o, n) {
 }
 // Allumer / éteindre : sur les autres pistes choisies, seulement là où cet effet est (ou a été) posé
 function setFxOn(x, fx, on) {
-    fxGroup(x).forEach(o => {
+    fxGroup(x).forEach(o => setFxOnOne(o, fx, on, o === x));
+}
+// Allume / éteint un plugin d'UNE piste ou d'un groupe ; éteint, il garde sa place dans la chaîne (fxOrder figé, fxOff)
+function setFxOnOne(o, fx, on, isMain = true) {
         o.effects = o.effects || [];
         const k = o.effects.indexOf(fx);
-        if (!on) { if (k >= 0) o.effects.splice(k, 1); return; }
-        const had = o === x || (o.effectParams && o.effectParams[fx]) || (fx === 'eq' && Array.isArray(o.eqBands) && o.eqBands.length);
+        if (!on) {
+            if (k < 0) return;
+            const chain = chainOf(o);
+            o.fxOrder = [...chain, ...FX_ORDER.filter(n => !chain.includes(n))];
+            o.effects.splice(k, 1);
+            o.fxOff = [...new Set([...(o.fxOff || []), fx])];
+            return;
+        }
+        if (o.fxOff) { o.fxOff = o.fxOff.filter(n => n !== fx); if (!o.fxOff.length) delete o.fxOff; }
+        const had = isMain || (o.effectParams && o.effectParams[fx]) || (fx === 'eq' && Array.isArray(o.eqBands) && o.eqBands.length);
         if (k < 0 && had) o.effects.push(fx);
-    });
+}
+// Bouton ⏻ du haut de la liste (pas dans Logic) : tout couper d'un coup pour l'avant / après, puis rallumer exactement les mêmes
+function toggleAllFx(x) {
+    const chain = chainOf(x).filter(n => n !== 'limit' && n !== 'master');
+    if (!chain.length) return;
+    pushUndo();
+    const live = chain.filter(n => !fxIsOff(x, n));
+    if (live.length) { x.fxAB = live; live.forEach(n => setFxOnOne(x, n, false)); flash(`Avant : ${live.length} plugin${live.length > 1 ? 's' : ''} coupé${live.length > 1 ? 's' : ''} — reclique pour l'après`); }
+    else { const back = (x.fxAB || chain).filter(n => chain.includes(n)); back.forEach(n => setFxOnOne(x, n, true)); delete x.fxAB; flash(`Après : ${back.length} plugin${back.length > 1 ? 's' : ''} rallumé${back.length > 1 ? 's' : ''}`); }
+    saveProject(); refreshPlaybackSoon(); refreshFxViews();
+}
+function refreshFxViews() {
+    renderInspector(); if (state.mixerOpen) { renderMixer(); bindMixerEvents(); }
+    // le ⏻ des fenêtres de plugins ouvertes suit
+    plugWins().forEach(w => { const cb = w.querySelector('.fx-bypass'); const o = w._plugT && (w._plugT.__real || w._plugT), n = w._plugT && w._plugT.__fxId || w.dataset.fx; if (cb && o && n) cb.checked = (o.effects || []).includes(n); });
+}
+// ⇅ (comme la flèche de droite d'un insert Logic) : remplacer ce plugin par un autre, à la même place
+function replaceFx(x, old, n) {
+    if (fxType(old) === n) return;
+    pushUndo();
+    const wasOff = fxIsOff(x, old);
+    const newId = (x.effects || []).includes(n) || (x.fxOff || []).includes(n) ? nextFxInstance(x, n) : n;
+    const chain = chainOf(x).map(k => k === old ? newId : k);
+    x.effects = (x.effects || []).filter(k => k !== old); x.effects.push(newId);
+    if (x.fxOff) { x.fxOff = x.fxOff.filter(k => k !== old); if (!x.fxOff.length) delete x.fxOff; }
+    x.fxOrder = [...chain, ...FX_ORDER.filter(k => !chain.includes(k))];
+    if (String(old).includes('#') && x.effectParams) delete x.effectParams[old];
+    if (FX_START[n] && newId !== n) { x.effectParams = x.effectParams || {}; x.effectParams[newId] = JSON.parse(JSON.stringify(FX_START[n])); }
+    const w = findPlugWin(x, old); if (w) w.remove();
+    saveProject(); refreshPlaybackSoon(); refreshFxViews();
+    flash(`${fxLabel(old)} remplacé par ${fxLabel(newId)}${wasOff ? '' : ''}`);
 }
 
 // Supprime un effet de la chaîne d'une piste ou d'un groupe (Auto-Tune : retire aussi la correction des prises)
@@ -2924,7 +2992,7 @@ async function removeFx(fx, x) {
     } else {
         pushUndo();
         group = fxGroup(x);
-        group.forEach(o => { o.effects = (o.effects || []).filter(n => n !== fx); });
+        group.forEach(o => { o.effects = (o.effects || []).filter(n => n !== fx); if (o.fxOff) { o.fxOff = o.fxOff.filter(n => n !== fx); if (!o.fxOff.length) delete o.fxOff; } });
         if (String(fx).includes('#')) group.forEach(o => {   // un exemplaire en plus part avec ses réglages et ses courbes
             if (o.effectParams) delete o.effectParams[fx];
             Object.keys(o.automation || {}).filter(k => k.startsWith(`fx:${fx}:`)).forEach(k => delete o.automation[k]);
@@ -3083,7 +3151,7 @@ const FX_START = {
     comp25: { thr: -10, ratio: 3, attack: 3, release: 3, relVar: 0.3, knee: 1, thrust: 1, feedback: 0, makeup: 0, mix: 100 },
     eq550: { lf: 0, lfF: 1, lfPeak: 0, mf: 0, mfF: 2, hf: 0, hfF: 3, hfPeak: 0, band: 0, on: 1, output: 0 },
     stripe: { hpf: 0, lpf: 22, lf: 0, lfF: 100, lfBell: 0, lmf: 0, lmfF: 600, lmfQ: 1, hmf: 0, hmfF: 2500, hmfQ: 1, hf: 0, hfF: 8000, hfBell: 0, eq: 1, variant: 0, cthr: 10, cratio: 1, crel: 0.3, cfast: 0, gthr: -80, grange: 20, grel: 0.3, dynPre: 0, output: 0 } };
-function openAddEffectMenu(anchor, target, x) {
+function openAddEffectMenu(anchor, target, x, replaceId = null) {
     closeAllMenus();
     const r = anchor.getBoundingClientRect();
     const menu = document.createElement('div');
@@ -3111,6 +3179,13 @@ function openAddEffectMenu(anchor, target, x) {
     const addHead = (box, txt) => { const h = document.createElement('div'); h.className = 'ctx-head'; h.textContent = txt; box.appendChild(h); };
     const pick = (n) => {
         menu.remove();
+        if (replaceId && n !== 'tune') {
+            const at = chainOf(x).indexOf(replaceId);
+            replaceFx(x, replaceId, n);
+            const nid = chainOf(x)[at] || n, row = document.querySelector(`#inspector .insp-strip .insp-fx-row[data-fx="${nid}"]`);
+            openEffectPanel(target, nid, row && row.isConnected ? row : document.body);
+            return;
+        }
         try { localStorage.setItem('pulse_fx_recent', JSON.stringify([n, ...recent.filter(r => r !== n)].slice(0, 3))); } catch {}
         if (n === 'tune') {
             const ti = state.project.tracks.indexOf(x);
@@ -3234,7 +3309,7 @@ function moveEffectTo(x, name, to) {
 function bindFxDrag(strip, x) {
     const rows = () => [...strip.querySelectorAll('.insp-fx-row.can-drag')];
     rows().forEach(row => row.addEventListener('mousedown', (e) => {
-        if (e.button !== 0 || e.target.closest('.insp-del')) return;
+        if (e.button !== 0 || e.target.closest('.insp-del, .fx-pow, .fx-swap')) return;
         const y0 = e.clientY; let on = false, target = -1, mark = null;
         const list = rows(), from = list.indexOf(row);
         const move = (ev) => {
@@ -5229,7 +5304,7 @@ function clearAllMutes() {
 // ⌥⌘C / ⌥⌘V (Logic « Copier / Coller le réglage de tranche ») : les plugins de la piste et tous leurs réglages
 function copyStripSetting() {
     const t = state.project.tracks[state.selectedTrack]; if (!t) return;
-    state._stripClip = JSON.parse(JSON.stringify({ effects: t.effects || [], fxOrder: t.fxOrder, effectParams: t.effectParams || {}, eqBands: t.eqBands, name: t.name }));
+    state._stripClip = JSON.parse(JSON.stringify({ effects: t.effects || [], fxOrder: t.fxOrder, effectParams: t.effectParams || {}, eqBands: t.eqBands, fxOff: t.fxOff, name: t.name }));
     flash(`Réglages de « ${t.name} » copiés (${(t.effects || []).length} plugin${(t.effects || []).length > 1 ? 's' : ''}) — ⌥⌘V pour les coller`);
 }
 function pasteStripSetting() {
@@ -5237,7 +5312,7 @@ function pasteStripSetting() {
     const idxs = selectedTrackIdxs().filter(i => state.project.tracks[i]);
     if (!idxs.length) return;
     pushUndo();
-    idxs.forEach(i => { const t = state.project.tracks[i]; const v = JSON.parse(JSON.stringify(c)); t.effects = v.effects; t.effectParams = v.effectParams; if (v.fxOrder) t.fxOrder = v.fxOrder; else delete t.fxOrder; if (v.eqBands) t.eqBands = v.eqBands; else delete t.eqBands; });
+    idxs.forEach(i => { const t = state.project.tracks[i]; const v = JSON.parse(JSON.stringify(c)); t.effects = v.effects; t.effectParams = v.effectParams; if (v.fxOrder) t.fxOrder = v.fxOrder; else delete t.fxOrder; if (v.eqBands) t.eqBands = v.eqBands; else delete t.eqBands; if (v.fxOff) t.fxOff = v.fxOff; else delete t.fxOff; });
     document.querySelectorAll('.fx-panel.plug-win').forEach(w => w.remove());
     renderTracksPanel(); bindTrackEvents(); renderInspector(); if (state.mixerOpen) { renderMixer(); bindMixerEvents(); }
     refreshPlaybackSoon(); saveProject();
