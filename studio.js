@@ -3576,10 +3576,31 @@ function sendKnobHtml(v) { return `<span class="send-knob" data-tooltip="Glisser
         ed.addEventListener('keydown', (ev) => { ev.stopPropagation(); if (ev.key === 'Enter') finish(true); else if (ev.key === 'Escape') finish(false); });
         ed.addEventListener('blur', () => finish(true));
     }, true);
+    // ⇧ + glisser un fader ou un curseur = réglage fin (10 fois plus lent), comme Logic — les curseurs du navigateur ne le font pas d'eux-mêmes
+    document.addEventListener('mousedown', (e) => {
+        if (!e.shiftKey || e.button !== 0 || e.altKey || e.metaKey || e.ctrlKey || !e.target.matches) return;
+        const inp = e.target.matches('input[type="range"]') ? e.target : null;
+        if (!inp || inp.disabled || inp.hidden) return;
+        e.preventDefault(); e.stopPropagation();
+        const r = inp.getBoundingClientRect(), vertical = r.height > r.width * 1.5;
+        const min = parseFloat(inp.min), max = parseFloat(inp.max), len = Math.max(40, vertical ? r.height : r.width);
+        const v0 = parseFloat(inp.value), x0 = e.clientX, y0 = e.clientY;
+        const stp = parseFloat(inp.step) || 0;
+        const mv = (ev) => {
+            const d = vertical ? (y0 - ev.clientY) : (ev.clientX - x0);
+            let nv = v0 + d / len * (max - min) * 0.1;
+            if (stp > 0) nv = Math.round(nv / stp) * stp;
+            nv = Math.max(min, Math.min(max, nv));
+            if (nv === parseFloat(inp.value)) return;
+            inp.value = nv; inp.dispatchEvent(new Event('input', { bubbles: true }));
+        };
+        const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); inp.dispatchEvent(new Event('change', { bubbles: true })); };
+        document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
+    }, true);
     // Molette au survol (comme Logic) : envois, faders, gauche/droite se dosent en faisant défiler ; Maj = réglage fin
     document.addEventListener('wheel', (e) => {
         if (e.altKey || e.metaKey || e.ctrlKey || !e.target.closest) return;
-        const el = e.target.closest('.send-bar-row, .send-knob, .strip-send-row, input.fader, input.t-vol, input.insp-pan-input, .strip-pan input[type="range"]');
+        const el = e.target.closest('.send-bar-row, .send-knob, .strip-send-row, input.fader, input.t-vol, input.group-vol, input.bus-pan, input.insp-pan-input, .strip-pan input[type="range"]');
         if (!el) return;
         const inp = el.matches('input[type="range"]') ? el : el.querySelector('input[type="range"]');
         if (!inp || inp.disabled) return;
