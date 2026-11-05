@@ -13798,9 +13798,13 @@ function bindTimelineClick() {
             }
             return startLoopSelection(e, eventToTime);
         }
-        // Reste de la règle : un clic ou un glissé déplace le curseur
-        setPlayheadFromEvent(e);
-        const onMove = (ev) => setPlayheadFromEvent(ev);
+        // Reste de la règle : un clic ou un glissé déplace le curseur — en lecture, la lecture saute là et continue (comme Logic)
+        const rulerSet = (ev) => {
+            if (state.playing && !state.recording) seekPlayhead(snapPlayheadToEdges(snapTime(eventToTime(ev), ev.shiftKey), ev.shiftKey));
+            else setPlayheadFromEvent(ev);
+        };
+        rulerSet(e);
+        const onMove = (ev) => rulerSet(ev);
         const onUp = () => {
             document.removeEventListener('mousemove', onMove);
             document.removeEventListener('mouseup', onUp);
