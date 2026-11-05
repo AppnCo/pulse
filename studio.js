@@ -12437,10 +12437,13 @@ function openColorPanel() {
     document.querySelectorAll('.color-panel').forEach(x => x.remove());
     const clipKeys = new Set(state.selectedClips);
     if (state.selectedClip) clipKeys.add(`${state.selectedClip.trackIdx}:${state.selectedClip.clipIdx}`);
-    const trackIdxs = clipKeys.size ? [] : selectedTrackIdxs();
-    const what = clipKeys.size ? (clipKeys.size > 1 ? `${clipKeys.size} régions` : 'la région') : (trackIdxs.length > 1 ? `${trackIdxs.length} pistes` : 'la piste');
+    // un groupe choisi (ou plusieurs, ⇧ / ⌘ + clic) passe avant les pistes : c'est lui qu'on vient de toucher
+    const busTargets = clipKeys.size ? [] : focusedBuses().filter(b => !b.locked && !b.noOut);
+    const trackIdxs = clipKeys.size || busTargets.length ? [] : selectedTrackIdxs();
+    const what = clipKeys.size ? (clipKeys.size > 1 ? `${clipKeys.size} régions` : 'la région') : busTargets.length ? (busTargets.length > 1 ? `${busTargets.length} groupes` : `« ${busTargets[0].name} »`) : (trackIdxs.length > 1 ? `${trackIdxs.length} pistes` : 'la piste');
     const apply = (color) => {
         pushUndo();
+        if (busTargets.length) { if (color) busTargets.forEach(b => { b.color = color; }); rerenderTracks(); if (state.mixerOpen) { renderMixer(); bindMixerEvents(); } saveProject(); return; }
         if (clipKeys.size) clipKeys.forEach(k => { const [ti, ci] = k.split(':').map(Number); const c = state.project.tracks[ti]?.clips[ci]; if (c) { if (color) c.color = color; else delete c.color; } });
         else trackIdxs.forEach(i => { const t = state.project.tracks[i]; if (t && color) t.color = color; });
         rerenderTracks(); saveProject();
