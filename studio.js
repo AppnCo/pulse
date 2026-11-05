@@ -15676,6 +15676,28 @@ if (/Mac/i.test(navigator.platform)) {
     }, true);
     window.addEventListener('click', (e) => { if (e.ctrlKey && !e.metaKey && e.button === 0 && e.isTrusted && !(e.target.closest && e.target.closest('input, textarea, select, [contenteditable="true"], .strip-s, .m-s, .g-s'))) { e.stopImmediatePropagation(); e.preventDefault(); } }, true);
 }
+// Comme Logic : pendant qu'on tire un fader de volume (ou qu'on tourne la molette dessus), une bulle montre la valeur en dB près de la souris
+(() => {
+    const SEL = 'input.fader, input.t-vol, input.group-vol';
+    let tip = null, active = null, hideT = 0, px = 0, py = 0;
+    const show = (el) => {
+        if (!el || el.hidden || !el.matches || !el.matches(SEL)) return;
+        const mapped = el.matches('[data-vmap], .t-vol, .group-vol');
+        const vol = mapped ? posToVol(parseFloat(el.value)) : parseFloat(el.value);
+        if (!tip) { tip = document.createElement('div'); tip.className = 'db-tip'; document.body.appendChild(tip); }
+        tip.textContent = `${volumeToDb(vol)} dB`;
+        const r = el.getBoundingClientRect();
+        const x = active ? px : r.left + r.width / 2, y = active ? py : r.top;
+        tip.style.left = Math.max(4, Math.min(innerWidth - 70, x + 14)) + 'px';
+        tip.style.top = Math.max(4, y - 26) + 'px';
+        tip.hidden = false;
+        clearTimeout(hideT); if (!active) hideT = setTimeout(() => { if (tip && !active) tip.hidden = true; }, 700);
+    };
+    document.addEventListener('mousedown', (e) => { if (e.button === 0 && e.target.matches && e.target.matches(SEL)) { active = e.target; px = e.clientX; py = e.clientY; } }, true);
+    document.addEventListener('mousemove', (e) => { if (active) { px = e.clientX; py = e.clientY; } }, true);
+    document.addEventListener('mouseup', () => { if (!active) return; active = null; clearTimeout(hideT); hideT = setTimeout(() => { if (tip) tip.hidden = true; }, 400); }, true);
+    document.addEventListener('input', (e) => { if (e.target === active || (e.target.matches && e.target.matches(SEL) && e.target.matches(':hover'))) show(e.target); }, true);
+})();
 function openValueEntry(el) {
     document.querySelectorAll('.value-entry').forEach(x => x.remove());
     const isDb = el.matches('.fader, .t-vol, .group-vol');

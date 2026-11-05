@@ -3885,3 +3885,6 @@ body[data-left-tool="fade"] .timeline-tracks .clip { cursor: ew-resize; }
 .strip-sends-title .fx-all { margin-left: auto; margin-right: 3px; width: 16px; height: 16px; padding: 0; display: inline-grid; place-items: center; border-radius: 4px; border: 1px solid var(--border, #3a2c50); background: transparent; color: var(--text-3, #9a8cb8); cursor: pointer; }
 .strip-sends-title .fx-all.on { background: #7C3AED; border-color: #A855F7; color: #fff; }
 .strip-sends-title .fx-all + .slot-plus { margin-left: 0; }
+
+/* bulle de valeur en dB pendant qu'on tire un fader */
+.db-tip { position: fixed; z-index: 400; pointer-events: none; padding: 2px 7px; border-radius: 5px; background: rgba(18,12,28,.95); border: 1px solid #3a2c50; color: #fff; font: 600 11px/16px -apple-system, system-ui, sans-serif; font-variant-numeric: tabular-nums; box-shadow: 0 4px 14px rgba(0,0,0,.5); }
