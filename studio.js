@@ -5666,6 +5666,7 @@ const SHORTCUT_GROUPS = [
             ['V', 'Cacher / remontrer toutes les fenêtres de plugins'],
             ['⌘↓ / ⌘↑', 'Zoom vertical : tout grandit / rétrécit (pistes et groupes)'],
             ['⌥ ⌘ N', 'Nouvelle piste (menu) · ⌘⌫ = supprimer la piste choisie'],
+            ['⌘W', 'Fermer la fenêtre de plugin de devant'],
             ['⌃ ⌥ ⌘ S', 'Plus aucun solo'],
             ['⌃ ⌥ ⌘ M', 'Plus aucun mute'],
             ['⌥ ⌘ C / ⌥ ⌘ V', 'Copier / coller les réglages de tranche (plugins) sur les pistes choisies']
@@ -16306,6 +16307,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Modifiers d'abord
         // Raccourcis Logic (liste des raccourcis d'Apple) : ⌃⌥⌘S = plus aucun solo, ⌃⌥⌘M = plus aucun mute,
         // ⌥⌘C / ⌥⌘V = copier / coller les réglages de tranche (plugins et leurs réglages) sur les pistes choisies
+        // ⌘W (Logic) : ferme la fenêtre de plugin de devant (son bouton × : le solo d'EQ s'arrête, etc.) — jamais la fenêtre de Pulse
+        if (e.metaKey && !e.altKey && !e.shiftKey && e.code === 'KeyW') {
+            e.preventDefault();
+            const wins = plugWins().filter(w => w.style.display !== 'none');
+            if (wins.length) {
+                const front = wins.reduce((a, b) => ((+b.style.zIndex || 0) > (+a.style.zIndex || 0) ? b : a));
+                const x = front.querySelector('.fx-panel-close'); if (x) x.click(); else front.remove();
+            }
+            return;
+        }
         if (e.ctrlKey && e.metaKey && e.altKey && e.code === 'KeyS') { e.preventDefault(); clearAllSolos(); return; }
         if (e.ctrlKey && e.metaKey && e.altKey && e.code === 'KeyM') { e.preventDefault(); clearAllMutes(); return; }
         if (e.metaKey && e.altKey && !e.ctrlKey && e.code === 'KeyC') { e.preventDefault(); copyStripSetting(); return; }
