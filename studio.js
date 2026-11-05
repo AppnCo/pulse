@@ -5245,7 +5245,14 @@ function pasteStripSetting() {
 }
 // Tous les solos à zéro : pistes, groupes, dossiers
 // Comme Logic : le M d'une piste qu'on n'entend pas parce qu'une AUTRE est en solo clignote (pistes et table de mixage)
+// Un solo quelque part (piste, groupe, dossier) ? Le S au-dessus des pistes s'allume
+function anySolo() {
+    const p = state.project; if (!p) return false;
+    return (p.tracks || []).some(t => t.solo) || (p.buses || []).some(b => b.solo) || (p.folders || []).some(f => f.solo);
+}
+function paintSoloAll() { const b = document.getElementById('btnSoloAll'); if (b) b.classList.toggle('active', anySolo()); }
 function markSoloMutes() {
+    paintSoloAll();
     const p = state.project; if (!p || !p.tracks) return;
     const off = (t) => !t.muted && !PulseAudio.isTrackAudible(p, t);
     document.querySelectorAll('.track-item').forEach(el => { const t = p.tracks[parseInt(el.dataset.i)]; const b = el.querySelector('.t-mini[data-flag="mute"]'); if (t && b) b.classList.toggle('solo-off', off(t)); });
@@ -5263,8 +5270,10 @@ function clearSoloFlags() {
     (state.project.folders || []).forEach(f => { delete f.solo; });
 }
 function clearAllSolos() {
+    if (anySolo()) pushUndo();
     clearSoloFlags();
     renderTracksPanel(); bindTrackEvents();
+    if (state.mixerOpen) { renderMixer(); bindMixerEvents(); }
     document.querySelectorAll('.track-item .m-s').forEach(btn => btn.classList.remove('active'));
     PulseAudio.refreshAudibility(state.project);
     saveProject();
@@ -15853,6 +15862,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('btnRec').addEventListener('click', toggleRec);
     document.getElementById('btnBack').addEventListener('click', rewind);
     document.getElementById('btnMixer').addEventListener('click', toggleMixer);
+    { const sa = document.getElementById('btnSoloAll'); if (sa) sa.addEventListener('click', (e) => { e.stopPropagation(); if (anySolo()) clearAllSolos(); }); }
+    // chaque changement de solo passe par refreshAudibility : le S du haut suit toujours
+    { const ra = PulseAudio.refreshAudibility; PulseAudio.refreshAudibility = (...a) => { const out = ra(...a); try { paintSoloAll(); } catch {} return out; }; }
     document.getElementById('btnMixerClose').addEventListener('click', toggleMixer);
     document.getElementById('btnAddTrack').addEventListener('click', (e) => addTrack(null, e.currentTarget));
     document.getElementById('btnLoop').addEventListener('click', () => {

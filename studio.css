@@ -3833,3 +3833,12 @@ body[data-left-tool="fade"] .timeline-tracks .clip { cursor: ew-resize; }
 
 /* Menu des envois : un bus déjà envoyé d'ici est grisé (comme Logic) */
 .track-ctx-menu .ctx-item.is-off { opacity: 0.4; pointer-events: none; }
+
+/* S au-dessus des pistes : s'allume dès qu'un solo est actif ; un clic les retire tous */
+.btn-solo-all {
+    margin: 0 auto 0 10px; height: 18px; min-width: 22px; padding: 0 5px; border-radius: 4px;
+    border: 1px solid var(--border); background: transparent; color: var(--text-3);
+    font: 700 10.5px/16px inherit; cursor: pointer;
+}
+.btn-solo-all:hover { color: var(--text-1); border-color: var(--text-3); }
+.btn-solo-all.active { background: #22D3EE; color: #000; border-color: #22D3EE; }
