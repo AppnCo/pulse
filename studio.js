@@ -1026,6 +1026,18 @@ document.addEventListener('dblclick', (e) => {
     el.addEventListener('blur', () => done(true), { once: true });
 });
 
+// La piste choisie reste visible (comme Logic) : la liste et la timeline défilent ensemble juste ce qu'il faut
+function revealTrack(i) {
+    const el = document.querySelector(`.track-item[data-i="${i}"]`), panel = document.querySelector('.tracks-panel'), tl = document.querySelector('.timeline');
+    if (!el || !panel || !tl) return;
+    const head = panel.querySelector('.tracks-header'), top = panel.getBoundingClientRect().top + (head ? head.offsetHeight : 0), bottom = panel.getBoundingClientRect().bottom - 8;
+    const r = el.getBoundingClientRect();
+    let d = 0;
+    if (r.top < top) d = r.top - top - 6; else if (r.bottom > bottom) d = r.bottom - bottom + 6;
+    if (!d) return;
+    tl.scrollTop = Math.max(0, tl.scrollTop + d);
+    panel.scrollTop = tl.scrollTop;
+}
 function removeTrackFromGroup(idx) {
     const t = state.project.tracks[idx];
     const bus = t && (state.project.buses || []).find(b => b.id === t.output);
@@ -16462,7 +16474,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const dir = e.code === 'ArrowUp' ? -1 : 1, tl = state.project.tracks;
             let nx = state.selectedTrack + dir;
             while (tl[nx] && isTrackFolded(tl[nx])) nx += dir;
-            if (tl[nx]) selectTrack(nx);
+            if (tl[nx]) { selectTrack(nx); revealTrack(nx); }
             return;
         }
         // Tab / Maj+Tab : bord de clip suivant / précédent (façon Pro Tools)
