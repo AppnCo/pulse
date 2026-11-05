@@ -1078,6 +1078,15 @@ function panKnobSvg(v) {
 // Hauteur d'une piste : la sienne si tu l'as tirée, sinon celle de toutes les pistes
 const TRACK_H_MIN = 44, TRACK_H_MAX = 240;
 function trackH(t) { return t && t.height ? t.height : state.trackHeight; }
+// Comme Logic / Pro Tools : le zoom vertical agrandit TOUT. Un groupe sans hauteur à lui fait la moitié d'une piste
+// (36 px au zoom normal de 72) et suit donc le zoom ; réglé à la main (b.height), il suit en proportion.
+function groupDefH() { return Math.max(22, Math.min(140, Math.round(state.trackHeight / 2))); }
+function grpH(b) { return b && b.height ? b.height : groupDefH(); }
+function applyTrackHVar() {
+    const st = document.documentElement.style;
+    st.setProperty('--track-h', state.trackHeight + 'px');
+    st.setProperty('--grp-def', groupDefH() + 'px');
+}
 
 function renderTracksPanel() {
     const list = document.getElementById('tracksList');
@@ -15384,9 +15393,13 @@ function bindTrackResize() {
                 const hgt = Math.max(TRACK_H_MIN, Math.min(TRACK_H_MAX, Math.round(startH + ev.clientY - startY)));
                 if (!moved) { pushUndo(); moved = true; }
                 if (all) {
+                    // ⌥ + tirer : toutes les pistes à cette hauteur, et les groupes suivent (leur hauteur à part est oubliée)
                     state.project.tracks.forEach(x => { delete x.height; });
+                    (state.project.buses || []).forEach(x => { delete x.height; });
+                    (state.project.folders || []).forEach(x => { delete x.height; });
                     state.trackHeight = hgt;
-                    document.documentElement.style.setProperty('--track-h', hgt + 'px');
+                    applyTrackHVar();
+                    document.querySelectorAll('.group-header[data-bus], .timeline-group-row[data-bus]').forEach(el => el.style.removeProperty('--grp-h'));
                 } else {
                     t.height = hgt;
                     document.querySelectorAll(`.track-item[data-i="${i}"], .timeline-track[data-i="${i}"]`)
@@ -15420,7 +15433,7 @@ function bindGroupResize() {
             if (e.button !== 0) return;
             e.preventDefault(); e.stopPropagation();
             const b = find(); if (!b) return;
-            const all = e.altKey, startY = e.clientY, startH = b.height || 36;
+            const all = e.altKey, startY = e.clientY, startH = grpH(b);
             let moved = false;
             document.body.classList.add('resizing-row');
             const apply = (ev) => {
@@ -15648,14 +15661,14 @@ function heightWheel(e) {
         if (!tg) {
             all = true;
             state.project.tracks.forEach((t, i) => { if (t.height) items.push({ kind: 'track', id: i, h0: t.height }); });
-            (state.project.buses || []).forEach(b => { if (b.height) items.push({ kind: 'bus', id: b.id, h0: b.height }); });
+            [...(state.project.buses || []), ...(state.project.folders || [])].forEach(b => { if (b.height) items.push({ kind: 'bus', id: b.id, h0: b.height }); });
         } else if (tg.kind === 'track') {
             const sel = selectedTrackIdxs();
             const ids = sel.length > 1 && sel.includes(tg.id) ? sel : [tg.id];
             ids.forEach(i => { const t = state.project.tracks[i]; if (t) items.push({ kind: 'track', id: i, h0: trackH(t) }); });
         } else {
-            const b = busById(tg.id);
-            if (b) items.push({ kind: 'bus', id: tg.id, h0: b.height || 36 });
+            const b = groupById(tg.id);
+            if (b) items.push({ kind: 'bus', id: tg.id, h0: grpH(b) });
         }
         _hLock = { all, items, th0: state.trackHeight, F: 1, raf: 0, t: performance.now() };
     }
@@ -15670,7 +15683,7 @@ function heightWheel(e) {
 }
 // Redimensionne d'un coup une piste ou un groupe (utilisé aussi par les tests)
 function resizeOneHeight(tg, factor) {
-    if (tg.kind === 'bus') { const b = busById(tg.id); if (b) b.height = Math.max(GROUP_H_MIN, Math.min(GROUP_H_MAX, Math.round((b.height || 36) * factor))); }
+    if (tg.kind === 'bus') { const b = groupById(tg.id); if (b) b.height = Math.max(GROUP_H_MIN, Math.min(GROUP_H_MAX, Math.round(grpH(b) * factor))); }
     else { const t = state.project.tracks[tg.id]; if (t) t.height = Math.max(TRACK_H_MIN, Math.min(TRACK_H_MAX, Math.round(trackH(t) * factor))); }
     renderTracksPanel(); bindTrackEvents(); renderTimelineTracks();
     saveProject();
@@ -15679,14 +15692,14 @@ function applyHeightLock() {
     const L = _hLock; if (!L) return;
     L.items.forEach(it => {
         if (it.kind === 'bus') {
-            const b = busById(it.id); if (b) b.height = Math.max(GROUP_H_MIN, Math.min(GROUP_H_MAX, Math.round(it.h0 * L.F)));
+            const b = groupById(it.id); if (b) b.height = Math.max(GROUP_H_MIN, Math.min(GROUP_H_MAX, Math.round(it.h0 * L.F)));
         } else {
             const t = state.project.tracks[it.id]; if (t) t.height = Math.max(TRACK_H_MIN, Math.min(TRACK_H_MAX, Math.round(it.h0 * L.F)));
         }
     });
     if (L.all) {
         state.trackHeight = Math.max(44, Math.min(200, Math.round(L.th0 * L.F)));
-        document.documentElement.style.setProperty('--track-h', state.trackHeight + 'px');
+        applyTrackHVar();
     }
     renderTracksPanel(); bindTrackEvents(); renderTimelineTracks();
     L.dirty = true;
@@ -15702,11 +15715,11 @@ window.addEventListener('blur', endHeightLock);
 function setTrackHeight(px, scaleAll = false) {
     const old = state.trackHeight;
     state.trackHeight = Math.max(44, Math.min(200, Math.round(px)));
-    document.documentElement.style.setProperty('--track-h', state.trackHeight + 'px');
+    applyTrackHVar();
     if (scaleAll && old > 0 && state.trackHeight !== old) {
         const r = state.trackHeight / old;
         state.project.tracks.forEach(t => { if (t.height) t.height = Math.max(TRACK_H_MIN, Math.min(TRACK_H_MAX, Math.round(t.height * r))); });
-        (state.project.buses || []).forEach(b => { if (b.height) b.height = Math.max(GROUP_H_MIN, Math.min(GROUP_H_MAX, Math.round(b.height * r))); });
+        [...(state.project.buses || []), ...(state.project.folders || [])].forEach(b => { if (b.height) b.height = Math.max(GROUP_H_MIN, Math.min(GROUP_H_MAX, Math.round(b.height * r))); });
         renderTracksPanel(); bindTrackEvents();
         saveProject();
     }

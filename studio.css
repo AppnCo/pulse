@@ -2176,7 +2176,7 @@ body.tool-scissors .timeline-tracks .clip {
 /* === Groupes de pistes (Track Stack) === */
 .group-header {
     display: flex; align-items: center; gap: 8px;
-    height: var(--grp-h, 36px); box-sizing: border-box; flex-shrink: 0; position: relative;
+    height: var(--grp-h, var(--grp-def, 36px)); box-sizing: border-box; flex-shrink: 0; position: relative;
     padding: 0 10px 0 6px;
     border-radius: var(--r-sm);
     background: color-mix(in srgb, var(--group-color) 16%, var(--bg-2));
@@ -2216,7 +2216,7 @@ body.tool-scissors .timeline-tracks .clip {
 
 /* Ligne du groupe dans la timeline : aperçu de tout ce qu'il contient */
 .timeline-group-row {
-    height: var(--grp-h, 36px); flex-shrink: 0; position: relative;
+    height: var(--grp-h, var(--grp-def, 36px)); flex-shrink: 0; position: relative;
     cursor: crosshair;   /* un clic pose le curseur de lecture, comme le bas d'une piste */
     margin: 0 8px 0 0;
     background: color-mix(in srgb, var(--group-color) 7%, var(--bg-1));
@@ -2233,7 +2233,7 @@ body.tool-scissors .timeline-tracks .clip {
 .group-header .group-vol { width: 46px; min-width: 0; }
 .timeline-group-row .group-count {
     position: sticky; left: 12px; float: left;
-    margin: 0; line-height: 36px;
+    margin: 0; line-height: var(--grp-h, var(--grp-def, 36px));
     font-style: normal; font-size: 10.5px; letter-spacing: 0.3px;
     color: var(--text-1); opacity: 0.55; white-space: nowrap; pointer-events: none;
     text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
