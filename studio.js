@@ -15653,6 +15653,28 @@ document.addEventListener('mousedown', (e) => {
     e.preventDefault(); e.stopPropagation();
     resetRange(el);
 }, true);
+// Mac (comme Logic) : ⌃ + clic = clic droit, partout. On le transforme une fois pour toutes en vrai clic droit,
+// sinon les gestes qui lisent ⌃ comme ⌘ (ajouter à la sélection…) se déclenchent EN PLUS du menu.
+if (/Mac/i.test(navigator.platform)) {
+    let _ctrlRight = false;
+    window.addEventListener('mousedown', (e) => {
+        if (e.button !== 0 || !e.ctrlKey || e.metaKey || !e.isTrusted) return;
+        const t = e.target;
+        if (!t || !t.closest || t.closest('input, textarea, select, [contenteditable="true"]')) return;
+        if (t.closest('.strip-s, .m-s, .g-s')) return;   // ⌃ + clic sur S : geste à part (solo protégé)
+        e.stopImmediatePropagation(); e.preventDefault();
+        _ctrlRight = true;
+        t.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window, clientX: e.clientX, clientY: e.clientY, screenX: e.screenX, screenY: e.screenY, button: 2, buttons: 2, shiftKey: e.shiftKey, altKey: e.altKey, detail: 1 }));
+    }, true);
+    // le relâché qui suit n'est pas un clic gauche non plus
+    window.addEventListener('mouseup', (e) => {
+        if (!_ctrlRight || e.button !== 0) return;
+        _ctrlRight = false;
+        e.stopImmediatePropagation();
+        e.target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window, clientX: e.clientX, clientY: e.clientY, button: 2, buttons: 0 }));
+    }, true);
+    window.addEventListener('click', (e) => { if (e.ctrlKey && !e.metaKey && e.button === 0 && e.isTrusted && !(e.target.closest && e.target.closest('input, textarea, select, [contenteditable="true"], .strip-s, .m-s, .g-s'))) { e.stopImmediatePropagation(); e.preventDefault(); } }, true);
+}
 function openValueEntry(el) {
     document.querySelectorAll('.value-entry').forEach(x => x.remove());
     const isDb = el.matches('.fader, .t-vol, .group-vol');
