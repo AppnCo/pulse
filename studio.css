@@ -3830,3 +3830,6 @@ body[data-left-tool="fade"] .timeline-tracks .clip { cursor: ew-resize; }
 .t-mini.m-m.solo-off, .strip-ms .strip-m.solo-off { animation: soloOffBlink 1s steps(1) infinite; }
 /* Groupes choisis ensemble (⌘ / ⇧ + clic sur l'en-tête) */
 .group-header.is-chosen { outline: 2px solid var(--group-color, #A855F7); outline-offset: -2px; }
+
+/* Menu des envois : un bus déjà envoyé d'ici est grisé (comme Logic) */
+.track-ctx-menu .ctx-item.is-off { opacity: 0.4; pointer-events: none; }

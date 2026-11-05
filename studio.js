@@ -2719,7 +2719,7 @@ function openSendTargetMenu(anchor, kind, x) {
     const r = anchor.getBoundingClientRect();
     const menu = document.createElement('div');
     menu.className = 'track-ctx-menu';
-    menu.style.cssText = `position:fixed;left:${Math.max(8, Math.min(r.left, window.innerWidth - 230))}px;top:${Math.max(8, Math.min(r.bottom + 2, window.innerHeight - 320))}px;z-index:300;min-width:210px;max-height:60vh;overflow:auto`;
+    menu.style.cssText = `position:fixed;left:${Math.max(8, Math.min(r.left, window.innerWidth - 230))}px;top:${Math.max(8, Math.min(r.bottom + 2, window.innerHeight - 320))}px;z-index:300;min-width:210px;max-height:calc(100vh - 16px);overflow:auto`;
     // Comme Logic : la liste des bus numérotés (Bus 1, Bus 2…). Un bus déjà créé garde son nom (« Bus 1 · Reverb ») ;
     // un numéro libre crée le bus. Ce bus a ses propres effets ; il s'affiche aussitôt dans la tranche de droite.
     const buses = (state.project.buses || []).filter(b => !b.premaster && b.id !== 'master' && !(kind === 'bus' && (b.id === x.id || busFeeds(busById(b.id), x.id))) && !(x.busSends || {})[b.id]);
@@ -2730,24 +2730,25 @@ function openSendTargetMenu(anchor, kind, x) {
         saveProject(); refreshPlaybackSoon(); refreshStrips();
         flash(`Envoi vers ${b.name} ajouté : son bus est à droite, ajoute-lui ses effets`);
     };
+    // Comme Logic : Bus 1 à 32 directement, puis les paquets « 33 – 64 ▸ »… jusqu'à 256.
+    // Un bus déjà utilisé le montre : « Bus 1 → Retour 1 » (ou son nom s'il est renommé) ; un numéro libre crée le bus.
     const items = [{ head: 'Bus' }];
     const num = (b) => b.busNum || +((/^Bus (\d+)$/.exec(b.name || '') || [])[1] || 0);
-    const auxes = buses.filter(b => b.isAux).sort((a, c) => (num(a) || 999) - (num(c) || 999));
-    auxes.forEach(b => items.push({ label: num(b) && b.name !== `Bus ${num(b)}` ? `Bus ${num(b)} · ${b.name}` : b.name, run: () => add(b) }));
-    const used = new Set((state.project.buses || []).map(num).filter(Boolean));
-    let first = 1; while (used.has(first)) first++;
-    items.push({ label: `Bus ${first}`, hint: 'nouveau', run: () => createSendBus(kind, x, 'empty', first) });
-    // Comme Logic : tous les bus, rangés par paquets (Bus 1–32 ▸, Bus 33–64 ▸… jusqu'à 256) ; un numéro libre crée le bus
-    const byNum = new Map(); buses.forEach(b => { const k = num(b); if (k && !byNum.has(k)) byNum.set(k, b); });
-    for (let a = 1; a <= BUS_MAX; a += BUS_PACK) {
+    const ok = new Set(buses);
+    const byNum = new Map(); (state.project.buses || []).forEach(b => { const k = num(b); if (k && !byNum.has(k)) byNum.set(k, b); });
+    const entry = (n) => {
+        const b = byNum.get(n);
+        if (!b) return { label: `Bus ${n}`, run: () => createSendBus(kind, x, 'empty', n) };
+        const label = `Bus ${n} → ${b.name !== `Bus ${n}` ? b.name : 'Retour ' + n}`;
+        return ok.has(b) ? { label, run: () => add(b) } : { label, off: true };   // déjà envoyé d'ici (ou boucle) : grisé
+    };
+    for (let n = 1; n <= BUS_PACK; n++) items.push(entry(n));
+    items.push({ sep: true });
+    for (let a = BUS_PACK + 1; a <= BUS_MAX; a += BUS_PACK) {
         const z = a + BUS_PACK - 1;
-        items.push({ label: `Bus ${a}–${z}`, sub: () => {
+        items.push({ label: `${a} – ${z}`, sub: () => {
             const out = [];
-            for (let n = a; n <= z; n++) {
-                const b = byNum.get(n);
-                if (b) out.push({ label: b.name !== `Bus ${n}` ? `Bus ${n} · ${b.name}` : b.name, action: () => add(b) });
-                else if (!used.has(n)) { const k = n; out.push({ label: `Bus ${k}`, action: () => createSendBus(kind, x, 'empty', k) }); }
-            }
+            for (let n = a; n <= z; n++) { const e = entry(n); out.push(e.off ? { label: e.label, off: true, action: () => {} } : { label: e.label, action: e.run }); }
             return out;
         } });
     }
@@ -2757,11 +2758,17 @@ function openSendTargetMenu(anchor, kind, x) {
     items.forEach(it => {
         if (it.sub) { ctxAddSubmenu(menu, { label: it.label, children: it.sub() }); menu.lastElementChild.dataset.busPack = it.label; return; }
         const el = document.createElement('div');
-        if (it.head) { el.className = 'ctx-head'; el.textContent = it.head; }
+        if (it.sep) { el.className = 'ctx-sep'; }
+        else if (it.head) { el.className = 'ctx-head'; el.textContent = it.head; }
+        else if (it.off) { el.className = 'ctx-item is-off'; el.textContent = it.label; el.title = 'Déjà envoyé d\'ici'; el.addEventListener('mousedown', (ev) => ev.stopPropagation()); }
         else { el.className = 'ctx-item'; el.textContent = it.label; if (it.hint) el.insertAdjacentHTML('beforeend', ` <i class="fam-tag">${it.hint}</i>`); el.addEventListener('mousedown', (ev) => { ev.stopPropagation(); closeAllMenus(); it.run(); }); }
         menu.appendChild(el);
     });
     document.body.appendChild(menu);
+    // tout le menu reste dans l'écran (encore une fois à l'image suivante : les petites icônes l'allongent un peu)
+    // (offsetHeight : la vraie hauteur, sans l'animation d'ouverture qui rétrécit le menu un instant)
+    const fitMenu = () => { const h = menu.offsetHeight, t = parseFloat(menu.style.top) || 0; if (t + h > window.innerHeight - 8) menu.style.top = Math.max(8, window.innerHeight - 8 - h) + 'px'; };
+    fitMenu(); requestAnimationFrame(fitMenu);
     setTimeout(() => document.addEventListener('mousedown', closeAllMenus, { once: true }), 10);
 }
 
@@ -12738,7 +12745,7 @@ function ctxAddSubmenu(menu, item) {
         item.children.filter(Boolean).forEach(ch => {
             if (ch.sep) { const d = document.createElement('div'); d.className = 'ctx-sep'; panel.appendChild(d); return; }
             const el = document.createElement('div');
-            el.className = 'ctx-item' + (ch.danger ? ' ctx-danger' : '');
+            el.className = 'ctx-item' + (ch.danger ? ' ctx-danger' : '') + (ch.off ? ' is-off' : '');
             el.textContent = ch.label;
             if (ch.title) el.title = ch.title;
             el.addEventListener('mousedown', (ev) => ev.stopPropagation());
