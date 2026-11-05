@@ -15100,7 +15100,7 @@ function deleteSelection() {
 // Temps (tout se cale sur la grille). `state.gridRes` = finesse de la grille : auto (suit le zoom), bar, beat, division.
 const SNAP_KEY = 'pulse_snap';
 const SNAP_RES_LABEL = { auto: 'Auto', bar: 'Mesure', beat: '1/4', division: '1/8' };
-const SNAP_MAGNET_PX = 8; // portée de l'aimant intelligent
+const SNAP_MAGNET_PX = 8; // portée de l'aimant sur les bords des régions (curseur)
 function snapSpec() {
     const s = state.snap;
     if (s === 'off' || s === 'magnet' || s === 'grid') return { mode: s, res: state.gridRes || 'auto' };
@@ -15111,12 +15111,12 @@ function getEffectiveSnap() {
     const { mode, res } = snapSpec();
     if (mode === 'off') return 'off';
     if (res !== 'auto') return res;
-    // Auto : finesse selon le zoom (comme Logic)
+    // Auto : finesse selon le zoom (comme Logic) — la même que les traits de la règle : on crante sur ce qu'on voit
     const beatPx = state.pxPerSecond * (60 / bpmAtSec(state.playhead || 0));
-    if (beatPx >= 480) return 'fine';     // 1/32 de temps : édition à la milliseconde
-    if (beatPx >= 120) return 'division'; // 1/8 note
-    if (beatPx >= 40)  return 'beat';
-    return 'bar';
+    if (beatPx >= 480) return 'fine';     // la règle montre 8 traits par temps
+    if (beatPx >= 100) return 'division'; // 4 traits par temps (doubles croches)
+    if (beatPx >= 24)  return 'beat';     // les temps sont numérotés
+    return 'bar';                          // dézoomé : seulement les mesures
 }
 
 // free : ⌘ tenu = placement libre le temps du geste
@@ -15131,12 +15131,24 @@ function snapPlayheadToEdges(t, free) {
     }));
     return best;
 }
+// Aimant intelligent : libre entre les traits, mais il « crante » quand on passe près d'un trait visible,
+// plus fort sur les grandes lignes : mesure (14 px), temps (10 px), subdivisions (6 px). On sent les mesures passer.
+const SNAP_LEVELS = ['bar', 'beat', 'division', 'fine'];
+const SNAP_PULL_PX = { bar: 14, beat: 10, division: 6, fine: 5 };
 function snapTime(t, free) {
     const { mode } = snapSpec();
     if (mode === 'off' || free) return Math.max(0, t);
-    const nearest = snapToGrid(t, getEffectiveSnap());
-    if (mode === 'magnet' && Math.abs(t - nearest) > SNAP_MAGNET_PX / state.pxPerSecond) return Math.max(0, t);
-    return Math.max(0, nearest);
+    const eff = getEffectiveSnap();
+    if (mode !== 'magnet') return Math.max(0, snapToGrid(t, eff));
+    const upTo = SNAP_LEVELS.indexOf(eff);
+    const beatPx = state.pxPerSecond * 60 / bpmAtSec(t);
+    const gapPx = { bar: beatPx * bpbAtSec(t), beat: beatPx, division: beatPx / 4, fine: beatPx / 8 };
+    for (let k = 0; k <= upTo; k++) {
+        const lv = SNAP_LEVELS[k], g = snapToGrid(t, lv);
+        // portée plafonnée à 35 % de l'écart entre deux traits : il reste toujours de la place libre entre les crans
+        if (Math.abs(t - g) * state.pxPerSecond <= Math.min(SNAP_PULL_PX[lv], gapPx[lv] * 0.35)) return Math.max(0, g);
+    }
+    return Math.max(0, t);
 }
 
 function saveSnap() {
