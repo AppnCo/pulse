@@ -1979,7 +1979,7 @@ function renderMarkers() {
                     state.project.markers.sort((a, b) => a.time - b.time);
                     saveProject(); renderMarkers();
                     flash(`Marqueur « ${mk.name || ''} » déplacé à ${secondsToDuration(mk.time)}`);
-                } else { state.playhead = mk.time; updatePlayhead(); updateChrono(); }
+                } else { state.playhead = mk.time; state.baseCleared = false; state.userBaseSec = mk.time; updatePlayhead(); updateChrono(); }
             };
             document.addEventListener('mousemove', move);
             document.addEventListener('mouseup', up);
@@ -2076,7 +2076,7 @@ function navigateMarker(dir) {
         target = [...markers].reverse().find(m => m.time < ph - 0.05);
     }
     if (!target) target = dir > 0 ? markers[0] : markers[markers.length - 1];
-    state.playhead = target.time;
+    state.playhead = target.time; state.baseCleared = false; state.userBaseSec = target.time;
     updatePlayhead(); updateChrono();
     flash(`→ ${target.name}`);
 }
@@ -11398,7 +11398,8 @@ function zoomAnchorSec() {
 // Où zoomer : sur le curseur de base s'il y en a un (au milieu de l'écran) ; sans base posée, autour de la souris
 // quand elle survole la timeline (le point sous la souris ne bouge pas)
 function zoomTarget() {
-    const hasBase = state.playing || state.recording || (!state.baseCleared && state.userBaseSec != null);
+    // une base = tout curseur posé (clic, règle, marqueur, retour au début…) tant qu'un clic en haut d'une piste ne l'a pas retirée
+    const hasBase = state.playing || state.recording || !state.baseCleared;
     if (!hasBase) {
         const tl = document.querySelector('.timeline');
         if (tl && _ptr.x != null) {
@@ -11411,6 +11412,8 @@ function zoomTarget() {
 }
 // Le curseur de base (là où la lecture revient à l'arrêt) plutôt que celui qui défile ; sans base, le curseur de lecture
 function baseCursorSec() {
+    // à l'arrêt après une pause, un nouveau clic a posé une nouvelle base : c'est elle qui compte (pas l'ancien point de départ)
+    if (!state.playing && state.paused && Math.abs(state.playhead - state.paused.pos) >= 0.02) return state.playhead;
     if ((state.playing || state.paused) && state.playOrigin != null && returnOnStop()) return state.playOrigin;
     return state.playhead;
 }
