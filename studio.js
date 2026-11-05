@@ -5845,10 +5845,13 @@ function bindGlobalDragDrop() {
         const tlr = tl && tl.getBoundingClientRect();
         const overTl = tlr && e.clientX >= tlr.left && e.clientX <= tlr.right && e.clientY >= tlr.top && e.clientY <= tlr.bottom;
         const at = overTl ? snapTime(Math.max(0, (e.clientX - tlr.left + tl.scrollLeft) / state.pxPerSecond), e.shiftKey) : state.playhead;
-        const rowEl = e.target.closest && e.target.closest('.timeline-track, .track-item');
-        const rowIdx = rowEl ? [...rowEl.parentElement.children].filter(c => c.matches('.timeline-track, .track-item')).indexOf(rowEl) : -1;
+        const rowEl = e.target.closest && e.target.closest('.timeline-track[data-i], .track-item[data-i]');
+        const rowIdx = rowEl ? parseInt(rowEl.dataset.i) : -1;   // le numéro de la piste (pas sa place dans la page : groupes et dossiers s'intercalent)
+        const rowT = rowIdx >= 0 ? state.project.tracks[rowIdx] : null;
+        const onAudio = !!(rowT && !rowT.locked && !rowT.isCapture && (rowT.type || 'audio') === 'audio');
+        // Comme Logic : un fichier lâché SUR une piste audio s'y pose ; sous les pistes (ou sur un piano / une batterie) = nouvelle piste.
         // Plusieurs fichiers : on demande quoi en faire, comme la fenêtre « Ajouter les fichiers » de Logic
-        const mode = files.length > 1 ? await askMultiImport(files.length) : 'new';
+        const mode = files.length > 1 ? await askMultiImport(files.length) : (onAudio ? 'existing' : 'new');
         if (!mode) return;
         await importDroppedFiles(files, mode, at, rowIdx >= 0 ? rowIdx : (state.selectedTrack ?? 0));
     });
