@@ -8839,8 +8839,16 @@ function findPlugWin(t, fxName) {
     if (String(fxName).includes('#')) return plugWins().find(p => p._plugT && p._plugT.__real === t && p._plugT.__fxId === fxName);
     return plugWins().find(p => p._plugT === t && p.dataset.fx === fxName);
 }
+// Comme Logic : une fenêtre de plugin rouverte revient là où on l'avait posée (par piste / groupe et par plugin, le temps de la séance)
+const _plugPos = new WeakMap();
+function plugPosKey(t, fxName) { return { o: t && t.__real ? t.__real : t, k: (t && t.__fxId) || fxName }; }
+function plugPosSave(t, fxName, x, y) { const { o, k } = plugPosKey(t, fxName); if (!o || typeof o !== 'object') return; const m = _plugPos.get(o) || {}; m[k] = { x, y }; _plugPos.set(o, m); }
+function plugPosGet(t, fxName) { const { o, k } = plugPosKey(t, fxName); const m = o && typeof o === 'object' ? _plugPos.get(o) : null; return m && m[k]; }
 function makePlugWindow(panel, t, fxName, trackIdx) {
     panel.classList.add('plug-win');
+    { const saved = plugPosGet(t, fxName);
+      if (saved) { const place = () => { const x = Math.max(80 - panel.offsetWidth, Math.min(window.innerWidth - 80, saved.x)), y = Math.max(0, Math.min(window.innerHeight - 30, saved.y)); plugSetPos(panel, x, y); };
+          place(); requestAnimationFrame(place); } }
     panel._plugT = t; panel.dataset.fx = fxName;
     if (t && t.__fxId) { const ti = panel.querySelector('.fx-title'); if (ti && !ti.querySelector('.fx-inst')) ti.insertAdjacentHTML('beforeend', ` <b class="fx-inst">${fxInstNum(t.__fxId)}</b>`); }
     if (!panel._autoShow) {
@@ -8861,7 +8869,10 @@ function makePlugWindow(panel, t, fxName, trackIdx) {
             const y = Math.max(0, Math.min(window.innerHeight - 30, ev.clientY - dy));
             plugSetPos(panel, Math.round(x), Math.round(y));
         };
-        const up = () => { panel.classList.remove('dragging'); document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
+        const up = () => {
+            panel.classList.remove('dragging'); document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up);
+            const pr = panel.getBoundingClientRect(); plugPosSave(t, fxName, Math.round(pr.left), Math.round(pr.top));   // retenue pour la prochaine ouverture
+        };
         panel.classList.add('dragging');
         document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
     });
