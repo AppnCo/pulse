@@ -5127,6 +5127,32 @@ function setTracksFlag(key) {
     if (state.mixerOpen) { renderMixer(); bindMixerEvents(); }
     saveProject();
 }
+// ⌃⌥⌘M (Logic) : plus aucun mute, pistes et bus
+function clearAllMutes() {
+    pushUndo();
+    state.project.tracks.forEach(t => { t.muted = false; });
+    (state.project.buses || []).forEach(b => { if (b.muted) { b.muted = false; PulseAudio.updateBusVolume(b.id, b.volume ?? 100); } });
+    PulseAudio.refreshAudibility(state.project);
+    renderTracksPanel(); bindTrackEvents(); if (state.mixerOpen) { renderMixer(); bindMixerEvents(); }
+    saveProject(); flash('Plus aucun mute');
+}
+// ⌥⌘C / ⌥⌘V (Logic « Copier / Coller le réglage de tranche ») : les plugins de la piste et tous leurs réglages
+function copyStripSetting() {
+    const t = state.project.tracks[state.selectedTrack]; if (!t) return;
+    state._stripClip = JSON.parse(JSON.stringify({ effects: t.effects || [], fxOrder: t.fxOrder, effectParams: t.effectParams || {}, eqBands: t.eqBands, name: t.name }));
+    flash(`Réglages de « ${t.name} » copiés (${(t.effects || []).length} plugin${(t.effects || []).length > 1 ? 's' : ''}) — ⌥⌘V pour les coller`);
+}
+function pasteStripSetting() {
+    const c = state._stripClip; if (!c) { flash('Rien à coller : ⌥⌘C sur une piste d\'abord'); return; }
+    const idxs = selectedTrackIdxs().filter(i => state.project.tracks[i]);
+    if (!idxs.length) return;
+    pushUndo();
+    idxs.forEach(i => { const t = state.project.tracks[i]; const v = JSON.parse(JSON.stringify(c)); t.effects = v.effects; t.effectParams = v.effectParams; if (v.fxOrder) t.fxOrder = v.fxOrder; else delete t.fxOrder; if (v.eqBands) t.eqBands = v.eqBands; else delete t.eqBands; });
+    document.querySelectorAll('.fx-panel.plug-win').forEach(w => w.remove());
+    renderTracksPanel(); bindTrackEvents(); renderInspector(); if (state.mixerOpen) { renderMixer(); bindMixerEvents(); }
+    refreshPlaybackSoon(); saveProject();
+    flash(`Réglages de « ${c.name} » collés sur ${idxs.length > 1 ? idxs.length + ' pistes' : '« ' + state.project.tracks[idxs[0]].name + ' »'}`);
+}
 // Tous les solos à zéro : pistes, groupes, dossiers
 // Comme Logic : le M d'une piste qu'on n'entend pas parce qu'une AUTRE est en solo clignote (pistes et table de mixage)
 function markSoloMutes() {
@@ -5374,7 +5400,10 @@ const SHORTCUT_GROUPS = [
             ['⌘⇧F', 'Voir tout le morceau'],
             ['X', 'Ouvrir / fermer le mixeur'],
             ['I', 'Afficher / cacher l\'inspecteur'],
-            ['V', 'Cacher / remontrer toutes les fenêtres de plugins']
+            ['V', 'Cacher / remontrer toutes les fenêtres de plugins'],
+            ['⌃ ⌥ ⌘ S', 'Plus aucun solo'],
+            ['⌃ ⌥ ⌘ M', 'Plus aucun mute'],
+            ['⌥ ⌘ C / ⌥ ⌘ V', 'Copier / coller les réglages de tranche (plugins) sur les pistes choisies']
         ]
     },
     {
@@ -13738,7 +13767,8 @@ function bindTimelineClick() {
         }
         // Tout en bas, sous la dernière piste (hors piste) : comme Logic, c'est le Pointeur → cadre de sélection des régions
         // (un simple clic désélectionne tout sans bouger le curseur)
-        if (!trackEl && e.button === 0 && !e.altKey && !e.shiftKey && !e.metaKey && mouseTool('left') !== 'marquee' && !e.target.closest('.empty-cta')) {
+        // (la ligne d'un groupe / dossier n'est pas « hors piste » : un clic y pose le curseur, glisser choisit une plage, plus bas)
+        if (!trackEl && e.button === 0 && !e.altKey && !e.shiftKey && !e.metaKey && mouseTool('left') !== 'marquee' && !e.target.closest('.empty-cta, .timeline-group-row')) {
             if (state.selection) clearRangeSelection();
             deselectTracksByTimelineClick();
             return startRegionLasso(e);
@@ -15852,6 +15882,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         const k = e.key.toLowerCase();
 
         // Modifiers d'abord
+        // Raccourcis Logic (liste des raccourcis d'Apple) : ⌃⌥⌘S = plus aucun solo, ⌃⌥⌘M = plus aucun mute,
+        // ⌥⌘C / ⌥⌘V = copier / coller les réglages de tranche (plugins et leurs réglages) sur les pistes choisies
+        if (e.ctrlKey && e.metaKey && e.altKey && e.code === 'KeyS') { e.preventDefault(); clearAllSolos(); return; }
+        if (e.ctrlKey && e.metaKey && e.altKey && e.code === 'KeyM') { e.preventDefault(); clearAllMutes(); return; }
+        if (e.metaKey && e.altKey && !e.ctrlKey && e.code === 'KeyC') { e.preventDefault(); copyStripSetting(); return; }
+        if (e.metaKey && e.altKey && !e.ctrlKey && e.code === 'KeyV') { e.preventDefault(); pasteStripSetting(); return; }
         if (mod && shift && k === 's') { e.preventDefault(); clearAllSolos(); return; }
         if (mod && shift && k === 't') { e.preventDefault(); _doAddTrack('audio'); return; }
         if (mod && !shift && !e.altKey && k === 't') { e.preventDefault(); splitAtPlayhead(); return; }

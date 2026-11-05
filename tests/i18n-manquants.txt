@@ -1,0 +1,148 @@
+. (ou ,)
+0.0 dB
+1 à 9
+2 microphones, clean vocal preset. For an interview or a dialogue.
+21 ms
+A step drum machine and a keyboard bass. To lay a foundation without playing.
+A+
+Afficher / cacher l'inspecteur
+All Vocal
+Aller au marqueur n° 1 à 9
+Aller au marqueur n° 10 à 19
+Aller à la position (mesure.temps)
+Ambiance
+Analogique
+A−
+Back
+Back ▾
+Bande 80
+Bandes et couleur
+Bitcrusher
+Boucle ↔ zone sautée (la lecture passe par-dessus)
+Bus 33
+Bus G
+Cacher / remontrer toutes les fenêtres de plugins
+Chorus
+Coller à la position du curseur (plusieurs pistes : à partir de la piste choisie, l'écart entre les régions est gardé)
+Comp 25
+Compresseurs
+Copier la région choisie (ou toutes les régions choisies)
+Couper ce bus
+Couper les régions là où est le curseur (les régions choisies, sinon celles de la piste choisie)
+Ctrl + 0 à 9
+De-esser
+Dimension
+Décaler la région choisie (ou toutes les régions choisies) d'un cran
+Détresse
+E / Z
+EQ 550
+EQ Horizon
+EQ Massif
+Entrée
+Flanger
+Gate
+Harmoniseur 910
+IV
+Joindre les régions choisies en une seule (piste par piste)
+Lampe 670
+Le déplacer (aimanté, Shift = libre) · le renommer (clic droit : supprimer)
+Lecture
+Marqueur · glisser · double-clic
+Menu des outils (Pointeur, Crayon, Gomme…) sous la souris
+Mix Bus 1
+New project
+Optique 2A
+Outil du clic : Outil Pointeur
+Outil du clic droit : Outil Gain
+Outil du ⌘ + clic : Outil Muet
+Outils de la souris
+Pause : la lecture suivante repart d'ici
+Pavé numérique (comme Logic)
+Phaser
+Piano 1 — 2.00s @ 0:00.000
+Pick up where you left off
+Plaque 140
+Préampli 76V
+Préamplis et EQ
+Pulse 73
+PulseTune
+Ranger les pistes choisies : nouveau dossier ou nouveau groupe (bus)
+Rap Studio
+Recent projects
+Reverb
+Répéter la région choisie une fois de plus, juste après (autant de fois que tu appuies) · plusieurs régions : tout le bloc est recopié après lui
+Salle 80
+Simple Beat
+Simple setup: 1 vocal + 1 instrumental. Perfect for a quick first track.
+Slapback
+Solo (S)
+Souffle
+Start from scratch
+Stop · à l'arrêt : retour au début
+Studio
+The base model: your beat on top, one track to record, then your vocals sorted by group (lead, backs, ambience). Add or remove whatever you want.
+The simple studio.
+Tracks
+Tranche E
+Vocal + Beat
+Vocal 1
+ajoute de l'air et de la présence sans durcir : se retient sur les « s »
+dB
+fait ressortir les détails et l'air d'une voix, soyeux, avec le souffle de la machine
+https://youtube.com/watch?v=…
+ii
+iii
+l'écho à bande : répétitions qui saturent et dérivent, vitesse qui pleure, ressort
+l'égaliseur de mastering : Terre (le grave profond), Ciel (l'air), Caractère Eau / Feu, centre / côtés
+l'égaliseur passif à lampes : grave plein et serré, aigus soyeux
+l'égaliseur à crans au son « américain » : punchy, les médiums en avant
+l'égaliseur à lampes de mastering : quatre bandes larges, l'air et le poids du master
+la grande réverbe numérique des années 80 : queue douce et vivante, graves qui tiennent
+la réverbe à plaque des voix depuis les années 60 : dense, brillante, sans pièce
+le compresseur FET des studios : on pousse l'entrée, la voix passe devant
+le compresseur de bus de console : il « colle » le mix ou la batterie (Gris, Noir)
+le compresseur de bus « américain » : punch, Poussée pour garder le grave, genou au choix
+le compresseur optique à lampes : lent, doux, la voix se pose toute seule (Gris, Argent, Noir)
+le compresseur à lampes des disques soul : épais, chaud, il colle sans se voir
+le compresseur à tout faire : de la couleur seule à tout écraser, avec ses distorsions
+le compresseur-limiteur de bus à diodes : rond, le mix tient sans se voir
+le magnétophone à bande : saturation douce, grave des têtes, souffle et pleurage (½ pouce, 2 pouces, cassette)
+le préampli de console : gain qui colore et EQ aux fréquences de la machine
+le préampli tout à lampes des années 50 : grave épais, aigus ronds, Radio pour le son « poste »
+le transpositeur des années 70 : doublage large (Micro), quintes, octaves, répétitions qui montent
+ms
+une voie de console complète : filtres, EQ 4 bandes, compresseur et gate (Brun, Noir)
+vi
+vii°
+Écho à bande
+Éclair 76
+Éclat
+Écouter seulement ce bus et ce qui y entre
+Égaliseur P1
+×2
+élargit la voix ou le synthé sans qu'on entende la modulation, et reste juste en mono
+÷2
+⇧F
+⇧⌘D
+⌘A · ⌥⌘A
+⌘C
+⌘D
+⌘D · ⌘A · ⌘Z
+⌘E
+⌘G
+⌘J
+⌘N
+⌘R
+⌘S
+⌘S · ⌘⌥S · ⌘Q
+⌘T
+⌘V
+⌘X
+⌘Z / ⌘⇧Z
+⌘⇧F
+⌘⇧S
+⌘⇧T
+⌘⌥S
+⌥C
+⌥M
+⌥T

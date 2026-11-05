@@ -2217,6 +2217,7 @@ body.tool-scissors .timeline-tracks .clip {
 /* Ligne du groupe dans la timeline : aperçu de tout ce qu'il contient */
 .timeline-group-row {
     height: var(--grp-h, 36px); flex-shrink: 0; position: relative;
+    cursor: crosshair;   /* un clic pose le curseur de lecture, comme le bas d'une piste */
     margin: 0 8px 0 0;
     background: color-mix(in srgb, var(--group-color) 7%, var(--bg-1));
     border-bottom: 1px solid color-mix(in srgb, var(--group-color) 30%, transparent);
