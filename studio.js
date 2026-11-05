@@ -16331,7 +16331,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Raccourcis clavier — philosophie : main gauche en priorité, zéro déplacement
     document.addEventListener('keydown', e => {
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
+        // un curseur (fader, volume, envoi) ou une case touchée ne prend pas le clavier : les raccourcis marchent tout de suite, comme dans Logic
+        if (e.target.tagName === 'INPUT' && /^(range|checkbox|radio|button|color)$/i.test(e.target.type)) { if (e.code === 'Space' || /^Arrow/.test(e.code)) e.target.blur(); }
+        else if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
 
         const mod = e.metaKey || e.ctrlKey;
         const shift = e.shiftKey;
