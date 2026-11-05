@@ -583,8 +583,20 @@ function bindGroupEvents() {
         h.addEventListener('click', (e) => {
             if (e.target.closest('button, input, .group-name.editing, .group-toggle')) return;
             // ⌘ / ⇧ + clic : ajouter / retirer ce groupe des groupes choisis ensemble (même choix que la table de mixage)
+            // (comme Logic : ⌘ + clic = ajouter / retirer ce groupe, ⇧ + clic = tous les groupes de la liste entre le dernier choisi et celui-ci)
             state.mixBuses = state.mixBuses instanceof Set ? state.mixBuses : new Set();
-            if (e.metaKey || e.shiftKey || e.ctrlKey) { if (state.mixBuses.has(bus.id)) state.mixBuses.delete(bus.id); else state.mixBuses.add(bus.id); paintGroupChosen(); return; }
+            const anchor = state.selectedBus && busById(state.selectedBus) ? state.selectedBus : null;
+            if (e.shiftKey && anchor && anchor !== bus.id) {
+                const order = [...document.querySelectorAll('#tracksList .group-header[data-bus], .tracks-list .group-header[data-bus]')].map(x => x.dataset.bus).filter((id, k, a) => busById(id) && a.indexOf(id) === k);
+                const a = order.indexOf(anchor), b = order.indexOf(bus.id);
+                if (a >= 0 && b >= 0) { state.mixBuses = new Set(order.slice(Math.min(a, b), Math.max(a, b) + 1)); paintGroupChosen(); return; }
+            }
+            if (e.metaKey || e.shiftKey || e.ctrlKey) {
+                if (!state.mixBuses.size && anchor) state.mixBuses.add(anchor);
+                if (state.mixBuses.has(bus.id)) state.mixBuses.delete(bus.id); else state.mixBuses.add(bus.id);
+                if (!anchor) { state.selectedBus = bus.id; state._selBusTrack = state.selectedTrack; }
+                paintGroupChosen(); return;
+            }
             state.mixBuses = new Set([bus.id]);
             state.selectedBus = bus.id; state._selBusTrack = state.selectedTrack;
             renderTracksPanel(); bindTrackEvents();
@@ -647,7 +659,10 @@ function bindGroupEvents() {
             const others = (state.project.buses || []).filter(b => b !== bus && b !== parent && isVisibleGroup(b) && !groupChain(b).includes(bus) && !inside.has(b));
             const items = [
                 ['Dupliquer le groupe (pour un feat, par exemple)', () => duplicateGroup(bus.id)],
-                ['Ranger dans un nouveau grand groupe', () => wrapGroup(bus.id)],
+                (() => { const ch = mixChosenBuses().filter(b => isVisibleGroup(b) && !isFolder(b));
+                    return ch.length > 1 && ch.includes(bus)
+                        ? [`Ranger les ${ch.length} groupes choisis dans un nouveau grand groupe (bus)`, () => wrapGroups(ch.map(b => b.id))]
+                        : ['Ranger dans un nouveau grand groupe (bus)', () => wrapGroups([bus.id])]; })(),
                 ...others.map(o => [`Ranger dans « ${o.name} »`, () => moveGroupInto(bus.id, o.id)]),
                 ...(parent ? [[`Sortir de « ${parent.name} »`, () => moveGroupInto(bus.id, parent.output || 'master')]] : []),
                 ['Éclater le groupe (les pistes restent, le bus disparaît)', () => dissolveGroup(bus.id)]
@@ -874,6 +889,35 @@ function wrapGroup(busId) {
     bus.output = id;
     afterGroupChange(`« ${bus.name} » est maintenant dans un grand groupe — clic droit sur un autre groupe pour l'y ranger aussi`);
 }
+
+// Plusieurs groupes d'un coup dans un nouveau grand groupe = un bus de plus (Mix Bus 1, 2…), autant de niveaux qu'on veut
+function wrapGroups(ids) {
+    let list = ids.map(busById).filter(Boolean);
+    // un groupe déjà contenu dans un autre groupe choisi suit son grand groupe
+    list = list.filter(b => !groupChain(b).slice(1).some(p => list.includes(p)));
+    if (!list.length) return;
+    pushUndo();
+    const outs = [...new Set(list.map(b => b.output || 'master'))];
+    const used = new Set((state.project.buses || []).map(b => b.name));
+    let n = 1; while (used.has('Mix Bus ' + n)) n++;
+    const id = 'grp_' + Date.now().toString(36);
+    state.project.buses.push({ id, name: 'Mix Bus ' + n, isGroup: true, output: outs.length === 1 ? outs[0] : 'master', color: '#7C3AED', volume: 100 });
+    // leurs pistes restent ensemble dans la liste, à la place de la première
+    const tracks = state.project.tracks;
+    const mine = new Set(list.flatMap(b => groupTracksDeep(b).map(i => tracks[i])));
+    const first = tracks.findIndex(t => mine.has(t));
+    if (first >= 0) {
+        const block = tracks.filter(t => mine.has(t)), rest = tracks.filter(t => !mine.has(t));
+        const at = tracks.slice(0, first).filter(t => !mine.has(t)).length;
+        const selT = tracks[state.selectedTrack];
+        state.project.tracks = [...rest.slice(0, at), ...block, ...rest.slice(at)];
+        if (selT) state.selectedTrack = state.project.tracks.indexOf(selT);
+    }
+    list.forEach(b => { b.output = id; });
+    state.mixBuses = new Set([id]); state.selectedBus = id; state._selBusTrack = state.selectedTrack;
+    afterGroupChange(list.length > 1 ? `${list.length} groupes rangés dans « Mix Bus ${n} » — double-clic sur le nom pour le renommer` : `« ${list[0].name} » rangé dans « Mix Bus ${n} »`);
+}
+function wrapGroup(busId) { wrapGroups([busId]); }
 
 // Range un groupe dans un autre (ou le sort vers `destId`)
 function moveGroupInto(busId, destId) {
@@ -5113,7 +5157,29 @@ function toggleSolo(trackIdx, exclusiveMode = false) {
 }
 
 // M / S au clavier sur plusieurs pistes choisies : toutes prennent le même état (l'inverse de la piste active), comme Logic
+// Groupes visés par S / M au clavier : le groupe actif (dernier cliqué dans la liste ou la table), avec ceux choisis en même temps
+function focusedBuses() {
+    const sel = state.selectedBus && state._selBusTrack === state.selectedTrack ? busById(state.selectedBus) : null;
+    const ch = mixChosenBuses();
+    if (sel) return ch.includes(sel) ? ch : [sel];
+    if (state._mixNoTrack && ch.length) return ch;
+    return [];
+}
+function setBusesFlag(key, buses) {
+    pushUndo();
+    const want = !buses[0][key];
+    buses.forEach(b => {
+        if (key === 'solo') { if (want) b.solo = true; else delete b.solo; }
+        else { b.muted = want; PulseAudio.updateBusVolume(b.id, want ? 0 : (b.volume ?? 100)); }
+    });
+    PulseAudio.refreshAudibility(state.project);
+    renderTracksPanel(); bindTrackEvents(); paintGroupChosen();
+    if (state.mixerOpen) { renderMixer(); bindMixerEvents(); }
+    saveProject();
+}
 function setTracksFlag(key) {
+    const fb = focusedBuses();
+    if (fb.length) { setBusesFlag(key === 'muted' ? 'muted' : 'solo', fb); return; }
     const idxs = selectedTrackIdxs().filter(i => state.project.tracks[i]);
     if (!idxs.length) return;
     const lead = state.project.tracks[state.selectedTrack] || state.project.tracks[idxs[0]];
