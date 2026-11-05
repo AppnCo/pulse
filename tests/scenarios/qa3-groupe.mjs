@@ -29,6 +29,7 @@ export default async (c) => {
   console.log('d2. ⌘Z :', await bus('vocal1'), ' sélection=', await ev(`state.selectedBus`), ' inspecteur=', await insp());
   // e. direction : Vocal 1 -> Back via le menu
   await ev(`document.querySelector('#inspector .insp-strip[data-kind="bus"] .insp-output').click()`); await sleep(150);
+  await ev(`document.querySelectorAll('.out-menu .ctx-has-sub').forEach(r => { if (r.textContent.trim() === 'Bus') r.dispatchEvent(new MouseEvent('mouseenter')); });`);
   console.log('e. choix du menu direction :', await ev(`JSON.stringify([...document.querySelectorAll('.track-ctx-menu .ctx-item')].map(e=>e.textContent))`));
   await ev(`[...document.querySelectorAll('.track-ctx-menu .ctx-item')].find(e=>/Back/.test(e.textContent)).click()`); await sleep(300);
   console.log('e2. après Vocal 1 → Back : bus=', await bus('vocal1'), ' invariants=', await ev(`JSON.stringify(${INVARIANTS})`), ' pistes=', await ev(`JSON.stringify(state.project.tracks.map(t=>t.name+'>'+t.output))`));

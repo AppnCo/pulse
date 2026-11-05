@@ -3030,52 +3030,75 @@ function outputChoices(kind, x) {
         const walk = (id) => { below.add(id); buses.filter(b => b.output === id).forEach(b => walk(b.id)); };
         walk(x.id);
     }
-    return buses.filter(b => !below.has(b.id) && !b.locked);   // Mix Bus 1 (Finition) compris : c'est une vraie direction
+    return buses.filter(b => !below.has(b.id) && !b.locked && !b.noOut);   // Mix Bus 1 (Finition) compris : c'est une vraie direction
+}
+// « Pas de sortie » (Logic) : un bus caché, à volume zéro — la piste ne sort plus, ses envois continuent (rien à changer dans le moteur)
+const NO_OUT_ID = 'no_out';
+function noOutBus() {
+    let b = busById(NO_OUT_ID);
+    if (!b) { b = { id: NO_OUT_ID, name: 'Pas de sortie', hidden: true, noFolder: true, noOut: true, output: 'master', volume: 0, color: '#555' }; (state.project.buses = state.project.buses || []).push(b); }
+    return b;
 }
 function openOutputMenu(anchor, kind, x, idx) {
     closeAllMenus();
     const r = anchor.getBoundingClientRect();
     const menu = document.createElement('div');
-    menu.className = 'track-ctx-menu';
-    menu.style.cssText = `position:fixed;left:${Math.max(8, r.left)}px;top:${Math.max(8, r.top - 12)}px;z-index:300;min-width:170px`;
+    menu.className = 'track-ctx-menu out-menu';
+    menu.style.cssText = `position:fixed;left:${Math.max(8, r.left)}px;top:${Math.max(8, r.top - 12)}px;z-index:300;min-width:190px`;
     const cur = x.output || 'master';
-    const items = [{ id: 'master', label: 'Sortie stéréo (Master)' }, ...outputChoices(kind, x).map(b => ({ id: b.id, label: b.name })), ...(kind === 'track' ? [{ id: '__new', label: '+  Nouveau bus…' }] : [])];
-    items.forEach(it => {
-        const el = document.createElement('div');
-        el.className = 'ctx-item';
-        el.textContent = (it.id === cur ? '✓  ' : '    ') + it.label;
-        el.addEventListener('click', () => {
-            menu.remove();
-            if (it.id === '__new') { createBus({ withTracks: kind === 'track' ? (selectedTrackIdxs().includes(idx) ? selectedTrackIdxs() : [idx]) : [] }); return; }
-            if (it.id === cur) return;
-            if (kind === 'track') {
-                // Plusieurs pistes choisies : elles partent toutes vers cette destination
-                const sel = selectedTrackIdxs();
-                const group = sel.length > 1 && sel.includes(idx) ? sel.map(i => state.project.tracks[i]) : [x];
-                if (it.id === 'master') {
-                    pushUndo(); group.forEach(g => { g.output = 'master'; });
-                    afterGroupChange(group.length > 1 ? `${group.length} pistes sortent maintenant directement sur la sortie stéréo` : `« ${x.name} » sort maintenant directement sur la sortie stéréo`);
-                } else if (group.length > 1) {
-                    const bus = busById(it.id); if (!bus) return;
-                    pushUndo(); group.forEach(g => { g.output = it.id; }); bus.collapsed = false;
-                    afterGroupChange(`${group.length} pistes rangées dans ${bus.name}`);
-                } else moveTrackToGroup(idx, it.id);
-            } else {
-                // Plusieurs groupes / bus choisis (⇧ / ⌘ + clic) : ils partent tous vers cette sortie, comme dans Logic.
-                // Un groupe qui contient la destination (ou qui EST la destination) reste où il est : pas de boucle.
-                const chosen = mixChosenBuses().filter(b => !b.locked && !b.premaster);
-                const list = chosen.length > 1 && chosen.includes(x) ? chosen : [x];
-                if (list.length === 1) { moveGroupInto(x.id, it.id === 'master' ? null : it.id); return; }
-                const dest = it.id === 'master' ? null : busById(it.id);
-                const ok = list.filter(b => !dest || (b !== dest && !busFeeds(dest, b.id)));
-                const skipped = list.length - ok.length;
-                if (!ok.length) { flash('Impossible : ce bus passe déjà par les groupes choisis'); return; }
-                asOneUndo(() => ok.forEach(b => moveGroupInto(b.id, dest ? dest.id : null)));
-                flash(`${ok.length} groupes envoyés vers ${dest ? dest.name : 'la sortie stéréo'}${skipped ? ` (${skipped} laissé${skipped > 1 ? 's' : ''} : ${skipped > 1 ? 'ils contiennent' : 'il contient'} la destination)` : ''}`);
-            }
-        });
-        menu.appendChild(el);
-    });
+    const choose = (id) => {
+        if (id === '__new') { createBus({ withTracks: kind === 'track' ? (selectedTrackIdxs().includes(idx) ? selectedTrackIdxs() : [idx]) : [] }); return; }
+        if (id === NO_OUT_ID) {
+            // toute la sélection (pistes, ou groupes choisis) ; les envois continuent
+            let tg;
+            if (kind === 'track') { const sl = selectedTrackIdxs(); tg = sl.length > 1 && sl.includes(idx) ? sl.map(i => state.project.tracks[i]) : [x]; }
+            else { const ch = mixChosenBuses().filter(b => !b.locked && !b.premaster); tg = ch.length > 1 && ch.includes(x) ? ch : [x]; }
+            pushUndo(); noOutBus(); tg.forEach(o => { o.output = NO_OUT_ID; });
+            afterGroupChange(tg.length > 1 ? `${tg.length} ${kind === 'track' ? 'pistes' : 'groupes'} sans sortie (leurs envois continuent)` : `« ${x.name} » n'a plus de sortie (ses envois continuent)`);
+            return;
+        }
+        if (id === cur) return;
+        if (kind === 'track') {
+            // Plusieurs pistes choisies : elles partent toutes vers cette destination
+            const sel = selectedTrackIdxs();
+            const group = sel.length > 1 && sel.includes(idx) ? sel.map(i => state.project.tracks[i]) : [x];
+            if (id === 'master') {
+                pushUndo(); group.forEach(g => { g.output = 'master'; });
+                afterGroupChange(group.length > 1 ? `${group.length} pistes sortent maintenant directement sur la sortie stéréo` : `« ${x.name} » sort maintenant directement sur la sortie stéréo`);
+            } else if (group.length > 1) {
+                const bus = busById(id); if (!bus) return;
+                pushUndo(); group.forEach(g => { g.output = id; }); bus.collapsed = false;
+                afterGroupChange(`${group.length} pistes rangées dans ${bus.name}`);
+            } else moveTrackToGroup(idx, id);
+        } else {
+            // Plusieurs groupes / bus choisis (⇧ / ⌘ + clic) : ils partent tous vers cette sortie, comme dans Logic.
+            // Un groupe qui contient la destination (ou qui EST la destination) reste où il est : pas de boucle.
+            const chosen = mixChosenBuses().filter(b => !b.locked && !b.premaster);
+            const list = chosen.length > 1 && chosen.includes(x) ? chosen : [x];
+            if (list.length === 1) { moveGroupInto(x.id, id === 'master' ? null : id); return; }
+            const dest = id === 'master' ? null : busById(id);
+            const ok = list.filter(b => !dest || (b !== dest && !busFeeds(dest, b.id)));
+            const skipped = list.length - ok.length;
+            if (!ok.length) { flash('Impossible : ce bus passe déjà par les groupes choisis'); return; }
+            asOneUndo(() => ok.forEach(b => moveGroupInto(b.id, dest ? dest.id : null)));
+            flash(`${ok.length} groupes envoyés vers ${dest ? dest.name : 'la sortie stéréo'}${skipped ? ` (${skipped} laissé${skipped > 1 ? 's' : ''} : ${skipped > 1 ? 'ils contiennent' : 'il contient'} la destination)` : ''}`);
+        }
+    };
+    const curLabel = cur === 'master' ? 'Sortie stéréo' : cur === NO_OUT_ID ? 'Pas de sortie' : busLabel(cur);
+    // comme Logic : la sortie actuelle cochée en haut, « Pas de sortie », puis « Sortie ▸ » et « Bus ▸ »
+    const row = (label, fn, cls = '') => { const el = document.createElement('div'); el.className = 'ctx-item ' + cls; el.textContent = label; el.addEventListener('mousedown', (e) => e.stopPropagation()); el.addEventListener('click', () => { menu.remove(); fn && fn(); }); menu.appendChild(el); return el; };
+    const sep = () => { const d = document.createElement('div'); d.className = 'ctx-sep'; menu.appendChild(d); };
+    row('✓  ' + curLabel, null, 'out-cur');
+    sep();
+    row((cur === NO_OUT_ID ? '✓  ' : '    ') + 'Pas de sortie', () => cur !== NO_OUT_ID && choose(NO_OUT_ID)).title = 'Le son ne sort plus (ses envois vers les bus continuent) — comme « Pas de sortie » dans Logic';
+    sep();
+    const close = () => menu.remove();
+    ctxAddSubmenu(menu, { label: 'Sortie', children: [{ label: (cur === 'master' ? '✓  ' : '    ') + 'Sortie stéréo (Master)', action: () => { close(); if (cur !== 'master') choose('master'); } }] });
+    const buses = outputChoices(kind, x).filter(b => !b.noOut);
+    ctxAddSubmenu(menu, { label: 'Bus', children: [
+        ...buses.map(b => ({ label: (b.id === cur ? '✓  ' : '    ') + b.name, action: () => { close(); if (b.id !== cur) choose(b.id); } })),
+        ...(kind === 'track' ? [{ sep: true }, { label: '+  Nouveau bus…', action: () => { close(); choose('__new'); } }] : [])
+    ] });
     document.body.appendChild(menu);
     dismissMenuOnOutside(menu);
 }
@@ -3739,6 +3762,7 @@ function openSendPanel(id, anchorEl) {
 
 function busLabel(id) {
     if (!id || id === 'master') return 'Master';
+    if (id === NO_OUT_ID) return 'Pas de sortie';
     const b = (state.project.buses || []).find(x => x.id === id);
     return b ? b.name : id;
 }

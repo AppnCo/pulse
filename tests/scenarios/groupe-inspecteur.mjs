@@ -17,6 +17,7 @@ export default async (c) => {
   console.log('effets du groupe :', await ev(`JSON.stringify(busById('vocal1').effects)`));
   // direction : vers Mix Bus 1 directement
   await ev(`document.querySelector('#inspector .insp-output').click()`); await sleep(150);
+  await ev(`document.querySelectorAll('.out-menu .ctx-has-sub').forEach(r => { if (r.textContent.trim() === 'Bus') r.dispatchEvent(new MouseEvent('mouseenter')); });`);
   const items = await ev(`JSON.stringify([...document.querySelectorAll('.track-ctx-menu .ctx-item')].map(e=>e.textContent.trim()))`);
   console.log('directions proposées :', items);
   await ev(`[...document.querySelectorAll('.track-ctx-menu .ctx-item')].find(e=>/Mix Bus 1/.test(e.textContent)).click()`); await sleep(300);

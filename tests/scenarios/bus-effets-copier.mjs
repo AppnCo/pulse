@@ -9,6 +9,7 @@ export default async ({ ev, nav, send, sleep }) => {
   const click = async (sel, text) => { const r = JSON.parse(await ev(`JSON.stringify((()=>{const els=[...document.querySelectorAll(${JSON.stringify(sel)})]; const el=${text?`els.find(e=>e.textContent.includes(${JSON.stringify(text)}))`:'els[0]'}; if(!el) return null; const b=el.getBoundingClientRect(); return {x:b.x+b.width/2,y:b.y+b.height/2}})())`)); if (!r) { console.log('introuvable', sel, text); return; } for (const type of ['mouseMoved','mousePressed','mouseReleased']) await send('Input.dispatchMouseEvent', { type, x: r.x, y: r.y, button: 'left', buttons: type==='mousePressed'?1:0, clickCount: 1 }); await sleep(300); };
   await click('.track-item');
   await click('.insp-output');
+  await ev(`document.querySelectorAll('.out-menu .ctx-has-sub').forEach(r => { if (r.textContent.trim() === 'Bus') r.dispatchEvent(new MouseEvent('mouseenter')); });`);
   await R('menu direction', `return [...document.querySelectorAll('.track-ctx-menu .ctx-item')].map(e=>e.textContent.trim()).join(' | ')`);
   await click('.track-ctx-menu .ctx-item', 'Nouveau bus');
   await R('bus créé, piste A dedans', `const b=state.project.buses.filter(b=>b.isGroup); return b.length+' bus : '+b.map(x=>x.name).join(',')+' | sortie A='+state.project.tracks[0].output+' | bus choisi='+state.selectedBus`);

@@ -6,12 +6,12 @@
 A step drum machine and a keyboard bass. To lay a foundation without playing.
 A+
 Afficher / cacher l'inspecteur
-All Vocal
 Aller au marqueur n° 1 à 9
 Aller au marqueur n° 10 à 19
 Aller à la position (mesure.temps)
-Ambiance
+Allumer / éteindre (clic maintenu et glisser vers le bas : plusieurs d'un coup)
 Analogique
+Avant / après : coupe tous les plugins de la tranche d'un coup, reclique pour les rallumer
 A−
 Back
 Back ▾
@@ -26,6 +26,7 @@ Chorus
 Coller à la position du curseur (plusieurs pistes : à partir de la piste choisie, l'écart entre les régions est gardé)
 Comp 25
 Compresseurs
+Copier / coller les réglages de tranche (plugins) sur les pistes choisies
 Copier la région choisie (ou toutes les régions choisies)
 Couper ce bus
 Couper les régions là où est le curseur (les régions choisies, sinon celles de la piste choisie)
@@ -46,6 +47,7 @@ IV
 Joindre les régions choisies en une seule (piste par piste)
 Lampe 670
 Le déplacer (aimanté, Shift = libre) · le renommer (clic droit : supprimer)
+Le son ne sort plus (ses envois vers les bus continuent) — comme « Pas de sortie » dans Logic
 Lecture
 Marqueur · glisser · double-clic
 Menu des outils (Pointeur, Crayon, Gomme…) sous la souris
@@ -56,12 +58,15 @@ Outil du clic : Outil Pointeur
 Outil du clic droit : Outil Gain
 Outil du ⌘ + clic : Outil Muet
 Outils de la souris
+Pas de sortie
 Pause : la lecture suivante repart d'ici
 Pavé numérique (comme Logic)
 Phaser
 Piano 1 — 2.00s @ 0:00.000
 Pick up where you left off
 Plaque 140
+Plus aucun mute
+Plus aucun solo
 Préampli 76V
 Préamplis et EQ
 Pulse 73
@@ -69,8 +74,10 @@ PulseTune
 Ranger les pistes choisies : nouveau dossier ou nouveau groupe (bus)
 Rap Studio
 Recent projects
+Remplacer par un autre plugin
 Reverb
 Répéter la région choisie une fois de plus, juste après (autant de fois que tu appuies) · plusieurs régions : tout le bloc est recopié après lui
+S'allume dès qu'un solo est actif — clic : plus aucun solo (⌃⌥⌘S)
 Salle 80
 Simple Beat
 Simple setup: 1 vocal + 1 instrumental. Perfect for a quick first track.
@@ -85,7 +92,6 @@ The simple studio.
 Tracks
 Tranche E
 Vocal + Beat
-Vocal 1
 ajoute de l'air et de la présence sans durcir : se retient sur les « s »
 dB
 fait ressortir les détails et l'air d'une voix, soyeux, avec le souffle de la machine
@@ -124,6 +130,8 @@ vii°
 ÷2
 ⇧F
 ⇧⌘D
+⌃ ⌥ ⌘ M
+⌃ ⌥ ⌘ S
 ⌘A · ⌥⌘A
 ⌘C
 ⌘D
@@ -143,6 +151,7 @@ vii°
 ⌘⇧S
 ⌘⇧T
 ⌘⌥S
+⌥ ⌘ C / ⌥ ⌘ V
 ⌥C
 ⌥M
 ⌥T
