@@ -2735,12 +2735,27 @@ function openSendTargetMenu(anchor, kind, x) {
     const auxes = buses.filter(b => b.isAux).sort((a, c) => (num(a) || 999) - (num(c) || 999));
     auxes.forEach(b => items.push({ label: num(b) && b.name !== `Bus ${num(b)}` ? `Bus ${num(b)} · ${b.name}` : b.name, run: () => add(b) }));
     const used = new Set((state.project.buses || []).map(num).filter(Boolean));
-    let shown = 0;
-    for (let n = 1; shown < 4 && n < 200; n++) if (!used.has(n)) { const k = n; items.push({ label: `Bus ${k}`, hint: 'nouveau', run: () => createSendBus(kind, x, 'empty', k) }); shown++; }
+    let first = 1; while (used.has(first)) first++;
+    items.push({ label: `Bus ${first}`, hint: 'nouveau', run: () => createSendBus(kind, x, 'empty', first) });
+    // Comme Logic : tous les bus, rangés par paquets (Bus 1–32 ▸, Bus 33–64 ▸… jusqu'à 256) ; un numéro libre crée le bus
+    const byNum = new Map(); buses.forEach(b => { const k = num(b); if (k && !byNum.has(k)) byNum.set(k, b); });
+    for (let a = 1; a <= BUS_MAX; a += BUS_PACK) {
+        const z = a + BUS_PACK - 1;
+        items.push({ label: `Bus ${a}–${z}`, sub: () => {
+            const out = [];
+            for (let n = a; n <= z; n++) {
+                const b = byNum.get(n);
+                if (b) out.push({ label: b.name !== `Bus ${n}` ? `Bus ${n} · ${b.name}` : b.name, action: () => add(b) });
+                else if (!used.has(n)) { const k = n; out.push({ label: `Bus ${k}`, action: () => createSendBus(kind, x, 'empty', k) }); }
+            }
+            return out;
+        } });
+    }
     // les groupes (sous-mix) peuvent aussi recevoir un envoi
     const groups = buses.filter(b => !b.isAux);
     if (groups.length) { items.push({ head: 'Groupes' }); groups.forEach(b => items.push({ label: b.name, run: () => add(b) })); }
     items.forEach(it => {
+        if (it.sub) { ctxAddSubmenu(menu, { label: it.label, children: it.sub() }); menu.lastElementChild.dataset.busPack = it.label; return; }
         const el = document.createElement('div');
         if (it.head) { el.className = 'ctx-head'; el.textContent = it.head; }
         else { el.className = 'ctx-item'; el.textContent = it.label; if (it.hint) el.insertAdjacentHTML('beforeend', ` <i class="fam-tag">${it.hint}</i>`); el.addEventListener('mousedown', (ev) => { ev.stopPropagation(); closeAllMenus(); it.run(); }); }
@@ -2750,6 +2765,8 @@ function openSendTargetMenu(anchor, kind, x) {
     setTimeout(() => document.addEventListener('mousedown', closeAllMenus, { once: true }), 10);
 }
 
+// Nombre de bus proposés dans le menu des envois (Logic : jusqu'à 256), par paquets de 32
+const BUS_MAX = 256, BUS_PACK = 32;
 // Bus d'envoi (aux façon Logic) : un groupe qui ne reçoit que des envois, avec ses inserts à lui.
 // Reverb à 100 % d'effet et -9,5 dB en sortie : même niveau que les anciens retours.
 const SEND_BUS_OUT = -9.54;
@@ -12219,10 +12236,10 @@ function openStackMenu() {
     const menu = document.createElement('div');
     menu.className = 'track-ctx-menu stack-menu';
     menu.style.cssText = `position:fixed;left:${Math.min(_lastMouse.x, innerWidth - 340)}px;top:${Math.min(_lastMouse.y, innerHeight - 120)}px;z-index:200;`;
-    [[`Nouveau dossier avec ${pl} (juste pour ranger, le son ne change pas)`, () => createFolderFromTracks(idxs)],
-     [`Nouveau groupe avec ${pl} (bus : un volume et un même son pour toutes)`, () => createGroupFromTracks(idxs)]].forEach(([label, fn]) => {
+    [['Nouveau groupe (bus)', () => createGroupFromTracks(idxs), `${pl} dans un bus : un seul volume et un même son pour toutes`],
+     ['Nouveau dossier', () => createFolderFromTracks(idxs), `${pl} dans un dossier : juste pour ranger, le son ne change pas`]].forEach(([label, fn, tip]) => {
         const el = document.createElement('div');
-        el.className = 'ctx-item'; el.textContent = label;
+        el.className = 'ctx-item'; el.textContent = label; el.title = tip;
         el.addEventListener('click', () => { menu.remove(); fn(); });
         menu.appendChild(el);
     });
@@ -12413,10 +12430,10 @@ function openTrackContextMenu(x, y, idx, t) {
             const pl = n > 1 ? `les ${n} pistes` : 'cette piste';
             const inGroup = ts.filter(x => trackGroup(x)), inFolder = ts.filter(x => trackFolder(x));
             return [
-                { label: `Nouveau groupe avec ${pl} (bus : un volume et un même son pour toutes)`, action: () => createGroupFromTracks(tg) },
-                { label: `Nouveau dossier avec ${pl} (juste pour ranger, le son ne change pas)`, action: () => createFolderFromTracks(tg) },
+                { label: 'Nouveau groupe (bus)', title: `${pl} dans un bus : un seul volume et un même son pour toutes`, action: () => createGroupFromTracks(tg) },
+                { label: 'Nouveau dossier', title: `${pl} dans un dossier : juste pour ranger, le son ne change pas`, action: () => createFolderFromTracks(tg) },
                 ...(state.project.buses || []).filter(b => isVisibleGroup(b) && !ts.every(x => x.output === b.id))
-                    .map(b => ({ label: `Ranger dans le groupe « ${b.name} »`, action: () => {
+                    .map(b => ({ label: `Ranger dans « ${b.name} »`, action: () => {
                         if (n === 1) { moveTrackToGroup(ti, b.id); return; }
                         pushUndo(); const mate = state.project.tracks[groupTracksDeep(b).find(k => !ts.includes(state.project.tracks[k]))];
                         ts.forEach(x => { if (!x.isCapture) x.output = b.id; }); b.collapsed = false;
@@ -12723,6 +12740,8 @@ function ctxAddSubmenu(menu, item) {
             const el = document.createElement('div');
             el.className = 'ctx-item' + (ch.danger ? ' ctx-danger' : '');
             el.textContent = ch.label;
+            if (ch.title) el.title = ch.title;
+            el.addEventListener('mousedown', (ev) => ev.stopPropagation());
             el.addEventListener('click', () => { ch.action(); menu.remove(); });
             panel.appendChild(el);
         });
@@ -12735,6 +12754,7 @@ function ctxAddSubmenu(menu, item) {
         panel.addEventListener('mouseleave', () => { timer = setTimeout(closePanel, 250); });
     };
     row.addEventListener('mouseenter', open);
+    row.addEventListener('mousedown', (ev) => ev.stopPropagation());
     row.addEventListener('click', open);
     row.addEventListener('mouseleave', () => { timer = setTimeout(closePanel, 250); });
     menu.appendChild(row);

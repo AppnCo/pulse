@@ -11,17 +11,17 @@ export default async (c) => {
     await sleep(300); return ok;
   };
   const menuOn = async (i) => { await ev(`closeAllMenus(); openTrackContextMenu(200, 200, ${i}, state.project.tracks[${i}]); [...document.querySelectorAll('.track-ctx-menu .ctx-has-sub')].find(e=>e.textContent==='Groupe').click()`); await sleep(200); };
-  const labels = async () => J(`return [...document.querySelectorAll('.track-ctx-menu *')].filter(e=>!e.children.length).map(e=>e.textContent.trim()).filter(Boolean)`);
+  const labels = async () => J(`return [...document.querySelectorAll('.track-ctx-menu .ctx-item')].map(e=>(e.textContent.trim()+(e.title?' — '+e.title:''))).filter(Boolean)`);
 
   // A, C, E choisies ; clic droit sur C
   await ev(`selectTrack(0); state.selectedTracks=new Set([0,2,4]); renderAll()`);
   await menuOn(2);
   const L = await labels();
-  check('menu : groupe avec les 3 pistes', L.some(l => l.startsWith('Nouveau groupe avec les 3 pistes')), JSON.stringify(L.filter(l => l.includes('Nouveau'))));
-  check('menu : dossier avec les 3 pistes', L.some(l => l.startsWith('Nouveau dossier avec les 3 pistes')));
+  check('menu : groupe avec les 3 pistes', L.some(l => l.startsWith('Nouveau groupe (bus) — les 3 pistes')), JSON.stringify(L.filter(l => l.includes('Nouveau'))));
+  check('menu : dossier avec les 3 pistes', L.some(l => l.startsWith('Nouveau dossier — les 3 pistes')));
   // Dossier
   const nbus = await J(`return state.project.buses.length`);
-  check('dossier créé', await pick('Nouveau dossier avec les 3 pistes'));
+  check('dossier créé', await pick('Nouveau dossier'));
   let s = await J(`return {names:state.project.tracks.map(t=>t.name), fold:state.project.tracks.map(t=>t.folder||''), out:state.project.tracks.map(t=>t.name+':'+t.output), folders:(state.project.folders||[]).length, buses:state.project.buses.length, heads:[...document.querySelectorAll('.group-header.is-folder')].length}`);
   check('les 3 pistes sont dans le dossier, rangées ensemble', s.names.join('') === 'ACEBD' && s.fold.slice(0, 3).every(Boolean) && !s.fold[3] && !s.fold[4], JSON.stringify(s));
   check('dossier : le son ne change pas (sorties identiques, pas de bus en plus)', s.buses === nbus && s.out.includes('E:mix') && s.out.includes('A:master'), JSON.stringify(s.out));
@@ -40,14 +40,14 @@ export default async (c) => {
   // Groupe (bus) avec 2 pistes choisies
   await ev(`state.project.tracks.forEach(t=>{delete t.folder}); selectTrack(1); state.selectedTracks=new Set([1,3]); renderAll()`);
   await menuOn(3);
-  check('groupe créé', await pick('Nouveau groupe avec les 2 pistes'));
+  check('groupe créé', await pick('Nouveau groupe (bus)'));
   s = await J(`const g=state.project.buses.filter(b=>b.isGroup && b.id.startsWith('grp_')).pop(); return {g:!!g, members: g? state.project.tracks.filter(t=>t.output===g.id).map(t=>t.name).join(''):''}`);
   check('les 2 pistes passent par le nouveau groupe', s.g && s.members.length === 2, JSON.stringify(s));
   // Une seule piste : seulement elle
   await ev(`selectTrack(0); state.selectedTracks=new Set([0]); renderAll()`);
   await menuOn(0);
-  check('une seule piste : « avec cette piste »', (await labels()).some(l => l.startsWith('Nouveau dossier avec cette piste')));
-  await pick('Nouveau dossier avec cette piste');
+  check('une seule piste : « avec cette piste »', (await labels()).some(l => l.startsWith('Nouveau dossier — cette piste')));
+  await pick('Nouveau dossier');
   check('dossier d\'une piste', (await J(`return state.project.tracks.filter(t=>t.folder).length`)) === 1);
   // Défaire le dossier
   await ev(`dissolveFolder(state.project.folders[0].id)`); await sleep(200);
