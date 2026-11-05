@@ -5665,6 +5665,7 @@ const SHORTCUT_GROUPS = [
             ['I', 'Afficher / cacher l\'inspecteur'],
             ['V', 'Cacher / remontrer toutes les fenêtres de plugins'],
             ['⌘↓ / ⌘↑', 'Zoom vertical : tout grandit / rétrécit (pistes et groupes)'],
+            ['⌥ ⌘ N', 'Nouvelle piste (menu) · ⌘⌫ = supprimer la piste choisie'],
             ['⌃ ⌥ ⌘ S', 'Plus aucun solo'],
             ['⌃ ⌥ ⌘ M', 'Plus aucun mute'],
             ['⌥ ⌘ C / ⌥ ⌘ V', 'Copier / coller les réglages de tranche (plugins) sur les pistes choisies']
@@ -16303,7 +16304,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
         if (mod && k === 'e')          { e.preventDefault(); exportProject(); return; }
-        if (mod && k === 'n')          { e.preventDefault(); window.location.href = 'index.html'; return; }
+        // ⌥⌘N (Logic « Nouvelles pistes ») : le menu d'ajout de piste — et surtout pas quitter le projet comme ⌘N
+        if (mod && e.altKey && e.code === 'KeyN') { e.preventDefault(); addTrack(null, document.getElementById('btnAddTrack')); return; }
+        if (mod && !e.altKey && k === 'n') { e.preventDefault(); window.location.href = 'index.html'; return; }
         if (mod && k === 'a')          { e.preventDefault(); if (e.altKey) selectAllClipsOnTrack(); else selectAllClips(); return; }
         if (mod && shift && k === 'f') { e.preventDefault(); zoomToFit(); return; }
         if (mod && shift && k === 'd') { e.preventDefault(); openStackMenu(); return; }   // ⇧⌘D = ranger les pistes choisies (pile de pistes de Logic)
