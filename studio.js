@@ -3061,7 +3061,17 @@ function openOutputMenu(anchor, kind, x, idx) {
                     afterGroupChange(`${group.length} pistes rangées dans ${bus.name}`);
                 } else moveTrackToGroup(idx, it.id);
             } else {
-                moveGroupInto(x.id, it.id === 'master' ? null : it.id);
+                // Plusieurs groupes / bus choisis (⇧ / ⌘ + clic) : ils partent tous vers cette sortie, comme dans Logic.
+                // Un groupe qui contient la destination (ou qui EST la destination) reste où il est : pas de boucle.
+                const chosen = mixChosenBuses().filter(b => !b.locked && !b.premaster);
+                const list = chosen.length > 1 && chosen.includes(x) ? chosen : [x];
+                if (list.length === 1) { moveGroupInto(x.id, it.id === 'master' ? null : it.id); return; }
+                const dest = it.id === 'master' ? null : busById(it.id);
+                const ok = list.filter(b => !dest || (b !== dest && !busFeeds(dest, b.id)));
+                const skipped = list.length - ok.length;
+                if (!ok.length) { flash('Impossible : ce bus passe déjà par les groupes choisis'); return; }
+                asOneUndo(() => ok.forEach(b => moveGroupInto(b.id, dest ? dest.id : null)));
+                flash(`${ok.length} groupes envoyés vers ${dest ? dest.name : 'la sortie stéréo'}${skipped ? ` (${skipped} laissé${skipped > 1 ? 's' : ''} : ${skipped > 1 ? 'ils contiennent' : 'il contient'} la destination)` : ''}`);
             }
         });
         menu.appendChild(el);
