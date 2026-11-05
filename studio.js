@@ -1001,6 +1001,31 @@ function renameBusInline(nameEl, bus) {
     nameEl.addEventListener('blur', () => done(true), { once: true });
 }
 
+// Double-clic sur le nom d'une tranche (inspecteur, table de mixage) = renommer, comme dans Logic — pistes et groupes
+document.addEventListener('dblclick', (e) => {
+    const el = e.target.closest && e.target.closest('.strip-name');
+    if (!el || el.isContentEditable) return;
+    const strip = el.closest('.strip'); if (!strip) return;
+    if (strip.closest('.mixer-strips') && strip.dataset.kind === 'bus') return;   // déjà géré (avec le glisser du nom)
+    let obj = null;
+    if (strip.dataset.kind === 'track') { const i = parseInt(strip.dataset.i ?? strip.dataset.id); obj = state.project.tracks[i]; }
+    else if (strip.dataset.kind === 'bus') obj = busById(strip.dataset.id) || (state.project.buses || [])[parseInt(strip.dataset.i)];
+    if (!obj || obj.premaster || obj.isCapture) return;
+    e.stopPropagation();
+    if (strip.dataset.kind === 'bus') { renameBusInline(el, obj); return; }
+    el.contentEditable = 'true'; el.textContent = obj.name; el.focus();
+    const rg = document.createRange(); rg.selectNodeContents(el); const sl = getSelection(); sl.removeAllRanges(); sl.addRange(rg);
+    let over = false;
+    const done = (keep) => {
+        if (over) return; over = true;
+        el.contentEditable = 'false';
+        const v = el.textContent.trim();
+        if (keep && v && v !== obj.name) { pushUndo(); obj.name = v; saveProject(); renderAll(); } else el.textContent = obj.name;
+    };
+    el.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); done(true); } if (ev.key === 'Escape') { ev.preventDefault(); done(false); } ev.stopPropagation(); });
+    el.addEventListener('blur', () => done(true), { once: true });
+});
+
 function removeTrackFromGroup(idx) {
     const t = state.project.tracks[idx];
     const bus = t && (state.project.buses || []).find(b => b.id === t.output);
