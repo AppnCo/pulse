@@ -41,4 +41,13 @@ export default async (c) => {
     const d = await H();
     check('⌥ + tirer une piste : toutes pareilles, groupes à la moitié, Perc compris', d.kb === d.pc && d.pc === d.vx && Math.abs(d.kb - Math.round(d.track / 2)) <= 1, JSON.stringify(d));
   } else check('poignée de bord de piste trouvée', false);
+  // ⌘↓ / ⌘↑ (Logic) : tout grandit / rétrécit
+  const before = await H();
+  await ev(`document.activeElement && document.activeElement.blur()`);
+  await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'ArrowDown', code: 'ArrowDown', windowsVirtualKeyCode: 40, modifiers: 4 }); await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'ArrowDown', code: 'ArrowDown', windowsVirtualKeyCode: 40, modifiers: 4 }); await sleep(250);
+  const after = await H();
+  check('⌘↓ : pistes et groupes grandissent ensemble', after.track > before.track && after.kb > before.kb && after.pc > before.pc, JSON.stringify([before, after]));
+  await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'ArrowUp', code: 'ArrowUp', windowsVirtualKeyCode: 38, modifiers: 4 }); await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'ArrowUp', code: 'ArrowUp', windowsVirtualKeyCode: 38, modifiers: 4 }); await sleep(250);
+  const back = await H();
+  check('⌘↑ : ils reviennent', Math.abs(back.track - before.track) <= 1 && Math.abs(back.kb - before.kb) <= 1, JSON.stringify([before, back]));
 };

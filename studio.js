@@ -5618,6 +5618,7 @@ const SHORTCUT_GROUPS = [
             ['X', 'Ouvrir / fermer le mixeur'],
             ['I', 'Afficher / cacher l\'inspecteur'],
             ['V', 'Cacher / remontrer toutes les fenêtres de plugins'],
+            ['⌘↓ / ⌘↑', 'Zoom vertical : tout grandit / rétrécit (pistes et groupes)'],
             ['⌃ ⌥ ⌘ S', 'Plus aucun solo'],
             ['⌃ ⌥ ⌘ M', 'Plus aucun mute'],
             ['⌥ ⌘ C / ⌥ ⌘ V', 'Copier / coller les réglages de tranche (plugins) sur les pistes choisies']
@@ -16283,6 +16284,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                 else seekPlayhead(dir < 0 ? 0 : computeProjectEndSec());
             } else if (state.playing && state.playOrigin != null && returnOnStop() && !state.recording) stepPlayOrigin(dir, shift ? 'bar' : 'beat');
             else stepPlayhead(dir, shift ? 'bar' : 'beat');
+            return;
+        }
+        // Comme Logic : ⌘↓ = zoom vertical (tout grandit, pistes et groupes), ⌘↑ = tout rétrécit
+        if (mod && !e.altKey && !shift && (e.code === 'ArrowUp' || e.code === 'ArrowDown')) {
+            e.preventDefault();
+            setTrackHeight(state.trackHeight * (e.code === 'ArrowDown' ? 1.2 : 1 / 1.2), true);
             return;
         }
         if (!e.altKey && (e.code === 'ArrowUp' || e.code === 'ArrowDown')) {
