@@ -11489,6 +11489,13 @@ function selectAllClipsOnTrack() {
 
 // U = boucle calée sur les régions choisies (comme « Set Locators by Selection » de Logic) ; la lecture reste où elle est
 function loopFromSelection() {
+    // une plage choisie (clic + glisser dans la timeline) passe d'abord, comme « caler les locateurs sur la sélection » de Logic
+    const sl = state.selection;
+    if (sl && Math.abs(sl.end - sl.start) > 0.01) {
+        state.loop = { start: Math.min(sl.start, sl.end), end: Math.max(sl.start, sl.end) }; state.loopSkip = false; state.looping = true;
+        renderLoopOverlay(); updateLoopButton(); saveProject(); refreshPlaybackSoon();
+        flash('Boucle calée sur la plage choisie'); return;
+    }
     const keys = state.selectedClips.size ? [...state.selectedClips]
         : (state.selectedClip ? [`${state.selectedClip.trackIdx}:${state.selectedClip.clipIdx}`] : []);
     const cs = keys.map(k => { const [ti, ci] = k.split(':').map(Number); const t = state.project.tracks[ti]; return t && t.clips[ci]; }).filter(Boolean);
@@ -16432,7 +16439,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (k === 'm') { setTracksFlag('muted'); return; }
 
         // Transport secondaires
-        if (k === 'u' && !mod && !shift && !e.altKey) { e.preventDefault(); loopFromSelection(); return; }
+        if (k === 'u' && !shift && !e.altKey) { e.preventDefault(); loopFromSelection(); return; }   // U, et ⌘U comme dans Logic
         if (k === 'l' || (k === 'c' && !mod && !shift && !e.altKey)) { document.getElementById('btnLoop').click(); return; }   // C = boucle (cycle) comme dans Logic
         if (k === 'k') { document.getElementById('btnMetronome').click(); return; }  // K = click/métronome (comme Logic)
         if (k === 't') { e.preventDefault(); toggleTapMode(); return; }
