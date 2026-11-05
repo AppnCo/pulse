@@ -1199,6 +1199,9 @@ function observeTrackHeights() {
 // --- Rendu : timeline tracks (zones vides) ---
 function renderTimelineTracks() {
     const el = document.getElementById('timelineTracks');
+    // un vrai rendu remet l'aperçu de zoom à plat (voir setZoom)
+    if (el && el.style.transform) { el.style.transform = ''; el.style.transformOrigin = ''; }
+    _zoomPrev.base = state.pxPerSecond;
     const timelineWidthSec = Math.max(180, computeProjectEndSec() + 60);
     const timelineWidthPx = state.pxPerSecond * timelineWidthSec;
 
@@ -11697,6 +11700,9 @@ function suspendFollow() {
     }
 }
 // center = true : le point visé finit pile au milieu de l'écran (E / Z et molette, sur le curseur)
+// Zoom fluide (comme les gros logiciels) : pendant un geste de zoom rapide (molette, pavé, E / Z tenus), on étire l'image déjà dessinée
+// (presque gratuit) et on ne redessine les pistes, net, qu'une fois le geste fini. La règle et le curseur restent exacts.
+const _zoomPrev = { base: 0, at: 0, timer: 0, want: null };
 function setZoom(px, anchorSec, center = false) {
     const timeline = document.querySelector('.timeline');
     const oldPx = state.pxPerSecond;
@@ -11709,12 +11715,34 @@ function setZoom(px, anchorSec, center = false) {
     const screenOffset = anchorPxBefore - timeline.scrollLeft;
     state.pxPerSecond = newPx;
 
-    renderTimelineTracks();
+    const tracksEl = document.getElementById('timelineTracks');
+    const now = performance.now();
+    const quick = tracksEl && _zoomPrev.base > 0 && now - _zoomPrev.at < 180;   // 2e cran et suivants d'un même geste
+    _zoomPrev.at = now;
+    if (quick) {
+        tracksEl.style.transformOrigin = '0 0';
+        tracksEl.style.transform = `scaleX(${newPx / _zoomPrev.base})`;
+    } else {
+        renderTimelineTracks();
+    }
     renderRuler();
     updatePlayhead();
 
     const anchorPxAfter = anchor * newPx;
-    timeline.scrollLeft = center ? Math.max(0, anchorPxAfter - timeline.clientWidth / 2) : anchorPxAfter - screenOffset;
+    const want = center ? Math.max(0, anchorPxAfter - timeline.clientWidth / 2) : anchorPxAfter - screenOffset;
+    timeline.scrollLeft = want;
+    clearTimeout(_zoomPrev.timer);
+    if (quick) {
+        _zoomPrev.want = want;
+        // le geste s'arrête : un seul vrai rendu, net, à la bonne place
+        _zoomPrev.timer = setTimeout(() => {
+            _zoomPrev.at = 0;
+            const w = _zoomPrev.want;
+            renderTimelineTracks();
+            if (w != null) timeline.scrollLeft = w;
+            _zoomPrev.want = null;
+        }, 140);
+    }
     saveViewState();
 }
 
