@@ -12491,8 +12491,8 @@ function openStackMenu() {
     const menu = document.createElement('div');
     menu.className = 'track-ctx-menu stack-menu';
     menu.style.cssText = `position:fixed;left:${Math.min(_lastMouse.x, innerWidth - 340)}px;top:${Math.min(_lastMouse.y, innerHeight - 120)}px;z-index:200;`;
-    [['Nouveau groupe (bus)', () => createGroupFromTracks(idxs), `${pl} dans un bus : un seul volume et un même son pour toutes`],
-     ['Nouveau dossier', () => createFolderFromTracks(idxs), `${pl} dans un dossier : juste pour ranger, le son ne change pas`]].forEach(([label, fn, tip]) => {
+    [['Nouveau dossier', () => createFolderFromTracks(idxs), `${pl} dans un dossier : juste pour ranger, le son ne change pas`],
+     ['Nouveau groupe (bus)', () => createGroupFromTracks(idxs), `${pl} dans un bus : un seul volume et un même son pour toutes`]].forEach(([label, fn, tip]) => {
         const el = document.createElement('div');
         el.className = 'ctx-item'; el.textContent = label; el.title = tip;
         el.addEventListener('click', () => { menu.remove(); fn(); });

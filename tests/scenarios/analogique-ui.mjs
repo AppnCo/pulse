@@ -6,7 +6,7 @@ import { boot, J } from './qa-lib.mjs';
 export default async (c) => {
   const { ev, sleep, send, check } = c;
   await boot(c, { id: 'au1', name: 'AU', bpm: 120, sends: [], tracks: [{ name: 'Voix', type: 'audio', color: '#A855F7', volume: 100, clips: [] }] }, { mic: false });
-  const pos = async (sel, text) => JSON.parse(await ev(`JSON.stringify((()=>{const els=[...document.querySelectorAll(${JSON.stringify(sel)})].filter(e=>e.getBoundingClientRect().width>0); const el=${text ? `els.find(e=>e.textContent.trim().startsWith(${JSON.stringify(text)}))` : 'els[0]'}; if(!el) return null; const b=el.getBoundingClientRect(); return {x:b.x+b.width/2,y:b.y+b.height/2}})())`));
+  const pos = async (sel, text) => JSON.parse(await ev(`JSON.stringify((()=>{const els=[...document.querySelectorAll(${JSON.stringify(sel)})].filter(e=>e.getBoundingClientRect().width>0); const el=${text ? `els.find(e=>e.textContent.trim().startsWith(${JSON.stringify(text)}))` : 'els[0]'}; if(!el) return null; el.scrollIntoView({block:'nearest'}); const b=el.getBoundingClientRect(); return {x:b.x+b.width/2,y:b.y+b.height/2}})())`));
   const mouse = async (type, p, extra = {}) => send('Input.dispatchMouseEvent', { type, x: p.x, y: p.y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1, ...extra });
   const click = async (sel, text) => { const r = await pos(sel, text); if (!r) return false; await mouse('mouseMoved', r, { buttons: 0 }); await mouse('mousePressed', r); await mouse('mouseReleased', r); await sleep(300); return true; };
   await click('.track-item');
@@ -236,7 +236,7 @@ export default async (c) => {
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   await click('#inspector .slot-plus[data-plus="send"]');
   const items = await J(ev, `return [...document.querySelectorAll('.track-ctx-menu .ctx-item')].map(e=>e.textContent.trim()).join('|')`);
-  check('menu des envois : Bus 1, Bus 2…', /^Bus 1 nouveau\|Bus 2 nouveau/.test(items), items);
+  check('menu des envois : Bus 1, Bus 2…', /^Bus 1\|Bus 2\|/.test(items), items);
   await click('.track-ctx-menu .ctx-item', 'Bus 1'); await sleep(300);
   const s1 = JSON.parse(await J(ev, `const st=[...document.querySelectorAll('#inspector .insp-strip')]; return JSON.stringify({ left: st[0].dataset.kind, sends: [...st[0].querySelectorAll('.send-bar-row .sb-name')].map(e=>e.textContent), right: st[1].querySelector('.strip-name').textContent, rightKind: st[1].dataset.kind, buses: state.project.buses.map(b=>b.name) })`));
   check('bus créé « Bus 1 »', s1.buses.includes('Bus 1'), JSON.stringify(s1.buses));
@@ -257,6 +257,6 @@ export default async (c) => {
   check('retoucher l\'envoi : son bus revient à droite', await J(ev, `return document.querySelectorAll('#inspector .insp-strip')[1].querySelector('.strip-name').textContent`) === 'Bus 1');
   await click('#inspector .slot-plus[data-plus="send"]');
   const items2 = await J(ev, `return [...document.querySelectorAll('.track-ctx-menu .ctx-item')].map(e=>e.textContent.trim()).join('|')`);
-  check('2e envoi : Bus 2 proposé (Bus 1 déjà utilisé)', items2.startsWith('Bus 2 nouveau'), items2);
+  check('2e envoi : Bus 1 marqué utilisé, Bus 2 proposé', items2.startsWith('Bus 1 →') && items2.includes('|Bus 2|'), items2);
   await ev(`document.dispatchEvent(new MouseEvent('mousedown',{bubbles:true}))`);
 };

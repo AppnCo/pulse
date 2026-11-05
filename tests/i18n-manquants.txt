@@ -40,6 +40,7 @@ EQ 550
 EQ Horizon
 EQ Massif
 Entrée
+Fermer la fenêtre de plugin de devant
 Flanger
 Gate
 Harmoniseur 910
@@ -53,6 +54,7 @@ Marqueur · glisser · double-clic
 Menu des outils (Pointeur, Crayon, Gomme…) sous la souris
 Mix Bus 1
 New project
+Nouvelle piste (menu) · ⌘⌫ = supprimer la piste choisie
 Optique 2A
 Outil du clic : Outil Pointeur
 Outil du clic droit : Outil Gain
@@ -92,6 +94,7 @@ The simple studio.
 Tracks
 Tranche E
 Vocal + Beat
+Zoom vertical : tout grandit / rétrécit (pistes et groupes)
 ajoute de l'air et de la présence sans durcir : se retient sur les « s »
 dB
 fait ressortir les détails et l'air d'une voix, soyeux, avec le souffle de la machine
@@ -145,6 +148,7 @@ vii°
 ⌘S · ⌘⌥S · ⌘Q
 ⌘T
 ⌘V
+⌘W
 ⌘X
 ⌘Z / ⌘⇧Z
 ⌘⇧F
@@ -152,6 +156,7 @@ vii°
 ⌘⇧T
 ⌘⌥S
 ⌥ ⌘ C / ⌥ ⌘ V
+⌥ ⌘ N
 ⌥C
 ⌥M
 ⌥T

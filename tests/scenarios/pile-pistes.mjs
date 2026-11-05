@@ -8,7 +8,7 @@ export default async ({ ev, nav, send, sleep, check }) => {
   const kd = (o) => `document.dispatchEvent(new KeyboardEvent('keydown',Object.assign({key:'d',code:'KeyD',metaKey:true,bubbles:true,cancelable:true},${JSON.stringify(o)})));`;
   await R(`selectTrack(0); state.selectedTracks=new Set([0,1]); renderAll(); ${kd({ shiftKey: true, key: 'D' })} return 1`);
   const items = await R(`return [...document.querySelectorAll('.stack-menu .ctx-item')].map(e=>e.textContent).join(' | ')`);
-  check('⇧⌘D ouvre le choix dossier / groupe pour les 2 pistes', /dossier avec les 2 pistes/.test(items) && /groupe avec les 2 pistes/.test(items), items);
+  check('⇧⌘D ouvre le choix dossier / groupe pour les 2 pistes', /^Nouveau dossier \| Nouveau groupe \(bus\)$/.test(items), items);
   check('⇧⌘D ne duplique pas la piste', (await R(`return state.project.tracks.length`)) === 3);
   await R(`document.querySelectorAll('.stack-menu .ctx-item')[0].click(); await new Promise(r=>setTimeout(r,200)); return 1`);
   check('dossier créé avec A et B', (await R(`const t=state.project.tracks; return !!t[0].folder && t[0].folder===t[1].folder && !t[2].folder`)) === true);
