@@ -16134,6 +16134,24 @@ document.addEventListener('DOMContentLoaded', async () => {
     { const ra = PulseAudio.refreshAudibility; PulseAudio.refreshAudibility = (...a) => { const out = ra(...a); try { paintSoloAll(); } catch {} return out; }; }
     document.getElementById('btnMixerClose').addEventListener('click', toggleMixer);
     document.getElementById('btnAddTrack').addEventListener('click', (e) => addTrack(null, e.currentTarget));
+    // Comme Logic : double-clic dans le vide sous la dernière piste (liste ou timeline) = nouvelle piste, tout en bas,
+    // du même genre que la piste choisie (audio, piano, batterie)
+    const addAtEnd = (e) => {
+        if (e.target.closest('.track-item, .group-header, .timeline-track, .timeline-group-row, .clip, .timeline-ruler, button, input, .empty-cta, .automation-lane')) return;
+        const prev = state.project.tracks[state.selectedTrack];
+        const type = prev && (prev.type === 'keys' || prev.type === 'drums') ? prev.type : 'audio';
+        state.selectedTrack = -1;
+        _doAddTrack(type);
+    };
+    // (2e appui détecté au mousedown : la liste est redessinée entre les deux clics, le « dblclick » natif se perdrait)
+    const onSecond = (e, inTimeline) => {
+        if (e.button !== 0 || e.detail !== 2 || e.metaKey || e.shiftKey || e.altKey || e.ctrlKey) return;   // exactement le 2e appui (pas un 3e)
+        if (inTimeline && e.target.closest('.timeline-tracks') && !e.target.classList.contains('timeline-tracks')) return;
+        if (e.target.closest('.track-item, .group-header, .timeline-track, .timeline-group-row, .clip, .timeline-ruler, button, input, .empty-cta, .automation-lane')) return;
+        setTimeout(() => addAtEnd(e), 0);
+    };
+    document.querySelector('.tracks-panel').addEventListener('mousedown', (e) => { if (!e.target.closest('.tracks-header')) onSecond(e, false); }, true);
+    document.querySelector('.timeline').addEventListener('mousedown', (e) => onSecond(e, true), true);
     document.getElementById('btnLoop').addEventListener('click', () => {
         if (!state.loop) {
             flash('Pour répéter un passage : maintiens Maj et glisse sur la timeline pour le choisir');
