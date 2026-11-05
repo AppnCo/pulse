@@ -2453,7 +2453,7 @@ function slotListsHtml(kind, x) {
                 <input type="range" class="insp-send" min="0" max="100" data-default="0" value="${(x.sends || {})[sd.id] || 0}" hidden>
             </label>`).join('')}
             ${Object.keys(x.busSends || {}).filter(id => busById(id)).map(id => `
-            <label class="strip-send-row send-bar-row on" data-bsend="${esc(id)}" style="--lvl:${x.busSends[id]}%" data-tooltip="Envoi vers le groupe « ${esc(busById(id).name)} » · glisser pour régler · double-clic = écrire le chiffre · ⌘ + clic = remettre à 0 · clic droit = avant / après le fader, retirer">
+            <label class="strip-send-row send-bar-row on" data-bsend="${esc(id)}" style="--lvl:${x.busSends[id]}%" data-tooltip="Envoi vers le groupe « ${esc(busById(id).name)} » · glisser pour régler · double-clic = écrire le chiffre · ⌥ + clic = remettre à 0 · clic droit = avant / après le fader, retirer">
                 <span class="sb-name">→ ${esc(busById(id).name)}</span>${(x.preSends || {})['busSend:' + id] ? '<b class="sb-pre" data-tooltip="Envoi pris avant le fader (Pre)">PRE</b>' : ''}<em class="sb-val">${Math.round(x.busSends[id])}</em>
                 <input type="range" class="insp-send" min="0" max="100" data-default="0" value="${x.busSends[id]}" hidden>
             </label>`).join('')}
@@ -15597,7 +15597,9 @@ document.addEventListener('mousedown', (e) => {
         pushUndo(); t.pan = 0; updatePanKnobVisual(pk, 0); PulseAudio.updateTrackPan(i, 0); syncTrackPan(i); saveProject();
         return;
     }
-    const el = e.target && e.target.closest ? e.target.closest('input[type="range"][data-default]') : null;
+    let el = e.target && e.target.closest ? e.target.closest('input[type="range"][data-default]') : null;
+    // une ligne d'envoi (barre) : son curseur est caché dedans — ⌥ + clic (Logic) comme ⌘ + clic la remet à sa valeur par défaut
+    if (!el && e.target && e.target.closest) { const row = e.target.closest('.send-bar-row'); if (row) el = row.querySelector('input[type="range"][data-default]'); }
     if (!el || el.disabled) return;
     e.preventDefault(); e.stopPropagation();
     resetRange(el);
