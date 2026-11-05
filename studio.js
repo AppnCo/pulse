@@ -14451,6 +14451,20 @@ function startClipDrag(startEvent, clipEl, trackIdx) {
 
     // Plusieurs régions choisies : elles partent toutes ensemble (même décalage dans le temps, chacune reste sur sa piste)
     const followers = [];
+    const dupCopies = [];
+    // ⌥ + glisser une région qui fait partie d'une sélection : TOUTES les régions choisies sont copiées (comme Logic)
+    if (duplicate && state.selectedClips.size > 1 && state.selectedClips.has(`${trackIdx}:${clipIdx}`)) {
+        [...state.selectedClips].forEach(k => {
+            const [ti, ci] = k.split(':').map(Number);
+            const fc = state.project.tracks[ti]?.clips[ci];
+            if (!fc || fc === clip || fc.recording || clipIsLocked(fc)) return;
+            const cp = { ...fc, peaks: fc.peaks ? fc.peaks.slice() : undefined };
+            state.project.tracks[ti].clips.push(cp);
+            dupCopies.push({ ti, clip: cp });
+            followers.push({ ti, clip: cp, start0: cp.start, loop0: cp.loopEnd });
+        });
+        if (dupCopies.length) renderTimelineTracks();
+    }
     if (!duplicate && state.selectedClips.size > 1 && state.selectedClips.has(`${trackIdx}:${clipIdx}`)) {
         state.selectedClips.forEach(k => {
             const [ti, ci] = k.split(':').map(Number);
@@ -14612,7 +14626,14 @@ function startClipDrag(startEvent, clipEl, trackIdx) {
         const freshEl = document.querySelector(`.timeline-track[data-i="${trackIdx}"] .clip[data-ci="${t.clips.indexOf(working)}"]`);
         if (freshEl) { freshEl.style.transform = ''; freshEl.style.zIndex = ''; freshEl.style.opacity = ''; }
 
-        if (!dragged) {
+        if (!dragged && duplicate) {
+            // ⌥ + clic sans bouger : pas de copie cachée sous l'originale
+            const k = t.clips.indexOf(working); if (k >= 0 && working !== clip) t.clips.splice(k, 1);
+            dupCopies.forEach(d => { const a = state.project.tracks[d.ti].clips, j = a.indexOf(d.clip); if (j >= 0) a.splice(j, 1); });
+            if (typeof _undoStack !== 'undefined' && _undoStack.length) { _undoStack.pop(); updateUndoBtn(); }
+            state.selectedClip = { trackIdx, clipIdx: t.clips.indexOf(clip) };
+            renderTimelineTracks();
+        } else if (!dragged) {
             state.selectedClip = { trackIdx, clipIdx: t.clips.indexOf(working) };
             if (groupMove) { state.selectedClips.clear(); }   // un simple clic, sans glisser : on ne garde que cette région
             renderTimelineTracks();
