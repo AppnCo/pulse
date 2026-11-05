@@ -2601,14 +2601,14 @@ body.resizing-col, body.resizing-col * { cursor: col-resize !important; user-sel
 .eq-ic button { width: 24px; height: 22px; padding: 0; border-radius: 5px; background: #241a33; border: 1px solid #3a2c50; color: #cbbfe3; cursor: pointer; font-size: 11px; }
 .eq-ic button.on { background: #7C3AED; border-color: var(--violet-2, #A855F7); color: #fff; }
 .eq-ic button:disabled { opacity: .35; cursor: default; }
-.eq-ic button.dyn { background: #b45309; border-color: #FBBF24; }
-.eq-dynrow { display: flex; align-items: center; gap: 4px; white-space: nowrap; margin: 0 0 6px; padding: 4px 6px; border-radius: 6px; background: #2a1a10; color: #FBBF24; font-size: 10.5px; }
-.eq-dynrow button { width: 18px; height: 18px; padding: 0; border-radius: 4px; background: #3a2410; color: #FBBF24; border: 0; cursor: pointer; }
-.eq-bub .eq-dynrow .eq-num { width: 40px; font-size: 11px; color: #FBBF24; }
-.eq-dyn-lim { fill: none; stroke: #FBBF24; stroke-width: 1.2; stroke-dasharray: 4 4; opacity: .7; }
-.eq-dyn-bar { stroke: #FBBF24; stroke-width: 3; stroke-linecap: round; opacity: .5; }
-.eq-dyn-end { fill: #FBBF24; }
-.eq-dyn-ring { fill: none; stroke: #FBBF24; stroke-width: 2; opacity: .85; pointer-events: none; }
+.eq-ic button.dyn { background: #86198f; border-color: #E879F9; }
+.eq-dynrow { display: flex; align-items: center; gap: 4px; white-space: nowrap; margin: 0 0 6px; padding: 4px 6px; border-radius: 6px; background: #2a1238; color: #E879F9; font-size: 10.5px; }
+.eq-dynrow button { width: 18px; height: 18px; padding: 0; border-radius: 4px; background: #3d1a4d; color: #E879F9; border: 0; cursor: pointer; }
+.eq-bub .eq-dynrow .eq-num { width: 40px; font-size: 11px; color: #E879F9; }
+.eq-dyn-lim { fill: none; stroke: #E879F9; stroke-width: 1.2; stroke-dasharray: 4 4; opacity: .7; }
+.eq-dyn-bar { stroke: #E879F9; stroke-width: 3; stroke-linecap: round; opacity: .5; }
+.eq-dyn-end { fill: #E879F9; }
+.eq-dyn-ring { fill: none; stroke: #E879F9; stroke-width: 2; opacity: .85; pointer-events: none; }
 
 /* === Arrondir le fondu : poignée au milieu de la courbe === */
 .fade-curve-handle {
@@ -3842,3 +3842,26 @@ body[data-left-tool="fade"] .timeline-tracks .clip { cursor: ew-resize; }
 }
 .btn-solo-all:hover { color: var(--text-1); border-color: var(--text-3); }
 .btn-solo-all.active { background: #22D3EE; color: #000; border-color: #22D3EE; }
+
+/* EQ comme Pro-Q : réglages du point en bas du graphique, sur une ligne, seulement après un clic sur le point */
+.eq-bub.dock { width: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 4px 8px; }
+.eq-bub.dock .eq-vals { margin: 0; gap: 6px; }
+.eq-bub.dock .eq-vals label { flex-direction: row; align-items: center; gap: 4px; }
+.eq-bub.dock .eq-vals label small:last-child { display: none; }
+.eq-bub.dock .eq-num { width: 54px; font-size: 12px; padding: 1px 4px; }
+.eq-bub.dock select.eq-num { width: 84px; font-size: 11px; }
+.eq-bub.dock .eq-types span { padding: 1px 2px; }
+.eq-bub.dock .eq-types svg { width: 22px; height: 14px; }
+.eq-bub.dock .eq-tname { display: none; }
+.eq-bub.dock .eq-dynrow { flex-basis: 100%; justify-content: flex-start; }
+/* petite bulle au survol d'un point */
+.eq-hover { position: absolute; z-index: 4; pointer-events: none; white-space: nowrap; background: rgba(18,12,28,.92); border: 1px solid #3a2c50; border-radius: 6px; padding: 2px 7px; font-size: 11px; color: #e9e2f5; }
+.eq-hover b { font-weight: 600; }
+.eq-bar .eq-undo, .eq-bar .eq-redo { min-width: 26px; padding: 0 6px; }
+
+.eq-ic button svg { display: block; margin: auto; }
+.eq-dynrow svg { flex: none; }
+.eq-bar .eq-undo svg, .eq-bar .eq-redo svg { display: block; margin: auto; }
+/* barre du bas : types, valeurs et boutons sur une ligne ; la ligne « Dynamique » passe dessous */
+.eq-bub.dock .eq-bub-foot { order: 2; }
+.eq-bub.dock .eq-dynrow { order: 3; margin: 0; }

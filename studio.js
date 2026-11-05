@@ -7613,13 +7613,23 @@ async function runLatencyCalibration() {
 
 // Applique un changement d'effet pendant la lecture : on reconstruit le graphe à la position courante
 let _fxRefreshTimer = null;
+// Un réglage de plugin bougé pendant la lecture : on l'entend PENDANT le geste (au plus toutes les 70 ms, en fondu),
+// plus seulement quand on lâche la souris. Une mise à jour à la fois ; la dernière valeur passe toujours.
+let _fxRefreshBusy = false, _fxRefreshPending = false, _fxRefreshLast = 0;
 function refreshPlaybackSoon() {
     if (!state.playing || state.recording) return;
+    if (_fxRefreshBusy) { _fxRefreshPending = true; return; }
     clearTimeout(_fxRefreshTimer);
-    _fxRefreshTimer = setTimeout(() => {
+    _fxRefreshTimer = setTimeout(async () => {
         if (!state.playing || state.recording) return;
-        PulseAudio.play(state.project, PulseAudio.getPlaybackPosition(), { smooth: true });
-    }, 120);
+        _fxRefreshBusy = true; _fxRefreshLast = performance.now();
+        try { await PulseAudio.play(state.project, PulseAudio.getPlaybackPosition(), { smooth: true }); }
+        catch {}
+        finally {
+            _fxRefreshBusy = false;
+            if (_fxRefreshPending) { _fxRefreshPending = false; refreshPlaybackSoon(); }
+        }
+    }, Math.max(0, 70 - (performance.now() - _fxRefreshLast)));
 }
 
 // === Interfaces graphiques EQ / Compresseur ===
@@ -7876,6 +7886,8 @@ const EQ_TYPES = { bell: 'Cloche', lowshelf: 'Plateau grave', highshelf: 'Platea
 const EQ_ICON_PATHS = { bell: 'M1 12 C6 12 7 3 11 3 C15 3 16 12 21 12', lowshelf: 'M1 4 C6 4 8 4 10 8 C12 12 15 12 21 12', highshelf: 'M1 12 C6 12 9 12 11 8 C13 4 16 4 21 4',
     hpf: 'M2 14 C5 6 8 4 12 4 L21 4', lpf: 'M1 4 L10 4 C14 4 17 6 20 14', notch: 'M1 4 L8 4 C10 4 10.6 14 11 14 C11.4 14 12 4 14 4 L21 4', tilt: 'M1 12 C8 12 9 9 11 8 C13 7 14 4 21 4' };
 const eqIcon = (k) => `<svg width="22" height="16" viewBox="0 0 22 16"><path d="${EQ_ICON_PATHS[k]}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>`;
+// Icône du point dynamique : une cloche pleine et sa limite en pointillés (la zone qui respire)
+const EQ_DYN_ICON = '<svg viewBox="0 0 16 12" width="15" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 9 C5 9 6 2 8 2 C10 2 11 9 15 9"/><path d="M3 10.5 C6 10.5 6.5 6 8 6 C9.5 6 10 10.5 13 10.5" stroke-dasharray="1.6 1.6" stroke-width="1.1"/></svg>';
 const EQ_FLAT = (t) => t === 'hpf' || t === 'lpf' || t === 'notch';   // points posés sur la courbe (pas de gain)
 const EQ_NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 const eqNote = (f) => { const n = Math.round(12 * Math.log2(f / 440)) + 57; return EQ_NOTES[(n % 12 + 12) % 12] + Math.floor(n / 12); };
@@ -7956,13 +7968,20 @@ function openEqPanel(trackIdx, anchorEl) {
         return Math.round(-s2 / n * 10) / 10;
     };
     let sel = 0;
+    let open = false;                   // comme Pro-Q : les réglages du point ne s'ouvrent (en bas) qu'au clic sur le point ; un clic dans le vide les ferme
+    const hist = [], fut = [];          // ↶ ↷ de l'EQ : un pas par geste
+    const eqSnap = () => JSON.stringify({ eq: t.effectParams.eq || null, bands: t.eqBands || null });
+    const eqRestore = (j) => { const o = JSON.parse(j); if (o.eq) t.effectParams.eq = o.eq; else delete t.effectParams.eq; if (o.bands) t.eqBands = o.bands; else delete t.eqBands; };
+    const histPush = () => { hist.push(eqSnap()); if (hist.length > 60) hist.shift(); fut.length = 0; };
+    // Où se pose un point : sur SA courbe (comme Pro-Q), jamais sur la courbe totale — un coupe-bas ne bouge pas quand un autre point monte
+    const ptDb = (b) => b.type === 'notch' ? 0 : (b.type === 'hpf' || b.type === 'lpf') ? eqBandDb({ ...b, on: true }, b.freq) : (b.gain || 0);
     const multi = new Set();            // points choisis ensemble (⇧ / ⌘ + clic, ou rectangle) ; `sel` reste le point principal
     const isSel = (i) => i === sel || multi.has(i);
     const bands = () => eqBandsOf(t.effectParams.eq || {});
     let eqUndo = false;                         // une seule étape d'annulation par geste (drapeau remis à zéro au relâchement)
     const commit = (arr) => {
         if (!eqUndo) {
-            pushUndo(); eqUndo = true;
+            pushUndo(); histPush(); eqUndo = true;
             const clear = () => { eqUndo = false; document.removeEventListener('mouseup', clear, true); };
             document.addEventListener('mouseup', () => setTimeout(clear, 0), { once: true, capture: true });
             setTimeout(clear, 2500);   // et pour les valeurs tapées au clavier
@@ -7998,6 +8017,7 @@ function openEqPanel(trackIdx, anchorEl) {
         </div>
         <div class="eq-bar">
             <select class="eq-preset" data-tooltip="Un point de départ : tu peux ensuite tout bouger"><option value="">Modèles…</option>${Object.entries(EQ_PRESETS).map(([k, v]) => `<option value="${k}">${esc(v.label)}</option>`).join('')}</select>
+            <button class="eq-undo" data-tooltip="Revenir en arrière dans l'EQ"><svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3 L2 6 L5 9"/><path d="M2 6 H10 A4 4 0 0 1 10 14 H7"/></svg></button><button class="eq-redo" data-tooltip="Rétablir"><svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 3 L14 6 L11 9"/><path d="M14 6 H6 A4 4 0 0 0 6 14 H9"/></svg></button>
             <button class="eq-add" data-tooltip="Pose un point au milieu (ou double-clic sur la courbe)">+ Point</button>
             <button class="fx-reset">Réinitialiser</button>
             <span class="eq-sp"></span>
@@ -8026,7 +8046,7 @@ function openEqPanel(trackIdx, anchorEl) {
     rin.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') rin.blur(); });
     rin.addEventListener('change', () => { const v = parseFloat(rin.value.replace(',', '.')); if (Number.isFinite(v)) setRange(Math.abs(v)); else rin.value = DB; });
     panel.querySelector('.eq-ag').addEventListener('click', (e) => {
-        pushUndo();
+        pushUndo(); histPush();
         const on = !(t.effectParams.eq || {}).autogain;
         const arr = bands();
         t.effectParams.eq = { ...(t.effectParams.eq || {}), bands: arr };
@@ -8038,7 +8058,7 @@ function openEqPanel(trackIdx, anchorEl) {
     const soloWatch = setInterval(() => { if (!panel.isConnected) { clearInterval(soloWatch); if (soloI >= 0) setSolo(-1); } }, 400);
     panel.querySelector('.eq-preset').addEventListener('change', (e) => {
         const P = EQ_PRESETS[e.target.value]; e.target.value = ''; if (!P) return;
-        sel = 0; multi.clear();
+        sel = 0; multi.clear(); open = false;
         commit(P.bands.map(b => ({ gain: 0, ...b })));   // commit() pousse l'étape d'annulation
         draw();
         flash(`EQ « ${P.label.split(' : ')[0]} » posé — tire les points pour l'ajuster à ta voix`);
@@ -8064,10 +8084,18 @@ function openEqPanel(trackIdx, anchorEl) {
         const st = DB <= 6 ? DB / 3 : DB / 2;
         let dbl = '';
         for (let d = -DB; d <= DB + 0.01; d += st) if (Math.abs(d) > 0.01) dbl += `<line x1="0" y1="${dy(d).toFixed(1)}" x2="${W}" y2="${dy(d).toFixed(1)}" class="viz-grid"/><text x="${W - 4}" y="${(dy(d) - 3).toFixed(1)}" class="viz-txt" text-anchor="end">${d > 0 ? '+' : ''}${+d.toFixed(1)}</text>`;
+        // la courbe de chaque point, fine et dans sa couleur (la courbe épaisse = le total)
+        let own = '';
+        if (arr.length > 1) arr.forEach((b, i) => {
+            if (b.on === false) return;
+            let p = '';
+            for (let k = 0; k <= N; k++) { const x = k / N * W, d = eqBandDb(b, xf(x)); if (d < floor) continue; p += `${p ? 'L' : 'M'}${x.toFixed(1)},${dy(d).toFixed(1)}`; }
+            own += `<path d="${p}" fill="none" stroke="${EQ_COLORS[i % EQ_COLORS.length]}" stroke-opacity=".6" stroke-width="1" class="eq-own"/>`;
+        });
         // la zone du point choisi, teintée de sa couleur
         let fills = '';
         arr.forEach((b, i) => {
-            if (!isSel(i) || b.on === false) return;
+            if (!open || !isSel(i) || b.on === false) return;
             let p = `M0,${mid}`;
             for (let k = 0; k <= N; k++) { const x = k / N * W; p += `L${x.toFixed(1)},${Math.max(-40, Math.min(H + 40, dy(eqBandDb(b, xf(x))))).toFixed(1)}`; }
             const c = EQ_COLORS[i % EQ_COLORS.length];
@@ -8084,20 +8112,21 @@ function openEqPanel(trackIdx, anchorEl) {
             dyns += `<path d="${p}" class="eq-dyn-lim"/><line x1="${x}" x2="${x}" y1="${dy(b.gain || 0).toFixed(1)}" y2="${dy(lim.gain).toFixed(1)}" class="eq-dyn-bar"/><circle cx="${x}" cy="${dy(lim.gain).toFixed(1)}" r="4" class="eq-dyn-end"/>`;
         });
         const pts = arr.map((b, i) => {
-            const y = EQ_FLAT(b.type) ? dy(total(b.freq)) : dy((b.gain || 0));
+            const y = dy(ptDb(b));
             const x = fx(b.freq).toFixed(1), c = EQ_COLORS[i % EQ_COLORS.length];
-            return `${i === sel ? `<circle cx="${x}" cy="${y.toFixed(1)}" r="14" fill="none" stroke="${c}" stroke-opacity=".55" pointer-events="none"/>` : ''}<circle cx="${x}" cy="${y.toFixed(1)}" r="${i === sel ? 9.5 : (multi.has(i) ? 9 : 8.5)}" class="eq-pt ${isSel(i) ? 'sel' : ''} ${b.on === false ? 'off' : ''}" data-i="${i}" fill="${b.on === false ? '#2a1f3a' : c}"/><text x="${x}" y="${(y + 3.5).toFixed(1)}" class="eq-num-pt" text-anchor="middle">${i + 1}</text>`;
+            return `${i === sel && open ? `<circle cx="${x}" cy="${y.toFixed(1)}" r="14" fill="none" stroke="${c}" stroke-opacity=".55" pointer-events="none"/>` : ''}<circle cx="${x}" cy="${y.toFixed(1)}" r="${i === sel ? 9.5 : (multi.has(i) ? 9 : 8.5)}" class="eq-pt ${isSel(i) ? 'sel' : ''} ${b.on === false ? 'off' : ''}" data-i="${i}" fill="${b.on === false ? '#2a1f3a' : c}"/><text x="${x}" y="${(y + 3.5).toFixed(1)}" class="eq-num-pt" text-anchor="middle">${i + 1}</text>`;
         }).join('');
         host.innerHTML = `<svg class="eq-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${grid}${dbl}
             <line x1="0" y1="${mid}" x2="${W}" y2="${mid}" class="viz-zero"/>
-            <path d="${shade}" class="eq-cut"/>${fills}${dyns}<path d="${line}" class="viz-line eq-line"/><g class="eq-live"></g>${pts}
+            <path d="${shade}" class="eq-cut"/>${fills}${own}${dyns}<path d="${line}" class="viz-line eq-line"/><g class="eq-live"></g>${pts}
             ${arr.length ? '' : `<text x="${W / 2}" y="${mid - 12}" class="eq-empty-txt" text-anchor="middle">Double-clic sur la courbe pour poser un point</text>`}
             ${soloI >= 0 ? `<text x="10" y="20" class="eq-solo-txt">🎧 Solo du point ${soloI + 1} : tu n'entends que sa zone</text>` : ''}</svg>`;
         const ep = t.effectParams.eq || {};
         panel.querySelector('.eq-out b').textContent = `${(ep.out || 0) > 0 ? '+' : ''}${(ep.out || 0).toFixed(1).replace('.', ',')} dB`;
         const b = arr[sel];
-        if (!b) { detail.hidden = true; detail.innerHTML = ''; return; }
+        if (!b || !open) { detail.hidden = true; detail.innerHTML = ''; return; }
         detail.hidden = false;
+        detail.classList.add('dock');
         const flat = EQ_FLAT(b.type), cut = b.type === 'hpf' || b.type === 'lpf', shelf = b.type === 'lowshelf' || b.type === 'highshelf';
         detail.innerHTML = `
             <div class="eq-types">${Object.keys(EQ_TYPES).map(k => `<span data-type="${k}" class="${b.type === k ? 'on' : ''}" data-tooltip="${EQ_TYPES[k]}">${eqIcon(k)}</span>`).join('')}</div>
@@ -8107,24 +8136,20 @@ function openEqPanel(trackIdx, anchorEl) {
                       : `<label><small>Gain</small><input class="eq-num eq-g" type="text" value="${(b.gain || 0).toFixed(1)}" ${flat ? 'disabled' : ''}><small>dB</small></label>`}
                 <label><small>${cut ? 'Résonance' : 'Q'}</small><input class="eq-num eq-q" type="text" value="${(b.q || 1).toFixed(2)}" ${shelf || b.type === 'tilt' ? 'disabled' : ''}><small>&nbsp;</small></label>
             </div>
-            ${PulseAudio.eqIsDynamic(b) ? `<div class="eq-dynrow">⚡ Dynamique · plage <button class="eq-dm">−</button><b>${Number(b.dyn) > 0 ? '+' : ''}${Number(b.dyn)} dB</b><button class="eq-dp">+</button> · seuil <input class="eq-num eq-thr" type="text" value="${b.thr ?? -30}"> dB</div>` : ''}
+            ${PulseAudio.eqIsDynamic(b) ? `<div class="eq-dynrow">${EQ_DYN_ICON} Dynamique · plage <button class="eq-dm">−</button><b>${Number(b.dyn) > 0 ? '+' : ''}${Number(b.dyn)} dB</b><button class="eq-dp">+</button> · seuil <input class="eq-num eq-thr" type="text" value="${b.thr ?? -30}"> dB</div>` : ''}
             <div class="eq-bub-foot"><span class="eq-tname"><span class="eq-dot" style="background:${EQ_COLORS[sel % EQ_COLORS.length]}"></span>${EQ_TYPES[b.type] || ''}</span>
                 <span class="eq-ic">
                     <button class="eq-solo ${soloI === sel ? 'on' : ''}" data-tooltip="Solo : n'écouter que la zone de ce point">🎧</button>
                     <button class="eq-onoff ${b.on === false ? '' : 'on'}" data-tooltip="Met ce point en pause sans le supprimer">⏻</button>
-                    <button class="eq-dyn ${PulseAudio.eqIsDynamic(b) ? 'on dyn' : ''}" ${['bell', 'lowshelf', 'highshelf', 'tilt'].includes(b.type) ? '' : 'disabled'} data-tooltip="Point dynamique : il ne bouge que quand sa zone dépasse le seuil (ex. une voix qui devient boueuse)">⚡</button>
+                    <button class="eq-dyn ${PulseAudio.eqIsDynamic(b) ? 'on dyn' : ''}" ${['bell', 'lowshelf', 'highshelf', 'tilt'].includes(b.type) ? '' : 'disabled'} data-tooltip="Point dynamique : il ne bouge que quand sa zone dépasse le seuil (ex. une voix qui devient boueuse)">${EQ_DYN_ICON}</button>
                     <button class="eq-del" data-tooltip="Retirer ce point">✕</button>
                 </span></div>`;
-        // la bulle se pose au-dessus du point (en dessous s'il est tout en haut)
+        // comme Pro-Q : les réglages se posent en bas du graphique, sous le point (ils ne cachent pas la courbe)
         const svg = host.querySelector('svg'), k = svg.clientWidth / W || 1;
-        const px = fx(b.freq) * k, py = (flat ? dy(total(b.freq)) : dy(b.gain || 0)) * k;
-        const bw = detail.offsetWidth || 270, gw = graph.clientWidth, gh = svg.clientHeight || graph.clientHeight, bh = detail.offsetHeight || 110;
-        let bx = px - bw / 2, by;
-        if (py - bh - 20 > 2) by = py - bh - 20;                 // au-dessus du point
-        else if (py + 22 + bh < gh - 2) by = py + 22;            // sinon en dessous
-        else { bx = px + 26 + bw < gw ? px + 26 : px - 26 - bw; by = py - bh / 2; }   // sinon à côté
-        detail.style.left = Math.max(4, Math.min(gw - bw - 4, bx)) + 'px';
-        detail.style.top = Math.max(2, Math.min(gh - bh - 2, by)) + 'px';
+        const px = fx(b.freq) * k;
+        const bw = detail.offsetWidth || 420, gw = graph.clientWidth, gh = svg.clientHeight || graph.clientHeight, bh = detail.offsetHeight || 40;
+        detail.style.left = Math.max(4, Math.min(gw - bw - 4, px - bw / 2)) + 'px';
+        detail.style.top = Math.max(2, gh - PB * k - bh - 6) + 'px';
     };
     const update = (i, patch) => {
         const arr = bands().map(b => ({ ...b }));
@@ -8142,13 +8167,13 @@ function openEqPanel(trackIdx, anchorEl) {
         if (arr.length >= EQ_MAX_BANDS) { flash('24 points au maximum'); return; }
         arr.push(type === 'bell' ? { type, freq, gain, q: 1 } : { type, freq, gain: 0, q: 0.71, slope: 24 });
         multi.clear();
-        sel = arr.length - 1;
+        sel = arr.length - 1; open = true;
         commit(arr); draw();
     };
     const removeBand = (i) => {
         const gone = multi.size > 1 && multi.has(i) ? multi : new Set([i]);
         const arr = bands().filter((_, k) => !gone.has(k));
-        multi.clear();
+        multi.clear(); open = false; hideHover();
         sel = Math.max(0, Math.min(sel, arr.length - 1));
         commit(arr); draw();
     };
@@ -8178,17 +8203,17 @@ function openEqPanel(trackIdx, anchorEl) {
             const upm = (ev) => {
                 document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', upm);
                 rect.remove();
-                if (!moved) { if (multi.size) { multi.clear(); draw(); } return; }
+                if (!moved) { multi.clear(); open = false; draw(); return; }   // clic dans le vide : les réglages se ferment
                 const x1 = ev.clientX - box.left, y1 = ev.clientY - box.top;
                 const l = Math.min(x0, x1) * kx, r2 = Math.max(x0, x1) * kx, tp = Math.min(y0, y1) * ky, bt = Math.max(y0, y1) * ky;
                 const arr = bands(), hit = [];
                 const total = (f) => arr.reduce((s2, b) => s2 + eqBandDb(b, f), 0);
                 arr.forEach((b, i) => {
-                    const cx = fx(b.freq), cy = EQ_FLAT(b.type) ? dy(total(b.freq)) : dy(b.gain || 0);
+                    const cx = fx(b.freq), cy = dy(ptDb(b));
                     if (cx >= l && cx <= r2 && cy >= tp && cy <= bt) hit.push(i);
                 });
                 multi.clear();
-                if (hit.length) { sel = hit[0]; hit.forEach(i => multi.add(i)); }
+                if (hit.length) { sel = hit[0]; hit.forEach(i => multi.add(i)); open = true; }
                 draw();
                 if (hit.length > 1) flash(`${hit.length} points choisis : tire-en un pour les bouger ensemble, Suppr pour les retirer`);
             };
@@ -8202,10 +8227,11 @@ function openEqPanel(trackIdx, anchorEl) {
             if (!multi.size) multi.add(sel);
             if (multi.has(i) && multi.size > 1) { multi.delete(i); if (sel === i) sel = [...multi][0]; }
             else { multi.add(i); sel = i; }
-            draw();
+            open = true; draw();
             return;
         }
         const group = multi.has(i) && multi.size > 1 ? [...multi] : null;
+        open = true; hideHover();
         if (!group) { multi.clear(); sel = i; draw(); }
         else { sel = i; draw(); }
         let undoDone = false;
@@ -8236,6 +8262,26 @@ function openEqPanel(trackIdx, anchorEl) {
         const up = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
         document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
     });
+    // Survol d'un point : une petite bulle (fréquence, gain, Q) — les réglages complets, eux, attendent un clic
+    const hover = document.createElement('div'); hover.className = 'eq-hover'; hover.hidden = true; graph.appendChild(hover);
+    function hideHover() { hover.hidden = true; hoverI = -1; }
+    let hoverI = -1;
+    graph.addEventListener('mousemove', (e) => {
+        if (e.buttons) return;
+        const pt = e.target.closest && e.target.closest('.eq-pt');
+        if (!pt) { if (hoverI >= 0) { hoverI = -1; hideHover(); } return; }
+        const i = parseInt(pt.dataset.i), b = bands()[i]; if (!b) return;
+        if (i === hoverI && !hover.hidden) return;
+        hoverI = i;
+        if (open && i === sel) { hideHover(); return; }
+        const cut = b.type === 'hpf' || b.type === 'lpf';
+        hover.innerHTML = `<b style="color:${EQ_COLORS[i % EQ_COLORS.length]}">${fmtF(b.freq)}</b>${EQ_FLAT(b.type) ? '' : ` · ${(b.gain || 0) > 0 ? '+' : ''}${(b.gain || 0).toFixed(1).replace('.', ',')} dB`}${cut ? ` · ${b.slope || 12} dB/oct` : (b.type === 'lowshelf' || b.type === 'highshelf' || b.type === 'tilt') ? '' : ` · Q ${(b.q || 1).toFixed(2).replace('.', ',')}`}`;
+        hover.hidden = false;
+        const g = graph.getBoundingClientRect(), pr = pt.getBoundingClientRect();
+        hover.style.left = Math.max(2, Math.min(g.width - hover.offsetWidth - 2, pr.left - g.left + pr.width / 2 - hover.offsetWidth / 2)) + 'px';
+        hover.style.top = (pr.bottom - g.top + 6 + hover.offsetHeight > g.height ? pr.top - g.top - hover.offsetHeight - 6 : pr.bottom - g.top + 6) + 'px';
+    });
+    graph.addEventListener('mouseleave', () => { hoverI = -1; hideHover(); });
     graph.addEventListener('dblclick', (e) => {
         if (e.target.closest && e.target.closest('.eq-bub')) return;
         const pt = e.target.closest && e.target.closest('.eq-pt');
@@ -8245,6 +8291,7 @@ function openEqPanel(trackIdx, anchorEl) {
         if (x < W * 0.05 || x > W * 0.95) { addBand(Math.round(xf(x)), 0, x < W * 0.05 ? 'hpf' : 'lpf'); return; }
         addBand(Math.round(xf(x)), Math.round(yd(y) * 2) / 2);
     });
+    let wheelAcc = 0;
     graph.addEventListener('wheel', (e) => {
         if (e.target.closest && e.target.closest('.eq-bub')) return;
         const pt = e.target.closest && e.target.closest('.eq-pt');
@@ -8252,6 +8299,14 @@ function openEqPanel(trackIdx, anchorEl) {
         const b = bands()[i]; if (!b || b.type === 'lowshelf' || b.type === 'highshelf' || b.type === 'tilt') return;
         e.preventDefault();
         sel = i;
+        if (b.type === 'hpf' || b.type === 'lpf') {
+            // une encoche de pente par cran (pavé tactile : on cumule pour ne pas sauter de 12 à 48 d'un coup)
+            wheelAcc += e.deltaY; if (Math.abs(wheelAcc) < 30) return;
+            const SL = [12, 24, 36, 48], k = SL.indexOf(b.slope || 12), nk = Math.max(0, Math.min(3, (k < 0 ? 0 : k) + (wheelAcc < 0 ? 1 : -1)));
+            wheelAcc = 0;
+            if (SL[nk] !== (b.slope || 12)) { update(i, { slope: SL[nk] }); flash(`Pente : ${SL[nk]} dB/oct`); }
+            return;
+        }
         update(i, { q: (b.q || 1) * (e.deltaY < 0 ? 1.12 : 1 / 1.12) });
     }, { passive: false });
 
@@ -8304,8 +8359,16 @@ function openEqPanel(trackIdx, anchorEl) {
     };
     document.addEventListener('keydown', eqKeys, true);
     panel.querySelector('.eq-add').addEventListener('click', () => addBand(1000, 0));
+    const histStep = (from, to) => {
+        if (!from.length) { flash(from === hist ? 'Rien à annuler dans l\'EQ' : 'Rien à rétablir dans l\'EQ'); return; }
+        pushUndo(); to.push(eqSnap()); eqRestore(from.pop());
+        multi.clear(); open = false; hideHover();
+        refreshPlaybackSoon(); saveProject(); draw();
+    };
+    panel.querySelector('.eq-undo').addEventListener('click', () => histStep(hist, fut));
+    panel.querySelector('.eq-redo').addEventListener('click', () => histStep(fut, hist));
     panel.querySelector('.fx-reset').addEventListener('click', () => {
-        pushUndo();
+        pushUndo(); histPush(); open = false;
         delete t.eqBands;
         if (t.sound) applySound(t); else delete t.effectParams.eq;   // retour à l'EQ du preset de Son
         sel = 0; refreshPlaybackSoon(); saveProject(); draw();
