@@ -118,7 +118,10 @@ function undoAction() {
     state.project = JSON.parse(_undoStack.pop());
     if (lyrics !== undefined) state.project.lyrics = lyrics;
     if (lmap !== undefined) state.project.lyricsMap = lmap;
-    renderAll(); saveProject(); flash('↩ Annulé');
+    renderAll(); saveProject();
+    // pendant la lecture, le son suit tout de suite (mute, solo, volumes, sorties, effets)
+    if (state.playing) { PulseAudio.refreshAudibility(state.project); refreshPlaybackSoon(); }
+    flash('↩ Annulé');
 }
 function redoAction() {
     if (window.PulsePianoRoll && PulsePianoRoll.isOpen() && PulsePianoRoll.redoNote()) { flash('↪ Note refaite'); return; }
@@ -130,7 +133,10 @@ function redoAction() {
     state.project = JSON.parse(_redoStack.pop());
     if (lyrics !== undefined) state.project.lyrics = lyrics;
     if (lmap !== undefined) state.project.lyricsMap = lmap;
-    renderAll(); saveProject(); flash('↪ Refait');
+    renderAll(); saveProject();
+    // pendant la lecture, le son suit tout de suite (mute, solo, volumes, sorties, effets)
+    if (state.playing) { PulseAudio.refreshAudibility(state.project); refreshPlaybackSoon(); }
+    flash('↪ Refait');
 }
 function updateUndoBtn() {
     const btn = document.getElementById('btnUndo');
@@ -1126,7 +1132,17 @@ function applyTrackHVar() {
     st.setProperty('--grp-def', groupDefH() + 'px');
 }
 
+// Pistes ajoutées, supprimées ou déplacées pendant la lecture : le moteur reprend le bon ordre (sinon chaque piste
+// sous la piste supprimée recevait le mute / solo / volume de sa voisine jusqu'à la relance de la lecture)
+let _tracksSeen = [];
+function followTrackOrder() {
+    const now = state.project.tracks;
+    const changed = now.length !== _tracksSeen.length || now.some((t, i) => t !== _tracksSeen[i]);
+    _tracksSeen = now.slice();
+    if (changed && state.playing && !state.recording) refreshPlaybackSoon();
+}
 function renderTracksPanel() {
+    followTrackOrder();
     const list = document.getElementById('tracksList');
     // Les Capture Lanes remontent toujours en haut (pinned)
     const tracks = state.project.tracks;

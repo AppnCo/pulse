@@ -3539,7 +3539,7 @@ window.PulseAudio = (function() {
                 const mL = actx.createAnalyser(), mR = actx.createAnalyser();
                 mL.fftSize = mR.fftSize = 512; mL.smoothingTimeConstant = mR.smoothingTimeConstant = 0.3;
                 preMeter.connect(msp); msp.connect(mL, 0); msp.connect(mR, 1);
-                liveNodes.set(trackIdx, { gainNode: trackGain, panNode, analyser, spec, meterL: mL, meterR: mR, vol, audible });
+                liveNodes.set(trackIdx, { gainNode: trackGain, panNode, analyser, spec, meterL: mL, meterR: mR, vol, audible, tname: track.name });
             } else {
                 panNode.connect(trackDest);
             }
@@ -4954,6 +4954,8 @@ window.PulseAudio = (function() {
         registerBuffer, hasBuffer, getBuffer, getBufferDuration, clearBuffers, computePeaks,
         play, stopAll, getPlaybackPosition, setNativeBackend, isNative, setBeatsPerBar,
         updateTrackVolume, updateTrackPan, updateComp, setAutoRanges, eqSections, horizonCoefs, eqMatched, eqIsDynamic, getEqDyn, eqBandCoefs, getLimiterMeter, getGateMeter, getDeessMeter, getMbandMeter, refreshAudibility, isTrackAudible, clearLiveNodes,
+        // Pour les tests : ce que la lecture fait vraiment entendre, piste par piste
+        debugLive: () => [...liveNodes].map(([i, n]) => ({ i, name: n.tname, audible: !!n.audible })),
         getTrackAnalyser, getTrackMeters, trackChannelCount, getMasterAnalyser, getTrackSpectrum, getBusSpectrum, getCompReduction, setMasterVolume,
         setMetronome, setMetronomeBpm, setCountIn, isCountInEnabled,
         startMetronome, stopMetronome, playCountIn, stopCountIn, isCountingIn,

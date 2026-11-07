@@ -41,32 +41,48 @@ export default async (c) => {
       const g = pick(await pts('.eq-panel .eq-pt')); if (g) await drag(g, { x: g.x + (rnd() - 0.5) * 200, y: g.y + (rnd() - 0.5) * 120 }); if (rnd() < 0.3) { const u = pick(await pts('.eq-panel button')); if (u) await click(u); } },
     async fermerPlugins() { await ev(`document.querySelectorAll('.eq-panel .fx-panel-close, .fx-panel .fx-panel-close').forEach(b => b.click())`); },
     async mixer() { await ev(`toggleMixer()`); await sleep(300); },
-    async mixClic() { await click(pick(await pts('.mixer.open .strip-name, .mixer.open .strip button, .mixer.open .strip-fx-slot')), MOD()); },
+    async mixClic() { const p = pick(await pts('.mixer.open .strip-name, .mixer.open .strip button, .mixer.open .strip-fx-slot')); const m = MOD();
+      if (p && process.env.QA_DBG) console.log('  mixClic sur', await J(ev, `const e = document.elementFromPoint(${p.x}, ${p.y}); const s = e && e.closest('.strip'); return (e ? e.className + ' «' + e.textContent.trim().slice(0, 20) + '»' : '?') + ' tranche=' + (s ? (s.querySelector('.strip-name')||{}).textContent : '?')`), 'mod', m);
+      await click(p, m); },
     async zoom() { await ev(`(() => { const zt = zoomTarget(); setZoom(state.pxPerSecond * (${rnd()} < 0.5 ? 1.25 : 0.8), zt.sec, zt.center); })()`); },
     async soloTout() { await click(pick(await pts('#btnSoloAll'))); },
+    async envoi() { await click(pick(await pts('.strip-sends .insp-slot-empty'))); await sleep(150); await this.menuItem(); },
+    async ajoutEffet() { await click(pick(await pts('.insp-fx .insp-slot-empty'))); await sleep(150); await this.menuItem(); },
+    async ouvrirPlugin() { await click(pick(await pts('.insp-fx-row, .strip-fx-slot'))); await sleep(200); if (rnd() < 0.5) await this.fermerPlugins(); },
+    async replier() { await click(pick(await pts('.group-toggle'))); },
+    async combo() { const [k, m] = pick([['c', 5], ['v', 5], ['s', 7], ['m', 7], ['ArrowUp', 4], ['ArrowDown', 4]]); await key(k, m); },
+    async regionAlt() { const r = pick(await pts('.clip')); if (r) await drag(r, { x: r.x + (rnd() - 0.3) * 200, y: r.y + (rnd() < 0.3 ? 70 : 0) }, pick([1, 0, 8])); },
+    async envoiBar() { const r = pick(await pts('.send-bar-row')); if (r) await drag(r, { x: r.x + (rnd() - 0.5) * 60, y: r.y }, pick([0, 8])); },
   };
   const names = Object.keys(actions).filter(n => n !== 'menuItem');
-  const weights = { groupe: 3, piste: 3, touche: 4, fader: 3, alt: 1, menuSortie: 2, clicDroit: 2, pow: 2, eq: 1, fermerPlugins: 1, mixer: 1, mixClic: 2, zoom: 1, soloTout: 1 };
+  const weights = { groupe: 3, piste: 3, touche: 4, fader: 3, alt: 1, menuSortie: 2, clicDroit: 2, pow: 2, eq: 1, fermerPlugins: 1, mixer: 1, mixClic: 2, zoom: 1, soloTout: 1, envoi: 2, ajoutEffet: 1, ouvrirPlugin: 2, replier: 1, combo: 2, regionAlt: 2, envoiBar: 1 };
   const bag = names.flatMap(n => Array(weights[n] || 1).fill(n));
   let bad = [], done = [];
   const CHECK = `(() => { const out = ${INVARIANTS}; try { JSON.stringify(state.project); } catch (e) { out.push('projet non sérialisable ' + e.message); }
     const p = state.project, ids = new Set((p.buses || []).map(b => b.id)); (p.tracks || []).forEach(t => (t.sends || []).forEach(s => { if (s.bus && !ids.has(s.bus)) out.push('envoi vers bus inconnu ' + t.name + '→' + s.bus); }));
+    if (${process.env.QA_PLAY ? 'true' : 'false'} && state.playing) { const live = PulseAudio.debugLive(); if (live.length) window.__liveChecks = (window.__liveChecks || 0) + 1; if (live.length) live.forEach(n => { const t = p.tracks[n.i]; if (!t) out.push('lecture : piste ' + n.i + ' disparue'); else if (t.name !== n.name) out.push('lecture : piste ' + n.i + ' = ' + n.name + ' mais à l écran ' + t.name); else if (PulseAudio.isTrackAudible(p, t) !== n.audible) out.push('lecture : ' + t.name + (n.audible ? ' s entend alors qu elle devrait être coupée' : ' coupée alors qu elle devrait s entendre')); }); }
     return out; })()`;
   for (let i = 0; i < N; i++) {
     const a = pick(bag); done.push(a);
     try { await actions[a](); } catch (e) { bad.push(i + ' ' + a + ' : action ' + e.message); }
     await sleep(40);
-    if (process.env.QA_DBG) console.log('DBG', i, a, await J(ev, `return (state.project.buses||[]).map(b => b.id + '→' + (b.output||'master')).join(' ') + ' | chosen=' + (typeof mixChosenBuses === 'function' ? mixChosenBuses().map(b=>b.id).join(',') : '?') + ' | msg=' + ((document.querySelector('.flash, .toast')||{}).textContent||'').slice(0,80)`));
-    if (i % 5 === 4 || i === N - 1) { const inv = await J(ev, `return ${CHECK}`); if (Array.isArray(inv) && inv.length) { bad.push(i + ' après ' + done.slice(-5).join(',') + ' : ' + inv.join(' | ')); break; } }
+    if (process.env.QA_DBG) console.log('DBG', i, a, await J(ev, `return state.project.tracks.map(t => t.name.slice(0,4) + (t.muted ? 'M' : '') + (t.solo ? 'S' : '') + (t.output !== 'master' ? '>' + t.output : '')).join(' ') + ' | buses ' + (state.project.buses||[]).map(b => b.id + (b.muted ? 'M' : '') + (b.solo ? 'S' : '')).join(' ') + ' | live ' + (state.playing ? PulseAudio.debugLive().map(n => n.name.slice(0,4) + (n.audible ? '+' : '-')).join(' ') : 'stop') + ' | flash=' + ((document.querySelector('.flash, .toast, #flash')||{}).textContent||'').slice(0,60) + ' || ' + (state.project.buses||[]).map(b => b.id + '→' + (b.output||'master')).join(' ') + ' | chosen=' + (typeof mixChosenBuses === 'function' ? mixChosenBuses().map(b=>b.id).join(',') : '?') + ' | msg=' + ((document.querySelector('.flash, .toast')||{}).textContent||'').slice(0,80)`));
+    if (process.env.QA_PLAY && (i % 5 === 3)) { await ev(`if (!state.playing) { state.playhead = 0; togglePlay(); }`); }
+    if (process.env.QA_PLAY && (i % 5 === 4)) await sleep(250);
+    if (i % 5 === 4 || i === N - 1) { const inv = await J(ev, `return ${CHECK}`); if (Array.isArray(inv) && inv.length && /^lecture/.test(inv[0])) { await sleep(1500); const inv2 = await J(ev, `return ${CHECK}`); console.log('DECALAGE', i, done.slice(-6).join(','), '| tout de suite :', inv.join(' ; '), '| 1,5 s après :', Array.isArray(inv2) && inv2.length ? inv2.join(' ; ') : 'rattrapé'); if (Array.isArray(inv2) && !inv2.length) continue; }
+      if (!Array.isArray(inv) || inv.length) { bad.push(i + ' après ' + done.slice(-5).join(',') + ' : ' + (Array.isArray(inv) ? inv.join(' | ') : String(inv).slice(0, 300))); break; } }
     const exc = logs.filter(l => /^EXC/.test(l)); if (exc.length) { bad.push(i + ' après ' + done.slice(-5).join(',') + ' : ' + exc[0]); break; }
   }
   console.log('bilan', await J(ev, `const p = state.project; return { sorties: p.tracks.map(t => t.output).join(','), groupes: (p.buses || []).map(b => b.id + '→' + (b.output || 'master') + (b.solo ? ' S' : '') + (b.mute ? ' M' : '')).join(', '), solos: p.tracks.filter(t => t.solo).length, mutes: p.tracks.filter(t => t.mute || t.muted).length, vols: p.tracks.map(t => Math.round(t.volume ?? 100)).join(','), fxOff: p.tracks.reduce((n, t) => n + ((t.fxOff || []).length || 0), 0), envois: p.tracks.reduce((n, t) => n + (t.sends || []).length, 0), pistes: p.tracks.length, undo: (state.undoStack || []).length }`));
+  if (process.env.QA_PLAY) console.log('contrôles en lecture :', await ev(`window.__liveChecks || 0`));
   check(`graine ${seed0} : ${N} gestes de mix sans exception ni incohérence`, !bad.length, bad.slice(0, 3).join(' || '));
   // Tout annuler puis tout refaire : le projet reste cohérent
   await ev(`document.querySelectorAll('.eq-panel,.fx-panel,.track-ctx-menu').forEach(p => p.remove())`);
   for (let k = 0; k < 80; k++) await key('z', 4);
+  await sleep(600);
   const inv1 = await J(ev, `return ${CHECK}`);
   for (let k = 0; k < 80; k++) await key('z', 12);
+  await sleep(600);
   const inv2 = await J(ev, `return ${CHECK}`);
   const exc = logs.filter(l => /^EXC/.test(l));
   check('tout annuler / tout refaire : cohérent, aucune exception', !inv1.length && !inv2.length && !exc.length, JSON.stringify([inv1, inv2, exc.slice(0, 2)]));
