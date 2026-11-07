@@ -3124,6 +3124,8 @@ window.PulseAudio = (function() {
         if (Object.entries(track.busSends || {}).some(([id, l]) => l > 0 && buses.some(b => b.id === id && b.solo))) return true;
         return !!(track.folder && (project.folders || []).some(f => f.id === track.folder && f.solo));
     }
+    // Pour les tests : empreinte des régions d'une piste (début, durée, décalage, muette)
+    function clipSig(track) { return (track.clips || []).map(c => [c.start, c.duration, c.offset || 0].map(v => (+v || 0).toFixed(3)).join(':') + (c.muted ? 'm' : '')).sort().join('|'); }
     function isTrackAudible(project, track) {
         const anySolo = project.tracks.some(t => t.solo) || (project.buses || []).some(b => b.solo) || (project.folders || []).some(f => f.solo);
         return !track.muted && (!anySolo || track.solo || groupSolo(project, track));
@@ -3539,7 +3541,7 @@ window.PulseAudio = (function() {
                 const mL = actx.createAnalyser(), mR = actx.createAnalyser();
                 mL.fftSize = mR.fftSize = 512; mL.smoothingTimeConstant = mR.smoothingTimeConstant = 0.3;
                 preMeter.connect(msp); msp.connect(mL, 0); msp.connect(mR, 1);
-                liveNodes.set(trackIdx, { gainNode: trackGain, panNode, analyser, spec, meterL: mL, meterR: mR, vol, audible, tname: track.name });
+                liveNodes.set(trackIdx, { gainNode: trackGain, panNode, analyser, spec, meterL: mL, meterR: mR, vol, audible, tname: track.name, tfx: (track.effects || []).join(','), tclips: clipSig(track) });
             } else {
                 panNode.connect(trackDest);
             }
@@ -4955,7 +4957,8 @@ window.PulseAudio = (function() {
         play, stopAll, getPlaybackPosition, setNativeBackend, isNative, setBeatsPerBar,
         updateTrackVolume, updateTrackPan, updateComp, setAutoRanges, eqSections, horizonCoefs, eqMatched, eqIsDynamic, getEqDyn, eqBandCoefs, getLimiterMeter, getGateMeter, getDeessMeter, getMbandMeter, refreshAudibility, isTrackAudible, clearLiveNodes,
         // Pour les tests : ce que la lecture fait vraiment entendre, piste par piste
-        debugLive: () => [...liveNodes].map(([i, n]) => ({ i, name: n.tname, audible: !!n.audible, vol: n.vol })),
+        debugLive: () => [...liveNodes].map(([i, n]) => ({ i, name: n.tname, audible: !!n.audible, vol: n.vol, fx: n.tfx, clips: n.tclips })),
+        clipSig,
         debugLiveBuses: () => [...liveBusNodes].map(([id, g]) => ({ id, gain: g.gain.value })),
         getTrackAnalyser, getTrackMeters, trackChannelCount, getMasterAnalyser, getTrackSpectrum, getBusSpectrum, getCompReduction, setMasterVolume,
         setMetronome, setMetronomeBpm, setCountIn, isCountInEnabled,

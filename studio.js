@@ -1214,7 +1214,17 @@ function observeTrackHeights() {
 }
 
 // --- Rendu : timeline tracks (zones vides) ---
+// Régions déplacées, copiées, coupées, raccourcies ou effacées pendant la lecture : le moteur les rejoue tout de suite
+// (avant : il fallait relancer la lecture pour entendre un montage fait en écoutant)
+let _clipsSeen = '';
+function followClipEdits() {
+    const sig = state.project.tracks.map(t => PulseAudio.clipSig ? PulseAudio.clipSig(t) : '').join('#');
+    const changed = sig !== _clipsSeen;
+    _clipsSeen = sig;
+    if (changed && state.playing && !state.recording && !document.body.classList.contains('is-dragging')) refreshPlaybackSoon();
+}
 function renderTimelineTracks() {
+    followClipEdits();
     const el = document.getElementById('timelineTracks');
     // un vrai rendu remet l'aperçu de zoom à plat (voir setZoom)
     if (el && el.style.transform) { el.style.transform = ''; el.style.transformOrigin = ''; }
@@ -1433,7 +1443,14 @@ function renderClip(t, c, ci) {
         const totalLoop = c.loopEnd - c.start - c.duration;
         let offsetPx = origWidthPx;
         let remaining = totalLoop;
+        // Région minuscule bouclée sur longtemps : au plus 400 répétitions dessinées une à une, le reste d'un seul bloc
+        // (avant : des millions de répétitions → « Invalid string length », la timeline ne s'affichait plus)
+        let reps = 0;
         while (remaining > 0.05) {
+            if (++reps > 400 || !(repeatDur > 0.001)) {
+                loopHtml += `<div class="clip-loop-repeat" style="left:${offsetPx.toFixed(1)}px;width:${(remaining * state.pxPerSecond).toFixed(1)}px"></div>`;
+                break;
+            }
             const segDur = Math.min(repeatDur, remaining);
             const segPx = segDur * state.pxPerSecond;
             loopHtml += `<div class="clip-loop-repeat" style="left:${offsetPx.toFixed(1)}px;width:${segPx.toFixed(1)}px">
@@ -5326,8 +5343,8 @@ function trimAtPlayhead(side) {
     t.clips = clips.flatMap(c => {
         const start = c.start;
         const end   = c.start + c.duration;
-        // Playhead en dehors du clip → inchangé
-        if (ph <= start || ph >= end) return [c];
+        // Playhead en dehors du clip (ou à moins d'1 ms d'un bord : on laisserait un morceau vide) → inchangé
+        if (ph <= start + 0.001 || ph >= end - 0.001) return [c];
         touched++;
         if (side === 'left') {
             // On garde la partie droite : nouveau start = playhead
@@ -15947,7 +15964,7 @@ function splitClipAt(trackIdx, clipIdx, atSec) {
         return;
     }
     if (clip.loopEnd && clip.loopEnd > clip.start + clip.duration + 1e-6) { flash('Cette région est répétée : supprime sa répétition (clic droit) avant de la scinder'); return; }
-    if (atSec <= clip.start || atSec >= clip.start + clip.duration) return;
+    if (atSec <= clip.start + 0.001 || atSec >= clip.start + clip.duration - 0.001) return;   // à moins d'1 ms d'un bord : pas de morceau vide
     pushUndo();
     const left  = { ...clip, duration: atSec - clip.start, loopEnd: undefined, fadeOut: 0 };
     const right = { ...clip, start: atSec, duration: clip.start + clip.duration - atSec,
@@ -15967,7 +15984,7 @@ function splitClipsAt(pairs, atSec) {
         const c = state.project.tracks[ti]?.clips?.[ci];
         if (!c || c.recording || clipIsLocked(c)) continue;
         if (c.loopEnd && c.loopEnd > c.start + c.duration + 1e-6) continue;
-        if (atSec <= c.start + 1e-4 || atSec >= c.start + c.duration - 1e-4) continue;
+        if (atSec <= c.start + 0.001 || atSec >= c.start + c.duration - 0.001) continue;
         if (!byTrack.has(ti)) byTrack.set(ti, []);
         byTrack.get(ti).push(ci);
     }
