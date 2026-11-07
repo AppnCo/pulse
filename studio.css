@@ -3888,3 +3888,13 @@ body[data-left-tool="fade"] .timeline-tracks .clip { cursor: ew-resize; }
 
 /* bulle de valeur en dB pendant qu'on tire un fader */
 .db-tip { position: fixed; z-index: 400; pointer-events: none; padding: 2px 7px; border-radius: 5px; background: rgba(18,12,28,.95); border: 1px solid #3a2c50; color: #fff; font: 600 11px/16px -apple-system, system-ui, sans-serif; font-variant-numeric: tabular-nums; box-shadow: 0 4px 14px rgba(0,0,0,.5); }
+
+/* 07/11 — Table de mixage : le fader est toujours entier (comme Logic). Quand la place manque,
+   ce sont les cases d'effets et d'envois qui rétrécissent (elles défilent), jamais le fader. */
+.mixer { height: min(720px, 76vh); }
+.mixer-strips { align-items: stretch; }
+.mixer-strips .strip { min-height: 0; }
+.mixer-strips .insp-fx, .mixer-strips .strip-sends { flex: 0 1 auto; min-height: 0; }
+.mixer-strips .insp-fx .insp-slots { flex: 0 1 150px; height: auto; min-height: 50px; }
+.mixer-strips .strip-sends .insp-slots { flex: 0 1 100px; height: auto; min-height: 26px; }
+.mixer-strips .strip-fader-wrap { flex: 0 0 auto; }
