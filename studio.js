@@ -2376,7 +2376,7 @@ function chainOf(x) {
 // automation « fx:comp#2:… ». Même découpage dans les moteurs (FxChain dans fx.rs, createEffectsChain dans audio.js).
 const fxType = (id) => String(id).split('#')[0];
 const fxInstNum = (id) => { const m = /#(\d+)$/.exec(String(id)); return m ? +m[1] : 1; };
-function fxLabel(id) { const ty = fxType(id); return (FX_NAMES[ty] || ty) + (String(id).includes('#') ? ' ' + fxInstNum(id) : ''); }
+function fxLabel(id) { const ty = fxType(id); if (ty === 'vst') return window.PulseExt ? PulseExt.nameOf(id) : 'Plugin externe'; return (FX_NAMES[ty] || ty) + (String(id).includes('#') ? ' ' + fxInstNum(id) : ''); }
 function nextFxInstance(o, ty) { let k = 2; while ((o.effects || []).includes(ty + '#' + k) || (o.fxOff || []).includes(ty + '#' + k)) k++; return ty + '#' + k; }
 // Vue d'un exemplaire pour les fenêtres d'effet (écrites pour « comp ») : la fenêtre lit et écrit « comp », la vue range dans « comp#2 »
 // (réglages, liste d'effets, automation). `__fxKey` = clé de ses afficheurs dans le moteur (« t0~comp#2 »).
@@ -3291,7 +3291,10 @@ function openAddEffectMenu(anchor, target, x, replaceId = null) {
     let recent = [];
     try { recent = JSON.parse(localStorage.getItem('pulse_fx_recent') || '[]').filter(n => fxChoice[n]); } catch {}
     // Deux gammes rangées à part : les plugins Pulse et la gamme Analogique (onglets en haut de la colonne de gauche)
-    const RANGES = [['Pulse', ADD_FX_CATEGORIES], ['Analogique', ADD_FX_CATEGORIES_ANA]];
+    const extList = window.PulseExt && PulseExt.available() ? PulseExt.visible() : [];
+    const extCats = [];
+    extList.forEach((p, i) => { const k = 'ext:' + i; fxChoice[k] = p.name; const v = p.vendor || 'Autres'; let c = extCats.find(e => e[0] === v); if (!c) extCats.push(c = [v, []]); c[1].push(k); });
+    const RANGES = [['Pulse', ADD_FX_CATEGORIES], ['Analogique', ADD_FX_CATEGORIES_ANA], ...(extCats.length ? [['Externes', extCats]] : [])];
     const cats = RANGES.flatMap(([g, list]) => list.map(([c, names]) => [c, names.filter(n => fxChoice[n]), g]));
     const voice = state.project.tracks.includes(x);   // PulseTune : sur toute piste, pas sur un groupe
     if (voice) { const vh = cats.find(([c]) => c === 'Voix et hauteur'); if (vh) vh[1] = ['tune', ...vh[1]]; }   // Auto-Tune en tête : 1er maillon d'une voix
@@ -3303,6 +3306,13 @@ function openAddEffectMenu(anchor, target, x, replaceId = null) {
     const addHead = (box, txt) => { const h = document.createElement('div'); h.className = 'ctx-head'; h.textContent = txt; box.appendChild(h); };
     const pick = (n) => {
         menu.remove();
+        // plugin externe (FabFilter…) : posé en fin de chaîne, sa vraie fenêtre s'ouvre
+        if (String(n).startsWith('ext:')) {
+            const info = extList[+String(n).slice(4)]; if (!info) return;
+            pushUndo();
+            PulseExt.add(x, info).then(id => { if (!id) return; saveProject(); refreshPlaybackSoon(); renderInspector(); if (state.mixerOpen) { renderMixer(); bindMixerEvents(); } flash(`${info.name} ajouté`); });
+            return;
+        }
         if (replaceId && n !== 'tune') {
             const at = chainOf(x).indexOf(replaceId);
             replaceFx(x, replaceId, n);
@@ -3386,6 +3396,7 @@ function openAddEffectMenu(anchor, target, x, replaceId = null) {
         el.addEventListener('click', () => { search.value = ''; showCat(c); });
         left.appendChild(el);
     });
+    if (window.PulseExt && PulseExt.available()) { const sep = document.createElement('div'); sep.className = 'ctx-sep'; left.appendChild(sep); const g = document.createElement('div'); g.className = 'ctx-item fam-ext-manage'; g.textContent = '⚙ Gérer les plugins externes…'; g.addEventListener('click', () => { menu.remove(); PulseExt.openManager(); }); left.appendChild(g); }
     left.querySelectorAll('.fam-range').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); search.value = ''; showCat(cats.find(k => k[2] === b.dataset.range)[0]); }));
     // Recherche : nom, explication et mots courants (anglais compris : delay, reverb…), dans les deux gammes
     const norm = (t) => t.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
@@ -4154,6 +4165,7 @@ async function saveProjectFolder(askAgain = false) {
             }
             await nativeWrite(dir, `${fsSafe(base, 'Projet')}.pulse`, split.main);
         } else {
+            if (window.PulseExt) await PulseExt.saveStates(state.project);
             const packed = await PulseFile.pack(state.project);
             missing = packed.missing;
             await nativeWrite(dir, `${fsSafe(base, 'Projet')}.pulse`, packed.blob);
@@ -4195,6 +4207,7 @@ async function exportPulseFile() {
     flash('Préparation du fichier projet…');
     try {
         saveProject();
+        if (window.PulseExt) await PulseExt.saveStates(state.project);
         const { blob, clips, missing } = await PulseFile.pack(state.project);
         const name = (state.project.name || 'projet').replace(/[^\p{L}\p{N}_\-]+/gu, '_');
         triggerDownload(blob, name + '.pulse');
@@ -4335,7 +4348,9 @@ async function togglePlay(fromRec = false) {
         state.followOff = false;
         state.startTime = performance.now() - state.playhead * 1000;
         // Moteur natif (appli de bureau, si activé dans les Réglages) : seulement pour écouter, pas pendant une prise
-        const useNative = !fromRec && window.PulseNative && PulseNative.isEnabled() && !state.recording;
+        const hasExt = !!(window.PulseExt && PulseExt.available() && PulseExt.has(state.project));
+        const useNative = !fromRec && window.PulseNative && (PulseNative.isEnabled() || (hasExt && PulseNative.available)) && !state.recording;
+        if (useNative && hasExt) await PulseExt.ensure(state.project);
         if (useNative) PulseNative.onError = (err) => flash('Le moteur natif n\'a pas pu jouer (' + (err && err.message || err) + ') : lecture par le moteur habituel');
         PulseAudio.setNativeBackend(useNative ? PulseNative : null);
         // le moteur natif reçoit la boucle dès le départ (il la tient lui-même, sans trou)
@@ -7843,8 +7858,46 @@ let _fxRefreshTimer = null;
 // Un réglage de plugin bougé pendant la lecture : on l'entend PENDANT le geste (au plus toutes les 70 ms, en fondu),
 // plus seulement quand on lâche la souris. Une mise à jour à la fois ; la dernière valeur passe toujours.
 let _fxRefreshBusy = false, _fxRefreshPending = false, _fxRefreshLast = 0;
+// === Réglages de plugins en direct pendant la lecture (comme Logic / Pro Tools) ===
+// À chaque (re)construction du son, on garde une empreinte du projet. Si ensuite SEULS des réglages de plugins ont bougé,
+// ils partent directement au plugin qui joue (même chemin que l'automation) : pas de reconstruction, pas de délai.
+// Le moindre autre changement (plugin ajouté, ordre, région, sortie, mode…) reconstruit comme avant.
+const _liveSnap = { rest: null, fx: null };
+function liveSnapOf(p) {
+    const fx = {};
+    const own = (key, x) => { fx[key] = JSON.parse(JSON.stringify(x.effectParams || {})); };
+    p.tracks.forEach((t, i) => own('t' + i, t));
+    (p.buses || []).forEach(b => own('b' + b.id, b));
+    const rest = JSON.stringify(p, (k, v) => (k === 'peaks' || k === 'effectParams' || k === 'eqBands' || k === 'proKeep' || k === 'lyrics' || k === 'lyricsMap') ? undefined : v);
+    return { rest, fx };
+}
+function liveSnapTake(p) { try { const s = liveSnapOf(p || state.project); _liveSnap.rest = s.rest; _liveSnap.fx = s.fx; } catch (e) { _liveSnap.rest = null; } }
+function tryLiveFx() {
+    if (!_liveSnap.rest || !PulseAudio.liveFxSet) return false;
+    const now = liveSnapOf(state.project);
+    if (now.rest !== _liveSnap.rest) return false;
+    const sends = [];
+    for (const key of Object.keys(now.fx)) {
+        const a = _liveSnap.fx[key] || {}, b = now.fx[key];
+        for (const id of new Set([...Object.keys(a), ...Object.keys(b)])) {
+            if (JSON.stringify(a[id]) === JSON.stringify(b[id])) continue;
+            if (fxType(id) === 'vst' && a[id] && b[id] && a[id].path === b[id].path) continue;   // plugin externe : ses réglages vivent dans le plugin
+            const pa = a[id] || {}, pb = b[id];
+            if (!pb || typeof pb !== 'object') return false;
+            const changed = {};
+            for (const k of new Set([...Object.keys(pa), ...Object.keys(pb)])) if (JSON.stringify(pa[k]) !== JSON.stringify(pb[k])) { if (pb[k] === undefined) return false; changed[k] = pb[k]; }
+            sends.push([key, id, changed, pa]);
+        }
+    }
+    if (!sends.length) return true;
+    // tout ou rien : si un seul réglage ne peut pas partir en direct, on reconstruit
+    if (!sends.every(([key, id, ch, prev]) => PulseAudio.liveFxSet(key, id, ch, prev))) return false;
+    _liveSnap.fx = now.fx;
+    return true;
+}
 function refreshPlaybackSoon() {
     if (!state.playing || state.recording) return;
+    if (tryLiveFx()) return;
     if (_fxRefreshBusy) { _fxRefreshPending = true; return; }
     clearTimeout(_fxRefreshTimer);
     _fxRefreshTimer = setTimeout(async () => {
@@ -10862,6 +10915,7 @@ const FX_PANEL_DEFS = {
 };
 
 function openEffectPanel(trackIdx, fxName, anchorEl) {
+    if (fxType(fxName) === 'vst') return window.PulseExt && PulseExt.openEditor(fxName);
     if (String(fxName).includes('#')) {
         const real = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;
         if (!real) return;
@@ -11745,6 +11799,22 @@ function suspendFollow() {
 // Zoom fluide (comme les gros logiciels) : pendant un geste de zoom rapide (molette, pavé, E / Z tenus), on étire l'image déjà dessinée
 // (presque gratuit) et on ne redessine les pistes, net, qu'une fois le geste fini. La règle et le curseur restent exacts.
 const _zoomPrev = { base: 0, at: 0, timer: 0, want: null };
+// Chaque construction du son (lecture, relance, saut…) remet l'empreinte des réglages à jour
+if (window.PulseAudio && PulseAudio.play && !PulseAudio.play._liveWrapped) {
+    const _play = PulseAudio.play;
+    PulseAudio.play = function (project, ...rest) { liveSnapTake(project); return _play.call(this, project, ...rest); };
+    PulseAudio.play._liveWrapped = true;
+}
+// Les réglages qui agissent directement sur le son (fader, pan, mute / solo, volume des bus, compresseur, Master) ne passent
+// pas par une reconstruction : l'empreinte ne correspond plus au son → la prochaine mise à jour reconstruit (sinon un ⌘Z
+// qui revient à l'ancienne valeur ne serait jamais entendu)
+if (window.PulseAudio && !PulseAudio._liveDirectWrapped) {
+    ['updateTrackVolume', 'updateTrackPan', 'updateBusVolume', 'refreshAudibility', 'updateComp', 'setMasterVolume'].forEach(k => {
+        const f = PulseAudio[k]; if (typeof f !== 'function') return;
+        PulseAudio[k] = function (...a) { _liveSnap.rest = null; return f.apply(this, a); };
+    });
+    PulseAudio._liveDirectWrapped = true;
+}
 function setZoom(px, anchorSec, center = false) {
     const timeline = document.querySelector('.timeline');
     const oldPx = state.pxPerSecond;

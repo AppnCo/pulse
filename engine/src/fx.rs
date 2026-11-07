@@ -2708,7 +2708,8 @@ pub fn process_send(send: &Send, left: &mut [f32], right: &mut [f32], sr: f64, b
 /// (« comp », « comp#2 »…, comme des inserts Logic). Sans doublon : une seule `Chain`, exactement comme avant.
 /// Avec doublons : la liste (dans l'ordre affiché, voir chainOf dans studio.js) est coupée en tranches sans doublon,
 /// jouées l'une après l'autre ; chaque tranche ne voit que ses exemplaires, sous leur nom de type.
-pub struct FxChain { parts: Vec<(Chain, Vec<String>)> }
+/// Les plugins externes (« vst#… ») sont des tranches à part : `ext[i]` joue à la place de la tranche i (vide).
+pub struct FxChain { parts: Vec<(Chain, Vec<String>)>, ext: Vec<Option<crate::ext::ExtSlot>> }
 
 impl FxChain {
     /// L'ordre de jeu : l'ordre choisi (`fx_order`), puis les autres à leur place habituelle (par type), puis le reste
@@ -2723,14 +2724,19 @@ impl FxChain {
     }
     pub fn new(effects: &[String], params: &EffectParams, fx_order: &[String], sr: f64, bpm: f64, ceiling_db: f64) -> Self {
         let dup = effects.iter().any(|e| e.contains('#'));
-        if !dup { return Self { parts: vec![(Chain::new(effects, params, sr, bpm, ceiling_db).with_order(fx_order), effects.to_vec())] }; }
+        if !dup { return Self { parts: vec![(Chain::new(effects, params, sr, bpm, ceiling_db).with_order(fx_order), effects.to_vec())], ext: vec![None] }; }
         let mut groups: Vec<Vec<String>> = vec![Vec::new()];
         for id in Self::ordered(effects, fx_order) {
             let ty = crate::model::fx_type(&id);
+            // plugin externe : toujours seul dans sa tranche
+            if ty == "vst" { groups.push(vec![id]); groups.push(Vec::new()); continue; }
             if groups.last().unwrap().iter().any(|g| crate::model::fx_type(g) == ty) { groups.push(Vec::new()); }
             groups.last_mut().unwrap().push(id);
         }
-        let parts = groups.into_iter().filter(|g| !g.is_empty()).map(|ids| {
+        let groups: Vec<Vec<String>> = groups.into_iter().filter(|g| !g.is_empty()).collect();
+        let ext = groups.iter().map(|g| if g.len() == 1 && crate::model::fx_type(&g[0]) == "vst" { Some(crate::ext::ExtSlot::new(&g[0], sr)) } else { None }).collect();
+        let parts = groups.into_iter().map(|ids| {
+            if crate::model::fx_type(&ids[0]) == "vst" { return (Chain::new(&[], &EffectParams::default(), sr, bpm, ceiling_db), ids); }
             let mut ep = EffectParams::default();
             for id in &ids {
                 let one = params.instance(id);
@@ -2740,7 +2746,7 @@ impl FxChain {
             let types: Vec<String> = ids.iter().map(|i| crate::model::fx_type(i).to_owned()).collect();
             (Chain::new(&types, &ep, sr, bpm, ceiling_db).with_order(&types), ids)
         }).collect();
-        Self { parts }
+        Self { parts, ext }
     }
     pub fn for_track(track: &Track, sr: f64, bpm: f64) -> Self {
         Self::new(&track.effects, &track.effect_params, &track.fx_order, sr, bpm, -0.3)
@@ -2749,7 +2755,7 @@ impl FxChain {
     pub fn with_auto(self, automation: &Automation, from: f64) -> Self {
         if self.parts.len() == 1 && !self.parts[0].1.iter().any(|i| i.contains('#')) {
             let (c, ids) = self.parts.into_iter().next().unwrap();
-            return Self { parts: vec![(c.with_auto(automation, from), ids)] };
+            return Self { parts: vec![(c.with_auto(automation, from), ids)], ext: self.ext };
         }
         let parts = self.parts.into_iter().map(|(c, ids)| {
             let mut a = Automation { volume: None, other: Default::default() };
@@ -2760,10 +2766,10 @@ impl FxChain {
             }
             (c.with_auto(&a, from), ids)
         }).collect();
-        Self { parts }
+        Self { parts, ext: self.ext }
     }
     pub fn with_tempo(self, segs: Vec<(f64, f64)>, from: f64) -> Self {
-        Self { parts: self.parts.into_iter().map(|(c, ids)| (c.with_tempo(segs.clone(), from), ids)).collect() }
+        Self { parts: self.parts.into_iter().map(|(c, ids)| (c.with_tempo(segs.clone(), from), ids)).collect(), ext: self.ext }
     }
     pub fn seek(&mut self, t: f64) { for (c, _) in &mut self.parts { c.seek(t); } }
     /// Réglage changé en direct : `fx` = nom d'exemplaire (« comp#2 ») ou de type
@@ -2773,12 +2779,14 @@ impl FxChain {
         for (c, ids) in &mut self.parts { if ids.iter().any(|i| i == fx) { r |= c.set_live(ty, key, v); } }
         r
     }
-    pub fn is_empty(&self) -> bool { self.parts.iter().all(|(c, _)| c.is_empty()) }
-    pub fn makes_stereo(&self) -> bool { self.parts.iter().any(|(c, _)| c.makes_stereo()) }
-    pub fn outputs_stereo(&self) -> bool { self.parts.iter().any(|(c, _)| c.outputs_stereo()) }
+    pub fn is_empty(&self) -> bool { self.parts.iter().all(|(c, _)| c.is_empty()) && self.ext.iter().all(|e| e.is_none()) }
+    pub fn makes_stereo(&self) -> bool { self.parts.iter().any(|(c, _)| c.makes_stereo()) || self.ext.iter().any(|e| e.is_some()) }
+    pub fn outputs_stereo(&self) -> bool { self.parts.iter().any(|(c, _)| c.outputs_stereo()) || self.ext.iter().any(|e| e.is_some()) }
     pub fn process(&mut self, left: &mut [f32], right: &mut [f32], mono: bool) {
         let mut mono = mono;
-        for (c, _) in &mut self.parts {
+        for (i, (c, _)) in self.parts.iter_mut().enumerate() {
+            // plugin externe : toujours en stéréo (gauche recopiée à droite pour une piste mono)
+            if let Some(Some(e)) = self.ext.get_mut(i) { e.process(left, right, mono); mono = false; continue; }
             c.process(left, right, mono);
             // une tranche qui élargit en stéréo (reverb, écho ping-pong…) a rempli `right` : la suite est stéréo
             if mono && c.outputs_stereo() { mono = false; }

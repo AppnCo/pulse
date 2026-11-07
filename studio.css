@@ -3898,3 +3898,13 @@ body[data-left-tool="fade"] .timeline-tracks .clip { cursor: ew-resize; }
 .mixer-strips .insp-fx .insp-slots { flex: 0 1 150px; height: auto; min-height: 50px; }
 .mixer-strips .strip-sends .insp-slots { flex: 0 1 100px; height: auto; min-height: 26px; }
 .mixer-strips .strip-fader-wrap { flex: 0 0 auto; }
+
+/* === Plugins externes : gestionnaire (cocher / décocher, comme Logic) === */
+.ext-manager { position: fixed; inset: 0; z-index: 400; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; }
+.ext-man-card { width: min(560px, 92vw); max-height: 80vh; display: flex; flex-direction: column; background: var(--bg-1, #15121c); border: 1px solid var(--border, #333); border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,.5); }
+.ext-man-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border, #333); flex-wrap: wrap; }
+.ext-man-hint { flex: 1; font-size: 11px; color: var(--text-3, #999); }
+.ext-man-head button { background: var(--bg-3, #2a2433); color: var(--text-1, #eee); border: 1px solid var(--border, #444); border-radius: 6px; padding: 4px 9px; cursor: pointer; }
+.ext-man-list { overflow: auto; padding: 8px 14px 14px; }
+.ext-man-vendor { margin: 10px 0 4px; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--text-3, #999); }
+.ext-man-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 13px; cursor: pointer; }

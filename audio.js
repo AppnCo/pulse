@@ -167,6 +167,9 @@ window.PulseAudio = (function() {
                     if (this._au) for (const k of (p.autoLog || [])) if (this._au[k]) this._au[k] = this._au[k].map(q => ({ t: q.t, v: Math.log(Math.max(q.v, 1e-9)) }));
                     this._al = p.autoLog || [];
                     this._at0 = p.autoT0 || 0; this._af = p.autoFrom || 0;
+                    // Réglage bougé pendant la lecture : appliqué tout de suite, par la même fonction que l'automation
+                    this.port.addEventListener('message', (e) => { const v = e.data && e.data.live; if (!v) return; this._ap = { ...this._ap, ...v }; try { apply(this, v); } catch (er) {} });
+                    this.port.start();
                 }
                 process(i, o) {
                     if (this._au) { const t = currentTime - this._at0 + this._af, v = {}; for (const k in this._au) { const x = pulseAutoAt(this._au[k], t); v[k] = this._al.includes(k) ? Math.exp(x) : x; } apply(this, v); }
@@ -2653,6 +2656,38 @@ window.PulseAudio = (function() {
     // Réduction réelle du compresseur (dB) par piste ('t' + numéro) ou groupe ('b' + id), mise à jour pendant la lecture
     const compGR = new Map();
     const compLive = new Map();   // grKey -> compresseur en cours de lecture (réglages en direct)
+    function liveFxSet(ownerKey, id, changed, prev = {}) {
+        if (nativeOn) return false;
+        const kind = String(id).split('#')[0];
+        const n = liveFx.get((String(id).includes('#') ? ownerKey + '~' + id : ownerKey) + '|' + kind);
+        if (!n) return false;
+        if (kind === 'eq') {
+            // EQ : seules la fréquence, le gain et la largeur des points fixes partent en direct (comme l'automation) ;
+            // un point ajouté / retiré / allumé, un type, une pente, un point dynamique, la sortie… reconstruisent
+            if (Object.keys(changed || {}).some(k => k !== 'bands')) return false;
+            const A = prev.bands, B = changed.bands;
+            if (!Array.isArray(A) || !Array.isArray(B) || A.length !== B.length || B.length > 24) return false;
+            const v = {};
+            for (let i = 0; i < B.length; i++) {
+                const a = A[i] || {}, b = B[i] || {};
+                for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) if (JSON.stringify(a[k]) !== JSON.stringify(b[k]) && !['freq', 'gain', 'q'].includes(k)) return false;
+                if (eqIsDynamic(b) || eqIsDynamic(a) || b.on === false || !(b.freq > 0) || !(a.freq > 0)) { if (JSON.stringify(a) !== JSON.stringify(b)) return false; continue; }
+                if (a.freq !== b.freq) { if (!Number.isFinite(b.freq)) return false; v['b' + i + '-freq'] = Math.max(20, Math.min(20000, b.freq)); }
+                if (a.gain !== b.gain) { if (!Number.isFinite(b.gain || 0)) return false; v['b' + i + '-gain'] = b.gain || 0; }
+                if (a.q !== b.q) { if (!Number.isFinite(b.q || 1)) return false; v['b' + i + '-q'] = b.q || 1; }
+            }
+            if (Object.keys(v).length) { try { n.port.postMessage({ live: v }); } catch (e) { return false; } }
+            return true;
+        }
+        const keys = Object.keys(changed || {});
+        if (!keys.length || !keys.every(k => autoRanges['fx:' + kind + ':' + k] && Number.isFinite(changed[k]))) return false;
+        // réglages qui font apparaître / disparaître le plugin ou changent sa version : on reconstruit
+        if (kind === 'sat' && 'drive' in changed && !(changed.drive > 0)) return false;
+        if (kind === 'deess' && (('thr' in changed && prev.thr === undefined) || ('amount' in changed && !(changed.amount > 0)))) return false;
+        const conv = liveFxConv.get(n) || {}, msg = {};
+        for (const k of keys) msg[k] = conv[k] ? conv[k](changed[k]) : changed[k];
+        try { n.port.postMessage({ live: msg }); return true; } catch (e) { return false; }
+    }
     function updateComp(key, cp) {
         const n = compLive.get(key); if (!n || !cp) return false;
         const r = { threshold: cp.threshold, ratio: cp.ratio, attack: cp.attack, release: cp.release, knee: cp.knee, makeup: cp.makeup, mix: cp.mix, mode: cp.mode, autoRel: cp.autoRel };
@@ -4174,6 +4209,8 @@ window.PulseAudio = (function() {
 
     // Références live des gain/pan + analyser par piste (pour update en direct + VU-mètres)
     const liveNodes = new Map();
+    const liveFx = new Map();
+    const liveFxConv = new WeakMap();   // conversions de l'automation (ex. delay : % → 0..1), reprises telles quelles en direct
     const liveBusNodes = new Map();
     const liveBusSpec = new Map();
 
@@ -4218,6 +4255,9 @@ window.PulseAudio = (function() {
         const input = actx.createGain();
         let prev = input;
         const connect = (n) => { prev.connect(n); prev = n; };
+        // Plugins de la lecture en cours, pour leur envoyer un réglage en direct (clé « t0|fet76 », « b<id>~comp#2|comp »…)
+        const isLive = !!params.grKey && !(typeof OfflineAudioContext !== 'undefined' && actx instanceof OfflineAudioContext);
+        const liveReg = (kind, n, conv) => { if (isLive && n) { liveFx.set(gk(kind) + '|' + kind, n); if (conv) liveFxConv.set(n, conv); } return n; };
         // Courbes d'automation des réglages, converties dans l'unité de l'effet
         const autoAt = params.autoAt || { t0: 0, from: 0 };
         const curveOf = (fx, key, conv = (x) => x) => {
@@ -4260,11 +4300,11 @@ window.PulseAudio = (function() {
         // Effets maison simples : un nœud par effet (voir les worklets pulse-mod / pulse-crush / pulse-util)
         const node = (name, kind) => {
             if (!enabled.includes(kind) || !fxReady.has(actx)) return;
-            connect(new AudioWorkletNode(actx, name, {
+            connect(liveReg(kind, new AudioWorkletNode(actx, name, {
                 numberOfInputs: 1, numberOfOutputs: 1,
                 channelCountMode: 'max', // une voix mono reste mono
                 processorOptions: { kind, ...(params[kind] || {}), ...autoAll(kind) }
-            }));
+            })));
         };
         ['doubler', 'slapback'].forEach((k) => { B[k] = () => node('pulse-mod', k); });
         // Chorus, flanger, phaser, trémolo : vitesse en Hz, ou calée sur le tempo (sync + beats = un cycle en temps), au tempo de l'endroit où la lecture part
@@ -4288,7 +4328,7 @@ window.PulseAudio = (function() {
             const n = new AudioWorkletNode(actx, 'pulse-fet76', { numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max',
                 processorOptions: { kind: 'fet76', ...(params.fet76 || {}), report: live, ...autoAll('fet76') } });
             if (live) { const k = 'fet76|' + gk('fet76'); n.port.onmessage = (e) => { compGR.set(k, e.data); compGRts.set(k, performance.now()); }; }
-            connect(n);
+            connect(liveReg('fet76', n));
         };
         B.pre73 = () => node('pulse-pre73', 'pre73');
         B.prev76 = () => node('pulse-prev76', 'prev76');
@@ -4302,32 +4342,32 @@ window.PulseAudio = (function() {
         // Écho à bande : sortie stéréo (les deux ressorts)
         B.techo = () => {
             if (!enabled.includes('techo') || !fxReady.has(actx)) return;
-            connect(new AudioWorkletNode(actx, 'pulse-techo', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCountMode: 'max',
-                processorOptions: { kind: 'techo', ...(params.techo || {}), ...autoAll('techo') } }));
+            connect(liveReg('techo', new AudioWorkletNode(actx, 'pulse-techo', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCountMode: 'max',
+                processorOptions: { kind: 'techo', ...(params.techo || {}), ...autoAll('techo') } })));
         };
         // Dimension : sortie stéréo même pour une piste mono
         B.dim = () => {
             if (!enabled.includes('dim') || !fxReady.has(actx)) return;
-            connect(new AudioWorkletNode(actx, 'pulse-dim', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCountMode: 'max',
-                processorOptions: { kind: 'dim', ...(params.dim || {}), ...autoAll('dim') } }));
+            connect(liveReg('dim', new AudioWorkletNode(actx, 'pulse-dim', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCountMode: 'max',
+                processorOptions: { kind: 'dim', ...(params.dim || {}), ...autoAll('dim') } })));
         };
         // Harmoniseur 910 : deux voix (gauche, droite) même pour une piste mono
         B.h910 = () => {
             if (!enabled.includes('h910') || !fxReady.has(actx)) return;
-            connect(new AudioWorkletNode(actx, 'pulse-h910', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCountMode: 'max',
-                processorOptions: { kind: 'h910', ...(params.h910 || {}), ...autoAll('h910') } }));
+            connect(liveReg('h910', new AudioWorkletNode(actx, 'pulse-h910', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCountMode: 'max',
+                processorOptions: { kind: 'h910', ...(params.h910 || {}), ...autoAll('h910') } })));
         };
         // Salle 80 : sortie stéréo même pour une piste mono
         B.hall80 = () => {
             if (!enabled.includes('hall80') || !fxReady.has(actx)) return;
-            connect(new AudioWorkletNode(actx, 'pulse-hall80', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCountMode: 'max',
-                processorOptions: { kind: 'hall80', ...(params.hall80 || {}), ...autoAll('hall80') } }));
+            connect(liveReg('hall80', new AudioWorkletNode(actx, 'pulse-hall80', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCountMode: 'max',
+                processorOptions: { kind: 'hall80', ...(params.hall80 || {}), ...autoAll('hall80') } })));
         };
         // Plaque 140 : sortie stéréo même pour une piste mono (comme la reverb)
         B.plate = () => {
             if (!enabled.includes('plate') || !fxReady.has(actx)) return;
-            connect(new AudioWorkletNode(actx, 'pulse-plate', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCountMode: 'max',
-                processorOptions: { kind: 'plate', ...(params.plate || {}), ...autoAll('plate') } }));
+            connect(liveReg('plate', new AudioWorkletNode(actx, 'pulse-plate', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCountMode: 'max',
+                processorOptions: { kind: 'plate', ...(params.plate || {}), ...autoAll('plate') } })));
         };
         // Bus 33 : aiguille de réduction (clé « bus33|t0 »)
         B.bus33 = () => {
@@ -4336,7 +4376,7 @@ window.PulseAudio = (function() {
             const n = new AudioWorkletNode(actx, 'pulse-bus33', { numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max',
                 processorOptions: { kind: 'bus33', ...(params.bus33 || {}), report: live, ...autoAll('bus33') } });
             if (live) { const k = 'bus33|' + gk('bus33'); n.port.onmessage = (e) => { compGR.set(k, e.data); compGRts.set(k, performance.now()); }; }
-            connect(n);
+            connect(liveReg('bus33', n));
         };
         // Comp 25 : aiguille de réduction (clé « comp25|t0 »)
         B.comp25 = () => {
@@ -4345,7 +4385,7 @@ window.PulseAudio = (function() {
             const n = new AudioWorkletNode(actx, 'pulse-comp25', { numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max',
                 processorOptions: { kind: 'comp25', ...(params.comp25 || {}), report: live, ...autoAll('comp25') } });
             if (live) { const k = 'comp25|' + gk('comp25'); n.port.onmessage = (e) => { compGR.set(k, e.data); compGRts.set(k, performance.now()); }; }
-            connect(n);
+            connect(liveReg('comp25', n));
         };
         // Tranche E : aiguille du compresseur (clé « stripe|t0 »)
         B.stripe = () => {
@@ -4354,7 +4394,7 @@ window.PulseAudio = (function() {
             const n = new AudioWorkletNode(actx, 'pulse-stripe', { numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max',
                 processorOptions: { kind: 'stripe', ...(params.stripe || {}), report: live, ...autoAll('stripe') } });
             if (live) { const k = 'stripe|' + gk('stripe'); n.port.onmessage = (e) => { compGR.set(k, e.data); compGRts.set(k, performance.now()); }; }
-            connect(n);
+            connect(liveReg('stripe', n));
         };
         // Détresse : aiguille de réduction (clé « dtr|t0 »)
         B.dtr = () => {
@@ -4363,7 +4403,7 @@ window.PulseAudio = (function() {
             const n = new AudioWorkletNode(actx, 'pulse-dtr', { numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max',
                 processorOptions: { kind: 'dtr', ...(params.dtr || {}), report: live, ...autoAll('dtr') } });
             if (live) { const k = 'dtr|' + gk('dtr'); n.port.onmessage = (e) => { compGR.set(k, e.data); compGRts.set(k, performance.now()); }; }
-            connect(n);
+            connect(liveReg('dtr', n));
         };
         // Lampe 670 : aiguille de réduction (clé « l670|t0 »)
         B.l670 = () => {
@@ -4372,7 +4412,7 @@ window.PulseAudio = (function() {
             const n = new AudioWorkletNode(actx, 'pulse-l670', { numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max',
                 processorOptions: { kind: 'l670', ...(params.l670 || {}), report: live, ...autoAll('l670') } });
             if (live) { const k = 'l670|' + gk('l670'); n.port.onmessage = (e) => { compGR.set(k, e.data); compGRts.set(k, performance.now()); }; }
-            connect(n);
+            connect(liveReg('l670', n));
         };
         // Bus G : aiguille de réduction comme le 76 (clé « busg|t0 »)
         B.busg = () => {
@@ -4381,7 +4421,7 @@ window.PulseAudio = (function() {
             const n = new AudioWorkletNode(actx, 'pulse-busg', { numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max',
                 processorOptions: { kind: 'busg', ...(params.busg || {}), report: live, ...autoAll('busg') } });
             if (live) { const k = 'busg|' + gk('busg'); n.port.onmessage = (e) => { compGR.set(k, e.data); compGRts.set(k, performance.now()); }; }
-            connect(n);
+            connect(liveReg('busg', n));
         };
         // Optique 2A : même aiguille que le 76 (clé « opto2a|t0 »)
         B.opto2a = () => {
@@ -4390,7 +4430,7 @@ window.PulseAudio = (function() {
             const n = new AudioWorkletNode(actx, 'pulse-opto2a', { numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max',
                 processorOptions: { kind: 'opto2a', ...(params.opto2a || {}), report: live, ...autoAll('opto2a') } });
             if (live) { const k = 'opto2a|' + gk('opto2a'); n.port.onmessage = (e) => { compGR.set(k, e.data); compGRts.set(k, performance.now()); }; }
-            connect(n);
+            connect(liveReg('opto2a', n));
         };
         B.util = () => node('pulse-util', 'util');
         B.width = () => node('pulse-util', 'width');
@@ -4406,7 +4446,7 @@ window.PulseAudio = (function() {
                     ratio: p.ratio, knee: p.knee, attack: p.attack, hold: p.hold, hp: p.hp, lp: p.lp, listen: live && !!p.listen, live, ...autoAll('gate') }
             });
             if (live) { const key = gk('gate'); node.port.onmessage = (e) => gateLive.set(key, { ...e.data, ts: performance.now() }); }
-            connect(node);
+            connect(liveReg('gate', node));
         };
 
         // EQ 4-bandes
@@ -4435,8 +4475,8 @@ window.PulseAudio = (function() {
                 // Filtres calés sur l'analogique (worklet pulse-eq), comme le moteur Rust ; l'automation y est suivie à chaque bloc
                 const list = [];
                 bandsEq.forEach((bd, i) => { if (isStatic(bd)) list.push({ i, type: bd.type, freq: Math.max(20, Math.min(20000, bd.freq)), gain: bd.gain || 0, q: bd.q || 1, slope: bd.slope }); });
-                if (list.length) connect(new AudioWorkletNode(actx, 'pulse-eq', { numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max',
-                    processorOptions: { bands: list, ...autoAll('eq') } }));
+                if (list.length) connect(liveReg('eq', new AudioWorkletNode(actx, 'pulse-eq', { numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max',
+                    processorOptions: { bands: list, ...autoAll('eq') } })));
             } else for (const [bi, bd] of bandsEq.entries()) {
                 // Sans worklet (navigateur très ancien) : filtres standards du navigateur
                 if (!isStatic(bd)) continue;
@@ -4470,7 +4510,7 @@ window.PulseAudio = (function() {
         B.sat = () => {
             const sp = params.sat || {}, drive = enabled.includes('sat') ? (sp.drive || 0) : 0;
             if (drive > 0 && fxReady.has(actx)) {
-                connect(new AudioWorkletNode(actx, 'pulse-sat', { numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max', processorOptions: { drive, sty: sp.sty, input: sp.input, tone: sp.tone, mix: sp.mix, out: sp.out, ag: sp.ag, ...autoOpts('sat', { drive: null, input: null, tone: null, mix: null, out: null }) } }));
+                connect(liveReg('sat', new AudioWorkletNode(actx, 'pulse-sat', { numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max', processorOptions: { drive, sty: sp.sty, input: sp.input, tone: sp.tone, mix: sp.mix, out: sp.out, ag: sp.ag, ...autoOpts('sat', { drive: null, input: null, tone: null, mix: null, out: null }) } })));
             } else if (drive > 0) {
                 const k = 1 + drive * 0.05;
                 const curve = new Float32Array(1024);
@@ -4497,16 +4537,16 @@ window.PulseAudio = (function() {
                 const node = new AudioWorkletNode(actx, 'pulse-deesser2', { numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max',
                     processorOptions: { thr: dp.thr, range: dp.range, lo: dp.lo, hi: dp.hi, wide: !!dp.wide, rel: !!dp.rel, listen: live && !!dp.listen, live, ...autoAll('deess') } });
                 if (live) { const key = gk('deess'); node.port.onmessage = (e) => deessLive.set(key, { ...e.data, ts: performance.now() }); }
-                connect(node);
+                connect(liveReg('deess', node));
                 return;
             }
             const deess = enabled.includes('deess') ? ((params.deess || {}).amount || 0) : 0;
             if ((deess > 0 || (enabled.includes('deess') && hasAuto('deess'))) && fxReady.has(actx)) {
-                connect(new AudioWorkletNode(actx, 'pulse-deesser', {
+                connect(liveReg('deess', new AudioWorkletNode(actx, 'pulse-deesser', {
                     numberOfInputs: 1, numberOfOutputs: 1,
                     channelCountMode: 'max', // une voix mono reste mono (même volume qu'avant)
                     processorOptions: { amount: deess, freq: (params.deess || {}).freq || 5500, ...autoAll('deess') }
-                }));
+                })));
             }
         };
 
@@ -4589,7 +4629,7 @@ window.PulseAudio = (function() {
                     processorOptions: { ceiling: dbToLin(lp.ceiling ?? ceiling), gain: lp.gain || 0, release: lp.release, lookahead: lp.lookahead, tp: !!lp.tp, style: lp.style || 0, live, ...autoAll('limit') }
                 });
                 if (live) { const key = gk('limit'); node.port.onmessage = (e) => limLive.set(key, { ...e.data, ts: performance.now() }); }
-                connect(node);
+                connect(liveReg('limit', node));
             }
         };
 
@@ -4600,14 +4640,14 @@ window.PulseAudio = (function() {
                 // tempo qui change : l'écho calé sur le rythme part au tempo de l'endroit où la lecture commence, puis suit
                 const tp = !(dp.ms > 0) && params.tempo && params.tempo.length > 1 ? params.tempo : null;
                 const bpm0 = tp ? tp.reduce((b, x) => x.sec <= autoAt.from + 1e-9 ? x.bpm : b, tp[0].bpm) : bpm;
-                connect(new AudioWorkletNode(actx, 'pulse-delay', {
+                connect(liveReg('delay', new AudioWorkletNode(actx, 'pulse-delay', {
                     numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max',
                     ...(dp.pp ? { outputChannelCount: [2] } : {}),
                     processorOptions: { ...(tp ? { tempo: tp, beats: dp.beats > 0 ? dp.beats : 0.5, tT0: autoAt.t0, tFrom: autoAt.from } : {}),
                         time: delaySeconds(dp, bpm0), feedback: (dp.feedback ?? 35) / 100, wet: (dp.wet ?? 25) / 100, dry: (dp.dry ?? 100) / 100, pp: !!dp.pp,
                         hpf: dp.hpf || 0, lpf: dp.lpf || 0, duck: dp.duck || 0, eq: dp.eq,
                         ...autoOpts('delay', { feedback: (x) => x / 100, wet: (x) => x / 100, dry: (x) => x / 100 }) }
-                }));
+                }), { feedback: (x) => x / 100, wet: (x) => x / 100, dry: (x) => x / 100 }));
             }
         };
 
@@ -4615,10 +4655,10 @@ window.PulseAudio = (function() {
         B.reverb = () => {
             if (enabled.includes('reverb') && fxReady.has(actx)) {
                 const rp = params.reverb || {};
-                connect(new AudioWorkletNode(actx, 'pulse-reverb', {
+                connect(liveReg('reverb', new AudioWorkletNode(actx, 'pulse-reverb', {
                     numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCountMode: 'max',
                     processorOptions: { wet: rp.wet !== undefined ? rp.wet / 100 : 0.18, size: rp.size, decay: rp.decay, pre: (rp.pre || 0) / 1000, low: rp.low || 0, high: rp.high || 0, duck: rp.duck || 0, out: rp.out || 0, bright: rp.bright, width: rp.width, eq: rp.eq, ...autoOpts('reverb', { wet: (x) => x / 100 }) }
-                }));
+                }), { wet: (x) => x / 100 }));
             } else if (enabled.includes('reverb')) {
                 const rp = params.reverb || {};
                 const wetAmt = rp.wet !== undefined ? rp.wet / 100 : 0.18;
@@ -4824,7 +4864,7 @@ window.PulseAudio = (function() {
     }
 
     function clearLiveNodes() {
-        liveNodes.clear();
+        liveNodes.clear(); liveFx.clear();
         liveBusNodes.clear();
         liveBusSpec.clear();
     }
@@ -4958,7 +4998,7 @@ window.PulseAudio = (function() {
         updateTrackVolume, updateTrackPan, updateComp, setAutoRanges, eqSections, horizonCoefs, eqMatched, eqIsDynamic, getEqDyn, eqBandCoefs, getLimiterMeter, getGateMeter, getDeessMeter, getMbandMeter, refreshAudibility, isTrackAudible, clearLiveNodes,
         // Pour les tests : ce que la lecture fait vraiment entendre, piste par piste
         debugLive: () => [...liveNodes].map(([i, n]) => ({ i, name: n.tname, audible: !!n.audible, vol: n.vol, fx: n.tfx, clips: n.tclips })),
-        clipSig,
+        clipSig, liveFxSet,
         debugLiveBuses: () => [...liveBusNodes].map(([id, g]) => ({ id, gain: g.gain.value })),
         getTrackAnalyser, getTrackMeters, trackChannelCount, getMasterAnalyser, getTrackSpectrum, getBusSpectrum, getCompReduction, setMasterVolume,
         setMetronome, setMetronomeBpm, setCountIn, isCountInEnabled,

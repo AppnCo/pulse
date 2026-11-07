@@ -1,5 +1,6 @@
 //! Pulse — moteur audio natif (v0.1 : lecture .pulse + mixage hors-ligne).
 pub mod analog;
+pub mod ext;
 pub mod file;
 pub mod fx;
 pub mod horizon;

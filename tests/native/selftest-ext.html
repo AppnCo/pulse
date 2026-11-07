@@ -1,0 +1,25 @@
+<!doctype html><meta charset="utf-8"><title>selftest ext</title><body style="margin:0;background:#111;color:#0f0;font:18px monospace"><pre id="o" style="position:fixed;z-index:9;top:60px;left:10px;background:#000c;padding:8px"></pre>
+<iframe id="f" src="studio.html" style="width:100vw;height:100vh;border:0"></iframe>
+<script>
+// Plugins externes dans l'appli : liste, chargement de Pro-Q 4, lecture native d'un projet qui le contient, réglages enregistrés
+const o=document.getElementById('o'); const log=t=>{ o.textContent+=t+'\n'; try{ window.__TAURI__.core.invoke('test_log',{text:t}); }catch{} };
+const f=document.getElementById('f'); const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+(async()=>{ try{
+  await sleep(2500); const w=f.contentWindow; w.__TAURI__=window.__TAURI__; const inv=window.__TAURI__.core.invoke;
+  log('PulseExt.available='+(w.PulseExt&&w.PulseExt.available()));
+  const t0=performance.now(); const list=await w.PulseExt.scan(true); log('scan: '+list.length+' plugins en '+Math.round(performance.now()-t0)+' ms');
+  const pq=list.find(p=>/Pro-Q 4/.test(p.name)); log('Pro-Q 4 trouvé='+!!pq+' éditeur='+(pq&&pq.editor));
+  const ST=w.eval('state'); const ctx=await w.PulseAudio.init(); const sr=48000,b=ctx.createBuffer(1,sr*4,sr); const d=b.getChannelData(0); for(let i=0;i<d.length;i++)d[i]=0.05*Math.sin(2*Math.PI*1000*i/sr);
+  w.PulseAudio.registerBuffer('sext',b); await w.PulsePersist.saveBlob('sext', new Blob([w.PulseAudio.audioBufferToWav(b)],{type:'audio/wav'}),{kind:'import'});
+  const t=ST.project.tracks[0]; t.clips=[{id:'sext',start:0,duration:4,offset:0}]; t.volume=20;
+  const id=await w.PulseExt.add(t, pq); log('ajouté: '+id+' effets='+JSON.stringify(t.effects));
+  await sleep(500);
+  ST.playhead=0.5; await w.togglePlay(); await sleep(1500);
+  const ni=await inv('native_info'); const lv=await inv('native_live');
+  log('lecture: isNative='+w.PulseAudio.isNative()+' joue='+ni.playing+' pos='+ni.position.toFixed(2)+' niveaux='+JSON.stringify(lv.levels&&lv.levels.master||lv.levels||null).slice(0,80));
+  await w.togglePlay();
+  await w.PulseExt.saveStates(ST.project); const st=(t.effectParams[id]||{}).state||''; log('état enregistré: '+st.length+' caractères');
+  log('chargés: '+JSON.stringify(await inv('ext_loaded')));
+  log('FIN OK');
+} catch(e){ log('ERREUR '+(e&&e.stack||e)); log('FIN'); } })();
+</script>
