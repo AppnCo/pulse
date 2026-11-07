@@ -882,7 +882,7 @@ function moveTrackToGroup(idx, busId) {
 // Met un groupe dans un nouveau grand groupe (ex. « Voix 1 » dans « Toutes les voix »)
 function wrapGroup(busId) {
     const bus = busById(busId);
-    if (!bus) return;
+    if (!bus || bus.noOut) return;
     pushUndo();
     const id = 'grp_' + Date.now().toString(36);
     state.project.buses.push({ id, name: 'Toutes les voix', isGroup: true, output: bus.output || 'master', color: '#7C3AED', volume: 100 });
@@ -892,7 +892,7 @@ function wrapGroup(busId) {
 
 // Plusieurs groupes d'un coup dans un nouveau grand groupe = un bus de plus (Mix Bus 1, 2…), autant de niveaux qu'on veut
 function wrapGroups(ids) {
-    let list = ids.map(busById).filter(Boolean);
+    let list = ids.map(busById).filter(b => b && !b.noOut);
     // un groupe déjà contenu dans un autre groupe choisi suit son grand groupe
     list = list.filter(b => !groupChain(b).slice(1).some(p => list.includes(p)));
     if (!list.length) return;
@@ -922,7 +922,8 @@ function wrapGroup(busId) { wrapGroups([busId]); }
 // Range un groupe dans un autre (ou le sort vers `destId`)
 function moveGroupInto(busId, destId) {
     const bus = busById(busId), dest = busById(destId);
-    if (!bus || bus === dest) return;
+    if (!bus || bus === dest || bus.noOut) return;
+    if (dest && busFeeds(dest, bus.id)) { flash(`Impossible : « ${dest.name} » passe déjà par « ${bus.name} »`); return; }
     pushUndo();
     bus.output = dest ? dest.id : 'master';
     if (dest) {
@@ -2271,6 +2272,12 @@ function openMarkerContextMenu(x, y, idx) {
 function applyShowAll() { document.body.classList.toggle('show-all', showAll()); }
 function migrateProject() {
     let changed = false;
+    // Sorties de groupes en boucle (bug du 07/11 via « Pas de sortie ») : le groupe repart sur la sortie stéréo
+    (state.project.buses || []).forEach(b => { if (b.noOut && b.output && b.output !== 'master') { b.output = 'master'; changed = true; } });
+    (state.project.buses || []).forEach(b => {
+        const seen = new Set([b.id]); let s = b;
+        while (s && s.output && s.output !== 'master') { if (seen.has(s.output)) { s.output = 'master'; changed = true; break; } seen.add(s.output); s = busById(s.output); }
+    });
     PulseAudio.setCeiling(state.project.ceilingDb ?? -0.3);
     // Le fader Master fait partie du projet : même export, même niveau, à chaque ouverture
     const mv = state.project.masterVolume ?? 100;
@@ -2584,7 +2591,7 @@ function renderInspector() {
     const idx = state.selectedTrack;
     const t = state.project.tracks[idx];
     if (!t) { el.innerHTML = '<div class="insp-hint">Clique sur une piste pour voir ses réglages ici</div>'; return; }
-    const dest = busById(t.output);
+    const dest = (b => b && !b.noOut ? b : null)(busById(t.output));
     // Un groupe cliqué dans la liste s'affiche comme une piste (avec sa sortie en dessous) ; sinon : la piste choisie + son groupe de sortie
     const selBus = state.selectedBus && state._selBusTrack === state.selectedTrack ? busById(state.selectedBus) : null;
     // Comme Logic : quand on clique un envoi, la tranche de droite montre son bus (pour y mettre des effets) ; sinon la sortie.
@@ -2593,7 +2600,7 @@ function renderInspector() {
     const left = selBus || t, ir = state._inspRight;
     const sendBus = ir && ir.owner === state.selectedTrack && (left.busSends || {})[ir.bus] !== undefined ? busById(ir.bus) : null;
     if (selBus) {
-        const up = sendBus && sendBus.id !== selBus.id ? sendBus : busById(selBus.output);
+        const up = sendBus && sendBus.id !== selBus.id ? sendBus : (b => b && !b.noOut ? b : null)(busById(selBus.output));
         el.innerHTML = inspectorStrip('bus', selBus) + (up ? inspectorStrip('bus', up) : inspectorStrip('master'));
     } else {
         const right = sendBus || dest;
@@ -3096,12 +3103,14 @@ function openOutputMenu(anchor, kind, x, idx) {
     menu.style.cssText = `position:fixed;left:${Math.max(8, r.left)}px;top:${Math.max(8, r.top - 12)}px;z-index:300;min-width:190px`;
     const cur = x.output || 'master';
     const choose = (id) => {
+        if (kind === 'bus' && x.noOut) return;   // le bus caché « Pas de sortie » reste sur la sortie stéréo
         if (id === '__new') { createBus({ withTracks: kind === 'track' ? (selectedTrackIdxs().includes(idx) ? selectedTrackIdxs() : [idx]) : [] }); return; }
         if (id === NO_OUT_ID) {
             // toute la sélection (pistes, ou groupes choisis) ; les envois continuent
             let tg;
             if (kind === 'track') { const sl = selectedTrackIdxs(); tg = sl.length > 1 && sl.includes(idx) ? sl.map(i => state.project.tracks[i]) : [x]; }
             else { const ch = mixChosenBuses().filter(b => !b.locked && !b.premaster); tg = ch.length > 1 && ch.includes(x) ? ch : [x]; }
+            tg = tg.filter(o => !o.noOut); if (!tg.length) return;
             pushUndo(); noOutBus(); tg.forEach(o => { o.output = NO_OUT_ID; });
             afterGroupChange(tg.length > 1 ? `${tg.length} ${kind === 'track' ? 'pistes' : 'groupes'} sans sortie (leurs envois continuent)` : `« ${x.name} » n'a plus de sortie (ses envois continuent)`);
             return;
