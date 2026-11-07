@@ -124,6 +124,14 @@ window.PulseExt = (function () {
             if (typeof state === 'undefined' || !state.project || !has(state.project)) return;
             saveStates(state.project).then(() => { if (typeof saveProject === 'function') saveProject(); }).catch(() => {});
         }, 20000);
+        // latence d'un plugin changée dans sa fenêtre (EQ en phase linéaire…) : notée dans le projet → le mix se recale
+        setInterval(async () => {
+            if (typeof state === 'undefined' || !state.project || !state.playing || !has(state.project)) return;
+            let lat; try { lat = await core().invoke('ext_latencies'); } catch { return; }
+            let changed = false;
+            for (const [o, id] of allExt(state.project)) { const p = (o.effectParams || {})[id]; if (p && lat[id] !== undefined && (p.latency || 0) !== lat[id]) { p.latency = lat[id]; changed = true; } }
+            if (changed && typeof refreshPlaybackSoon === 'function') refreshPlaybackSoon();
+        }, 1500);
     }
     return { available, scan, visible, nameOf, has, isExt, ensure, saveStates, add, openEditor, openManager, names };
 })();

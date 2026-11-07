@@ -7881,7 +7881,7 @@ function tryLiveFx() {
         const a = _liveSnap.fx[key] || {}, b = now.fx[key];
         for (const id of new Set([...Object.keys(a), ...Object.keys(b)])) {
             if (JSON.stringify(a[id]) === JSON.stringify(b[id])) continue;
-            if (fxType(id) === 'vst' && a[id] && b[id] && a[id].path === b[id].path) continue;   // plugin externe : ses réglages vivent dans le plugin
+            if (fxType(id) === 'vst' && a[id] && b[id] && a[id].path === b[id].path && a[id].latency === b[id].latency) continue;   // plugin externe : ses réglages vivent dans le plugin (une latence qui change, elle, reconstruit)
             const pa = a[id] || {}, pb = b[id];
             if (!pb || typeof pb !== 'object') return false;
             const changed = {};

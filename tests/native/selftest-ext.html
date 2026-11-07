@@ -20,6 +20,9 @@ const f=document.getElementById('f'); const sleep=ms=>new Promise(r=>setTimeout(
   await w.togglePlay();
   await w.PulseExt.saveStates(ST.project); const st=(t.effectParams[id]||{}).state||''; log('état enregistré: '+st.length+' caractères');
   log('chargés: '+JSON.stringify(await inv('ext_loaded')));
+  { const t1=performance.now(); const wav=await w.PulseAudio.exportWav(ST.project,{normalize:false}); const ms=Math.round(performance.now()-t1);
+    if(!wav){ log('export: RIEN'); } else { const ab=await w.PulseAudio.getContext().decodeAudioData(await wav.arrayBuffer()); const d=ab.getChannelData(0); let s2=0; for(let i=0;i<d.length;i++) s2+=d[i]*d[i];
+      log('export: '+ab.duration.toFixed(2)+' s en '+ms+' ms, niveau='+Math.sqrt(s2/d.length).toFixed(4)+' (son présent='+(Math.sqrt(s2/d.length)>0.001)+')'); } }
   log('FIN OK');
 } catch(e){ log('ERREUR '+(e&&e.stack||e)); log('FIN'); } })();
 </script>

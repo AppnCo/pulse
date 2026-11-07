@@ -24,6 +24,8 @@ mod imp {
     pub fn get(id: &str) -> Option<Shared> { reg().lock().unwrap().get(id).cloned() }
     pub fn remove(id: &str) -> Option<Shared> { reg().lock().unwrap().remove(id) }
     pub fn ids() -> Vec<String> { reg().lock().unwrap().keys().cloned().collect() }
+    /// Retard du plugin (échantillons) : compensé par le moteur comme celui du Pitch et des machines analogiques
+    pub fn latency(id: &str) -> u32 { get(id).and_then(|s| s.lock().ok().map(|g| g.latency_samples())).unwrap_or(0) }
 
     // Génération de chaque instance : à chaque nouveau mixeur (fondu entre l'ancien et le nouveau), seul le plus récent
     // fait passer le son dans le plugin ; l'ancien laisse passer le son tel quel le temps du fondu (sinon deux sons
@@ -65,6 +67,7 @@ mod imp {
 #[cfg(not(feature = "ext"))]
 mod imp {
     pub struct ExtSlot;
+    pub fn latency(_id: &str) -> u32 { 0 }
     impl ExtSlot {
         pub fn new(_id: &str, _sr: f64) -> Self { ExtSlot }
         pub fn is_live(&self) -> bool { false }

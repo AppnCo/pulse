@@ -44,3 +44,41 @@ fn proq4_dans_le_moteur() {
     assert!(a > 0.05, "le son doit passer : {a}");
     assert!((b / a - 1.0).abs() > 0.2, "le point de l'EQ doit changer le son : {a} → {b}");
 }
+
+#[test]
+fn proq4_phase_lineaire_compensee() {
+    if !std::path::Path::new(PROQ).exists() { return; }
+    let sr = 48_000u32;
+    let mut p = vst3_host::simple::load_plugin(PROQ).expect("chargement");
+    p.reconfigure(sr as f64, ext::MAX_BLOCK).expect("fréquence");
+    let params = p.get_parameters().unwrap();
+    let modes: Vec<String> = params.iter().filter(|q| q.name.to_lowercase().contains("phase") || q.name.to_lowercase().contains("processing")).map(|q| format!("{}={}", q.name, q.id)).collect();
+    println!("réglages de phase : {modes:?}");
+    let pm = params.iter().find(|q| q.name.to_lowercase().contains("phase mode") || q.name.to_lowercase().contains("processing mode")).map(|q| (q.id, q.step_count));
+    let Some((pid, steps)) = pm else { println!("pas de mode de phase trouvé"); return };
+    // un point allumé (sinon le linéaire ne fait rien) + mode linéaire (dernier cran)
+    let id = |name: &str| params.iter().find(|q| q.name == name).map(|q| q.id).unwrap();
+    p.set_parameter(id("Band 1 Used"), 1.0).unwrap(); p.set_parameter(id("Band 1 Gain"), 0.5).unwrap();   // point à 0 dB : le son ressort tel quel, seulement retardé
+    p.set_parameter(pid, if steps > 0 { 1.0 } else { 1.0 }).unwrap();
+    p.start_processing().unwrap();
+    // la latence est annoncée après un premier passage
+    let mut b = vst3_host::AudioBuffers::new(2, 2, ext::MAX_BLOCK, sr as f64); for _ in 0..4 { p.process_audio(&mut b).unwrap(); }
+    let _ = p.service_host_requests();
+    let lat = p.latency_samples();
+    println!("latence annoncée : {lat} échantillons");
+    ext::insert("vst#lin", p);
+    // une impulsion à 1 s
+    let n = sr as usize * 3; let mut s = vec![0.0f32; n]; s[sr as usize] = 0.9;
+    let mut media = render::Media::new(); media.insert("c".into(), render::Source::new(sr, vec![s.clone(), s]));
+    let json = r#"{"bpm":120,"tracks":[{"name":"V","type":"audio","volume":100,"clips":[{"id":"c","start":0,"duration":3,"offset":0}],"effects":["vst#lin"]},{"name":"Ref","type":"audio","volume":100,"clips":[],"effects":[]}]}"#;
+    let project: Project = serde_json::from_str(json).unwrap();
+    let (l, _) = render::render_blocks(&project, &media, &render::RenderOptions { sample_rate: sr, ..Default::default() }, 512);
+    let pk = |x: &[f32]| x.iter().enumerate().max_by(|a, b| a.1.abs().partial_cmp(&b.1.abs()).unwrap()).map(|(i, _)| i).unwrap() as i64;
+    // référence : le même projet sans plugin (le limiteur du Master retarde tout le mix pareil, c'est normal)
+    let reference: Project = serde_json::from_str(&json.replace(r#""effects":["vst#lin"]"#, r#""effects":[]"#)).unwrap();
+    let (l0, _) = render::render_blocks(&reference, &media, &render::RenderOptions { sample_rate: sr, ..Default::default() }, 512);
+    let (a, b) = (pk(&l0), pk(&l));
+    println!("impulsion sans plugin à {a}, avec Pro-Q linéaire à {b} (écart {})", b - a);
+    assert!(lat > 0, "le mode linéaire doit annoncer une latence");
+    assert!((b - a).abs() <= 2, "la latence de Pro-Q doit être compensée : écart {}", b - a);
+}

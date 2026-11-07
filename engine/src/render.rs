@@ -180,7 +180,9 @@ fn fx_latency(effects: &[String], params: &crate::model::EffectParams, auto: Opt
         "tape" => crate::analog::Tape::LATENCY,
         _ => 0,
     }).sum();
-    pitch * crate::pitch::Pitch::latency_for(sr) as f64 / sr + analog as f64 / sr
+    // plugins externes : le retard qu'ils annoncent
+    let ext: u32 = effects.iter().filter(|e| crate::model::fx_type(e) == "vst").map(|e| crate::ext::latency(e)).sum();
+    pitch * crate::pitch::Pitch::latency_for(sr) as f64 / sr + analog as f64 / sr + ext as f64 / sr
 }
 /// Retard des groupes sur le trajet de sortie d'une piste (groupe → groupe → master). Même calcul que busLatency dans audio.js.
 /// Un stem seul contourne les groupes : 0.
@@ -387,7 +389,10 @@ impl Renderer {
                 && (project.tracks.iter().enumerate().any(|(i, t)| opts.only_track.map_or(true, |o| o == i) && t.sends.get(&sd.id).is_some_and(|l| *l > 0.0))
                     || (opts.only_track.is_none() && project.buses.iter().any(|b| b.sends.get(&sd.id).is_some_and(|l| *l > 0.0)))))
         };
-        let tail = if opts.range.is_some() { 0.0 } else if uses("delay") || send_used(true) { 4.0 } else if uses("reverb") || send_used(false) { 2.5 } else { 0.0 };
+        // plugin externe : on ne connaît pas sa queue (réverbe, écho…) → 3 s de marge
+        let has_ext = project.tracks.iter().any(|t| t.effects.iter().any(|e| crate::model::fx_type(e) == "vst")) || project.buses.iter().any(|b| b.effects.iter().any(|e| crate::model::fx_type(e) == "vst"));
+        let tail: f64 = if opts.range.is_some() { 0.0 } else if uses("delay") || send_used(true) { 4.0 } else if uses("reverb") || send_used(false) { 2.5 } else { 0.0 };
+        let tail = if has_ext && opts.range.is_none() { tail.max(3.0) } else { tail };
         let frames = ((to - from + tail).max(0.0) * sr).ceil() as usize;
 
         let mut tracks = Vec::new();

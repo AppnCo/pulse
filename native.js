@@ -25,6 +25,20 @@ window.PulseNative = (function () {
         if (lp) headers.loop = lp[0] + ',' + lp[1];
         return sendBytes(bytes, 'native_play', headers, 'native_play_staged', { from, lp });
     }
+    // Export par le moteur natif (projet avec plugins externes). Réponse : ArrayBuffer [fréquence u32][n u32][gauche f32…][droite f32…]
+    async function render(project, master, range = null) {
+        if (!isAvailable()) throw new Error('moteur natif absent');
+        const sizes = {};
+        for (const id of new Set(PulsePersist.mediaIds(project, false))) { const b = await PulsePersist.loadBlob(id); if (b) sizes[id] = b.size; }
+        const ask = () => core().invoke('native_render', { json: JSON.stringify(project), sizes, master, range });
+        try { return await ask(); }
+        catch (err) {
+            if (!/sons manquants/.test(String((err && err.message) || err))) throw err;
+            // le moteur n'a pas encore les sons : on les lui envoie (comme pour la lecture), puis on recommence
+            await play(project, 0); try { await core().invoke('native_stop'); } catch {}
+            return ask();
+        }
+    }
     // Envoi d'octets à l'appli. Depuis la page en ligne, macOS refuse le canal rapide : Tauri passe par un canal
     // de secours qui ne prend que du texte (« octets bruts » refusés). On envoie alors en base64, par morceaux
     // de 4 Mo recollés côté Rust (stage_put), puis la commande « _staged » utilise le fichier recollé.
@@ -111,7 +125,7 @@ window.PulseNative = (function () {
     };
     // le canal est testé dès le chargement (quelques ms), avant la première lecture
     if (isAvailable()) setTimeout(() => { rawWorks().catch(() => {}); }, 0);
-    return { get available() { return isAvailable(); }, get chunked() { return rawOk === false; }, play, swap, scope, stop, mix, loop, live, info, isEnabled, setEnabled, monitor, sendBytes, readBytes, onError: null };
+    return { get available() { return isAvailable(); }, get chunked() { return rawOk === false; }, render, play, swap, scope, stop, mix, loop, live, info, isEnabled, setEnabled, monitor, sendBytes, readBytes, onError: null };
 })();
 
 // Claviers MIDI dans l'appli : la fenêtre n'a pas « Web MIDI », on lui prête la même interface avec CoreMIDI (Rust).

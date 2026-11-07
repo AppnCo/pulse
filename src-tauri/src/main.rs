@@ -142,6 +142,38 @@ async fn native_play_project(player: State<'_, Player>, sounds: State<'_, Sounds
     start_stream(&player, renderer, media, from, rate)
 }
 
+/// Export par le moteur natif (projet avec plugins externes : eux seuls tournent ici). Rend à la fréquence de la sortie
+/// (celle où les plugins sont réglés). Réponse : fréquence (u32), nombre d'échantillons (u32), puis gauche et droite (f32).
+#[tauri::command]
+async fn native_render(player: State<'_, Player>, sounds: State<'_, Sounds>, json: String, sizes: std::collections::HashMap<String, u64>, master: f64, range: Option<(f64, f64)>) -> Result<tauri::ipc::Response, String> {
+    if player.is_playing() { player.stop(); }
+    let rate = match player.output_rate() { 0 => 48_000, r => r };
+    let cache = sounds.0.clone();
+    let bytes = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<u8>, String> {
+        let project: pulse_engine::model::Project = serde_json::from_str(&json).map_err(|e| format!("projet illisible : {e}"))?;
+        let media: render::Media = {
+            let c = cache.lock().unwrap();
+            let mut m = render::Media::new();
+            for (id, size) in &sizes {
+                match c.get(id) {
+                    Some((s, src)) if s == size => { m.insert(id.clone(), src.clone()); }
+                    _ => return Err("sons manquants".to_string()),
+                }
+            }
+            m
+        };
+        let opts = render::RenderOptions { sample_rate: rate, master_volume: master, range, ..Default::default() };
+        // blocs de la taille de ceux des plugins externes
+        let (l, r) = render::render_blocks(&project, &media, &opts, pulse_engine::ext::MAX_BLOCK);
+        let mut out = Vec::with_capacity(8 + (l.len() + r.len()) * 4);
+        out.extend_from_slice(&rate.to_le_bytes());
+        out.extend_from_slice(&(l.len() as u32).to_le_bytes());
+        for v in l.iter().chain(r.iter()) { out.extend_from_slice(&v.to_le_bytes()); }
+        Ok(out)
+    }).await.map_err(|e| e.to_string())??;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
 /// Projet changé pendant la lecture (effet ajouté, réglage de plugin, région…) : nouveau mixeur pris en fondu enchaîné
 /// de 20 ms, même position, même boucle, sans arrêt. Erreur « sons manquants » ou « pas en lecture » → la page relance normalement.
 #[tauri::command]
@@ -1019,7 +1051,7 @@ fn main() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![ext_cmd::ext_scan, ext_cmd::ext_create, ext_cmd::ext_state, ext_cmd::ext_editor, ext_cmd::ext_remove, ext_cmd::ext_loaded, native_info, native_play, native_play_staged, stage_put, save_file_staged, save_download_staged, read_file_part, project_file_size, web_update, migration_state, migration_put, migration_read, migration_done, native_play_project, native_mix, native_swap, native_loop, native_live, native_scope, native_stop, diag_write, monitor_start, monitor_stop, monitor_gain, monitor_track, monitor_info, midi_ports, midi_start, pick_folder, create_project_folder, project_folder_ok, save_file, reveal_project_folder, take_pending_open, read_pulse_file, import_url, read_import_file, save_download, test_log, test_exit])
+        .invoke_handler(tauri::generate_handler![native_render, ext_cmd::ext_scan, ext_cmd::ext_create, ext_cmd::ext_state, ext_cmd::ext_editor, ext_cmd::ext_remove, ext_cmd::ext_loaded, ext_cmd::ext_latencies, native_info, native_play, native_play_staged, stage_put, save_file_staged, save_download_staged, read_file_part, project_file_size, web_update, migration_state, migration_put, migration_read, migration_done, native_play_project, native_mix, native_swap, native_loop, native_live, native_scope, native_stop, diag_write, monitor_start, monitor_stop, monitor_gain, monitor_track, monitor_info, midi_ports, midi_start, pick_folder, create_project_folder, project_folder_ok, save_file, reveal_project_folder, take_pending_open, read_pulse_file, import_url, read_import_file, save_download, test_log, test_exit])
         .build(context)
         .expect("Pulse n'a pas pu démarrer la fenêtre")
         .run(|app, event| {

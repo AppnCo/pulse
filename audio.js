@@ -4056,7 +4056,27 @@ window.PulseAudio = (function() {
     // === Export WAV mixdown (même graphe que la lecture : effets, fades, répétitions inclus) ===
     // opts: { startSec, endSec } pour export d'une plage seulement
     async function exportWav(project, opts = {}) {
+        // plugins externes (FabFilter…) : seul le moteur natif de l'appli les fait tourner → c'est lui qui rend l'export
+        if (window.PulseExt && PulseExt.available() && PulseExt.has(project) && window.PulseNative && PulseNative.available) return exportWavNative(project, opts);
         return renderOffline(project, opts, null);
+    }
+    async function exportWavNative(project, opts = {}) {
+        await PulseExt.ensure(project);
+        const range = opts.endSec !== undefined ? [opts.startSec ?? 0, opts.endSec] : null;
+        const raw = await PulseNative.render(project, MASTER_TRIM, range);   // le fader Master du projet est appliqué par le moteur
+        const buf = raw instanceof ArrayBuffer ? raw : (raw && raw.buffer) ? raw.buffer.slice(raw.byteOffset || 0, (raw.byteOffset || 0) + raw.byteLength) : new Uint8Array(raw).buffer;
+        const dv = new DataView(buf), rate = dv.getUint32(0, true), n = dv.getUint32(4, true);
+        if (!n) return null;
+        const rendered = new AudioBuffer({ numberOfChannels: 2, length: n, sampleRate: rate });
+        rendered.copyToChannel(new Float32Array(buf, 8, n), 0);
+        rendered.copyToChannel(new Float32Array(buf, 8 + 4 * n, n), 1);
+        if (opts.raw) return rendered;
+        if (opts.normalize) {
+            let peak = 0;
+            for (let c = 0; c < 2; c++) { const d = rendered.getChannelData(c); for (let i = 0; i < d.length; i++) { const v = Math.abs(d[i]); if (v > peak) peak = v; } }
+            if (peak > 1e-4) { const g = Math.min(8, dbToLin(project.ceilingDb ?? ceilingDb) / peak); for (let c = 0; c < 2; c++) { const d = rendered.getChannelData(c); for (let i = 0; i < d.length; i++) d[i] *= g; } }
+        }
+        return audioBufferToWav(rendered);
     }
 
     // Exporte une piste unique (stem) en WAV — ignore solo/mute des autres pistes

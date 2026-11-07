@@ -81,6 +81,10 @@ pub fn ext_remove(app: AppHandle, id: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Retard actuel de chaque plugin chargé (échantillons) : il change si on passe un EQ en phase linéaire, par exemple
+#[tauri::command]
+pub fn ext_latencies() -> HashMap<String, u32> { ext::ids().into_iter().map(|id| { let l = ext::latency(&id); (id, l) }).collect() }
+
 /// Plugins chargés en ce moment (identifiants)
 #[tauri::command]
 pub fn ext_loaded() -> Vec<String> { ext::ids() }
