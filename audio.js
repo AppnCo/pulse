@@ -4955,7 +4955,8 @@ window.PulseAudio = (function() {
         play, stopAll, getPlaybackPosition, setNativeBackend, isNative, setBeatsPerBar,
         updateTrackVolume, updateTrackPan, updateComp, setAutoRanges, eqSections, horizonCoefs, eqMatched, eqIsDynamic, getEqDyn, eqBandCoefs, getLimiterMeter, getGateMeter, getDeessMeter, getMbandMeter, refreshAudibility, isTrackAudible, clearLiveNodes,
         // Pour les tests : ce que la lecture fait vraiment entendre, piste par piste
-        debugLive: () => [...liveNodes].map(([i, n]) => ({ i, name: n.tname, audible: !!n.audible })),
+        debugLive: () => [...liveNodes].map(([i, n]) => ({ i, name: n.tname, audible: !!n.audible, vol: n.vol })),
+        debugLiveBuses: () => [...liveBusNodes].map(([id, g]) => ({ id, gain: g.gain.value })),
         getTrackAnalyser, getTrackMeters, trackChannelCount, getMasterAnalyser, getTrackSpectrum, getBusSpectrum, getCompReduction, setMasterVolume,
         setMetronome, setMetronomeBpm, setCountIn, isCountInEnabled,
         startMetronome, stopMetronome, playCountIn, stopCountIn, isCountingIn,
