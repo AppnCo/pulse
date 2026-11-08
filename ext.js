@@ -88,7 +88,10 @@ window.PulseExt = (function () {
     function autoPids(o, id) {
         const pre = 'fx:' + id + ':';
         const used = Object.keys(o.automation || {}).filter(k => k.startsWith(pre)).map(k => +k.slice(pre.length));
-        return [...new Set([...used, ...(touched[id] || [])])];
+        // peu de réglages (Audio Unit, petit plugin) : on les propose tous
+        if (!paramCache[id]) loadParams(id);
+        const all = paramCache[id] && paramCache[id].size <= 80 ? [...paramCache[id].keys()] : [];
+        return [...new Set([...used, ...(touched[id] || []), ...all])];
     }
     // En mode automation (A) : toucher un bouton dans la fenêtre du plugin affiche sa courbe et l'écriture suit le geste
     function ownerOf(id) { const hit = (typeof state !== 'undefined' && state.project) ? allExt(state.project).find(([, i]) => i === id) : null; return hit ? hit[0] : null; }
@@ -126,7 +129,7 @@ window.PulseExt = (function () {
         if (!available()) { flashSafe('Les plugins externes s\'ouvrent dans l\'appli Pulse (pas dans le navigateur)'); return; }
         // projet rouvert : le plugin n'est peut-être pas encore chargé (il l'est d'habitude au lancement de la lecture)
         if (!loaded.has(id) && typeof state !== 'undefined' && state.project) await ensure(state.project);
-        core().invoke('ext_editor', { id }).catch(err => flashSafe('Fenêtre du plugin : ' + err));
+        core().invoke('ext_editor', { id, title: nameOf(id) }).catch(err => flashSafe('Fenêtre du plugin : ' + err));
     }
     function flashSafe(m) { if (typeof flash === 'function') flash(m); else console.warn(m); }
 

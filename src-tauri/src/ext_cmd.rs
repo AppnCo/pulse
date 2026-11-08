@@ -24,7 +24,20 @@ pub async fn ext_scan(app: AppHandle, list: State<'_, ExtList>, force: bool) -> 
         if let Some(l) = list.0.lock().unwrap().clone() { return Ok(l); }
         if let Some(f) = cache_file(&app) { if let Ok(t) = std::fs::read_to_string(&f) { if let Ok(l) = serde_json::from_str::<Vec<ExtInfo>>(&t) { *list.0.lock().unwrap() = Some(l.clone()); return Ok(l); } } }
     }
-    let found = tauri::async_runtime::spawn_blocking(|| -> Result<Vec<ExtInfo>, String> { Ok(scan_folders()) }).await.map_err(|e| e.to_string())??;
+    let found = tauri::async_runtime::spawn_blocking(|| -> Result<Vec<ExtInfo>, String> {
+        #[allow(unused_mut)]
+        let mut out = scan_folders();
+        #[cfg(target_os = "macos")]
+        {
+            // même plugin en VST3 et en AU : on garde le VST3 (sa latence est compensée)
+            let key = |n: &str| n.to_lowercase().chars().filter(|c| c.is_alphanumeric()).collect::<String>();
+            let have: std::collections::HashSet<String> = out.iter().map(|p| key(&p.name)).collect();
+            let vendor_name: std::collections::HashSet<String> = out.iter().map(|p| key(&format!("{}{}", p.vendor, p.name))).collect();
+            for a in scan_au() { if !have.contains(&key(&a.name)) && !vendor_name.contains(&key(&format!("{}{}", a.vendor, a.name))) && !have.contains(&key(&format!("{} {}", a.vendor, a.name))) { out.push(a); } }
+            out.sort_by(|a, b| a.vendor.to_lowercase().cmp(&b.vendor.to_lowercase()).then(a.name.to_lowercase().cmp(&b.name.to_lowercase())));
+        }
+        Ok(out)
+    }).await.map_err(|e| e.to_string())??;
     if let Some(f) = cache_file(&app) { let _ = std::fs::create_dir_all(f.parent().unwrap()); let _ = std::fs::write(&f, serde_json::to_string(&found).unwrap_or_default()); }
     *list.0.lock().unwrap() = Some(found.clone());
     Ok(found)
@@ -33,19 +46,52 @@ pub async fn ext_scan(app: AppHandle, list: State<'_, ExtList>, force: bool) -> 
 #[derive(serde::Serialize)]
 pub struct ExtLoaded { pub name: String, pub latency: u32, pub editor: bool }
 
+/// Audio Units (Mac) trouvées à la dernière recherche : identifiant → fiche (pour les recharger)
+#[cfg(target_os = "macos")]
+fn au_infos() -> &'static Mutex<HashMap<String, ext::rack::PluginInfo>> {
+    static M: std::sync::OnceLock<Mutex<HashMap<String, ext::rack::PluginInfo>>> = std::sync::OnceLock::new();
+    M.get_or_init(|| Mutex::new(HashMap::new()))
+}
+/// Audio Units d'effet (Mac) : « FabFilter: Pro-C 2 » → marque FabFilter, nom Pro-C 2 ; chemin « au:<identifiant> »
+#[cfg(target_os = "macos")]
+fn scan_au() -> Vec<ExtInfo> {
+    use ext::rack::PluginScanner;
+    let Ok(sc) = ext::rack::au::AudioUnitScanner::new() else { return Vec::new() };
+    let Ok(list) = sc.scan() else { return Vec::new() };
+    let mut m = au_infos().lock().unwrap();
+    list.into_iter().filter(|i| matches!(i.plugin_type, ext::rack::PluginType::Effect)).map(|i| {
+        let (vendor, name) = match i.name.split_once(": ") { Some((v, n)) => (v.trim().to_owned(), n.trim().to_owned()), None => (i.manufacturer.clone(), i.name.clone()) };
+        m.insert(i.unique_id.clone(), i.clone());
+        ExtInfo { name, vendor, path: format!("au:{}", i.unique_id), category: "Fx|AU".into(), version: i.version.to_string(), editor: true }
+    }).collect()
+}
+
 /// Charge un plugin sous l'identifiant `id`, à la fréquence du son de l'appli, avec ses réglages (`state`, base64) s'il y en a
 #[tauri::command]
 pub async fn ext_create(player: State<'_, pulse_engine::player::Player>, id: String, path: String, state: Option<String>) -> Result<ExtLoaded, String> {
-    if let Some(sh) = ext::get(&id) { let g = sh.lock().unwrap(); return Ok(ExtLoaded { name: g.info().name.clone(), latency: g.latency_samples(), editor: g.has_editor() }); }
+    if ext::get(&id).is_some() { return Ok(ExtLoaded { name: String::new(), latency: ext::latency(&id), editor: true }); }
     let rate = match player.output_rate() { 0 => 48_000, r => r } as f64;
+    let bytes = state.and_then(|s| base64::engine::general_purpose::STANDARD.decode(s).ok());
     tauri::async_runtime::spawn_blocking(move || -> Result<ExtLoaded, String> {
+        #[cfg(target_os = "macos")]
+        if let Some(uid) = path.strip_prefix("au:") {
+            use ext::rack::{PluginInstance, PluginScanner};
+            if au_infos().lock().unwrap().get(uid).is_none() { scan_au(); }
+            let info = au_infos().lock().unwrap().get(uid).cloned().ok_or("Audio Unit introuvable (désinstallée ?)")?;
+            let sc = ext::rack::au::AudioUnitScanner::new().map_err(|e| e.to_string())?;
+            let mut p = sc.load(&info).map_err(|e| format!("plugin illisible : {e}"))?;
+            p.initialize(rate, ext::MAX_BLOCK).map_err(|e| e.to_string())?;
+            if let Some(b) = &bytes { let _ = p.set_state(b); }
+            ext::insert(&id, ext::Inst::Au(Box::new(p), vec![0.0; ext::MAX_BLOCK], vec![0.0; ext::MAX_BLOCK]));
+            return Ok(ExtLoaded { name: info.name.clone(), latency: 0, editor: true });
+        }
         let mut p = vst3_host::simple::load_plugin(&path).map_err(|e| format!("plugin illisible : {e}"))?;
         if p.info().audio_inputs == 0 { return Err("c'est un instrument (pas encore pris en charge) : seuls les effets se posent sur une piste".into()); }
         p.reconfigure(rate, ext::MAX_BLOCK).map_err(|e| e.to_string())?;
-        if let Some(s) = state { if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(s) { let _ = p.load_state(&bytes); } }
+        if let Some(b) = &bytes { let _ = p.load_state(b); }
         p.start_processing().map_err(|e| e.to_string())?;
         let out = ExtLoaded { name: p.info().name.clone(), latency: p.latency_samples(), editor: p.has_editor() };
-        ext::insert(&id, p);
+        ext::insert(&id, ext::Inst::Vst(std::sync::Arc::new(Mutex::new(p))));
         Ok(out)
     }).await.map_err(|e| e.to_string())?
 }
@@ -55,28 +101,62 @@ pub async fn ext_create(player: State<'_, pulse_engine::player::Player>, id: Str
 pub fn ext_state(id: String) -> Result<String, String> {
     let sh = ext::get(&id).ok_or("plugin absent")?;
     let g = sh.lock().unwrap();
-    let st = g.save_state().map_err(|e| e.to_string())?;
+    let st = match &*g {
+        ext::Inst::Vst(p) => p.lock().unwrap().save_state().map_err(|e| e.to_string())?,
+        #[cfg(target_os = "macos")]
+        ext::Inst::Au(p, ..) => { use ext::rack::PluginInstance; p.get_state().map_err(|e| e.to_string())? }
+    };
     Ok(base64::engine::general_purpose::STANDARD.encode(st))
 }
 
+// Fenêtres des Audio Units ouvertes (fil de l'interface)
+#[cfg(target_os = "macos")]
+thread_local! { static AU_GUIS: std::cell::RefCell<HashMap<String, ext::rack::au::AudioUnitGui>> = std::cell::RefCell::new(HashMap::new()); }
+
 /// Ouvre (ou ramène devant) la vraie fenêtre du plugin — sur le fil de l'interface, comme l'exigent les plugins
 #[tauri::command]
-pub fn ext_editor(app: AppHandle, id: String) -> Result<(), String> {
+pub fn ext_editor(app: AppHandle, id: String, title: Option<String>) -> Result<(), String> {
     let sh = ext::get(&id).ok_or("plugin absent")?;
-    app.run_on_main_thread(move || WINDOWS.with(|w| {
-        let mut w = w.borrow_mut();
-        if let Some(win) = w.get(&id) { if win.is_open() && !win.closed_by_user() { return; } }
-        w.remove(&id);
-        let mut win = vst3_host::PluginWindow::new(sh);
-        if win.open().is_ok() { w.insert(id, win); }
-    })).map_err(|e| e.to_string())
+    let vst = match &*sh.lock().unwrap() { ext::Inst::Vst(p) => Some(p.clone()), #[cfg(target_os = "macos")] _ => None };
+    if let Some(p) = vst {
+        return app.run_on_main_thread(move || WINDOWS.with(|w| {
+            let mut w = w.borrow_mut();
+            if let Some(win) = w.get(&id) { if win.is_open() && !win.closed_by_user() { return; } }
+            w.remove(&id);
+            let mut win = vst3_host::PluginWindow::new(p);
+            if win.open().is_ok() { w.insert(id, win); }
+        })).map_err(|e| e.to_string());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let sh2 = sh.clone();
+        return app.run_on_main_thread(move || {
+            // déjà ouverte : on la remontre
+            let shown = AU_GUIS.with(|m| m.borrow().get(&id).map(|g| g.show_window(title.as_deref()).is_ok()).unwrap_or(false));
+            if shown { return; }
+            let mut g = sh2.lock().unwrap();
+            if let ext::Inst::Au(p, ..) = &mut *g {
+                let (id2, t2) = (id.clone(), title.clone());
+                p.create_gui(move |res| {
+                    if let Ok(gui) = res { let _ = gui.show_window(t2.as_deref()); AU_GUIS.with(|m| { m.borrow_mut().insert(id2, gui); }); }
+                    Ok(())
+                });
+            }
+        }).map_err(|e| e.to_string());
+    }
+    #[allow(unreachable_code)]
+    Ok(())
 }
 
 /// Retire un plugin (fenêtre fermée, instance libérée)
 #[tauri::command]
 pub fn ext_remove(app: AppHandle, id: String) -> Result<(), String> {
     let id2 = id.clone();
-    let _ = app.run_on_main_thread(move || WINDOWS.with(|w| { if let Some(mut win) = w.borrow_mut().remove(&id2) { win.close(); } }));
+    let _ = app.run_on_main_thread(move || {
+        WINDOWS.with(|w| { if let Some(mut win) = w.borrow_mut().remove(&id2) { win.close(); } });
+        #[cfg(target_os = "macos")]
+        AU_GUIS.with(|m| { m.borrow_mut().remove(&id2); });
+    });
     ext::remove(&id);
     Ok(())
 }
@@ -93,18 +173,29 @@ pub struct ExtParam { pub id: u32, pub name: String, pub value: f64 }
 pub fn ext_params(id: String) -> Result<Vec<ExtParam>, String> {
     let sh = ext::get(&id).ok_or("plugin absent")?;
     let g = sh.lock().unwrap();
-    Ok(g.get_parameters().map_err(|e| e.to_string())?.into_iter()
-        .filter(|q| q.can_automate && !q.is_read_only && !q.is_bypass)
-        .map(|q| ExtParam { id: q.id, name: q.name, value: q.value }).collect())
+    match &*g {
+        ext::Inst::Vst(p) => Ok(p.lock().unwrap().get_parameters().map_err(|e| e.to_string())?.into_iter()
+            .filter(|q| q.can_automate && !q.is_read_only && !q.is_bypass)
+            .map(|q| ExtParam { id: q.id, name: q.name, value: q.value }).collect()),
+        #[cfg(target_os = "macos")]
+        ext::Inst::Au(p, ..) => {
+            use ext::rack::PluginInstance;
+            Ok((0..p.parameter_count()).filter_map(|i| p.parameter_info(i).ok().map(|q| ExtParam { id: i as u32, name: q.name, value: p.get_parameter(i).unwrap_or(0.0) as f64 })).collect())
+        }
+    }
 }
 
 /// Réglages touchés dans la fenêtre du plugin depuis la dernière fois (n°, valeur 0..1) : en mode automation,
-/// toucher un bouton du plugin affiche sa courbe (comme Logic) et l'écriture suit le geste
+/// toucher un bouton du plugin affiche sa courbe (comme Logic) et l'écriture suit le geste. Audio Units : pas encore.
 #[tauri::command]
 pub fn ext_edits(id: String) -> Result<Vec<(u32, f64)>, String> {
     let sh = ext::get(&id).ok_or("plugin absent")?;
-    let mut g = sh.lock().unwrap();
-    Ok(g.take_parameter_edits().into_iter().filter_map(|e| e.value.map(|v| (e.id, v))).collect())
+    let g = sh.lock().unwrap();
+    match &*g {
+        ext::Inst::Vst(p) => Ok(p.lock().unwrap().take_parameter_edits().into_iter().filter_map(|e| e.value.map(|v| (e.id, v))).collect()),
+        #[cfg(target_os = "macos")]
+        ext::Inst::Au(..) => Ok(Vec::new()),
+    }
 }
 
 /// Plugins chargés en ce moment (identifiants)

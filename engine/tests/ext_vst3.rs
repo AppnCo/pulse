@@ -14,7 +14,7 @@ fn proq4_dans_le_moteur() {
     let mut p = vst3_host::simple::load_plugin(PROQ).expect("chargement");
     p.reconfigure(sr as f64, ext::MAX_BLOCK).expect("fréquence");
     p.start_processing().expect("démarrage");
-    ext::insert("vst#test", p);
+    ext::insert("vst#test", ext::Inst::Vst(std::sync::Arc::new(std::sync::Mutex::new(p))));
     // un son de 2 s : sinus 1 kHz
     let n = sr as usize * 2;
     let s: Vec<f32> = (0..n).map(|i| 0.3 * (2.0 * std::f32::consts::PI * 1000.0 * i as f32 / sr as f32).sin()).collect();
@@ -29,7 +29,9 @@ fn proq4_dans_le_moteur() {
     // point 1 : allumé, cloche à 1 kHz +12 dB environ → le niveau monte nettement
     {
         let sh = ext::get("vst#test").unwrap();
-        let mut g = sh.lock().unwrap();
+        let gg = sh.lock().unwrap();
+        let ext::Inst::Vst(inner) = &*gg else { panic!() };
+        let mut g = inner.lock().unwrap();
         let params = g.get_parameters().unwrap();
         let id = |name: &str| params.iter().find(|q| q.name == name).map(|q| q.id).expect(name);
         g.set_parameter(id("Band 1 Used"), 1.0).unwrap();
@@ -66,7 +68,7 @@ fn proq4_phase_lineaire_compensee() {
     let _ = p.service_host_requests();
     let lat = p.latency_samples();
     println!("latence annoncée : {lat} échantillons");
-    ext::insert("vst#lin", p);
+    ext::insert("vst#lin", ext::Inst::Vst(std::sync::Arc::new(std::sync::Mutex::new(p))));
     // une impulsion à 1 s
     let n = sr as usize * 3; let mut s = vec![0.0f32; n]; s[sr as usize] = 0.9;
     let mut media = render::Media::new(); media.insert("c".into(), render::Source::new(sr, vec![s.clone(), s]));
@@ -94,7 +96,7 @@ fn proq4_automation() {
     p.set_parameter(id("Band 1 Used"), 1.0).unwrap();
     let gain = id("Band 1 Gain");
     p.start_processing().unwrap();
-    ext::insert("vst#auto", p);
+    ext::insert("vst#auto", ext::Inst::Vst(std::sync::Arc::new(std::sync::Mutex::new(p))));
     let n = sr as usize * 2;
     let s: Vec<f32> = (0..n).map(|i| 0.2 * (2.0 * std::f32::consts::PI * 1000.0 * i as f32 / sr as f32).sin()).collect();
     let mut media = render::Media::new(); media.insert("c".into(), render::Source::new(sr, vec![s.clone(), s]));

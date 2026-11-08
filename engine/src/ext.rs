@@ -13,19 +13,40 @@ mod imp {
     use std::sync::{Arc, Mutex, OnceLock};
     pub use vst3_host::Plugin;
     pub use vst3_host;
-    pub type Shared = Arc<Mutex<Plugin>>;
+    #[cfg(target_os = "macos")]
+    pub use rack;
+
+    /// Une instance de plugin externe : VST3 (Mac et Windows) ou Audio Unit (Mac)
+    pub enum Inst {
+        /// partagé à part : la fenêtre VST3 (vst3_host::PluginWindow) veut son propre accès au plugin
+        Vst(Arc<Mutex<Plugin>>),
+        #[cfg(target_os = "macos")]
+        Au(Box<rack::au::AudioUnitPlugin>, Vec<f32>, Vec<f32>),
+    }
+    impl Inst {
+        pub fn latency(&self) -> u32 { match self { Inst::Vst(p) => p.lock().map(|g| g.latency_samples()).unwrap_or(0), #[cfg(target_os = "macos")] Inst::Au(..) => 0 } }
+        /// Réglage n° `id` à `v` (0..1), pour l'automation
+        pub fn set_param(&mut self, id: u32, v: f64) {
+            match self {
+                Inst::Vst(p) => { if let Ok(mut g) = p.try_lock() { let _ = g.set_parameter_at(id, v, 0); } }
+                #[cfg(target_os = "macos")]
+                Inst::Au(p, ..) => { use rack::PluginInstance; let _ = p.set_parameter(id as usize, v as f32); }
+            }
+        }
+    }
+    pub type Shared = Arc<Mutex<Inst>>;
 
     fn reg() -> &'static Mutex<HashMap<String, Shared>> {
         static R: OnceLock<Mutex<HashMap<String, Shared>>> = OnceLock::new();
         R.get_or_init(|| Mutex::new(HashMap::new()))
     }
     /// Range une instance prête (chargée, réglée à la bonne fréquence, en marche) sous son identifiant (« vst#k3j2 »)
-    pub fn insert(id: &str, p: Plugin) -> Shared { let s = Arc::new(Mutex::new(p)); reg().lock().unwrap().insert(id.to_owned(), s.clone()); s }
+    pub fn insert(id: &str, p: Inst) -> Shared { let s = Arc::new(Mutex::new(p)); reg().lock().unwrap().insert(id.to_owned(), s.clone()); s }
     pub fn get(id: &str) -> Option<Shared> { reg().lock().unwrap().get(id).cloned() }
     pub fn remove(id: &str) -> Option<Shared> { reg().lock().unwrap().remove(id) }
     pub fn ids() -> Vec<String> { reg().lock().unwrap().keys().cloned().collect() }
     /// Retard du plugin (échantillons) : compensé par le moteur comme celui du Pitch et des machines analogiques
-    pub fn latency(id: &str) -> u32 { get(id).and_then(|s| s.lock().ok().map(|g| g.latency_samples())).unwrap_or(0) }
+    pub fn latency(id: &str) -> u32 { get(id).and_then(|s| s.lock().ok().map(|g| g.latency())).unwrap_or(0) }
 
     // Génération de chaque instance : à chaque nouveau mixeur (fondu entre l'ancien et le nouveau), seul le plus récent
     // fait passer le son dans le plugin ; l'ancien laisse passer le son tel quel le temps du fondu (sinon deux sons
@@ -60,14 +81,28 @@ mod imp {
                 // automation : valeur de la courbe au début du bloc (envoyée seulement si elle bouge)
                 if !self.auto.is_empty() {
                     let t = self.from + (self.pos + at) as f64 / self.sr;
-                    for a in &mut self.auto { let v = a.1.at(t).clamp(0.0, 1.0); if (v - a.2).abs() > 1e-6 { a.2 = v; let _ = g.set_parameter_at(a.0, v, 0); } }
+                    for a in &mut self.auto { let v = a.1.at(t).clamp(0.0, 1.0); if (v - a.2).abs() > 1e-6 { a.2 = v; g.set_param(a.0, v); } }
                 }
-                self.buf.inputs[0].copy_from_slice(&left[at..at + n]);
-                self.buf.inputs[1].copy_from_slice(if mono { &left[at..at + n] } else { &right[at..at + n] });
-                if g.process_audio(&mut self.buf).is_ok() {
-                    left[at..at + n].copy_from_slice(&self.buf.outputs[0]);
-                    right[at..at + n].copy_from_slice(&self.buf.outputs[1]);
-                } else if mono { right[at..at + n].copy_from_slice(&left[at..at + n]); }
+                let ok = match &mut *g {
+                    Inst::Vst(p) => {
+                        let Ok(mut p) = p.try_lock() else { if mono { right[at..at + n].copy_from_slice(&left[at..at + n]); } at += n; continue; };
+                        self.buf.inputs[0].copy_from_slice(&left[at..at + n]);
+                        self.buf.inputs[1].copy_from_slice(if mono { &left[at..at + n] } else { &right[at..at + n] });
+                        if p.process_audio(&mut self.buf).is_ok() {
+                            left[at..at + n].copy_from_slice(&self.buf.outputs[0]);
+                            right[at..at + n].copy_from_slice(&self.buf.outputs[1]);
+                            true
+                        } else { false }
+                    }
+                    #[cfg(target_os = "macos")]
+                    Inst::Au(p, ol, or) => {
+                        use rack::PluginInstance;
+                        let (il, ir) = (&left[at..at + n], if mono { &left[at..at + n] } else { &right[at..at + n] });
+                        let r = p.process(&[il, ir], &mut [&mut ol[..n], &mut or[..n]], n);
+                        if r.is_ok() { left[at..at + n].copy_from_slice(&ol[..n]); right[at..at + n].copy_from_slice(&or[..n]); true } else { false }
+                    }
+                };
+                if !ok && mono { right[at..at + n].copy_from_slice(&left[at..at + n]); }
                 at += n;
             }
             self.pos += left.len();

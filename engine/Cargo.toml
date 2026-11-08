@@ -14,8 +14,12 @@ cpal = "0.15"
 # Plugins externes (VST3) : seulement dans l'appli (fonction « ext »)
 vst3-host = { version = "0.11", default-features = false, optional = true }
 
+# Audio Units (Mac) : la plupart des FabFilter de Ridwane n'existent qu'en AU sur son Mac
+[target.'cfg(target_os = "macos")'.dependencies]
+rack = { version = "0.4", optional = true }
+
 [features]
-ext = ["dep:vst3-host"]
+ext = ["dep:vst3-host", "dep:rack"]
 
 [profile.release]
 opt-level = 3
