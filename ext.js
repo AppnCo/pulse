@@ -168,7 +168,9 @@ window.PulseExt = (function () {
     // Dans l'appli : liste des plugins prête avant le premier « + Effet », et réglages des plugins rangés
     // dans le projet toutes les 20 s (ils survivent ainsi à une fermeture sans enregistrer)
     if (available()) {
-        setTimeout(() => scan(false).catch(() => {}), 2500);
+        // nouvelle version de la recherche (Audio Units ajoutées le 08/11) : on refait la liste une fois
+        const SV = 'pulse_ext_scan_v', v = 2;
+        setTimeout(() => { let force = false; try { force = +localStorage.getItem(SV) !== v; localStorage.setItem(SV, String(v)); } catch {} scan(force).catch(() => {}); }, 2500);
         setInterval(() => {
             if (typeof state === 'undefined' || !state.project || !has(state.project)) return;
             saveStates(state.project).then(() => { if (typeof saveProject === 'function') saveProject(); }).catch(() => {});
