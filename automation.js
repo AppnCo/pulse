@@ -62,6 +62,12 @@ function autoInfo(o, pid) {
     const [kind, a, b] = pid.split(':');
     if (kind === 'send') { const sd = projectSends().find(x => x.id === a); return sd ? lin('Envoi · ' + sd.name, 0, 100, () => (o.sends || {})[a] || 0, v => Math.round(v)) : null; }
     if (kind === 'busSend') { const bs = busById(a); return bs ? lin('Envoi → ' + bs.name, 0, 100, () => (o.busSends || {})[a] || 0, v => Math.round(v)) : null; }
+    if (kind === 'fx' && fxType(a) === 'vst') {
+        // plugin externe : le réglage n° b, valeur du plugin 0..1
+        if (!window.PulseExt) return null;
+        const nm = PulseExt.paramName(a, +b);
+        return { label: fxLabel(a) + ' · ' + (nm || 'réglage ' + b), cur: () => PulseExt.paramValue(a, +b), norm: v => Math.max(0, Math.min(1, v)), denorm: n => n, fmt: v => Math.round(v * 100) + ' %' };
+    }
     if (kind === 'fx') {
         const ty = fxType(a);
         const d = fxNumericDefs(ty, a.includes('#') ? fxInstanceView(o, a, '') : o).find(x => x.key === b); if (!d) return null;
@@ -129,6 +135,7 @@ function autoParamGroups(o) {
         const sd = projectSends().map(x => 'send:' + x.id).concat(Object.keys(o.busSends || {}).filter(id => busById(id)).map(id => 'busSend:' + id));
         if (sd.length) groups.push(['Envois', sd]);
         (o.effects || []).filter(n => n !== 'limit' && n !== 'master').forEach(n => {
+            if (fxType(n) === 'vst') { const ids = window.PulseExt ? PulseExt.autoPids(o, n).map(p => `fx:${n}:${p}`) : []; groups.push([fxLabel(n) + (ids.length ? '' : ' — en mode A, touche un bouton du plugin'), ids]); return; }
             const ids = fxNumericDefs(fxType(n), n.includes('#') ? fxInstanceView(o, n, '') : o).map(d => `fx:${n}:${d.key}`);
             if (ids.length) groups.push([fxLabel(n), ids]);
         });

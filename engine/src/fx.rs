@@ -2757,7 +2757,7 @@ impl FxChain {
             let (c, ids) = self.parts.into_iter().next().unwrap();
             return Self { parts: vec![(c.with_auto(automation, from), ids)], ext: self.ext };
         }
-        let parts = self.parts.into_iter().map(|(c, ids)| {
+        let parts: Vec<(Chain, Vec<String>)> = self.parts.into_iter().map(|(c, ids)| {
             let mut a = Automation { volume: None, other: Default::default() };
             for (k, v) in &automation.other {
                 let mut it = k.splitn(3, ':');
@@ -2766,12 +2766,20 @@ impl FxChain {
             }
             (c.with_auto(&a, from), ids)
         }).collect();
-        Self { parts, ext: self.ext }
+        let mut ext = self.ext;
+        // plugins externes : leurs courbes « fx:vst#…:<n° du réglage> »
+        for (i, (_, ids)) in parts.iter().enumerate() {
+            let Some(Some(slot)) = ext.get_mut(i) else { continue };
+            let pre = format!("fx:{}:", ids[0]);
+            let curves: Vec<(u32, crate::model::Curve)> = automation.other.iter().filter_map(|(k, c)| k.strip_prefix(&pre).and_then(|n| n.parse::<u32>().ok()).map(|n| (n, c.clone()))).collect();
+            if !curves.is_empty() { slot.set_auto(curves, from); }
+        }
+        Self { parts, ext }
     }
     pub fn with_tempo(self, segs: Vec<(f64, f64)>, from: f64) -> Self {
         Self { parts: self.parts.into_iter().map(|(c, ids)| (c.with_tempo(segs.clone(), from), ids)).collect(), ext: self.ext }
     }
-    pub fn seek(&mut self, t: f64) { for (c, _) in &mut self.parts { c.seek(t); } }
+    pub fn seek(&mut self, t: f64) { for (c, _) in &mut self.parts { c.seek(t); } for e in self.ext.iter_mut().flatten() { e.seek(t); } }
     /// Réglage changé en direct : `fx` = nom d'exemplaire (« comp#2 ») ou de type
     pub fn set_live(&mut self, fx: &str, key: &str, v: f64) -> bool {
         let ty = crate::model::fx_type(fx);

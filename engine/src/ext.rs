@@ -34,14 +34,19 @@ mod imp {
         static G: OnceLock<Mutex<HashMap<String, Arc<std::sync::atomic::AtomicU64>>>> = OnceLock::new();
         G.get_or_init(|| Mutex::new(HashMap::new()))
     }
-    pub struct ExtSlot { inst: Option<Shared>, buf: vst3_host::AudioBuffers, gen: u64, latest: Arc<std::sync::atomic::AtomicU64> }
+    pub struct ExtSlot { inst: Option<Shared>, buf: vst3_host::AudioBuffers, gen: u64, latest: Arc<std::sync::atomic::AtomicU64>,
+        /// automation : (réglage du plugin, courbe 0..1), position en échantillons depuis `from` (secondes)
+        auto: Vec<(u32, crate::model::Curve, f64)>, pos: usize, from: f64, sr: f64 }
     impl ExtSlot {
         pub fn new(id: &str, sr: f64) -> Self {
             let latest = gens().lock().unwrap().entry(id.to_owned()).or_default().clone();
             let gen = latest.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-            Self { inst: get(id), buf: vst3_host::AudioBuffers::new(2, 2, MAX_BLOCK, sr), gen, latest }
+            Self { inst: get(id), buf: vst3_host::AudioBuffers::new(2, 2, MAX_BLOCK, sr), gen, latest, auto: Vec::new(), pos: 0, from: 0.0, sr }
         }
         pub fn is_live(&self) -> bool { self.inst.is_some() }
+        /// Courbes « fx:vst#…:<n° du réglage> » (valeurs 0..1 = valeurs du plugin)
+        pub fn set_auto(&mut self, curves: Vec<(u32, crate::model::Curve)>, from: f64) { self.auto = curves.into_iter().map(|(p, c)| (p, c, -1.0)).collect(); self.from = from; self.pos = 0; }
+        pub fn seek(&mut self, t: f64) { self.from = t; self.pos = 0; }
         pub fn process(&mut self, left: &mut [f32], right: &mut [f32], mono: bool) {
             let Some(p) = &self.inst else { if mono { right.copy_from_slice(left); } return };
             if self.latest.load(std::sync::atomic::Ordering::SeqCst) != self.gen { if mono { right.copy_from_slice(left); } return; }
@@ -52,6 +57,11 @@ mod imp {
                 // longueur des tampons = taille du bloc pour le plugin ; capacité déjà réservée : aucune allocation
                 for ch in 0..2 { self.buf.inputs[ch].resize(n, 0.0); self.buf.outputs[ch].resize(n, 0.0); }
                 self.buf.block_size = n;
+                // automation : valeur de la courbe au début du bloc (envoyée seulement si elle bouge)
+                if !self.auto.is_empty() {
+                    let t = self.from + (self.pos + at) as f64 / self.sr;
+                    for a in &mut self.auto { let v = a.1.at(t).clamp(0.0, 1.0); if (v - a.2).abs() > 1e-6 { a.2 = v; let _ = g.set_parameter_at(a.0, v, 0); } }
+                }
                 self.buf.inputs[0].copy_from_slice(&left[at..at + n]);
                 self.buf.inputs[1].copy_from_slice(if mono { &left[at..at + n] } else { &right[at..at + n] });
                 if g.process_audio(&mut self.buf).is_ok() {
@@ -60,6 +70,7 @@ mod imp {
                 } else if mono { right[at..at + n].copy_from_slice(&left[at..at + n]); }
                 at += n;
             }
+            self.pos += left.len();
         }
     }
 }
@@ -72,6 +83,8 @@ mod imp {
         pub fn new(_id: &str, _sr: f64) -> Self { ExtSlot }
         pub fn is_live(&self) -> bool { false }
         pub fn process(&mut self, left: &mut [f32], right: &mut [f32], mono: bool) { if mono { right.copy_from_slice(left); } }
+        pub fn set_auto(&mut self, _c: Vec<(u32, crate::model::Curve)>, _from: f64) {}
+        pub fn seek(&mut self, _t: f64) {}
     }
 }
 

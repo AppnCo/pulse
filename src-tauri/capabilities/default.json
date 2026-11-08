@@ -57,7 +57,9 @@
     "allow-ext-remove",
     "allow-ext-loaded",
     "allow-native-render",
-    "allow-ext-latencies"
+    "allow-ext-latencies",
+    "allow-ext-params",
+    "allow-ext-edits"
   ],
   "remote": {
     "urls": [

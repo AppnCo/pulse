@@ -85,6 +85,28 @@ pub fn ext_remove(app: AppHandle, id: String) -> Result<(), String> {
 #[tauri::command]
 pub fn ext_latencies() -> HashMap<String, u32> { ext::ids().into_iter().map(|id| { let l = ext::latency(&id); (id, l) }).collect() }
 
+#[derive(serde::Serialize)]
+pub struct ExtParam { pub id: u32, pub name: String, pub value: f64 }
+
+/// Réglages automatisables du plugin (valeur 0..1)
+#[tauri::command]
+pub fn ext_params(id: String) -> Result<Vec<ExtParam>, String> {
+    let sh = ext::get(&id).ok_or("plugin absent")?;
+    let g = sh.lock().unwrap();
+    Ok(g.get_parameters().map_err(|e| e.to_string())?.into_iter()
+        .filter(|q| q.can_automate && !q.is_read_only && !q.is_bypass)
+        .map(|q| ExtParam { id: q.id, name: q.name, value: q.value }).collect())
+}
+
+/// Réglages touchés dans la fenêtre du plugin depuis la dernière fois (n°, valeur 0..1) : en mode automation,
+/// toucher un bouton du plugin affiche sa courbe (comme Logic) et l'écriture suit le geste
+#[tauri::command]
+pub fn ext_edits(id: String) -> Result<Vec<(u32, f64)>, String> {
+    let sh = ext::get(&id).ok_or("plugin absent")?;
+    let mut g = sh.lock().unwrap();
+    Ok(g.take_parameter_edits().into_iter().filter_map(|e| e.value.map(|v| (e.id, v))).collect())
+}
+
 /// Plugins chargés en ce moment (identifiants)
 #[tauri::command]
 pub fn ext_loaded() -> Vec<String> { ext::ids() }

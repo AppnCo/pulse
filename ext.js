@@ -75,6 +75,37 @@ window.PulseExt = (function () {
             try { const st = await core().invoke('ext_state', { id }); if (st) { o.effectParams[id].state = st; } } catch {}
         }
     }
+    // === Automation des plugins externes ===
+    // Réglages du plugin (n° → nom, valeur 0..1) ; réglages touchés récemment dans sa fenêtre (les plus récents d'abord)
+    const paramCache = {}, touched = {};
+    async function loadParams(id) {
+        if (!available()) return;
+        try { const l = await core().invoke('ext_params', { id }); paramCache[id] = new Map(l.map(p => [p.id, { name: p.name, value: p.value }])); } catch {}
+    }
+    const paramName = (id, pid) => { const p = paramCache[id] && paramCache[id].get(pid); if (!p && !paramCache[id]) loadParams(id); return p ? p.name : null; };
+    const paramValue = (id, pid) => { const p = paramCache[id] && paramCache[id].get(pid); return p ? p.value : 0.5; };
+    // réglages proposés dans le menu des courbes : déjà automatisés + touchés récemment (713 réglages dans un Pro-Q : on ne les liste pas tous)
+    function autoPids(o, id) {
+        const pre = 'fx:' + id + ':';
+        const used = Object.keys(o.automation || {}).filter(k => k.startsWith(pre)).map(k => +k.slice(pre.length));
+        return [...new Set([...used, ...(touched[id] || [])])];
+    }
+    // En mode automation (A) : toucher un bouton dans la fenêtre du plugin affiche sa courbe et l'écriture suit le geste
+    function ownerOf(id) { const hit = (typeof state !== 'undefined' && state.project) ? allExt(state.project).find(([, i]) => i === id) : null; return hit ? hit[0] : null; }
+    if (available()) setInterval(async () => {
+        if (typeof state === 'undefined' || !state.project || !state.automationMode) return;
+        for (const id of loaded) {
+            let ed; try { ed = await core().invoke('ext_edits', { id }); } catch { continue; }
+            if (!ed || !ed.length) continue;
+            if (!paramCache[id]) await loadParams(id);
+            const o = ownerOf(id); if (!o) continue;
+            for (const [pid, v] of ed) {
+                const c = paramCache[id] && paramCache[id].get(pid); if (c) c.value = v;
+                touched[id] = [pid, ...(touched[id] || []).filter(x => x !== pid)].slice(0, 12);
+                if (typeof autoTouch === 'function') autoTouch(o, 'fx:' + id + ':' + pid);
+            }
+        }
+    }, 200);
     function newId() { return 'vst#' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
     // Pose un plugin externe sur une piste / un groupe (à la fin de sa chaîne) puis ouvre sa fenêtre
     async function add(x, info) {
@@ -148,5 +179,5 @@ window.PulseExt = (function () {
             if (changed && typeof refreshPlaybackSoon === 'function') refreshPlaybackSoon();
         }, 1500);
     }
-    return { available, scan, visible, nameOf, has, isExt, ensure, saveStates, add, openEditor, openManager, names };
+    return { available, scan, visible, nameOf, has, isExt, ensure, saveStates, add, openEditor, openManager, names, paramName, paramValue, autoPids, loadParams };
 })();

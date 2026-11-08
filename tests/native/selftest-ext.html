@@ -22,6 +22,11 @@ const f=document.getElementById('f'); const sleep=ms=>new Promise(r=>setTimeout(
   { const st=await w.PulseAudio.exportTrackWav(ST.project,0); log('stem: '+(st?Math.round(st.size/1024)+' Ko':'RIEN')); }
   { ST.project.tracks.push({name:'Copie',type:'audio',color:'#888',output:'master',clips:[]}); const t2=ST.project.tracks[ST.project.tracks.length-1]; if(t2){ t2.effects=[id]; t2.effectParams={[id]:JSON.parse(JSON.stringify(t.effectParams[id]))}; await w.PulseExt.ensure(ST.project); log('copie: piste1='+JSON.stringify(t.effects)+' piste2='+JSON.stringify(t2.effects)+' distinctes='+(t.effects[0]!==t2.effects[0])+' état copié='+(!!(t2.effectParams[t2.effects[0]]||{}).state)); } }
   { const fr=await w.PulseAudio.renderFreeze(ST.project,0); log('gel: '+(fr?JSON.stringify(Object.keys(fr)).slice(0,80):'RIEN')); }
+  { await w.PulseExt.loadParams(id); const l=await inv('ext_params',{id}); const og=l.find(q=>/^Output Level|^Output Gain/i.test(q.name)); log('réglages automatisables: '+l.length+' sortie='+(og&&og.name));
+    if(og){ t.automation={['fx:'+id+':'+og.id]:{points:[{t:0,v:0.2},{t:4,v:0.9}]}}; const info=w.eval('autoInfo')(t,'fx:'+id+':'+og.id); log('courbe: '+(info&&info.label));
+      const wav=await w.PulseAudio.exportWav(ST.project,{normalize:false}); const ab=await w.PulseAudio.getContext().decodeAudioData(await wav.arrayBuffer()); const d=ab.getChannelData(0), sr=ab.sampleRate;
+      const rms=(a,b)=>{let s2=0;for(let i=a;i<b;i++)s2+=d[i]*d[i];return Math.sqrt(s2/(b-a));}; const a0=rms(Math.round(0.6*sr),Math.round(0.9*sr)), b0=rms(Math.round(3.4*sr),Math.round(3.7*sr));
+      log('automation: début='+a0.toFixed(4)+' fin='+b0.toFixed(4)+' monte='+(b0>a0*1.5)); t.automation={}; } }
   log('chargés: '+JSON.stringify(await inv('ext_loaded')));
   { const t1=performance.now(); const wav=await w.PulseAudio.exportWav(ST.project,{normalize:false}); const ms=Math.round(performance.now()-t1);
     if(!wav){ log('export: RIEN'); } else { const ab=await w.PulseAudio.getContext().decodeAudioData(await wav.arrayBuffer()); const d=ab.getChannelData(0); let s2=0; for(let i=0;i<d.length;i++) s2+=d[i]*d[i];

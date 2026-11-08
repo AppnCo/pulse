@@ -82,3 +82,27 @@ fn proq4_phase_lineaire_compensee() {
     assert!(lat > 0, "le mode linéaire doit annoncer une latence");
     assert!((b - a).abs() <= 2, "la latence de Pro-Q doit être compensée : écart {}", b - a);
 }
+
+#[test]
+fn proq4_automation() {
+    if !std::path::Path::new(PROQ).exists() { return; }
+    let sr = 48_000u32;
+    let mut p = vst3_host::simple::load_plugin(PROQ).expect("chargement");
+    p.reconfigure(sr as f64, ext::MAX_BLOCK).unwrap();
+    let params = p.get_parameters().unwrap();
+    let id = |name: &str| params.iter().find(|q| q.name == name).map(|q| q.id).unwrap();
+    p.set_parameter(id("Band 1 Used"), 1.0).unwrap();
+    let gain = id("Band 1 Gain");
+    p.start_processing().unwrap();
+    ext::insert("vst#auto", p);
+    let n = sr as usize * 2;
+    let s: Vec<f32> = (0..n).map(|i| 0.2 * (2.0 * std::f32::consts::PI * 1000.0 * i as f32 / sr as f32).sin()).collect();
+    let mut media = render::Media::new(); media.insert("c".into(), render::Source::new(sr, vec![s.clone(), s]));
+    let json = format!(r#"{{"bpm":120,"tracks":[{{"name":"V","type":"audio","volume":100,"clips":[{{"id":"c","start":0,"duration":2,"offset":0}}],"effects":["vst#auto"],"automation":{{"fx:vst#auto:{gain}":{{"points":[{{"t":0,"v":0.5}},{{"t":2,"v":0.85}}]}}}}}}]}}"#);
+    let project: Project = serde_json::from_str(&json).expect("projet");
+    let (l, _) = render::render_blocks(&project, &media, &render::RenderOptions { sample_rate: sr, ..Default::default() }, 512);
+    let w = sr as usize / 10;
+    let (a, b) = (rms(&l[w..2 * w]), rms(&l[n - 2 * w..n - w]));
+    println!("début {a:.4}, fin {b:.4} (×{:.2})", b / a);
+    assert!(b / a > 2.0, "la courbe doit monter le gain du point : {a} → {b}");
+}
