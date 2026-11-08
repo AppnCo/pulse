@@ -26,11 +26,11 @@ window.PulseNative = (function () {
         return sendBytes(bytes, 'native_play', headers, 'native_play_staged', { from, lp });
     }
     // Export par le moteur natif (projet avec plugins externes). Réponse : ArrayBuffer [fréquence u32][n u32][gauche f32…][droite f32…]
-    async function render(project, master, range = null) {
+    async function render(project, master, range = null, only = null) {
         if (!isAvailable()) throw new Error('moteur natif absent');
         const sizes = {};
         for (const id of new Set(PulsePersist.mediaIds(project, false))) { const b = await PulsePersist.loadBlob(id); if (b) sizes[id] = b.size; }
-        const ask = () => core().invoke('native_render', { json: JSON.stringify(project), sizes, master, range });
+        const ask = () => core().invoke('native_render', { json: JSON.stringify(project), sizes, master, range, only });
         try { return await ask(); }
         catch (err) {
             if (!/sons manquants/.test(String((err && err.message) || err))) throw err;

@@ -145,7 +145,7 @@ async fn native_play_project(player: State<'_, Player>, sounds: State<'_, Sounds
 /// Export par le moteur natif (projet avec plugins externes : eux seuls tournent ici). Rend à la fréquence de la sortie
 /// (celle où les plugins sont réglés). Réponse : fréquence (u32), nombre d'échantillons (u32), puis gauche et droite (f32).
 #[tauri::command]
-async fn native_render(player: State<'_, Player>, sounds: State<'_, Sounds>, json: String, sizes: std::collections::HashMap<String, u64>, master: f64, range: Option<(f64, f64)>) -> Result<tauri::ipc::Response, String> {
+async fn native_render(player: State<'_, Player>, sounds: State<'_, Sounds>, json: String, sizes: std::collections::HashMap<String, u64>, master: f64, range: Option<(f64, f64)>, only: Option<usize>) -> Result<tauri::ipc::Response, String> {
     if player.is_playing() { player.stop(); }
     let rate = match player.output_rate() { 0 => 48_000, r => r };
     let cache = sounds.0.clone();
@@ -162,7 +162,7 @@ async fn native_render(player: State<'_, Player>, sounds: State<'_, Sounds>, jso
             }
             m
         };
-        let opts = render::RenderOptions { sample_rate: rate, master_volume: master, range, ..Default::default() };
+        let opts = render::RenderOptions { sample_rate: rate, master_volume: master, range, only_track: only, ..Default::default() };
         // blocs de la taille de ceux des plugins externes
         let (l, r) = render::render_blocks(&project, &media, &opts, pulse_engine::ext::MAX_BLOCK);
         let mut out = Vec::with_capacity(8 + (l.len() + r.len()) * 4);

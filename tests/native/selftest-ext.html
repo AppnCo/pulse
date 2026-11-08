@@ -19,6 +19,7 @@ const f=document.getElementById('f'); const sleep=ms=>new Promise(r=>setTimeout(
   log('lecture: isNative='+w.PulseAudio.isNative()+' joue='+ni.playing+' pos='+ni.position.toFixed(2)+' niveaux='+JSON.stringify(lv.levels&&lv.levels.master||lv.levels||null).slice(0,80));
   await w.togglePlay();
   await w.PulseExt.saveStates(ST.project); const st=(t.effectParams[id]||{}).state||''; log('état enregistré: '+st.length+' caractères');
+  { const st=await w.PulseAudio.exportTrackWav(ST.project,0); log('stem: '+(st?Math.round(st.size/1024)+' Ko':'RIEN')); }
   log('chargés: '+JSON.stringify(await inv('ext_loaded')));
   { const t1=performance.now(); const wav=await w.PulseAudio.exportWav(ST.project,{normalize:false}); const ms=Math.round(performance.now()-t1);
     if(!wav){ log('export: RIEN'); } else { const ab=await w.PulseAudio.getContext().decodeAudioData(await wav.arrayBuffer()); const d=ab.getChannelData(0); let s2=0; for(let i=0;i<d.length;i++) s2+=d[i]*d[i];
