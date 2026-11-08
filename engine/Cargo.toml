@@ -23,3 +23,7 @@ ext = ["dep:vst3-host", "dep:rack"]
 
 [profile.release]
 opt-level = 3
+
+# rack modifié pour Pulse (retard des Audio Units : vendor/rack)
+[patch.crates-io]
+rack = { path = "vendor/rack" }

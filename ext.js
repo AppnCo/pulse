@@ -103,6 +103,8 @@ window.PulseExt = (function () {
             if (!paramCache[id]) await loadParams(id);
             const o = ownerOf(id); if (!o) continue;
             for (const [pid, v] of ed) {
+                // réglage qui bouge parce que sa courbe joue (Audio Unit : valeurs comparées) : ce n'est pas un geste
+                if (state.playing && o.automation && o.automation['fx:' + id + ':' + pid] && !/^\//.test((o.effectParams[id] || {}).path || '') && String((o.effectParams[id] || {}).path || '').startsWith('au:')) continue;
                 const c = paramCache[id] && paramCache[id].get(pid); if (c) c.value = v;
                 touched[id] = [pid, ...(touched[id] || []).filter(x => x !== pid)].slice(0, 12);
                 if (typeof autoTouch === 'function') autoTouch(o, 'fx:' + id + ':' + pid);

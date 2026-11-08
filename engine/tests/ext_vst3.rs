@@ -108,3 +108,29 @@ fn proq4_automation() {
     println!("début {a:.4}, fin {b:.4} (×{:.2})", b / a);
     assert!(b / a > 2.0, "la courbe doit monter le gain du point : {a} → {b}");
 }
+
+/// Audio Unit avec retard (Pro-L 2 : anticipation) : retard lu et compensé comme un VST3
+#[cfg(target_os = "macos")]
+#[test]
+fn au_pro_l2_latence_compensee() {
+    use pulse_engine::ext::rack::{PluginInstance, PluginScanner};
+    let sc = pulse_engine::ext::rack::au::AudioUnitScanner::new().unwrap();
+    let Some(info) = sc.scan().unwrap().into_iter().find(|i| i.name.contains("Pro-L 2")) else { eprintln!("Pro-L 2 absent"); return };
+    let sr = 48_000u32;
+    let mut p = sc.load(&info).unwrap();
+    p.initialize(sr as f64, ext::MAX_BLOCK).unwrap();
+    let lat = p.latency_samples();
+    println!("Pro-L 2 (AU) : latence {lat} échantillons");
+    ext::insert("vst#aul", ext::Inst::Au(Box::new(p), vec![0.0; ext::MAX_BLOCK], vec![0.0; ext::MAX_BLOCK]));
+    let n = sr as usize * 3; let mut s = vec![0.0f32; n]; for i in 0..2400 { s[sr as usize + i] = 0.3 * ((i as f32) * 0.2).sin(); }
+    let mut media = render::Media::new(); media.insert("c".into(), render::Source::new(sr, vec![s.clone(), s]));
+    let json = r#"{"bpm":120,"tracks":[{"name":"V","type":"audio","volume":100,"clips":[{"id":"c","start":0,"duration":3,"offset":0}],"effects":["vst#aul"]}]}"#;
+    let project: Project = serde_json::from_str(json).unwrap();
+    let reference: Project = serde_json::from_str(&json.replace(r#""effects":["vst#aul"]"#, r#""effects":[]"#)).unwrap();
+    let opts = render::RenderOptions { sample_rate: sr, ..Default::default() };
+    let onset = |x: &[f32]| x.iter().position(|v| v.abs() > 0.01).unwrap_or(0) as i64;
+    let (a, b) = (onset(&render::render_blocks(&reference, &media, &opts, 512).0), onset(&render::render_blocks(&project, &media, &opts, 512).0));
+    println!("début du son sans plugin {a}, avec Pro-L 2 {b} (écart {})", b - a);
+    assert!(lat > 0, "Pro-L 2 doit annoncer un retard");
+    assert!((b - a).abs() <= 48, "retard compensé : écart {}", b - a);
+}

@@ -12,7 +12,7 @@ if [ "$WAS_MUTED" != "true" ] && [ "$WAS_MUTED" != "false" ] && [ "${PULSE_SON_O
 fi
 osascript -e 'set volume output muted true' 2>/dev/null || true
 trap 'osascript -e "set volume output muted $WAS_MUTED" 2>/dev/null || true' EXIT
-export PATH=$HOME/.cargo/bin:$PATH CARGO_TARGET_DIR=$HOME/pulse-build/tauri-target
+export PATH=$HOME/.cargo/bin:$HOME/Library/Python/3.9/bin:$PATH CARGO_TARGET_DIR=$HOME/pulse-build/tauri-target
 ./make-web.sh >/dev/null
 cp tests/native/selftest.html web-dist/selftest.html; cp tests/native/selftest-ext.html web-dist/selftest-ext.html
 cp src-tauri/tauri.conf.json /tmp/tauri.conf.keep

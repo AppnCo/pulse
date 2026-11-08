@@ -82,8 +82,9 @@ pub async fn ext_create(player: State<'_, pulse_engine::player::Player>, id: Str
             let mut p = sc.load(&info).map_err(|e| format!("plugin illisible : {e}"))?;
             p.initialize(rate, ext::MAX_BLOCK).map_err(|e| e.to_string())?;
             if let Some(b) = &bytes { let _ = p.set_state(b); }
+            let latency = p.latency_samples();
             ext::insert(&id, ext::Inst::Au(Box::new(p), vec![0.0; ext::MAX_BLOCK], vec![0.0; ext::MAX_BLOCK]));
-            return Ok(ExtLoaded { name: info.name.clone(), latency: 0, editor: true });
+            return Ok(ExtLoaded { name: info.name.clone(), latency, editor: true });
         }
         let mut p = vst3_host::simple::load_plugin(&path).map_err(|e| format!("plugin illisible : {e}"))?;
         if p.info().audio_inputs == 0 { return Err("c'est un instrument (pas encore pris en charge) : seuls les effets se posent sur une piste".into()); }
@@ -100,9 +101,11 @@ pub async fn ext_create(player: State<'_, pulse_engine::player::Player>, id: Str
 #[tauri::command]
 pub fn ext_state(id: String) -> Result<String, String> {
     let sh = ext::get(&id).ok_or("plugin absent")?;
+    let vst = match &*sh.lock().unwrap() { ext::Inst::Vst(p) => Some(p.clone()), #[cfg(target_os = "macos")] _ => None };
+    if let Some(p) = vst { let st = p.lock().unwrap().save_state().map_err(|e| e.to_string())?; return Ok(base64::engine::general_purpose::STANDARD.encode(st)); }
     let g = sh.lock().unwrap();
     let st = match &*g {
-        ext::Inst::Vst(p) => p.lock().unwrap().save_state().map_err(|e| e.to_string())?,
+        ext::Inst::Vst(_) => unreachable!(),
         #[cfg(target_os = "macos")]
         ext::Inst::Au(p, ..) => { use ext::rack::PluginInstance; p.get_state().map_err(|e| e.to_string())? }
     };
@@ -172,6 +175,10 @@ pub struct ExtParam { pub id: u32, pub name: String, pub value: f64 }
 #[tauri::command]
 pub fn ext_params(id: String) -> Result<Vec<ExtParam>, String> {
     let sh = ext::get(&id).ok_or("plugin absent")?;
+    let vst = match &*sh.lock().unwrap() { ext::Inst::Vst(p) => Some(p.clone()), #[cfg(target_os = "macos")] _ => None };
+    if let Some(p) = vst { return Ok(p.lock().unwrap().get_parameters().map_err(|e| e.to_string())?.into_iter()
+            .filter(|q| q.can_automate && !q.is_read_only && !q.is_bypass)
+            .map(|q| ExtParam { id: q.id, name: q.name, value: q.value }).collect()); }
     let g = sh.lock().unwrap();
     match &*g {
         ext::Inst::Vst(p) => Ok(p.lock().unwrap().get_parameters().map_err(|e| e.to_string())?.into_iter()
@@ -186,16 +193,25 @@ pub fn ext_params(id: String) -> Result<Vec<ExtParam>, String> {
 }
 
 /// Réglages touchés dans la fenêtre du plugin depuis la dernière fois (n°, valeur 0..1) : en mode automation,
-/// toucher un bouton du plugin affiche sa courbe (comme Logic) et l'écriture suit le geste. Audio Units : pas encore.
+/// toucher un bouton du plugin affiche sa courbe (comme Logic) et l'écriture suit le geste (Audio Units : valeurs comparées).
 #[tauri::command]
 pub fn ext_edits(id: String) -> Result<Vec<(u32, f64)>, String> {
     let sh = ext::get(&id).ok_or("plugin absent")?;
-    let g = sh.lock().unwrap();
-    match &*g {
-        ext::Inst::Vst(p) => Ok(p.lock().unwrap().take_parameter_edits().into_iter().filter_map(|e| e.value.map(|v| (e.id, v))).collect()),
-        #[cfg(target_os = "macos")]
-        ext::Inst::Au(..) => Ok(Vec::new()),
+    let vst = match &*sh.lock().unwrap() { ext::Inst::Vst(p) => Some(p.clone()), #[cfg(target_os = "macos")] _ => None };
+    if let Some(p) = vst { return Ok(p.lock().unwrap().take_parameter_edits().into_iter().filter_map(|e| e.value.map(|v| (e.id, v))).collect()); }
+    #[cfg(target_os = "macos")]
+    {
+        // Audio Unit : pas d'avis de la fenêtre → on compare les valeurs à celles du dernier passage
+        use ext::rack::PluginInstance;
+        static LAST: std::sync::OnceLock<Mutex<HashMap<String, Vec<f32>>>> = std::sync::OnceLock::new();
+        let now: Vec<f32> = { let g = sh.lock().unwrap(); if let ext::Inst::Au(p, ..) = &*g { (0..p.parameter_count()).map(|i| p.get_parameter(i).unwrap_or(0.0)).collect() } else { Vec::new() } };
+        let mut last = LAST.get_or_init(|| Mutex::new(HashMap::new())).lock().unwrap();
+        let prev = last.insert(id, now.clone());
+        let Some(prev) = prev else { return Ok(Vec::new()) };
+        return Ok(now.iter().enumerate().filter(|(i, v)| prev.get(*i).map_or(false, |p| (*p - **v).abs() > 1e-5)).map(|(i, v)| (i as u32, *v as f64)).collect());
     }
+    #[allow(unreachable_code)]
+    Ok(Vec::new())
 }
 
 /// Plugins chargés en ce moment (identifiants)
