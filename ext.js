@@ -38,7 +38,8 @@ window.PulseExt = (function () {
         (project.buses || []).forEach(scanO);
         return out;
     }
-    const has = (project) => allExt(project).length > 0;
+    // une piste gelée est déjà pré-calculée : son plugin ne tourne plus (ni moteur natif imposé, ni chargement)
+    const has = (project) => allExt(project).some(([o]) => !o.frozen);
 
     // Crée dans l'appli toutes les instances du projet (avec leurs réglages) : à l'ouverture et avant la lecture
     async function ensure(project) {

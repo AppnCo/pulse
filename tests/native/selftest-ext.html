@@ -21,6 +21,7 @@ const f=document.getElementById('f'); const sleep=ms=>new Promise(r=>setTimeout(
   await w.PulseExt.saveStates(ST.project); const st=(t.effectParams[id]||{}).state||''; log('état enregistré: '+st.length+' caractères');
   { const st=await w.PulseAudio.exportTrackWav(ST.project,0); log('stem: '+(st?Math.round(st.size/1024)+' Ko':'RIEN')); }
   { ST.project.tracks.push({name:'Copie',type:'audio',color:'#888',output:'master',clips:[]}); const t2=ST.project.tracks[ST.project.tracks.length-1]; if(t2){ t2.effects=[id]; t2.effectParams={[id]:JSON.parse(JSON.stringify(t.effectParams[id]))}; await w.PulseExt.ensure(ST.project); log('copie: piste1='+JSON.stringify(t.effects)+' piste2='+JSON.stringify(t2.effects)+' distinctes='+(t.effects[0]!==t2.effects[0])+' état copié='+(!!(t2.effectParams[t2.effects[0]]||{}).state)); } }
+  { const fr=await w.PulseAudio.renderFreeze(ST.project,0); log('gel: '+(fr?JSON.stringify(Object.keys(fr)).slice(0,80):'RIEN')); }
   log('chargés: '+JSON.stringify(await inv('ext_loaded')));
   { const t1=performance.now(); const wav=await w.PulseAudio.exportWav(ST.project,{normalize:false}); const ms=Math.round(performance.now()-t1);
     if(!wav){ log('export: RIEN'); } else { const ab=await w.PulseAudio.getContext().decodeAudioData(await wav.arrayBuffer()); const d=ab.getChannelData(0); let s2=0; for(let i=0;i<d.length;i++) s2+=d[i]*d[i];

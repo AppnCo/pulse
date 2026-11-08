@@ -4098,7 +4098,9 @@ window.PulseAudio = (function() {
         const copy = { ...project, tracks: project.tracks.map((x, i) => i !== trackIdx ? x
             : { ...x, volume: 100, pan: 0, delayMs: 0, sends: {}, busSends: {}, preSends: {}, automation }) };
         // 1 s de plus au moins pour la fin des effets (un filtre, un compresseur résonnent encore après la région), puis le silence de la fin est retiré
-        const out = await renderOffline(copy, { freeze: true, raw: true, minTail: 1 }, trackIdx);
+        // plugin externe sur la piste : seul le moteur natif peut le rendre
+        const ext = window.PulseExt && PulseExt.available() && PulseExt.has({ tracks: [t], buses: [] }) && window.PulseNative && PulseNative.available;
+        const out = ext ? await exportWavNative(copy, { raw: true }, trackIdx) : await renderOffline(copy, { freeze: true, raw: true, minTail: 1 }, trackIdx);
         if (!out) return null;
         const L0 = out.getChannelData(0), R0 = out.getChannelData(1);
         let end = L0.length;
