@@ -43,6 +43,18 @@ window.PulseExt = (function () {
     // Crée dans l'appli toutes les instances du projet (avec leurs réglages) : à l'ouverture et avant la lecture
     async function ensure(project) {
         if (!available()) return;
+        // même plugin sur deux pistes (piste dupliquée, réglages collés…) : chaque copie reçoit sa propre instance,
+        // avec les mêmes réglages (sinon les deux pistes passeraient dans le même plugin et le son serait faux)
+        const seen = new Set();
+        for (const [o, id] of allExt(project)) {
+            if (!seen.has(id)) { seen.add(id); continue; }
+            const nid = newId(), p = (o.effectParams || {})[id];
+            const sw = (arr) => Array.isArray(arr) ? arr.map(x => x === id ? nid : x) : arr;
+            o.effects = sw(o.effects); o.fxOff = sw(o.fxOff); o.fxOrder = sw(o.fxOrder);
+            if (p) { o.effectParams[nid] = JSON.parse(JSON.stringify(p)); delete o.effectParams[id]; }
+            if (loaded.has(id)) { try { const st = await core().invoke('ext_state', { id }); if (st && o.effectParams[nid]) o.effectParams[nid].state = st; } catch {} }
+            seen.add(nid);
+        }
         const jobs = [];
         for (const [o, id] of allExt(project)) {
             const p = (o.effectParams || {})[id]; if (!p || !p.path) continue;
@@ -78,8 +90,10 @@ window.PulseExt = (function () {
         openEditor(id);
         return id;
     }
-    function openEditor(id) {
+    async function openEditor(id) {
         if (!available()) { flashSafe('Les plugins externes s\'ouvrent dans l\'appli Pulse (pas dans le navigateur)'); return; }
+        // projet rouvert : le plugin n'est peut-être pas encore chargé (il l'est d'habitude au lancement de la lecture)
+        if (!loaded.has(id) && typeof state !== 'undefined' && state.project) await ensure(state.project);
         core().invoke('ext_editor', { id }).catch(err => flashSafe('Fenêtre du plugin : ' + err));
     }
     function flashSafe(m) { if (typeof flash === 'function') flash(m); else console.warn(m); }
