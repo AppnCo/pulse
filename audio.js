@@ -3163,7 +3163,7 @@ window.PulseAudio = (function() {
     function clipSig(track) { return (track.clips || []).map(c => [c.start, c.duration, c.offset || 0].map(v => (+v || 0).toFixed(3)).join(':') + (c.muted ? 'm' : '')).sort().join('|'); }
     function isTrackAudible(project, track) {
         const anySolo = project.tracks.some(t => t.solo) || (project.buses || []).some(b => b.solo) || (project.folders || []).some(f => f.solo);
-        return !track.muted && (!anySolo || track.solo || groupSolo(project, track));
+        return !track.muted && (!anySolo || track.solo || track.soloSafe || groupSolo(project, track));
     }
 
     function volumePoints(track) {

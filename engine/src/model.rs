@@ -87,6 +87,8 @@ pub struct Track {
     pub mono: Option<bool>,
     pub muted: bool,
     pub solo: bool,
+    /// Solo protégé (⌃ + clic sur S) : reste audible quand d'autres pistes sont en solo
+    pub solo_safe: bool,
     pub output: Option<String>,
     /// Ordre des effets choisi par l'utilisateur (vide = ordre habituel)
     pub fx_order: Vec<String>,
@@ -836,7 +838,7 @@ impl Project {
 
     pub fn is_audible(&self, track: &Track) -> bool {
         let any_solo = self.tracks.iter().any(|t| t.solo) || self.buses.iter().any(|b| b.solo) || self.folders.iter().any(|f| f.solo);
-        !track.muted && (!any_solo || track.solo || self.group_solo(track))
+        !track.muted && (!any_solo || track.solo || track.solo_safe || self.group_solo(track))
     }
     /// La piste est dans un groupe (en remontant les sorties) ou un dossier mis en solo (même calcul que groupSolo dans audio.js)
     pub fn group_solo(&self, track: &Track) -> bool {

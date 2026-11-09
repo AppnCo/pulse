@@ -1176,7 +1176,7 @@ function renderTracksPanel() {
                 <div class="track-name" contenteditable="${!t.isCapture}" data-i="${i}">${esc(t.name)}${t.isCapture ? '<span class="chip" contenteditable="false"> LIVE</span>' : ''}</div>
                 <div class="track-buttons">
                     <button class="t-mini m-m ${t.muted?'active':''}" data-flag="mute" data-i="${i}" data-tooltip="Mute (M) — glisser sur les M = plusieurs pistes · ⌘ + clic = tous les M dans le même état · ⌥ + clic = toutes les pistes">M</button>
-                    <button class="t-mini m-s ${t.solo?'active':''} ${!t.solo && trackGroups(t).some(g => g.solo) ? 'implied' : ''}" data-flag="solo" data-i="${i}" data-tooltip="Solo (S) — ⌥ + clic = cette piste seule (re-⌥ + clic = plus de solo) · glisser sur les S = plusieurs pistes">S</button>
+                    <button class="t-mini m-s ${t.solo?'active':''} ${!t.solo && trackGroups(t).some(g => g.solo) ? 'implied' : ''} ${t.soloSafe ? 'safe' : ''}" data-flag="solo" data-i="${i}" data-tooltip="Solo (S) — ⌥ + clic = cette piste seule (re-⌥ + clic = plus de solo) · glisser sur les S = plusieurs pistes · ⌃ + clic = solo protégé (joue toujours)">S</button>
                     <button class="t-mini m-r ${t.armed?'active':''}" data-flag="rec" data-i="${i}" data-tooltip="${t.armed ? 'Prête à enregistrer : la prochaine prise ira ici (clic pour désarmer)' : 'Prête à enregistrer : clique pour que la prochaine prise aille ici'}">R</button>
                     <button class="t-mini m-i ${trackMonitored(t)?'active':''}" data-flag="mon" data-i="${i}" data-tooltip="${trackMonitored(t) ? 'Retour casque : tu t\'entends (clic pour couper)' : 'Retour casque coupé (clic pour t\'entendre)'}">i</button>
                     ${trackTakeNumbers(t).length ? `<button class="takes-toggle ${t.takesOpen ? 'active' : ''}" data-takes="${i}" data-tooltip="${t.takesOpen ? 'Cacher les prises' : 'Voir les prises mises de côté'}"><svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>${trackTakeNumbers(t).length}</button>` : ''}
@@ -3718,7 +3718,7 @@ function renderMixer() {
         return `
         <div class="strip ${t.isCapture?'strip-capture':''} ${isPendDel(t) ? 'pend-del' : ''}" style="--track-color: ${t.color}" data-kind="track" data-i="${i}">
             <div class="strip-name">${esc(t.name)}</div>
-            <div class="strip-ms"><button class="strip-m ${t.muted ? 'active' : ''}" data-tooltip="Mute (M)">M</button><button class="strip-s ${t.solo ? 'active' : ''} ${!t.solo && trackGroups(t).some(g => g.solo) ? 'implied' : ''}" data-tooltip="Solo (S)">S</button></div>
+            <div class="strip-ms"><button class="strip-m ${t.muted ? 'active' : ''}" data-tooltip="Mute (M)">M</button><button class="strip-s ${t.solo ? 'active' : ''} ${!t.solo && trackGroups(t).some(g => g.solo) ? 'implied' : ''} ${t.soloSafe ? 'safe' : ''}" data-tooltip="Solo (S) · ⌃ + clic = solo protégé">S</button></div>
             <button class="strip-sound" data-tooltip="Réglage de la piste : charge un réglage prêt à l'emploi (comme « Réglage » dans Logic)">${t.sound && SOUND_PRESETS[t.sound.preset] ? esc(SOUND_PRESETS[t.sound.preset].label) : 'Réglage'} ▾</button>
             ${slotListsHtml('track', t)}
             <div class="strip-pan">
@@ -5408,7 +5408,7 @@ function toggleSolo(trackIdx, exclusiveMode = false) {
         state.project.tracks.forEach((tr, i) => { tr.solo = !wasSoloAlone && i === trackIdx; });
         renderTracksPanel(); bindTrackEvents();
     } else {
-        t.solo = !t.solo;
+        t.solo = !t.solo; if (t.solo) delete t.soloSafe;
         const btn = document.querySelector(`.track-item[data-i="${trackIdx}"] .m-s`);
         if (btn) btn.classList.toggle('active', t.solo);
     }
@@ -5578,10 +5578,17 @@ function paintMixerSelection() {
 function mixChosenTracks() { return state._mixNoTrack ? [] : selectedTrackIdxs(); }
 function mixChosenBuses() { const ids = state.mixBuses instanceof Set ? state.mixBuses : new Set(); return (state.project.buses || []).filter(b => ids.has(b.id)); }
 // M / S depuis la table de mixage (piste ou bus) : la tranche cliquée, ou toutes les choisies si elle en fait partie
+// Solo protégé (⌃ + clic sur S, comme Logic) : la piste reste audible quand d'autres sont en solo (ex. un bus de reverb)
+function toggleSoloSafe(t) {
+    pushUndo(); if (t.soloSafe) delete t.soloSafe; else { t.soloSafe = true; t.solo = false; }
+    PulseAudio.refreshAudibility(state.project); renderTracksPanel(); bindTrackEvents(); if (state.mixerOpen) { renderMixer(); bindMixerEvents(); } saveProject();
+    flash(t.soloSafe ? `Solo protégé : « ${t.name} » joue même quand une autre piste est en solo` : `Solo protégé retiré de « ${t.name} »`);
+}
 function mixerFlag(kind, i, flag, e = {}) {
     const tIdx = mixChosenTracks(), bs = mixChosenBuses();
     const src = kind === 'track' ? state.project.tracks[i] : state.project.buses[i]; if (!src) return;
     // ⌥ + clic sur un S : cette tranche seule en solo (ou plus aucun solo si elle l'était) ; ⌘ + clic sur un M : tous les M dans le même état
+    if (flag === 'solo' && e.ctrlKey && !e.metaKey && kind === 'track') { toggleSoloSafe(src); return; }
     if (flag === 'solo' && e.altKey) {
         const was = !!src.solo; pushUndo(); clearSoloFlags(); if (!was) src.solo = true;
         PulseAudio.refreshAudibility(state.project); renderTracksPanel(); bindTrackEvents(); renderMixer(); bindMixerEvents(); saveProject(); return;
@@ -13808,6 +13815,7 @@ function bindTrackEvents() {
                 return;
             }
 
+            if (flag === 'solo' && e.ctrlKey && !e.metaKey) { toggleSoloSafe(t); return; }
             // Comme Logic (manuel d'Apple) : ⌥ + clic sur un S éteint = cette piste seule en solo, sur un S allumé = plus aucun solo
             if (flag === 'solo' && e.altKey) {
                 const was = !!t.solo; pushUndo(); clearSoloFlags(); if (!was) t.solo = true;

@@ -104,7 +104,7 @@ pub fn ext_state(id: String) -> Result<String, String> {
     let vst = match &*sh.lock().unwrap() { ext::Inst::Vst(p) => Some(p.clone()), #[cfg(target_os = "macos")] _ => None };
     if let Some(p) = vst { let st = p.lock().unwrap().save_state().map_err(|e| e.to_string())?; return Ok(base64::engine::general_purpose::STANDARD.encode(st)); }
     let g = sh.lock().unwrap();
-    let st = match &*g {
+    let st: Vec<u8> = match &*g {
         ext::Inst::Vst(_) => unreachable!(),
         #[cfg(target_os = "macos")]
         ext::Inst::Au(p, ..) => { use ext::rack::PluginInstance; p.get_state().map_err(|e| e.to_string())? }
