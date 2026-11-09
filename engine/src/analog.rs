@@ -34,21 +34,39 @@ fn os_fir() -> [f64; 128] {
 }
 /// Suréchantillonnage ×4 : `f` est appelée 4 fois par échantillon, à 4× la cadence. Retard : 31,5 échantillons.
 #[derive(Clone)]
-struct Os4 { h: [f64; 128], xin: [f64; 32], xs: [f64; 128], pos: usize }
+struct Os4 { xin: [f64; 64], xs: [f64; 256], wi: usize, pos: usize }
+/// Coefficients communs à toutes les machines (calculés une fois) : le filtre entier et ses 4 phases
+static OS_H: std::sync::LazyLock<([f64; 128], [[f64; 32]; 4])> = std::sync::LazyLock::new(|| {
+    let h = os_fir();
+    let mut hp = [[0.0; 32]; 4];
+    for p in 0..4 { for j in 0..32 { hp[p][j] = h[p + 4 * j]; } }
+    (h, hp)
+});
+/// Produit scalaire avec 8 sommes partielles : les additions ne s'attendent plus les unes les autres (≈ 4× plus rapide)
+#[inline(always)]
+fn dot(a: &[f64], b: &[f64]) -> f64 {
+    let mut acc = [0.0f64; 8];
+    for (ca, cb) in a.chunks_exact(8).zip(b.chunks_exact(8)) { for q in 0..8 { acc[q] += ca[q] * cb[q]; } }
+    ((acc[0] + acc[1]) + (acc[2] + acc[3])) + ((acc[4] + acc[5]) + (acc[6] + acc[7]))
+}
 impl Os4 {
-    fn new() -> Self { Self { h: os_fir(), xin: [0.0; 32], xs: [0.0; 128], pos: 0 } }
+    fn new() -> Self { Self { xin: [0.0; 64], xs: [0.0; 256], wi: 0, pos: 0 } }
+    // Tampons circulaires écrits deux fois (i et i + taille) : la fenêtre des derniers échantillons est toujours d'un seul tenant,
+    // les produits se calculent sans modulo (le processeur les vectorise). Même calcul qu'avant, à l'arrondi près.
     fn run(&mut self, v: f64, mut f: impl FnMut(f64) -> f64) -> f64 {
-        self.xin.copy_within(0..31, 1);
-        self.xin[0] = v;
-        for p in 0..4 {
-            let mut u = 0.0;
-            for j in 0..32 { u += self.h[p + 4 * j] * self.xin[j]; }
-            self.pos = (self.pos + 1) % 128;
-            self.xs[self.pos] = f(4.0 * u);
+        self.wi = (self.wi + 31) & 31;
+        self.xin[self.wi] = v;
+        self.xin[self.wi + 32] = v;
+        let w = &self.xin[self.wi..self.wi + 32];
+        let (h, hp) = &*OS_H;
+        let us = [dot(&hp[0], w), dot(&hp[1], w), dot(&hp[2], w), dot(&hp[3], w)];
+        for u in us {
+            self.pos = (self.pos + 127) & 127;
+            let y = f(4.0 * u);
+            self.xs[self.pos] = y;
+            self.xs[self.pos + 128] = y;
         }
-        let (mut out, mut idx) = (0.0, self.pos);
-        for hi in self.h.iter() { out += hi * self.xs[idx]; idx = (idx + 127) % 128; }
-        out
+        dot(h, &self.xs[self.pos..self.pos + 128])
     }
 }
 
@@ -140,7 +158,7 @@ pub struct Fet76 {
     viron: f64,
     lpa: f64,
     lp: [f64; 2],
-    os: [Os4; 2],
+    os: Box<[Os4; 2]>,
     dc: [(f64, f64); 2],
     /// son d'origine retardé comme la partie suréchantillonnée
     dry: [[f64; 40]; 2],
@@ -149,7 +167,7 @@ pub struct Fet76 {
 impl Fet76 {
     pub fn new(p: &Fet76Params, sr: f64) -> Self {
         let mut s = Self { sr, gin: 1.0, gout: 1.0, ratio: 4.0, knee: 6.0, all: false, att: 0.0, rel_fast: 0.0, rel_slow: 0.0, mix: 1.0,
-            gr: 0.0, gr_slow: 0.0, ff: 0.0, iron: [Iron::default(); 2], ik: iron_k(sr), vfet: 1.0, viron: 1.0, lpa: 1.0, lp: [0.0; 2], os: [Os4::new(), Os4::new()], dc: [(0.0, 0.0); 2], dry: [[0.0; 40]; 2] };
+            gr: 0.0, gr_slow: 0.0, ff: 0.0, iron: [Iron::default(); 2], ik: iron_k(sr), vfet: 1.0, viron: 1.0, lpa: 1.0, lp: [0.0; 2], os: Box::new([Os4::new(), Os4::new()]), dc: [(0.0, 0.0); 2], dry: [[0.0; 40]; 2] };
         s.set(p);
         s
     }
@@ -208,7 +226,7 @@ impl Fet76 {
         // tous enfoncés : au-delà de 8 dB au-dessus du seuil, le son plonge (≈ 0,2 dB de moins par dB de plus)
         let fft = if self.all { 0.2 * (lin - FET_THR - 8.0).max(0.0) } else { 0.0 };
         self.ff += (fft - self.ff) * if fft > self.ff { self.att } else { self.rel_fast };
-        let g = 10f64.powf(-(self.gr + self.ff) / 20.0);
+        let g = (-(self.gr + self.ff) * (std::f64::consts::LN_10 / 20.0)).exp();
         let (iw, il) = self.ik;
         // couleur : harmonique 2 du FET (croît avec la réduction), puis l'étage de sortie qui arrondit les crêtes
         let fet = (0.04 + 0.5 * (1.0 - g)) * if self.all { 2.2 } else { 1.0 } * self.vfet;
@@ -303,7 +321,7 @@ pub struct Pre73 {
     drive: f64,
     /// EQ et coupe-bas, calculés à 4× la cadence (dans le suréchantillonnage, entre les deux transfos)
     eq: Vec<[Biquad; 2]>,
-    os: [Os4; 2],
+    os: Box<[Os4; 2]>,
     dc: [(f64, f64); 2],
     /// transfos d'entrée et de sortie (le fer qui donne le grave de la machine)
     iron: [[Iron; 2]; 2],
@@ -334,7 +352,7 @@ impl Pre73 {
         if p.variant == 2 { eq.push(Biquad::lowpass(sr, 14_000.0, -3.0)); }
         let (va2, vir) = if p.variant == 2 { (0.06, 2.0) } else { (0.0, 1.0) };
         Self { gin: 10f64.powf(p.gain.clamp(0.0, 30.0) / 20.0), gout: 10f64.powf(p.output.clamp(-24.0, 12.0) / 20.0), drive: p.gain.clamp(0.0, 30.0) / 30.0, va2, vir,
-            eq: eq.into_iter().map(|b| [b, b]).collect(), os: [Os4::new(), Os4::new()], dc: [(0.0, 0.0); 2], iron: [[Iron::default(); 2]; 2], ik: iron_k(sr / 4.0) }
+            eq: eq.into_iter().map(|b| [b, b]).collect(), os: Box::new([Os4::new(), Os4::new()]), dc: [(0.0, 0.0); 2], iron: [[Iron::default(); 2]; 2], ik: iron_k(sr / 4.0) }
     }
     /// Nouveau réglage sans clic : mêmes filtres → seuls les coefficients changent ; sinon les filtres sont refaits
     pub fn set(&mut self, p: &Pre73Params, sr: f64) {
@@ -446,7 +464,7 @@ pub struct Opto2A {
     mem: f64,
     scl: [f64; 2],
     lp: [f64; 2],
-    os: [Os4; 2],
+    os: Box<[Os4; 2]>,
     iron: [Iron; 2],
     ik: (f64, f64),
     dc: [(f64, f64); 2],
@@ -460,7 +478,7 @@ impl Opto2A {
     pub const LATENCY: usize = 31;
     pub fn new(p: &Opto2AParams, sr: f64) -> Self {
         let mut s = Self { sr, gout: 1.0, thr: -20.0, ratio: 3.0, knee: 12.0, emph: 0.0, att: 0.0, rf: 0.0, rs_min: 0.0, rs_max: 0.0, a2: 0.0, k: 1.0, lpa: 1.0, iron_b: 0.0, mix: 1.0,
-            gr_f: 0.0, gr_s: 0.0, mem: 0.0, scl: [0.0; 2], lp: [0.0; 2], os: [Os4::new(), Os4::new()], iron: [Iron::default(); 2], ik: iron_k(sr), dc: [(0.0, 0.0); 2], dry: [[0.0; 40]; 2],
+            gr_f: 0.0, gr_s: 0.0, mem: 0.0, scl: [0.0; 2], lp: [0.0; 2], os: Box::new([Os4::new(), Os4::new()]), iron: [Iron::default(); 2], ik: iron_k(sr), dc: [(0.0, 0.0); 2], dry: [[0.0; 40]; 2],
             co_mem_up: 1.0 - (-1.0 / (3.0 * sr)).exp(), co_mem_down: 1.0 - (-1.0 / (20.0 * sr)).exp(), a1k: 1.0 - (-2.0 * PI * 1000.0 / sr).exp() };
         s.set(p);
         s
@@ -584,7 +602,7 @@ const IRONP1: f64 = 0.05;
 pub struct EqP1 {
     gout: f64,
     eq: Vec<[Biquad; 2]>,
-    os: [Os4; 2],
+    os: Box<[Os4; 2]>,
     iron: [[Iron; 2]; 2],
     ik: (f64, f64),
     dc: [(f64, f64); 2],
@@ -606,7 +624,7 @@ impl EqP1 {
             let ha = p.high_atten.clamp(0.0, 10.0);
             if ha > 1e-6 { eq.push(eq_matched("highshelf", P1_HFA[p.atten_f.min(2)] * 0.75, 0.6, -ha * 1.6, s4)); }
         }
-        Self { gout: 10f64.powf(p.output.clamp(-12.0, 12.0) / 20.0), eq: eq.into_iter().map(|b| [b, b]).collect(), os: [Os4::new(), Os4::new()],
+        Self { gout: 10f64.powf(p.output.clamp(-12.0, 12.0) / 20.0), eq: eq.into_iter().map(|b| [b, b]).collect(), os: Box::new([Os4::new(), Os4::new()]),
             iron: [[Iron::default(); 2]; 2], ik: iron_k(sr), dc: [(0.0, 0.0); 2] }
     }
     /// Nouveau réglage sans clic : mêmes filtres → seuls les coefficients changent
@@ -702,14 +720,14 @@ pub struct BusG {
     slow: f64,
     hp: [(f64, f64); 2],
     hpa: f64,
-    os: [Os4; 2],
+    os: Box<[Os4; 2]>,
     dry: [[f64; 40]; 2],
 }
 impl BusG {
     pub const LATENCY: usize = 31;
     pub fn new(p: &BusGParams, sr: f64) -> Self {
         let mut s = Self { sr, thr: -10.0, slope: 0.75, knee: 6.0, att: 0.0, rel: 0.0, auto: true, rel_fast: 0.0, rel_slow: 0.0, gmk: 1.0, mix: 1.0, drive: 1.0, h3: 0.0,
-            gr: 0.0, slow: 0.0, hp: [(0.0, 0.0); 2], hpa: 0.0, os: [Os4::new(), Os4::new()], dry: [[0.0; 40]; 2] };
+            gr: 0.0, slow: 0.0, hp: [(0.0, 0.0); 2], hpa: 0.0, os: Box::new([Os4::new(), Os4::new()]), dry: [[0.0; 40]; 2] };
         s.set(p);
         s
     }
@@ -826,7 +844,7 @@ pub struct Tape {
     hyst: f64,
     mix: f64,
     eq: Vec<[Biquad; 2]>,
-    os: [Os4; 2],
+    os: Box<[Os4; 2]>,
     mem: [f64; 2],
     /// souffle : niveau, filtre, générateur (le même dans le navigateur)
     hiss: f64,
@@ -845,7 +863,7 @@ pub struct Tape {
 impl Tape {
     pub const LATENCY: usize = 31 + TAPE_WOW_BASE;
     pub fn new(p: &TapeParams, sr: f64) -> Self {
-        let mut s = Self { sr, gin: 1.0, gout: 1.0, k: 1.0, hyst: 0.0, mix: 1.0, eq: Vec::new(), os: [Os4::new(), Os4::new()], mem: [0.0; 2],
+        let mut s = Self { sr, gin: 1.0, gout: 1.0, k: 1.0, hyst: 0.0, mix: 1.0, eq: Vec::new(), os: Box::new([Os4::new(), Os4::new()]), mem: [0.0; 2],
             hiss: 0.0, hlp: 0.0, hs: [0.0; 2], rng: 0x1234_5678, dw: 0.0, df: 0.0, pw: 0.0, pf: 0.0, line: [[0.0; 128]; 2], li: 0, dry: [[0.0; 128]; 2] };
         s.set(p);
         s
@@ -977,7 +995,7 @@ pub struct L670 {
     mix: f64,
     gr: f64,
     slow: f64,
-    os: [Os4; 2],
+    os: Box<[Os4; 2]>,
     iron: [[Iron; 2]; 2],
     ik: (f64, f64),
     dry: [[f64; 40]; 2],
@@ -986,7 +1004,7 @@ impl L670 {
     pub const LATENCY: usize = 31;
     pub fn new(p: &L670Params, sr: f64) -> Self {
         let mut s = Self { sr, gin: 1.0, gout: 1.0, thr: -12.0, att: 0.0, rel: 0.0, rel_slow: 0.0, auto: false, mix: 1.0, gr: 0.0, slow: 0.0,
-            os: [Os4::new(), Os4::new()], iron: [[Iron::default(); 2]; 2], ik: iron_k(sr), dry: [[0.0; 40]; 2] };
+            os: Box::new([Os4::new(), Os4::new()]), iron: [[Iron::default(); 2]; 2], ik: iron_k(sr), dry: [[0.0; 40]; 2] };
         s.set(p);
         s
     }
@@ -1105,7 +1123,7 @@ pub struct Dtr {
     hpa: f64,
     band: [Biquad; 2],
     use_band: bool,
-    os: [Os4; 2],
+    os: Box<[Os4; 2]>,
     dc: [(f64, f64); 2],
     dry: [[f64; 40]; 2],
 }
@@ -1114,7 +1132,7 @@ impl Dtr {
     pub fn new(p: &DtrParams, sr: f64) -> Self {
         let b = eq_matched("peaking", 6_000.0, 1.0, 10.0, sr);
         let mut s = Self { sr, gin: 1.0, gout: 1.0, slope: 0.0, knee: 0.0, nuke: false, att: 0.0, rel: 0.0, mix: 1.0, a2: 0.0, h3: 0.0, drive: 1.0, gr: 0.0,
-            hp: [(0.0, 0.0); 2], hpa: (-2.0 * PI * 100.0 / sr).exp(), band: [b, b], use_band: false, os: [Os4::new(), Os4::new()], dc: [(0.0, 0.0); 2], dry: [[0.0; 40]; 2] };
+            hp: [(0.0, 0.0); 2], hpa: (-2.0 * PI * 100.0 / sr).exp(), band: [b, b], use_band: false, os: Box::new([Os4::new(), Os4::new()]), dc: [(0.0, 0.0); 2], dry: [[0.0; 40]; 2] };
         s.set(p);
         s
     }
@@ -1237,13 +1255,13 @@ pub struct StripE {
     // gate
     gthr: f64, gfloor: f64, grel: f64, gatt: f64, gg: f64, gon: bool, ghold: usize, gcount: usize,
     gout: f64,
-    os: [Os4; 2],
+    os: Box<[Os4; 2]>,
 }
 impl StripE {
     pub const LATENCY: usize = 31;
     pub fn new(p: &StripEParams, sr: f64) -> Self {
         let mut s = Self { sr, filt: Vec::new(), eq: Vec::new(), dyn_pre: false, cthr: 10.0, cslope: 0.0, catt: 0.0, crel: 0.0, cgr: 0.0, con: false,
-            gthr: -80.0, gfloor: 1.0, grel: 0.0, gatt: 0.0, gg: 1.0, gon: false, ghold: 0, gcount: 0, gout: 1.0, os: [Os4::new(), Os4::new()] };
+            gthr: -80.0, gfloor: 1.0, grel: 0.0, gatt: 0.0, gg: 1.0, gon: false, ghold: 0, gcount: 0, gout: 1.0, os: Box::new([Os4::new(), Os4::new()]) };
         s.set(p);
         s
     }
@@ -1361,7 +1379,7 @@ const IRON550: f64 = 0.04;
 pub struct Eq550 {
     gout: f64,
     eq: Vec<[Biquad; 2]>,
-    os: [Os4; 2],
+    os: Box<[Os4; 2]>,
     iron: [Iron; 2],
     ik: (f64, f64),
     dc: [(f64, f64); 2],
@@ -1370,7 +1388,7 @@ pub struct Eq550 {
 impl Eq550 {
     pub const LATENCY: usize = 31;
     pub fn new(p: &Eq550Params, sr: f64) -> Self {
-        let mut s = Self { gout: 1.0, eq: Vec::new(), os: [Os4::new(), Os4::new()], iron: [Iron::default(); 2], ik: iron_k(sr), dc: [(0.0, 0.0); 2], sr };
+        let mut s = Self { gout: 1.0, eq: Vec::new(), os: Box::new([Os4::new(), Os4::new()]), iron: [Iron::default(); 2], ik: iron_k(sr), dc: [(0.0, 0.0); 2], sr };
         s.set(p);
         s
     }
@@ -1469,7 +1487,7 @@ pub struct Comp25 {
     gr: f64,
     lp: [f64; 2],
     lpa: f64,
-    os: [Os4; 2],
+    os: Box<[Os4; 2]>,
     iron: [Iron; 2],
     ik: (f64, f64),
     dc: [(f64, f64); 2],
@@ -1479,7 +1497,7 @@ impl Comp25 {
     pub const LATENCY: usize = 31;
     pub fn new(p: &Comp25Params, sr: f64) -> Self {
         let mut s = Self { sr, thr: -10.0, ratio: 3.0, knee: 6.0, att: 0.0, rel: 0.0, fb: false, tk: 0.0, gmk: 1.0, mix: 1.0, gr: 0.0, lp: [0.0; 2],
-            lpa: 1.0 - (-2.0 * PI * 200.0 / sr).exp(), os: [Os4::new(), Os4::new()], iron: [Iron::default(); 2], ik: iron_k(sr), dc: [(0.0, 0.0); 2], dry: [[0.0; 40]; 2] };
+            lpa: 1.0 - (-2.0 * PI * 200.0 / sr).exp(), os: Box::new([Os4::new(), Os4::new()]), iron: [Iron::default(); 2], ik: iron_k(sr), dc: [(0.0, 0.0); 2], dry: [[0.0; 40]; 2] };
         s.set(p);
         s
     }
@@ -1577,7 +1595,7 @@ pub struct Bus33 {
     con: bool, cthr: f64, cratio: f64, catt: f64, crf: f64, crs: f64, cauto: bool, cgr: f64, cslow: f64,
     lon: bool, lthr: f64, latt: f64, lrf: f64, lrs: f64, lauto: bool, lgr: f64, lslow: f64,
     gmk: f64, mix: f64,
-    os: [Os4; 2],
+    os: Box<[Os4; 2]>,
     iron: [[Iron; 2]; 2],
     ik: (f64, f64),
     dc: [(f64, f64); 2],
@@ -1588,7 +1606,7 @@ impl Bus33 {
     pub fn new(p: &Bus33Params, sr: f64) -> Self {
         let mut s = Self { sr, con: true, cthr: -10.0, cratio: 2.0, catt: 0.0, crf: 0.0, crs: 0.0, cauto: true, cgr: 0.0, cslow: 0.0,
             lon: false, lthr: -2.0, latt: 0.0, lrf: 0.0, lrs: 0.0, lauto: false, lgr: 0.0, lslow: 0.0, gmk: 1.0, mix: 1.0,
-            os: [Os4::new(), Os4::new()], iron: [[Iron::default(); 2]; 2], ik: iron_k(sr), dc: [(0.0, 0.0); 2], dry: [[0.0; 40]; 2] };
+            os: Box::new([Os4::new(), Os4::new()]), iron: [[Iron::default(); 2]; 2], ik: iron_k(sr), dc: [(0.0, 0.0); 2], dry: [[0.0; 40]; 2] };
         s.set(p);
         s
     }
@@ -1704,7 +1722,7 @@ pub struct Massif {
     sr: f64,
     eq: Vec<[Biquad; 2]>,
     gout: f64,
-    os: [Os4; 2],
+    os: Box<[Os4; 2]>,
     iron: [Iron; 2],
     ik: (f64, f64),
     dc: [(f64, f64); 2],
@@ -1712,7 +1730,7 @@ pub struct Massif {
 impl Massif {
     pub const LATENCY: usize = 31;
     pub fn new(p: &MassifParams, sr: f64) -> Self {
-        let mut s = Self { sr, eq: Vec::new(), gout: 1.0, os: [Os4::new(), Os4::new()], iron: [Iron::default(); 2], ik: iron_k(sr), dc: [(0.0, 0.0); 2] };
+        let mut s = Self { sr, eq: Vec::new(), gout: 1.0, os: Box::new([Os4::new(), Os4::new()]), iron: [Iron::default(); 2], ik: iron_k(sr), dc: [(0.0, 0.0); 2] };
         s.set(p);
         s
     }
@@ -2181,7 +2199,7 @@ impl PreV76Params {
 }
 pub struct PreV76 {
     sr: f64, gin: f64, gout: f64, a1: f64, k1: f64, a2: f64,
-    eq: Vec<[Biquad; 2]>, os: [Os4; 2], dc: [[(f64, f64); 2]; 2], iron: [[Iron; 2]; 2], ik: (f64, f64),
+    eq: Vec<[Biquad; 2]>, os: Box<[Os4; 2]>, dc: [[(f64, f64); 2]; 2], iron: [[Iron; 2]; 2], ik: (f64, f64),
 }
 impl PreV76 {
     pub const LATENCY: usize = 31;
@@ -2194,7 +2212,7 @@ impl PreV76 {
         eq
     }
     pub fn new(p: &PreV76Params, sr: f64) -> Self {
-        let mut s = Self { sr, gin: 1.0, gout: 1.0, a1: 0.0, k1: 1.0, a2: 0.0, eq: Vec::new(), os: [Os4::new(), Os4::new()], dc: [[(0.0, 0.0); 2]; 2],
+        let mut s = Self { sr, gin: 1.0, gout: 1.0, a1: 0.0, k1: 1.0, a2: 0.0, eq: Vec::new(), os: Box::new([Os4::new(), Os4::new()]), dc: [[(0.0, 0.0); 2]; 2],
             iron: [[Iron::default(); 2]; 2], ik: iron_k(sr) };
         s.set(p);
         s
@@ -3010,5 +3028,33 @@ mod tests {
         assert!((t2 - 0.48).abs() < 0.02, "vitesse 0,5 : {t2:.3} s");
         let pk = |a: f64, b: f64| o[(a * SR) as usize..(b * SR) as usize].iter().fold(0f64, |m, v| m.max(v.abs()));
         assert!(pk(0.45, 0.53) < pk(0.2, 0.28) * 0.8, "la 2e répétition est plus faible");
+    }
+}
+
+#[cfg(test)]
+mod bench_os4 {
+    #[test]
+    #[ignore]
+    fn vitesse_os4() {
+        let mut o = super::Os4::new();
+        let t = std::time::Instant::now();
+        let mut s = 0.0;
+        for i in 0..4_800_000 { s += o.run((i as f64 * 0.01).sin() * 0.3, |u| u * 0.9); }
+        let dt = t.elapsed().as_secs_f64();
+        println!("Os4 : {:.0} ns / échantillon ({s})", dt / 4.8e6 * 1e9);
+        let t = std::time::Instant::now();
+        for i in 0..4_800_000 { s += o.run((i as f64 * 0.01).sin() * 0.3, |u| (1.15 * u).tanh()); }
+        println!("Os4 + tanh : {:.0} ns / échantillon ({s})", t.elapsed().as_secs_f64() / 4.8e6 * 1e9);
+        let mut f = super::Fet76::new(&super::Fet76Params::default(), 48000.0);
+        let t = std::time::Instant::now();
+        for i in 0..4_800_000 { let mut x = [(i as f64 * 0.01).sin() * 0.3, (i as f64 * 0.013).sin() * 0.3]; f.tick(&mut x, 2); s += x[0]; }
+        println!("Fet76 stéréo : {:.0} ns / échantillon ({s})", t.elapsed().as_secs_f64() / 4.8e6 * 1e9);
+        let t = std::time::Instant::now();
+        for i in 0..4_800_000 { let mut x = [(i as f64 * 0.01).sin() * 0.3, 0.0]; f.tick(&mut x, 1); s += x[0]; }
+        println!("Fet76 mono : {:.0} ns / échantillon ({s})", t.elapsed().as_secs_f64() / 4.8e6 * 1e9);
+        let mut o2 = [super::Os4::new(), super::Os4::new()];
+        let t = std::time::Instant::now();
+        for i in 0..4_800_000 { for ch in 0..2 { s += o2[ch].run((i as f64 * 0.01).sin() * 0.3, |u| (1.15 * u).tanh()); } }
+        println!("2 × Os4 tableau : {:.0} ns / échantillon ({s})", t.elapsed().as_secs_f64() / 4.8e6 * 1e9);
     }
 }

@@ -1037,6 +1037,20 @@ fn main() {
         // Pulse servi depuis le Mac (pulse://localhost/…) : copie téléchargée de la dernière version, sinon copie embarquée
         .register_uri_scheme_protocol("pulse", |ctx, request| serve_pulse(ctx.app_handle(), request.uri().path()))
         .setup(|app| {
+            // Menu du Mac sans « Fermer la fenêtre » (⌘W) : dans Pulse, ⌘W ferme le plugin de devant (géré par la page)
+            #[cfg(target_os = "macos")]
+            {
+                use tauri::menu::{Menu, MenuItemKind};
+                let m = Menu::default(app.handle())?;
+                for it in m.items()? {
+                    if let MenuItemKind::Submenu(sm) = &it {
+                        let t = sm.text().unwrap_or_default();
+                        if t == "File" { m.remove(&it)?; }
+                        else if t == "Window" { if let Some(last) = sm.items()?.pop() { sm.remove(&last)?; } }
+                    }
+                }
+                app.set_menu(m)?;
+            }
             // Test automatique : un script à lancer dans la page une fois chargée (PULSE_TEST_EVAL = chemin du fichier .js)
             if std::env::var_os("PULSE_TEST").is_some() {
                 if let Some(js) = std::env::var_os("PULSE_TEST_EVAL").and_then(|p| std::fs::read_to_string(p).ok()) {

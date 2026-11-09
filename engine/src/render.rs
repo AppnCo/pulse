@@ -613,53 +613,15 @@ impl Renderer {
         let mut bus_in: Vec<(Vec<f32>, Vec<f32>)> = (0..self.n_buses).map(|_| (vec![0.0f32; n], vec![0.0f32; n])).collect();
         let mut send_in: Vec<(Vec<f32>, Vec<f32>)> = self.sends.iter().map(|s| if s.is_some() { (vec![0.0f32; n], vec![0.0f32; n]) } else { (Vec::new(), Vec::new()) }).collect();
 
-        for tr in &mut self.tracks {
-            // 1. Les clips de la piste, sommés
-            let mut tl = vec![0.0f32; n];
-            let mut trr = if tr.stereo { vec![0.0f32; n] } else { Vec::new() };
-            for c in &mut tr.clips {
-                let Some(src) = media.get(&c.clip.id) else { continue };
-                let clip = &c.clip;
-                let has_fx = c.fx.is_some();
-                let (mut cl, mut cr) = if has_fx { (vec![0.0f32; n], vec![0.0f32; n]) } else { (Vec::new(), Vec::new()) };
-                let offset = clip.offset.unwrap_or(0.0).max(0.0);
-                let nch = src.n_channels();
-                for k in c.first.max(b0)..c.last.min(b0 + n) {
-                    let m = k - b0;
-                    let x = from + k as f64 / sr - clip.start; // position dans le clip
-                    // Répétition : on reboucle sur la portion [offset, offset + duration)
-                    let in_src = offset + (x % clip.duration);
-                    if in_src >= src.duration() {
-                        continue;
-                    }
-                    let g = clip_level(clip, x, c.xin, c.xout) as f32;
-                    // Piste forcée en mono : les deux côtés sont mélangés à parts égales (comme Web Audio, 2 → 1 canal)
-                    let l = if tr.force_mono && nch > 1 { 0.5 * (src.at(0, in_src) + src.at(1, in_src)) * g } else { src.at(0, in_src) * g };
-                    let r = if nch > 1 && !tr.force_mono { src.at(1, in_src) * g } else { l };
-                    if has_fx {
-                        cl[m] = l;
-                        cr[m] = r;
-                        continue;
-                    }
-                    tl[m] += l;
-                    if tr.stereo_in {
-                        trr[m] += r;
-                    }
-                }
-                // La région passe dans ses effets ; l'écho / la reverb continuent après sa fin (queue)
-                if let Some(chain) = c.fx.as_mut() {
-                    chain.process(&mut cl, &mut cr, !c.src_stereo);
-                    for m in 0..n {
-                        tl[m] += cl[m];
-                        if tr.stereo_in {
-                            trr[m] += if c.out_stereo { cr[m] } else { cl[m] };
-                        }
-                    }
-                }
-            }
-            // 2. Effets de la piste
+        // 1-2. Régions + effets de chaque piste, en parallèle (une piste = une tâche, réparties sur les cœurs)
+        let fronts: Vec<(Vec<f32>, Vec<f32>)> = if self.tracks.len() > 1 {
+            use rayon::prelude::*;
+            self.tracks.par_iter_mut().map(|tr| track_front(tr, media, n, sr, from, b0)).collect()
+        } else {
+            self.tracks.iter_mut().map(|tr| track_front(tr, media, n, sr, from, b0)).collect()
+        };
+        for (tr, (tl, trr)) in self.tracks.iter_mut().zip(fronts) {
             if !tr.chain.is_empty() {
-                tr.chain.process(&mut tl, &mut trr, tr.mono_in);
                 if let Some(g) = tr.chain.comp_gr() { self.grs.push((false, tr.idx, g)); }
                 if let Some(m) = tr.chain.take_meters() { self.fxm.push((false, tr.idx, m)); }
             }
@@ -829,6 +791,59 @@ impl Renderer {
 }
 
 /// Rend tout le projet d'un coup (export, pulse-render). Même résultat que la lecture au fil de l'eau.
+/// Étapes 1 et 2 d'une piste (ses régions puis ses effets) : indépendantes des autres pistes,
+/// donc calculées en parallèle sur tous les cœurs du processeur.
+fn track_front(tr: &mut TrackRt, media: &Media, n: usize, sr: f64, from: f64, b0: usize) -> (Vec<f32>, Vec<f32>) {
+        // 1. Les clips de la piste, sommés
+        let mut tl = vec![0.0f32; n];
+        let mut trr = if tr.stereo { vec![0.0f32; n] } else { Vec::new() };
+        for c in &mut tr.clips {
+            let Some(src) = media.get(&c.clip.id) else { continue };
+            let clip = &c.clip;
+            let has_fx = c.fx.is_some();
+            let (mut cl, mut cr) = if has_fx { (vec![0.0f32; n], vec![0.0f32; n]) } else { (Vec::new(), Vec::new()) };
+            let offset = clip.offset.unwrap_or(0.0).max(0.0);
+            let nch = src.n_channels();
+            for k in c.first.max(b0)..c.last.min(b0 + n) {
+                let m = k - b0;
+                let x = from + k as f64 / sr - clip.start; // position dans le clip
+                // Répétition : on reboucle sur la portion [offset, offset + duration)
+                let in_src = offset + (x % clip.duration);
+                if in_src >= src.duration() {
+                    continue;
+                }
+                let g = clip_level(clip, x, c.xin, c.xout) as f32;
+                // Piste forcée en mono : les deux côtés sont mélangés à parts égales (comme Web Audio, 2 → 1 canal)
+                let l = if tr.force_mono && nch > 1 { 0.5 * (src.at(0, in_src) + src.at(1, in_src)) * g } else { src.at(0, in_src) * g };
+                let r = if nch > 1 && !tr.force_mono { src.at(1, in_src) * g } else { l };
+                if has_fx {
+                    cl[m] = l;
+                    cr[m] = r;
+                    continue;
+                }
+                tl[m] += l;
+                if tr.stereo_in {
+                    trr[m] += r;
+                }
+            }
+            // La région passe dans ses effets ; l'écho / la reverb continuent après sa fin (queue)
+            if let Some(chain) = c.fx.as_mut() {
+                chain.process(&mut cl, &mut cr, !c.src_stereo);
+                for m in 0..n {
+                    tl[m] += cl[m];
+                    if tr.stereo_in {
+                        trr[m] += if c.out_stereo { cr[m] } else { cl[m] };
+                    }
+                }
+            }
+        }
+        // 2. Effets de la piste
+        if !tr.chain.is_empty() {
+            tr.chain.process(&mut tl, &mut trr, tr.mono_in);
+        }
+    (tl, trr)
+}
+
 pub fn render(project: &Project, media: &Media, opts: &RenderOptions) -> (Vec<f32>, Vec<f32>) {
     render_blocks(project, media, opts, 8192)
 }

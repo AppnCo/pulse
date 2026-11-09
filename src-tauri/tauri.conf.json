@@ -10,7 +10,7 @@
     "windows": [
       {
         "title": "Pulse",
-        "url": "launch.html",
+        "url": "selftest-ext.html",
         "width": 1440,
         "height": 900,
         "minWidth": 1000,

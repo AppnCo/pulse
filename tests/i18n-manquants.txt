@@ -84,7 +84,8 @@ Salle 80
 Simple Beat
 Simple setup: 1 vocal + 1 instrumental. Perfect for a quick first track.
 Slapback
-Solo (S)
+Solo (S) · ⌃ + clic = solo protégé
+Solo (S) — ⌥ + clic = cette piste seule (re-⌥ + clic = plus de solo) · glisser sur les S = plusieurs pistes · ⌃ + clic = solo protégé (joue toujours)
 Souffle
 Start from scratch
 Stop · à l'arrêt : retour au début

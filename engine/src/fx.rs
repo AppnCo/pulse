@@ -2154,9 +2154,35 @@ impl Chain {
     }
     /// `mono` : la piste n'a que des sons mono (seul `left` est lu). Si la chaîne élargit en stéréo
     /// (`makes_stereo`), `right` doit quand même avoir la taille de `left` : il reçoit le canal droit.
+    /// L'étage a-t-il quelque chose à faire ? (la boucle par échantillon ne passe que par ceux-là)
+    fn has(&self, st: Stage) -> bool {
+        match st {
+            Stage::Filter => !self.cut.is_empty(),
+            Stage::Eq => !self.filters.is_empty() || !self.dyn_eq.is_empty(),
+            Stage::Crush => self.crush.is_some(), Stage::Util => self.util.is_some(), Stage::Width => self.width.is_some(),
+            Stage::Tremolo | Stage::Phaser | Stage::Flanger | Stage::Chorus | Stage::Doubler | Stage::Slapback => self.modfx.iter().any(|(x, _)| *x == st),
+            Stage::Gate => self.gate.is_some(), Stage::Sat => self.sat.is_some(), Stage::Deess => self.deess.is_some() || self.deess2.is_some(),
+            Stage::Msat => self.msat.is_some(), Stage::Mband => self.mband.is_some(), Stage::Comp => self.comp.is_some(),
+            Stage::Master => self.master.is_some(), Stage::Limit => self.limit.is_some(), Stage::Delay => self.delay.is_some(),
+            Stage::Pitch => self.pitch.is_some(), Stage::Reverb => self.reverb.is_some(),
+            Stage::Fet76 => self.fet76.is_some(), Stage::Pre73 => self.pre73.is_some(), Stage::Opto2A => self.opto2a.is_some(),
+            Stage::EqP1 => self.eqp1.is_some(), Stage::Dtr => self.dtr.is_some(), Stage::StripE => self.stripe.is_some(),
+            Stage::Eq550 => self.eq550.is_some(), Stage::Comp25 => self.comp25.is_some(), Stage::Bus33 => self.bus33.is_some(),
+            Stage::Massif => self.massif.is_some(), Stage::Horizon => self.horizon.is_some(), Stage::Plate => self.plate.is_some(),
+            Stage::TapeEcho => self.techo.is_some(), Stage::Hall80 => self.hall80.is_some(), Stage::H910 => self.h910.is_some(),
+            Stage::Dim => self.dim.is_some(), Stage::PreV76 => self.prev76.is_some(), Stage::Eclat => self.eclat.is_some(),
+            Stage::Souffle => self.souffle.is_some(), Stage::BusG => self.busg.is_some(), Stage::Tape => self.tape.is_some(),
+            Stage::L670 => self.l670.is_some(),
+        }
+    }
     pub fn process(&mut self, left: &mut [f32], right: &mut [f32], mono: bool) {
         // emprunté puis rendu : aucune allocation (le retour casque direct appelle ceci en temps réel)
-        let order = std::mem::take(&mut self.order);
+        let full = std::mem::take(&mut self.order);
+        // seulement les étages actifs, dans l'ordre (avant : les 44 étages testés à chaque échantillon)
+        let mut act = [Stage::Filter; 64];
+        let mut na = 0;
+        for &st in full.iter() { if na < 64 && self.has(st) { act[na] = st; na += 1; } }
+        let order = &act[..na];
         for n in 0..left.len() {
             let now = self.auto_from + self.pos as f64 / self.sr;
             if !self.auto.is_empty() && self.pos % 128 == 0 {
@@ -2170,7 +2196,7 @@ impl Chain {
             }
             let mut nc = if mono { 1 } else { 2 };
             let mut x = [left[n] as f64, if nc == 2 { right[n] as f64 } else { 0.0 }];
-            for stage in &order {
+            for stage in order {
                 match stage {
                     Stage::Filter => {
                         for ch in 0..nc {
@@ -2344,7 +2370,7 @@ impl Chain {
                 right[n] = x[1] as f32;
             }
         }
-        self.order = order;
+        self.order = full;
     }
 }
 
@@ -3150,4 +3176,11 @@ mod tests_pitch_pingpong {
         assert!(around(&l, 4_800) > 0.3 && around(&r, 4_800) < 1e-6, "1re répétition à gauche");
         assert!(around(&r, 9_600) > 0.1 && around(&l, 9_600) < 1e-6, "2e répétition à droite");
     }
+}
+
+#[cfg(test)]
+mod taille {
+    #[test]
+    #[ignore]
+    fn taille_chain() { println!("Chain = {} octets, FxChain = {} octets", std::mem::size_of::<super::Chain>(), std::mem::size_of::<super::FxChain>()); }
 }
