@@ -60,6 +60,7 @@ Outil du clic : Outil Pointeur
 Outil du clic droit : Outil Gain
 Outil du ⌘ + clic : Outil Muet
 Outils de la souris
+Ouvrir la fenêtre de l'instrument (choisir un son, le régler)
 Pas de sortie
 Pause : la lecture suivante repart d'ici
 Pavé numérique (comme Logic)
@@ -75,6 +76,7 @@ Pulse 73
 PulseTune
 Ranger les pistes choisies : nouveau dossier ou nouveau groupe (bus)
 Rap Studio
+Recalculer le son des régions après avoir changé le réglage de l'instrument
 Recent projects
 Remplacer par un autre plugin
 Reverb

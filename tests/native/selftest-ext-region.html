@@ -24,6 +24,12 @@ const f=document.getElementById('f'); const sleep=ms=>new Promise(r=>setTimeout(
     await w.PulseExt.saveStates(ST.project);
     log((r1>0.001&&r0<0.0005&&r2>0.001?'ok      ':'ECHEC   ')+info.name+' : notes → son '+r1.toFixed(4)+', sans note '+r0.toFixed(5)+', recalcul ('+n+' région) '+r2.toFixed(4)+', état rangé '+((t.extInst.state||'').length)+' car., nom « '+w.eval('midiInstLabel')('ext:'+id)+' », peaks '+(clip.peaks||[]).length);
   }
+  // piste dupliquée : la copie a sa propre instance de l'instrument (même réglages), l'original garde la sienne
+  { const avant=t.extInst.id; ST.selectedTrack=0; w.eval('duplicateTrack')(0); await sleep(3000); const c2=ST.project.tracks[1];
+    const okD=c2&&c2.extInst&&c2.extInst.id!==avant&&t.extInst.id===avant&&c2.midiInst==='ext:'+c2.extInst.id&&c2.extInst!==t.extInst;
+    let son=-1; if(okD){ await w.eval('createMidiClip')(1,0,true); await sleep(400); w.PulsePianoRoll.close(true); const k=c2.clips[0];
+      await w.eval('commitMidi')(k,{inst:'ext:'+c2.extInst.id,beats:4,notes:[{s:0,d:1,p:60,v:100}]},true); son=rmsOf(k.id); }
+    log((okD&&son>0.001?'ok      ':'ECHEC   ')+'piste dupliquée : instance à part '+okD+', son de la copie '+son.toFixed(4)); ST.project.tracks.splice(1,1); }
   // retour à un instrument intégré : le son revient par le synthé de Pulse
   await w.eval('commitMidi')(clip,{inst:'piano',beats:4,notes:[{s:0,d:1,p:60,v:100}]},true); log('retour au piano intégré: son '+rmsOf(clip.id).toFixed(4));
   log('FIN OK');

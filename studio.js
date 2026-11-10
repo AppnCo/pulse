@@ -11964,6 +11964,8 @@ function duplicateTrack(idx) {
     if (src.frozen) { delete copy.frozen; if (!src.frozen.wasLocked) delete copy.locked; }
     state.project.tracks.splice(idx + 1, 0, copy);
     state.selectedTrack = idx + 1;
+    // instrument externe : la copie reçoit sa propre instance (mêmes réglages), sinon un preset changé d'un côté changerait l'autre
+    if (copy.extInst && window.PulseExt && PulseExt.available()) PulseExt.ensure(state.project).then(() => saveProject()).catch(() => {});
     renderAll();
     saveProject();
     flash(`Piste dupliquée : « ${copy.name} »`);

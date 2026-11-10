@@ -73,6 +73,17 @@ window.PulseExt = (function () {
                 .catch(err => flashSafe(`« ${p.name || 'Plugin'} » n'a pas pu s'ouvrir : ${err}`)));
         }
         // instruments externes des pistes de notes
+        // même instrument sur deux pistes (piste dupliquée) : la copie reçoit sa propre instance, avec les mêmes réglages
+        const seenI = new Set();
+        for (const t of (project.tracks || [])) {
+            const x = t.extInst; if (!x || !x.path) continue;
+            if (!seenI.has(x.id)) { seenI.add(x.id); continue; }
+            const old = x.id, nid = newId(), nx = { ...x, id: nid };
+            if (loaded.has(old)) { try { const st = await core().invoke('ext_state', { id: old }); if (st) nx.state = st; } catch {} }
+            t.extInst = nx; seenI.add(nid);
+            if (t.midiInst === 'ext:' + old) t.midiInst = 'ext:' + nid;
+            for (const c of (t.clips || [])) if (c.midi && c.midi.inst === 'ext:' + old) c.midi.inst = 'ext:' + nid;
+        }
         for (const t of (project.tracks || [])) {
             const x = t.extInst; if (!x || !x.path) continue;
             names[x.id] = x.name || names[x.id];
