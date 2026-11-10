@@ -9,7 +9,7 @@ const SORTIE=false;   // TOUR_EXIT=1 : garder les plugins chargés puis quitter 
 const VEUT=/Pro-Q|Pro-C|Pro-L|Pro-DS|Pro-R|Pro-MB|Saturn|SSL Native|SSL 4K|Auto-Tune Pro|AutoTune|Decapitator|EchoBoy|Little Plate|Devil-Loc|MicroShift|Valhalla|bx_XL|Oxford|Sonnox|Melodyne|HalfTime|Youlean|UAD|1176|LA-2A|Pultec|Lustrous|PLATE-140|Vocal De-Esser|kHs Compressor|Soothe|RVox|CLA-76|Waves/i;
 (async()=>{ try{
   await sleep(2500); const w=f.contentWindow; w.__TAURI__=window.__TAURI__; const inv=window.__TAURI__.core.invoke;
-  const list=await w.PulseExt.scan(true); const pick=list.filter(p=>VEUT.test(p.name)||VEUT.test(p.vendor||'')).slice(0,400);
+  const list=await w.PulseExt.scan(false); /* pas de recherche forcée : elle effacerait les verdicts des plugins mis de côté */ const pick=list.filter(p=>VEUT.test(p.name)||VEUT.test(p.vendor||'')).slice(0,400);
   log('scan: '+list.length+' plugins, '+pick.length+' essayés');
   let ok=0, ko=0, n=0;
   for(const p of pick){ const id='vst#tour'+(n++); const t0=performance.now(); const kind=p.path.startsWith('au:')?'AU ':'VST';
@@ -21,6 +21,7 @@ const VEUT=/Pro-Q|Pro-C|Pro-L|Pro-DS|Pro-R|Pro-MB|Saturn|SSL Native|SSL 4K|Auto-
     ok++; log('ok      '+kind+' '+p.vendor+' / '+p.name+' : '+ms+' ms, latence '+r.x.latency+', état '+(st.length>20?st.length+' car.':st));
     if(!SORTIE) try{ await Promise.race([inv('ext_remove',{id}), sleep(5000)]); }catch{}
   }
+  if(!SORTIE){ await sleep(26000); log('destruction différée passée : appli toujours vivante'); }
   log('BILAN: '+ok+' chargés, '+ko+' en échec'); if(SORTIE){ await sleep(2000); log('SORTIE'); await sleep(300); inv('test_exit'); return; }
   log('FIN OK');
 } catch(e){ log('ERREUR '+(e&&e.stack||e)); log('FIN'); } })();

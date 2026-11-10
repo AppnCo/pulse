@@ -20,11 +20,16 @@ window.PulseExt = (function () {
         if (!available()) return [];
         if (list && !force) return list;
         if (scanning) return scanning;
-        scanning = core().invoke('ext_scan', { force }).then(l => { list = l || []; return list; }).finally(() => { scanning = null; });
+        scanning = core().invoke('ext_scan', { force }).then(async l => { list = l || []; await loadBad(); return list; }).finally(() => { scanning = null; });
         return scanning;
     }
     // Plugins à montrer dans le menu « + Effet » : sans ceux que l'utilisateur a décochés (licence expirée, doublons…)
-    function visible() { const h = hidden(); return (list || []).filter(p => !h.has(keyOf(p))); }
+    // Plugins mis de côté par la vérification (plantent ou restent bloqués au chargement — licence iLok absente de cet ordi, par exemple) :
+    // ils ne sont plus proposés dans le menu ; le gestionnaire les montre avec leur étiquette, « Rechercher à nouveau » les revérifie.
+    let bad = {};
+    async function loadBad() { try { bad = (await core().invoke('ext_verdicts')) || {}; } catch { bad = {}; } }
+    const isBad = (p) => !!(bad[p.path] && bad[p.path] !== 'ok');
+    function visible() { const h = hidden(); return (list || []).filter(p => !h.has(keyOf(p)) && !isBad(p)); }
 
     function nameOf(id, owner) {
         let p = owner && owner.effectParams && owner.effectParams[id];
@@ -117,7 +122,7 @@ window.PulseExt = (function () {
         const id = newId();
         names[id] = info.name;
         try { await core().invoke('ext_create', { id, path: info.path, state: null }); loaded.add(id); }
-        catch (err) { flashSafe(`« ${info.name} » n'a pas pu s'ouvrir : ${err}`); return null; }
+        catch (err) { flashSafe(`« ${info.name} » n'a pas pu s'ouvrir : ${err}`); loadBad(); return null; }
         x.effects = x.effects || [];
         x.effectParams = x.effectParams || {};
         x.effectParams[id] = { path: info.path, name: info.name, vendor: info.vendor };

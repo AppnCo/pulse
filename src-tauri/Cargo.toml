@@ -22,3 +22,5 @@ plist = "1.10.3"
 # rack modifié pour Pulse (retard des Audio Units : vendor/rack)
 [patch.crates-io]
 rack = { path = "../engine/vendor/rack" }
+# vst3-host modifié pour Pulse (un module de plugin chargé n'est jamais déchargé : vendor/vst3-host)
+vst3-host = { path = "../engine/vendor/vst3-host" }

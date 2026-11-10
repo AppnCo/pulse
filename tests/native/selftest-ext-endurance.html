@@ -1,0 +1,43 @@
+<!doctype html><meta charset="utf-8"><title>selftest endurance plugins externes</title><body style="margin:0;background:#111;color:#0f0;font:14px monospace"><pre id="o" style="position:fixed;z-index:9;top:60px;left:10px;background:#000c;padding:8px"></pre>
+<iframe id="f" src="studio.html" style="width:100vw;height:100vh;border:0"></iframe>
+<script>
+// Endurance : une séance de mix de 12 pistes, 2 plugins externes par piste (VST3 + Audio Units), lue pendant DUREE secondes
+// pendant qu'on fait ce qu'on fait en mixant (mute, volume, saut, arrêt / reprise, réglages enregistrés). On compte les trous
+// de son (underruns) et les blocs passés sans plugin (ext_misses). Fenêtres des plugins fermées. Son du Mac coupé par le script.
+const DUREE=120;
+const o=document.getElementById('o'); const log=t=>{ o.textContent+=t+'\n'; try{ window.__TAURI__.core.invoke('test_log',{text:t}); }catch{} };
+const f=document.getElementById('f'); const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const POOL=[/^FabFilter Pro-Q 4$/,/^Pro-C 2$/,/^ValhallaVintageVerb$/,/^Pro-L 2$/,/^Auto-Tune Pro$/,/^bx_XL V3$/,/^UAD Pultec EQP-1A$|Pultec EQP-1A/,/^Saturn 2$/,/^Pro-Q 3$/,/^Melodyne$/,/1176/,/LA-2A/];
+(async()=>{ try{
+  await sleep(2500); const w=f.contentWindow; w.__TAURI__=window.__TAURI__; const inv=window.__TAURI__.core.invoke;
+  const list=await w.PulseExt.scan(false); const pool=POOL.map(re=>list.find(p=>re.test(p.name))).filter(Boolean);
+  log('plugins du test: '+pool.map(p=>(p.path.startsWith('au:')?'AU ':'VST ')+p.name).join(', '));
+  const ST=w.eval('state'); const ctx=await w.PulseAudio.init(); const sr=48000,b=ctx.createBuffer(1,sr*30,sr); const d=b.getChannelData(0); for(let i=0;i<d.length;i++)d[i]=0.03*Math.sin(2*Math.PI*(110+i%7*55)*i/sr)*(i%24000<12000?1:0.2);
+  w.PulseAudio.registerBuffer('send',b); await w.PulsePersist.saveBlob('send', new Blob([w.PulseAudio.audioBufferToWav(b)],{type:'audio/wav'}),{kind:'import'});
+  const P=ST.project; P.tracks=[]; let n=0, ko=0;
+  for(let i=0;i<12;i++){ const t={name:'P'+(i+1),type:'audio',color:'#3B82F6',output:'master',volume:15,clips:[{id:'send',start:0,duration:30,offset:0},{id:'send',start:30,duration:30,offset:0},{id:'send',start:60,duration:30,offset:0},{id:'send',start:90,duration:30,offset:0}],effects:[],effectParams:{}};
+    for(let k=0;k<2;k++){ const p=pool[(i*2+k)%pool.length]; const id='vst#e'+(n++); try{ await inv('ext_create',{id,path:p.path,state:null}); t.effects.push(id); t.effectParams[id]={path:p.path,name:p.name,vendor:p.vendor}; }catch(e){ ko++; log('refus '+p.name+' : '+String(e).slice(0,80)); } }
+    P.tracks.push(t); }
+  w.eval('renderAll') && w.eval('typeof renderAll==="function" && renderAll()');
+  log('séance: 12 pistes, '+(n-ko)+' plugins chargés');
+  let under=0, lastU=0, stuck=0, lastPos=-1, acts=0; const rnd=()=>Math.random();
+  const peek=async()=>{ const ni=await inv('native_info'); if(ni.underruns<lastU) under+=lastU; lastU=ni.underruns; return ni; };
+  ST.playhead=0; await w.togglePlay(); await sleep(1500);
+  const t0=performance.now();
+  while(performance.now()-t0<DUREE*1000){
+    const a=Math.floor(rnd()*6), t=P.tracks[Math.floor(rnd()*12)]; acts++;
+    if(a===0){ t.muted=!t.muted; w.refreshPlaybackSoon(); }
+    else if(a===1){ t.volume=5+Math.round(rnd()*20); w.refreshPlaybackSoon(); }
+    else if(a===2){ await w.togglePlay(); await sleep(300); ST.playhead=Math.round(rnd()*80); await w.togglePlay(); }
+    else if(a===3){ await w.PulseExt.saveStates(P); }
+    else if(a===4){ t.solo=!t.solo; w.refreshPlaybackSoon(); }
+    else { const id=t.effects[0]; if(id){ try{ const l=await inv('ext_params',{id}); } catch{} } }
+    await sleep(700+rnd()*900);
+    const ni=await peek(); if(ni.playing && Math.abs(ni.position-lastPos)<0.01) stuck++; lastPos=ni.position;
+    if(ni.error) log('erreur moteur: '+ni.error);
+  }
+  const ni=await peek(); under+=lastU;
+  log('BILAN: '+acts+' gestes en '+DUREE+' s, lecture native='+w.PulseAudio.isNative()+', trous de son='+under+', blocs sans plugin='+ni.ext_misses+', position figée='+stuck+' fois');
+  await w.togglePlay(); log('FIN OK');
+} catch(e){ log('ERREUR '+(e&&e.stack||e)); log('FIN'); } })();
+</script>

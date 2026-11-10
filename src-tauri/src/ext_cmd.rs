@@ -115,7 +115,7 @@ pub fn check_main(path: String) -> ! {
                 let mut slot = ext::ExtSlot::new("vst#check", 48_000.0);
                 let (mut l, mut r) = (vec![0.01f32; 512], vec![0.01f32; 512]);
                 for _ in 0..8 { slot.process(&mut l, &mut r, false); }
-                let _ = ext_state("vst#check".into());
+                let _ = state_of("vst#check", None);
                 0
             }
         };
@@ -205,15 +205,35 @@ pub async fn ext_create(app: AppHandle, player: State<'_, pulse_engine::player::
 
 /// Réglages actuels du plugin (base64), pour les ranger dans le projet
 #[tauri::command]
-pub fn ext_state(id: String) -> Result<String, String> {
-    let sh = ext::get(&id).ok_or("plugin absent")?;
+pub fn ext_state(player: State<'_, pulse_engine::player::Player>, id: String) -> Result<String, String> {
+    let rate = match player.output_rate() { 0 => 48_000, r => r } as f64;
+    state_of(&id, if player.is_playing() { None } else { Some(rate) })
+}
+/// État du plugin. `flush` = fréquence du son si la lecture est à l'arrêt : un VST3 ne reçoit ses changements de réglages
+/// que pendant qu'il traite du son ; à l'arrêt on lui fait donc passer un court silence avant de lire son état,
+/// sinon les réglages touchés depuis la dernière lecture manquaient dans le projet enregistré.
+fn state_of(id: &str, flush: Option<f64>) -> Result<String, String> {
+    let sh = ext::get(id).ok_or("plugin absent")?;
     let vst = match &*sh.lock().unwrap() { ext::Inst::Vst(p) => Some(p.clone()), #[cfg(target_os = "macos")] _ => None };
-    if let Some(p) = vst { let st = p.lock().unwrap().save_state().map_err(|e| e.to_string())?; return Ok(base64::engine::general_purpose::STANDARD.encode(st)); }
-    let g = sh.lock().unwrap();
-    let st: Vec<u8> = match &*g {
+    if let Some(p) = vst {
+        let mut g = p.lock().unwrap();
+        if let Some(sr) = flush {
+            let mut buf = vst3_host::AudioBuffers::new(2, 2, ext::MAX_BLOCK, sr);
+            for ch in 0..2 { buf.inputs[ch].resize(256, 0.0); buf.outputs[ch].resize(256, 0.0); }
+            buf.block_size = 256;
+            let _ = g.process_audio(&mut buf);
+        }
+        let st = g.save_state().map_err(|e| e.to_string())?; return Ok(base64::engine::general_purpose::STANDARD.encode(st)); }
+    let mut g = sh.lock().unwrap();
+    let st: Vec<u8> = match &mut *g {
         ext::Inst::Vst(_) => unreachable!(),
         #[cfg(target_os = "macos")]
-        ext::Inst::Au(p, ..) => { use ext::rack::PluginInstance; p.get_state().map_err(|e| e.to_string())? }
+        ext::Inst::Au(p, ol, or) => {
+            use ext::rack::PluginInstance;
+            // même raison que pour un VST3 : à l'arrêt, un court silence pour que les derniers réglages soient pris en compte
+            if flush.is_some() { let z = [0.0f32; 256]; let _ = p.process(&[&z[..], &z[..]], &mut [&mut ol[..256], &mut or[..256]], 256); }
+            p.get_state().map_err(|e| e.to_string())?
+        }
     };
     Ok(base64::engine::general_purpose::STANDARD.encode(st))
 }
@@ -278,7 +298,11 @@ pub fn ext_remove(app: AppHandle, id: String) -> Result<(), String> {
                 let (old, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut *g).into_iter().partition(|(t, s)| t.elapsed().as_secs() >= 19 && std::sync::Arc::strong_count(&s.0) == 1);
                 *g = keep;
                 drop(g);
-                drop(old);
+                // Un VST3 se détruit sur le fil principal (règle du format). Une Audio Unit, sur un fil à part : certaines
+                // attendent le fil principal pour finir de se fermer (Slate VM : l'appli restait figée pour toujours).
+                let (vst, au): (Vec<_>, Vec<_>) = old.into_iter().partition(|(_, s)| matches!(&*s.0.lock().unwrap_or_else(|e| e.into_inner()), ext::Inst::Vst(_)));
+                std::thread::spawn(move || drop(au));
+                drop(vst);
             });
         });
     }
@@ -297,6 +321,16 @@ pub fn ext_latencies() -> HashMap<String, u32> { ext::ids().into_iter().map(|id|
 
 #[derive(serde::Serialize)]
 pub struct ExtParam { pub id: u32, pub name: String, pub value: f64 }
+
+/// Pose un réglage du plugin (0..1) tout de suite, hors lecture (tests, futurs boutons de l'interface)
+#[tauri::command]
+pub fn ext_set_param(id: String, param: u32, value: f64) -> Result<(), String> {
+    let sh = ext::get(&id).ok_or("plugin absent")?;
+    let vst = match &*sh.lock().unwrap() { ext::Inst::Vst(p) => Some(p.clone()), #[cfg(target_os = "macos")] _ => None };
+    if let Some(p) = vst { return p.lock().unwrap().set_parameter(param, value).map_err(|e| e.to_string()); }
+    sh.lock().unwrap().set_param(param, value);
+    Ok(())
+}
 
 /// Réglages automatisables du plugin (valeur 0..1)
 #[tauri::command]

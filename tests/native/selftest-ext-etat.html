@@ -1,0 +1,34 @@
+<!doctype html><meta charset="utf-8"><title>selftest état des plugins externes</title><body style="margin:0;background:#111;color:#0f0;font:14px monospace"><pre id="o" style="position:fixed;z-index:9;top:60px;left:10px;background:#000c;padding:8px"></pre>
+<iframe id="f" src="studio.html" style="width:100vw;height:100vh;border:0"></iframe>
+<script>
+// Les réglages d'un plugin externe reviennent-ils quand on rouvre la séance ? Pour chaque plugin : on bouge 3 réglages,
+// on lit l'état, on retire le plugin, on le recharge avec cet état, on relit les réglages. Aucun son.
+const o=document.getElementById('o'); const log=t=>{ o.textContent+=t+'\n'; try{ window.__TAURI__.core.invoke('test_log',{text:t}); }catch{} };
+const f=document.getElementById('f'); const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const VEUT=/^FabFilter Pro-Q 4$|^Pro-C 2$|^Pro-L 2$|^Pro-Q 3$|^Saturn 2$|^Pro-DS$|^Pro-R|^Pro-MB$|ValhallaVintageVerb|ValhallaShimmer|^Auto-Tune Pro$|^bx_XL V3$|Pultec EQP-1A|1176 Rev A|LA-2A|^Melodyne$|Decapitator|EchoBoy|Little Plate|^HalfTime$|Rev PLATE-140|^CLA-76|^RVox|^SSL E-Channel|^H-Delay|^Vocal De-Esser$|kHs Compressor|Oxford/i;
+(async()=>{ try{
+  await sleep(2500); const w=f.contentWindow; w.__TAURI__=window.__TAURI__; const inv=window.__TAURI__.core.invoke;
+  const list=await w.PulseExt.scan(false); const seen=new Set(); const pick=list.filter(p=>VEUT.test(p.name)&&!seen.has(p.name+p.path.slice(0,3))&&seen.add(p.name+p.path.slice(0,3))).slice(0,60);
+  log('plugins: '+pick.length); let ok=0, ko=0, n=0;
+  for(const p of pick){ const kind=p.path.startsWith('au:')?'AU ':'VST'; const a='vst#s'+(n++), b='vst#s'+(n++);
+    try{
+      await inv('ext_create',{id:a,path:p.path,state:null});
+      const l0=await inv('ext_params',{id:a}); const cand=l0.filter(q=>!/bypass|preset|program|midi|learn|a\/b|undo|oversampl|quality|latency|lookahead|display|zoom|analy|solo|listen|monitor/i.test(q.name)).slice(0,40);
+      // 3 réglages bien répartis dans la liste
+      const ch=[cand[0],cand[Math.floor(cand.length/2)],cand[cand.length-1]].filter(Boolean); const want={};
+      for(const q of ch){ const v=q.value<0.5?0.8:0.2; await inv('ext_set_param',{id:a,param:q.id,value:v}); }
+      await sleep(150);
+      const st=await inv('ext_state',{id:a});   // lu d'abord : c'est la lecture de l'état qui fait prendre en compte les réglages à l'arrêt
+      const l1=await inv('ext_params',{id:a}); let moved=0; for(const q of ch){ const now=l1.find(x=>x.id===q.id); want[q.id]=now.value; if(Math.abs(now.value-q.value)>0.05) moved++; }
+      await inv('ext_remove',{id:a});
+      await inv('ext_create',{id:b,path:p.path,state:st}); await sleep(150);
+      const l2=await inv('ext_params',{id:b}); let back=0, det=[]; for(const q of ch){ const now=l2.find(x=>x.id===q.id); if(now&&Math.abs(now.value-want[q.id])<0.02) back++; else det.push(q.name+' '+want[q.id].toFixed(2)+'→'+(now?now.value.toFixed(2):'?')); }
+      await inv('ext_remove',{id:b});
+      if(!moved){ log('?       '+kind+' '+p.name+' : aucun réglage n\'a bougé (test sans valeur), état '+st.length+' car.'); }
+      else if(back===ch.length){ ok++; log('ok      '+kind+' '+p.name+' : '+moved+' réglages bougés, tous revenus (état '+st.length+' car.)'); }
+      else { ko++; log('PERDU   '+kind+' '+p.name+' : '+det.join(' ; ')+' (état '+st.length+' car.)'); }
+    }catch(e){ log('erreur  '+kind+' '+p.name+' : '+String(e).slice(0,90)); try{ await inv('ext_remove',{id:a}); }catch{} }
+  }
+  log('BILAN: '+ok+' plugins retrouvent leurs réglages, '+ko+' les perdent'); log('FIN OK');
+} catch(e){ log('ERREUR '+(e&&e.stack||e)); log('FIN'); } })();
+</script>

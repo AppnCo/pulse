@@ -53,6 +53,7 @@
     "allow-ext-scan",
     "allow-ext-create",
     "allow-ext-verdicts",
+    "allow-ext-set-param",
     "allow-ext-state",
     "allow-ext-editor",
     "allow-ext-remove",

@@ -28,3 +28,5 @@ opt-level = 3
 # rack modifié pour Pulse (retard des Audio Units : vendor/rack)
 [patch.crates-io]
 rack = { path = "vendor/rack" }
+# vst3-host modifié pour Pulse (un module de plugin chargé n'est jamais déchargé : vendor/vst3-host)
+vst3-host = { path = "vendor/vst3-host" }
