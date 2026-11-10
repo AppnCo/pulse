@@ -97,7 +97,7 @@ fn load_inst(path: &str, rate: f64, bytes: &Option<Vec<u8>>) -> Result<(ext::Ins
 // (par plugin et par date du fichier : une mise à jour du plugin relance la vérification).
 
 /// Ferme le double tout de suite, sans laisser le plugin « ranger ses affaires » (certains plantent à la fermeture : ça ne dit rien du chargement)
-fn quit_now(code: i32) -> ! {
+pub fn quit_now(code: i32) -> ! {
     #[cfg(unix)]
     { extern "C" { fn _exit(code: i32) -> !; } unsafe { _exit(code) } }
     #[cfg(not(unix))]
@@ -284,6 +284,8 @@ pub fn ext_remove(app: AppHandle, id: String) -> Result<(), String> {
     }
     Ok(())
 }
+/// Reste-t-il des plugins chargés ou en attente de destruction ?
+pub fn any_alive() -> bool { !ext::ids().is_empty() || !GRAVE.lock().unwrap_or_else(|e| e.into_inner()).is_empty() }
 struct Gone(ext::Shared);
 // les instances ne sont touchées que sous leur verrou ; elles voyagent déjà entre fils dans le registre du moteur
 unsafe impl Send for Gone {}

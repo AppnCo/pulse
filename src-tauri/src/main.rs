@@ -1084,6 +1084,11 @@ fn main() {
                     }
                 }
             }
+            // Fermeture avec des plugins externes chargés : certains plantent ou restent bloqués quand on les laisse
+            // « ranger leurs affaires » à la sortie (l'appli ne se fermait plus). Tout est déjà enregistré : on sort tout de suite.
+            if let tauri::RunEvent::Exit = &event {
+                if ext_cmd::any_alive() && std::env::var_os("PULSE_EXIT_NORMAL").is_none() { journal_write("fermeture", "plugins externes chargés : sortie directe"); ext_cmd::quit_now(0); }
+            }
             #[cfg(not(target_os = "macos"))]
             let _ = (app, event);
         });
