@@ -20,6 +20,7 @@ fn cache_file(app: &AppHandle) -> Option<std::path::PathBuf> { app.path().app_da
 /// Plugins installés (VST3). `force` = refaire la recherche (nouveau plugin installé)
 #[tauri::command]
 pub async fn ext_scan(app: AppHandle, list: State<'_, ExtList>, force: bool) -> Result<Vec<ExtInfo>, String> {
+    if force { forget_bad_verdicts(&app); }   // « chercher à nouveau » redonne leur chance aux plugins mis de côté
     if !force {
         if let Some(l) = list.0.lock().unwrap().clone() { return Ok(l); }
         if let Some(f) = cache_file(&app) { if let Ok(t) = std::fs::read_to_string(&f) { if let Ok(l) = serde_json::from_str::<Vec<ExtInfo>>(&t) { *list.0.lock().unwrap() = Some(l.clone()); return Ok(l); } } }
@@ -66,34 +67,139 @@ fn scan_au() -> Vec<ExtInfo> {
     }).collect()
 }
 
+/// Charge un plugin (Audio Unit « au:… » ou VST3) à la fréquence `rate`, avec ses réglages s'il y en a
+fn load_inst(path: &str, rate: f64, bytes: &Option<Vec<u8>>) -> Result<(ext::Inst, ExtLoaded), String> {
+    #[cfg(target_os = "macos")]
+    if let Some(uid) = path.strip_prefix("au:") {
+        use ext::rack::{PluginInstance, PluginScanner};
+        if au_infos().lock().unwrap().get(uid).is_none() { scan_au(); }
+        let info = au_infos().lock().unwrap().get(uid).cloned().ok_or("Audio Unit introuvable (désinstallée ?)")?;
+        let sc = ext::rack::au::AudioUnitScanner::new().map_err(|e| e.to_string())?;
+        let mut p = sc.load(&info).map_err(|e| format!("plugin illisible : {e}"))?;
+        p.initialize(rate, ext::MAX_BLOCK).map_err(|e| e.to_string())?;
+        if let Some(b) = bytes { let _ = p.set_state(b); }
+        let latency = p.latency_samples();
+        return Ok((ext::Inst::Au(Box::new(p), vec![0.0; ext::MAX_BLOCK], vec![0.0; ext::MAX_BLOCK]), ExtLoaded { name: info.name.clone(), latency, editor: true }));
+    }
+    let mut p = vst3_host::simple::load_plugin(path).map_err(|e| format!("plugin illisible : {e}"))?;
+    if p.info().audio_inputs == 0 { return Err("c'est un instrument (pas encore pris en charge) : seuls les effets se posent sur une piste".into()); }
+    p.reconfigure(rate, ext::MAX_BLOCK).map_err(|e| e.to_string())?;
+    if let Some(b) = bytes { let _ = p.load_state(b); }
+    p.start_processing().map_err(|e| e.to_string())?;
+    let out = ExtLoaded { name: p.info().name.clone(), latency: p.latency_samples(), editor: p.has_editor() };
+    Ok((ext::Inst::Vst(std::sync::Arc::new(Mutex::new(p))), out))
+}
+
+// === Vérification à part ===
+// Un plugin externe qui plante emporte toute l'appli (et la séance en cours). Avant de charger un plugin pour la première
+// fois, Pulse se relance lui-même à côté (PULSE_EXT_CHECK=<chemin>) : ce double charge le plugin, lui fait passer du son,
+// lit ses réglages, puis se ferme. S'il plante ou se bloque, le plugin est mis de côté ; le verdict est retenu
+// (par plugin et par date du fichier : une mise à jour du plugin relance la vérification).
+
+/// Ferme le double tout de suite, sans laisser le plugin « ranger ses affaires » (certains plantent à la fermeture : ça ne dit rien du chargement)
+fn quit_now(code: i32) -> ! {
+    #[cfg(unix)]
+    { extern "C" { fn _exit(code: i32) -> !; } unsafe { _exit(code) } }
+    #[cfg(not(unix))]
+    std::process::exit(code)
+}
+/// Le double : ne revient jamais. Code de sortie 0 = bon, 2 = refus propre (instrument, illisible), autre / signal = plantage.
+pub fn check_main(path: String) -> ! {
+    std::thread::spawn(|| { std::thread::sleep(std::time::Duration::from_secs(25)); std::process::exit(4); });
+    let path_is_au = path.starts_with("au:");
+    let work = move || {
+        let code = match load_inst(&path, 48_000.0, &None) {
+            Err(_) => 2,
+            Ok((inst, _)) => {
+                ext::insert("vst#check", inst);
+                let mut slot = ext::ExtSlot::new("vst#check", 48_000.0);
+                let (mut l, mut r) = (vec![0.01f32; 512], vec![0.01f32; 512]);
+                for _ in 0..8 { slot.process(&mut l, &mut r, false); }
+                let _ = ext_state("vst#check".into());
+                0
+            }
+        };
+        quit_now(code);
+    };
+    // comme dans l'appli : un VST3 se charge sur le fil principal (c'est la règle du format ; certains plantent sinon), une Audio Unit à côté
+    let on_main = !path_is_au;
+    let mut work = Some(work);
+    if !on_main { let w = work.take().unwrap(); std::thread::spawn(move || { std::thread::sleep(std::time::Duration::from_millis(600)); w() }); }
+    // les plugins ont besoin d'une vraie boucle d'application sur le fil principal (fenêtres de licence, minuteries…)
+    let mut el = tao::event_loop::EventLoopBuilder::<()>::new().build();
+    #[cfg(target_os = "macos")]
+    { use tao::platform::macos::{ActivationPolicy, EventLoopExtMacOS}; el.set_activation_policy(ActivationPolicy::Accessory); }
+    el.run(move |ev, _, flow| { *flow = tao::event_loop::ControlFlow::Wait; if let tao::event::Event::MainEventsCleared = ev { if let Some(w) = work.take() { w(); } } })
+}
+
+fn verdict_file(app: &AppHandle) -> Option<std::path::PathBuf> { app.path().app_data_dir().ok().map(|d| d.join("plugins-verdicts.json")) }
+fn verdict_key(path: &str) -> String {
+    let m = std::fs::metadata(path).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0);
+    format!("{path}|{m}")
+}
+static CHECKING: Mutex<()> = Mutex::new(());
+/// Vérifie le plugin à part s'il n'a jamais été vu. Err = mis de côté (message pour l'utilisateur).
+fn verdict(app: &AppHandle, path: &str) -> Result<(), String> {
+    if std::env::var_os("PULSE_EXT_NOCHECK").is_some() { return Ok(()); }
+    let _one = CHECKING.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(file) = verdict_file(app) else { return Ok(()) };
+    let mut map: HashMap<String, String> = std::fs::read_to_string(&file).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+    let key = verdict_key(path);
+    let msg = |v: &str| if v == "bloque" { "ce plugin reste bloqué au chargement : Pulse l'a mis de côté pour protéger ta séance".to_string() }
+        else { "ce plugin plante au chargement : Pulse l'a mis de côté pour protéger ta séance".to_string() };
+    match map.get(&key).map(String::as_str) { Some("ok") => return Ok(()), Some(v) => return Err(msg(v)), None => {} }
+    let Ok(exe) = std::env::current_exe() else { return Ok(()) };
+    let Ok(mut child) = std::process::Command::new(exe).env("PULSE_EXT_CHECK", path).env_remove("PULSE_TEST")
+        .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn() else { return Ok(()) };
+    let t0 = std::time::Instant::now();
+    let v = loop {
+        match child.try_wait() {
+            Ok(Some(st)) => break match st.code() { Some(0) => "ok", Some(2) => "refus", Some(4) => "bloque", _ => "plante" },
+            Ok(None) => { if t0.elapsed().as_secs() > 30 { let _ = child.kill(); let _ = child.wait(); break "bloque"; } std::thread::sleep(std::time::Duration::from_millis(40)); }
+            Err(_) => break "refus",
+        }
+    };
+    if v == "refus" { return Ok(()); }   // refus propre : le chargement normal donnera le même message, sans danger
+    map.insert(key, v.to_string());
+    if let Some(d) = file.parent() { let _ = std::fs::create_dir_all(d); }
+    let _ = std::fs::write(&file, serde_json::to_string(&map).unwrap_or_default());
+    crate::journal_write("plugin-externe", &format!("vérification de {path} : {v}"));
+    if v == "ok" { Ok(()) } else { Err(msg(v)) }
+}
+/// Verdicts connus (chemin → « ok » / « plante » / « bloque ») pour l'afficher dans la liste
+#[tauri::command]
+pub fn ext_verdicts(app: AppHandle) -> HashMap<String, String> {
+    let map: HashMap<String, String> = verdict_file(&app).and_then(|f| std::fs::read_to_string(f).ok()).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+    map.into_iter().filter_map(|(k, v)| k.rsplit_once('|').map(|(p, _)| (p.to_string(), v))).collect()
+}
+/// Oublie les plugins mis de côté (ils seront revérifiés au prochain chargement)
+fn forget_bad_verdicts(app: &AppHandle) {
+    let Some(file) = verdict_file(app) else { return };
+    let mut map: HashMap<String, String> = std::fs::read_to_string(&file).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+    map.retain(|_, v| v == "ok");
+    let _ = std::fs::write(&file, serde_json::to_string(&map).unwrap_or_default());
+}
+
 /// Charge un plugin sous l'identifiant `id`, à la fréquence du son de l'appli, avec ses réglages (`state`, base64) s'il y en a
 #[tauri::command]
-pub async fn ext_create(player: State<'_, pulse_engine::player::Player>, id: String, path: String, state: Option<String>) -> Result<ExtLoaded, String> {
+pub async fn ext_create(app: AppHandle, player: State<'_, pulse_engine::player::Player>, id: String, path: String, state: Option<String>) -> Result<ExtLoaded, String> {
     if ext::get(&id).is_some() { return Ok(ExtLoaded { name: String::new(), latency: ext::latency(&id), editor: true }); }
     let rate = match player.output_rate() { 0 => 48_000, r => r } as f64;
     let bytes = state.and_then(|s| base64::engine::general_purpose::STANDARD.decode(s).ok());
     tauri::async_runtime::spawn_blocking(move || -> Result<ExtLoaded, String> {
-        #[cfg(target_os = "macos")]
-        if let Some(uid) = path.strip_prefix("au:") {
-            use ext::rack::{PluginInstance, PluginScanner};
-            if au_infos().lock().unwrap().get(uid).is_none() { scan_au(); }
-            let info = au_infos().lock().unwrap().get(uid).cloned().ok_or("Audio Unit introuvable (désinstallée ?)")?;
-            let sc = ext::rack::au::AudioUnitScanner::new().map_err(|e| e.to_string())?;
-            let mut p = sc.load(&info).map_err(|e| format!("plugin illisible : {e}"))?;
-            p.initialize(rate, ext::MAX_BLOCK).map_err(|e| e.to_string())?;
-            if let Some(b) = &bytes { let _ = p.set_state(b); }
-            let latency = p.latency_samples();
-            ext::insert(&id, ext::Inst::Au(Box::new(p), vec![0.0; ext::MAX_BLOCK], vec![0.0; ext::MAX_BLOCK]));
-            return Ok(ExtLoaded { name: info.name.clone(), latency, editor: true });
+        verdict(&app, &path)?;
+        if path.starts_with("au:") {
+            let (inst, out) = load_inst(&path, rate, &bytes)?;
+            ext::insert(&id, inst);
+            return Ok(out);
         }
-        let mut p = vst3_host::simple::load_plugin(&path).map_err(|e| format!("plugin illisible : {e}"))?;
-        if p.info().audio_inputs == 0 { return Err("c'est un instrument (pas encore pris en charge) : seuls les effets se posent sur une piste".into()); }
-        p.reconfigure(rate, ext::MAX_BLOCK).map_err(|e| e.to_string())?;
-        if let Some(b) = &bytes { let _ = p.load_state(b); }
-        p.start_processing().map_err(|e| e.to_string())?;
-        let out = ExtLoaded { name: p.info().name.clone(), latency: p.latency_samples(), editor: p.has_editor() };
-        ext::insert(&id, ext::Inst::Vst(std::sync::Arc::new(Mutex::new(p))));
-        Ok(out)
+        // VST3 : chargé sur le fil principal (règle du format : certains plugins plantent ou se bloquent sinon)
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.run_on_main_thread(move || {
+            let r = load_inst(&path, rate, &bytes).map(|(inst, out)| { ext::insert(&id, inst); out });
+            let _ = tx.send(r);
+        }).map_err(|e| e.to_string())?;
+        rx.recv().map_err(|_| "le chargement du plugin a été interrompu".to_string())?
     }).await.map_err(|e| e.to_string())?
 }
 
@@ -160,9 +266,28 @@ pub fn ext_remove(app: AppHandle, id: String) -> Result<(), String> {
         #[cfg(target_os = "macos")]
         AU_GUIS.with(|m| { m.borrow_mut().remove(&id2); });
     });
-    ext::remove(&id);
+    // Le plugin n'est pas détruit tout de suite : certains travaillent encore en coulisse juste après leur chargement et
+    // plantent si on les détruit à ce moment-là (vécu : UAD AMS RMX16), et le mixeur en cours peut encore le tenir
+    // (il ne faut jamais qu'un plugin soit détruit sur le fil du son). Il attend 20 s puis part sur le fil principal.
+    if let Some(sh) = ext::remove(&id) {
+        GRAVE.lock().unwrap_or_else(|e| e.into_inner()).push((std::time::Instant::now(), Gone(sh)));
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(20));
+            let _ = app.run_on_main_thread(|| {
+                let mut g = GRAVE.lock().unwrap_or_else(|e| e.into_inner());
+                let (old, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut *g).into_iter().partition(|(t, s)| t.elapsed().as_secs() >= 19 && std::sync::Arc::strong_count(&s.0) == 1);
+                *g = keep;
+                drop(g);
+                drop(old);
+            });
+        });
+    }
     Ok(())
 }
+struct Gone(ext::Shared);
+// les instances ne sont touchées que sous leur verrou ; elles voyagent déjà entre fils dans le registre du moteur
+unsafe impl Send for Gone {}
+static GRAVE: Mutex<Vec<(std::time::Instant, Gone)>> = Mutex::new(Vec::new());
 
 /// Retard actuel de chaque plugin chargé (échantillons) : il change si on passe un EQ en phase linéaire, par exemple
 #[tauri::command]

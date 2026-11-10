@@ -52,6 +52,7 @@
     "allow-save-download",
     "allow-ext-scan",
     "allow-ext-create",
+    "allow-ext-verdicts",
     "allow-ext-state",
     "allow-ext-editor",
     "allow-ext-remove",

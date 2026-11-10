@@ -35,6 +35,9 @@ mod imp {
         }
     }
     pub type Shared = Arc<Mutex<Inst>>;
+    /// Nombre de blocs passés SANS le plugin parce que l'appli le tenait (doit rester à 0 : chaque bloc sauté s'entend)
+    pub static MISSES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    fn miss() { MISSES.fetch_add(1, std::sync::atomic::Ordering::Relaxed); }
     /// Prend le verrou en patientant au plus `max_us` microsecondes (l'appli ne le garde que très peu de temps :
     /// lire les réglages, enregistrer l'état). Sans ça, le bloc passait sans le plugin → petit accroc audible.
     pub fn lock_soon<T>(m: &Mutex<T>, max_us: u64) -> Option<std::sync::MutexGuard<'_, T>> {
@@ -81,7 +84,7 @@ mod imp {
         pub fn process(&mut self, left: &mut [f32], right: &mut [f32], mono: bool) {
             let Some(p) = &self.inst else { if mono { right.copy_from_slice(left); } return };
             if self.latest.load(std::sync::atomic::Ordering::SeqCst) != self.gen { if mono { right.copy_from_slice(left); } return; }
-            let Some(mut g) = lock_soon(p, 3000) else { if mono { right.copy_from_slice(left); } return };
+            let Some(mut g) = lock_soon(p, 3000) else { miss(); if mono { right.copy_from_slice(left); } return };
             let mut at = 0;
             while at < left.len() {
                 let n = (left.len() - at).min(MAX_BLOCK);
@@ -95,7 +98,7 @@ mod imp {
                 }
                 let ok = match &mut *g {
                     Inst::Vst(p) => {
-                        let Some(mut p) = lock_soon(p, 3000) else { if mono { right[at..at + n].copy_from_slice(&left[at..at + n]); } at += n; continue; };
+                        let Some(mut p) = lock_soon(p, 3000) else { miss(); if mono { right[at..at + n].copy_from_slice(&left[at..at + n]); } at += n; continue; };
                         self.buf.inputs[0].copy_from_slice(&left[at..at + n]);
                         self.buf.inputs[1].copy_from_slice(if mono { &left[at..at + n] } else { &right[at..at + n] });
                         if p.process_audio(&mut self.buf).is_ok() {

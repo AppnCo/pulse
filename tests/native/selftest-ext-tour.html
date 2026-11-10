@@ -1,0 +1,25 @@
+<!doctype html><meta charset="utf-8"><title>selftest tour des plugins</title><body style="margin:0;background:#111;color:#0f0;font:14px monospace"><pre id="o" style="position:fixed;z-index:9;top:60px;left:10px;background:#000c;padding:8px"></pre>
+<iframe id="f" src="studio.html" style="width:100vw;height:100vh;border:0"></iframe>
+<script>
+// Tour des plugins externes : chaque plugin de la liste est chargé dans l'appli (15 s max), son état lu, puis retiré. Aucun son.
+// Sert à savoir lesquels se chargent, lesquels bloquent, lesquels refusent — avant un vrai mix.
+const o=document.getElementById('o'); const log=t=>{ o.textContent+=t+'\n'; try{ window.__TAURI__.core.invoke('test_log',{text:t}); }catch{} };
+const f=document.getElementById('f'); const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const VEUT=/Pro-Q|Pro-C|Pro-L|Pro-DS|Pro-R|Pro-MB|Saturn|SSL Native|SSL 4K|Auto-Tune Pro|AutoTune|Decapitator|EchoBoy|Little Plate|Devil-Loc|MicroShift|Valhalla|bx_XL|Oxford|Sonnox|Melodyne|HalfTime|Youlean|UAD|1176|LA-2A|Pultec|Lustrous|PLATE-140|Vocal De-Esser|kHs Compressor|Soothe|RVox|CLA-76|Waves/i;
+(async()=>{ try{
+  await sleep(2500); const w=f.contentWindow; w.__TAURI__=window.__TAURI__; const inv=window.__TAURI__.core.invoke;
+  const list=await w.PulseExt.scan(true); const pick=list.filter(p=>VEUT.test(p.name)||VEUT.test(p.vendor||'')).slice(0,400);
+  log('scan: '+list.length+' plugins, '+pick.length+' essayés');
+  let ok=0, ko=0, n=0;
+  for(const p of pick){ const id='vst#tour'+(n++); const t0=performance.now(); const kind=p.path.startsWith('au:')?'AU ':'VST';
+    const r=await Promise.race([inv('ext_create',{id,path:p.path,state:null}).then(x=>({x}),e=>({e:String(e)})), sleep(45000).then(()=>({to:1}))]);
+    const ms=Math.round(performance.now()-t0);
+    if(r.to){ ko++; log('BLOQUE  '+kind+' '+p.vendor+' / '+p.name+' (> 45 s)'); continue; }
+    if(r.e){ if(/instrument/.test(r.e)) log('instru  '+kind+' '+p.vendor+' / '+p.name); else { ko++; log('REFUSE  '+kind+' '+p.vendor+' / '+p.name+' : '+r.e.slice(0,90)); } continue; }
+    let st=''; try{ st=await Promise.race([inv('ext_state',{id}), sleep(5000).then(()=>'(état bloqué)')]); }catch(e){ st='(état refusé)'; }
+    ok++; log('ok      '+kind+' '+p.vendor+' / '+p.name+' : '+ms+' ms, latence '+r.x.latency+', état '+(st.length>20?st.length+' car.':st));
+    try{ await Promise.race([inv('ext_remove',{id}), sleep(5000)]); }catch{}
+  }
+  log('BILAN: '+ok+' chargés, '+ko+' en échec'); log('FIN OK');
+} catch(e){ log('ERREUR '+(e&&e.stack||e)); log('FIN'); } })();
+</script>
