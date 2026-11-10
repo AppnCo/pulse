@@ -1,0 +1,31 @@
+<!doctype html><meta charset="utf-8"><title>selftest région + instrument externe</title><body style="margin:0;background:#111;color:#0f0;font:14px monospace"><pre id="o" style="position:fixed;z-index:9;top:60px;left:10px;background:#000c;padding:8px"></pre>
+<iframe id="f" src="studio.html" style="width:100vw;height:100vh;border:0"></iframe>
+<script>
+// Une piste de notes jouée par un instrument externe, de bout en bout dans l'appli : la région prend l'instrument, ses notes
+// deviennent du son, le son suit quand on change les notes, l'état de l'instrument est rangé dans le projet. Aucun son joué.
+const o=document.getElementById('o'); const log=t=>{ o.textContent+=t+'\n'; try{ window.__TAURI__.core.invoke('test_log',{text:t}); }catch{} };
+const f=document.getElementById('f'); const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+(async()=>{ try{
+  await sleep(2500); const w=f.contentWindow; w.__TAURI__=window.__TAURI__; const inv=window.__TAURI__.core.invoke;
+  await w.PulseExt.scan(true); const insts=w.PulseExt.instruments(); log('instruments proposés: '+insts.length+' | effets proposés: '+w.PulseExt.visible().length+' (aucun instrument dedans: '+!w.PulseExt.visible().some(p=>p.instrument)+')');
+  const ST=w.eval('state'); await w.PulseAudio.init();
+  ST.project.tracks=[{name:'Clavier',type:'keys',midiInst:'piano',color:'#3B82F6',output:'master',volume:80,clips:[]}];
+  await w.eval('createMidiClip')(0,0,true); await sleep(400); w.PulsePianoRoll.close(true);
+  const t=ST.project.tracks[0], clip=t.clips[0]; log('région créée: '+!!clip+' inst='+(clip&&clip.midi.inst));
+  const rmsOf=(id)=>{ const b=w.PulseAudio.getBuffer?w.PulseAudio.getBuffer(id):null; if(!b) return -1; const d=b.getChannelData(0); let s=0; for(let i=0;i<d.length;i++) s+=d[i]*d[i]; return Math.sqrt(s/d.length); };
+  for(const re of [/^DLSMusicDevice$/,/^Twin 2$/,/^Mini V3$/]){ const info=insts.find(p=>re.test(p.name)); if(!info){ log('absent: '+re); continue; }
+    const id=await w.PulseExt.addInstrument(t, info, true); if(!id){ log('REFUS '+info.name); continue; }
+    t.midiInst='ext:'+id;
+    await w.eval('commitMidi')(clip,{inst:'ext:'+id,beats:4,notes:[{s:0,d:1,p:60,v:100},{s:1,d:1,p:64,v:100},{s:2,d:1,p:67,v:100}]},true);
+    const r1=rmsOf(clip.id), id1=clip.id;
+    await w.eval('commitMidi')(clip,{inst:'ext:'+id,beats:4,notes:[]},true); const r0=rmsOf(clip.id);
+    await w.eval('commitMidi')(clip,{inst:'ext:'+id,beats:4,notes:[{s:0,d:2,p:48,v:110}]},true);
+    const n=await w.eval('rebakeExtClips')('ext:'+id); const r2=rmsOf(clip.id);
+    await w.PulseExt.saveStates(ST.project);
+    log((r1>0.001&&r0<0.0005&&r2>0.001?'ok      ':'ECHEC   ')+info.name+' : notes → son '+r1.toFixed(4)+', sans note '+r0.toFixed(5)+', recalcul ('+n+' région) '+r2.toFixed(4)+', état rangé '+((t.extInst.state||'').length)+' car., nom « '+w.eval('midiInstLabel')('ext:'+id)+' », peaks '+(clip.peaks||[]).length);
+  }
+  // retour à un instrument intégré : le son revient par le synthé de Pulse
+  await w.eval('commitMidi')(clip,{inst:'piano',beats:4,notes:[{s:0,d:1,p:60,v:100}]},true); log('retour au piano intégré: son '+rmsOf(clip.id).toFixed(4));
+  log('FIN OK');
+} catch(e){ log('ERREUR '+(e&&e.stack||e)); log('FIN'); } })();
+</script>

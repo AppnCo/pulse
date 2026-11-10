@@ -75,6 +75,15 @@
     function isOpen() { return !!el; }
 
     // ---------- Interface ----------
+    // Instruments externes (appli) : celui en place + la liste de ceux qui sont installés
+    const escH = (t) => String(t == null ? '' : t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const isExtInst = () => /^ext:/.test(S.midi.inst || '');
+    function extOpts() {
+        const cur = isExtInst() ? `<option value="${escH(S.midi.inst)}" selected>${escH(S.o.extName ? S.o.extName(S.midi.inst) : 'Instrument externe')}</option>` : '';
+        const l = S.o.extInsts ? S.o.extInsts() : [];
+        return cur + (l.length ? `<optgroup label="Instruments externes">${l.map(p => `<option value="extpick|${escH(p.path)}">${escH(p.vendor ? p.vendor + ' — ' : '')}${escH(p.name)}</option>`).join('')}</optgroup>` : '');
+    }
+    function syncExtButtons() { if (!el) return; el.querySelectorAll('.me-ext-open, .me-ext-redo').forEach(b => { b.style.display = isExtInst() ? '' : 'none'; }); }
     function build() {
         el = document.createElement('section');
         el.className = 'midi-editor';
@@ -85,7 +94,7 @@
             <div class="me-bar">
                 <span class="me-title"></span>
                 ${isDrums ? '' : `<div class="me-seg me-toolseg" role="group"><button data-tool="draw" data-tooltip="Crayon : un clic pose une note, glisser l'étire (touche 1)">Crayon</button><button data-tool="select" data-tooltip="Pointeur : glisser dans le vide = choisir plusieurs notes ; double-clic = poser une note (touche 2)">Pointeur</button><button data-tool="erase" data-tooltip="Gomme : clique ou glisse sur des notes pour les effacer (touche 3)">Gomme</button><button data-tool="cut" data-tooltip="Ciseaux : clique sur une note pour la couper en deux à cet endroit (touche 4)">Ciseaux</button></div>`}
-                ${isDrums ? '' : `<select class="me-inst" data-tooltip="Le son de cette région">${insts.map(([k, v]) => `<option value="${k}" ${S.midi.inst === k ? 'selected' : ''}>${v.label}</option>`).join('')}</select>`}
+                ${isDrums ? '' : `<select class="me-inst" data-tooltip="Le son de cette région">${insts.map(([k, v]) => `<option value="${k}" ${S.midi.inst === k ? 'selected' : ''}>${v.label}</option>`).join('')}${extOpts()}</select><button class="me-btn me-ext-open" style="display:none" data-tooltip="Ouvrir la fenêtre de l'instrument (choisir un son, le régler)">Réglages</button><button class="me-btn me-ext-redo" style="display:none" data-tooltip="Recalculer le son des régions après avoir changé le réglage de l'instrument">↻</button>`}
                 ${isDrums ? `<div class="me-seg" role="group"><button data-view="steps" data-tooltip="Séquenceur de pas : une case = un coup">Pas</button><button data-view="roll" data-tooltip="Piano roll : placer les coups librement">Piano roll</button></div>` : ''}
                 <label class="me-lbl me-adv">Grille <select class="me-snap">${SNAPS.map(([n], i) => `<option value="${i}" ${i === S.snap ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
                 <label class="me-lbl me-steps-only me-adv">Pas <select class="me-div"><option value="4">1/16</option><option value="8">1/32</option><option value="3">1/8 triolet</option></select></label>
@@ -146,7 +155,26 @@
         q('.me-snap').onchange = (e) => { S.snap = +e.target.value; draw(); };
         q('.me-div').onchange = (e) => { S.stepDiv = +e.target.value; draw(); };
         const inst = q('.me-inst');
-        if (inst) inst.onchange = (e) => { S.midi.inst = e.target.value; changed('inst'); };
+        if (inst) inst.onchange = (e) => {
+            const v = e.target.value;
+            if (v.startsWith('extpick|')) {   // instrument externe : il se charge (sa fenêtre s'ouvre), puis la région le prend
+                const before = S.midi.inst; inst.value = before; inst.disabled = true;
+                Promise.resolve(S.o.onPickExt ? S.o.onPickExt(v.slice(8)) : null).then((got) => {
+                    inst.disabled = false;
+                    if (!got || !S) return;
+                    [...inst.options].filter(o => /^ext:/.test(o.value)).forEach(o => o.remove());
+                    const o = document.createElement('option'); o.value = got; o.textContent = S.o.extName ? S.o.extName(got) : 'Instrument externe';
+                    inst.insertBefore(o, inst.querySelector('optgroup')); inst.value = got;
+                    S.midi.inst = got; syncExtButtons(); changed('inst');
+                }).catch(() => { inst.disabled = false; });
+                return;
+            }
+            S.midi.inst = v; syncExtButtons(); changed('inst');
+        };
+        { const bo = q('.me-ext-open'), br = q('.me-ext-redo');
+          if (bo) bo.onclick = () => { if (isExtInst() && S.o.onExtOpen) S.o.onExtOpen(S.midi.inst); };
+          if (br) br.onclick = () => { if (isExtInst() && S.o.onExtRedo) S.o.onExtRedo(S.midi.inst); };
+          syncExtButtons(); }
         el.querySelectorAll('[data-tool]').forEach(b => b.onclick = () => { S.tool = b.dataset.tool; syncBar(); draw(); });
         el.querySelectorAll('[data-view]').forEach(b => b.onclick = () => { S.view = b.dataset.view; syncBar(); fit(); centerOnNotes(); draw(); });
         q('.me-longer').onclick = () => { snapshot(); S.midi.beats = Math.min(256, S.midi.beats + S.bpb); autoZoom(); changed('len'); };

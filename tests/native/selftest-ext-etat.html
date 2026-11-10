@@ -16,7 +16,7 @@ const VEUT=/^FabFilter Pro-Q 4$|^Pro-C 2$|^Pro-L 2$|^Pro-Q 3$|^Saturn 2$|^Pro-DS
       const l0=await inv('ext_params',{id:a}); const cand=l0.filter(q=>!/bypass|preset|program|midi|learn|a\/b|undo|oversampl|quality|latency|lookahead|display|zoom|analy|solo|listen|monitor/i.test(q.name)).slice(0,40);
       // 3 réglages bien répartis dans la liste
       const ch=[cand[0],cand[Math.floor(cand.length/2)],cand[cand.length-1]].filter(Boolean); const want={};
-      for(const q of ch){ const v=q.value<0.5?0.8:0.2; await inv('ext_set_param',{id:a,param:q.id,value:v}); }
+      for(const q of ch){ const v=q.value<0.5?1:0;   /* bouts de course : pas d'arrondi possible (interrupteurs, listes) */ await inv('ext_set_param',{id:a,param:q.id,value:v}); }
       await sleep(150);
       const st=await inv('ext_state',{id:a});   // lu d'abord : c'est la lecture de l'état qui fait prendre en compte les réglages à l'arrêt
       const l1=await inv('ext_params',{id:a}); let moved=0; for(const q of ch){ const now=l1.find(x=>x.id===q.id); want[q.id]=now.value; if(Math.abs(now.value-q.value)>0.05) moved++; }

@@ -54,6 +54,7 @@
     "allow-ext-create",
     "allow-ext-verdicts",
     "allow-ext-set-param",
+    "allow-ext-render-notes",
     "allow-ext-state",
     "allow-ext-editor",
     "allow-ext-remove",

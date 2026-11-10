@@ -7,7 +7,9 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Manager, State};
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
-pub struct ExtInfo { pub name: String, pub vendor: String, pub path: String, pub category: String, pub version: String, pub editor: bool }
+pub struct ExtInfo { pub name: String, pub vendor: String, pub path: String, pub category: String, pub version: String, pub editor: bool,
+    /// instrument (joue des notes) et non effet
+    #[serde(default)] pub instrument: bool }
 
 /// Liste en mémoire (le premier scan prend quelques secondes ; ensuite instantané)
 #[derive(Default)]
@@ -34,7 +36,12 @@ pub async fn ext_scan(app: AppHandle, list: State<'_, ExtList>, force: bool) -> 
             let key = |n: &str| n.to_lowercase().chars().filter(|c| c.is_alphanumeric()).collect::<String>();
             let have: std::collections::HashSet<String> = out.iter().map(|p| key(&p.name)).collect();
             let vendor_name: std::collections::HashSet<String> = out.iter().map(|p| key(&format!("{}{}", p.vendor, p.name))).collect();
-            for a in scan_au() { if !have.contains(&key(&a.name)) && !vendor_name.contains(&key(&format!("{}{}", a.vendor, a.name))) && !have.contains(&key(&format!("{} {}", a.vendor, a.name))) { out.push(a); } }
+            for a in scan_au() {
+                let (k1, k2) = (key(&a.name), key(&format!("{}{}", a.vendor, a.name)));
+                if !have.contains(&k1) && !vendor_name.contains(&k2) && !have.contains(&k2) { out.push(a); continue; }
+                // doublon d'un VST3 : la fiche d'un VST3 ne dit pas toujours si c'est un instrument, celle de l'Audio Unit si
+                if a.instrument { for p in out.iter_mut() { if !p.path.starts_with("au:") && (key(&p.name) == k1 || key(&p.name) == k2 || key(&format!("{}{}", p.vendor, p.name)) == k2) { p.instrument = true; } } }
+            }
             out.sort_by(|a, b| a.vendor.to_lowercase().cmp(&b.vendor.to_lowercase()).then(a.name.to_lowercase().cmp(&b.name.to_lowercase())));
         }
         Ok(out)
@@ -60,15 +67,16 @@ fn scan_au() -> Vec<ExtInfo> {
     let Ok(sc) = ext::rack::au::AudioUnitScanner::new() else { return Vec::new() };
     let Ok(list) = sc.scan() else { return Vec::new() };
     let mut m = au_infos().lock().unwrap();
-    list.into_iter().filter(|i| matches!(i.plugin_type, ext::rack::PluginType::Effect)).map(|i| {
+    list.into_iter().filter(|i| matches!(i.plugin_type, ext::rack::PluginType::Effect | ext::rack::PluginType::Instrument)).map(|i| {
+        let inst = matches!(i.plugin_type, ext::rack::PluginType::Instrument);
         let (vendor, name) = match i.name.split_once(": ") { Some((v, n)) => (v.trim().to_owned(), n.trim().to_owned()), None => (i.manufacturer.clone(), i.name.clone()) };
         m.insert(i.unique_id.clone(), i.clone());
-        ExtInfo { name, vendor, path: format!("au:{}", i.unique_id), category: "Fx|AU".into(), version: i.version.to_string(), editor: true }
+        ExtInfo { name, vendor, path: format!("au:{}", i.unique_id), category: if inst { "Instrument|AU".into() } else { "Fx|AU".into() }, version: i.version.to_string(), editor: true, instrument: inst }
     }).collect()
 }
 
 /// Charge un plugin (Audio Unit « au:… » ou VST3) à la fréquence `rate`, avec ses réglages s'il y en a
-fn load_inst(path: &str, rate: f64, bytes: &Option<Vec<u8>>) -> Result<(ext::Inst, ExtLoaded), String> {
+fn load_inst(path: &str, rate: f64, bytes: &Option<Vec<u8>>, allow_inst: bool) -> Result<(ext::Inst, ExtLoaded), String> {
     #[cfg(target_os = "macos")]
     if let Some(uid) = path.strip_prefix("au:") {
         use ext::rack::{PluginInstance, PluginScanner};
@@ -82,7 +90,7 @@ fn load_inst(path: &str, rate: f64, bytes: &Option<Vec<u8>>) -> Result<(ext::Ins
         return Ok((ext::Inst::Au(Box::new(p), vec![0.0; ext::MAX_BLOCK], vec![0.0; ext::MAX_BLOCK]), ExtLoaded { name: info.name.clone(), latency, editor: true }));
     }
     let mut p = vst3_host::simple::load_plugin(path).map_err(|e| format!("plugin illisible : {e}"))?;
-    if p.info().audio_inputs == 0 { return Err("c'est un instrument (pas encore pris en charge) : seuls les effets se posent sur une piste".into()); }
+    if p.info().audio_inputs == 0 && !allow_inst { return Err("c'est un instrument (pas encore pris en charge) : seuls les effets se posent sur une piste".into()); }
     p.reconfigure(rate, ext::MAX_BLOCK).map_err(|e| e.to_string())?;
     if let Some(b) = bytes { let _ = p.load_state(b); }
     p.start_processing().map_err(|e| e.to_string())?;
@@ -108,7 +116,7 @@ pub fn check_main(path: String) -> ! {
     std::thread::spawn(|| { std::thread::sleep(std::time::Duration::from_secs(25)); std::process::exit(4); });
     let path_is_au = path.starts_with("au:");
     let work = move || {
-        let code = match load_inst(&path, 48_000.0, &None) {
+        let code = match load_inst(&path, 48_000.0, &None, true) {
             Err(_) => 2,
             Ok((inst, _)) => {
                 ext::insert("vst#check", inst);
@@ -182,21 +190,22 @@ fn forget_bad_verdicts(app: &AppHandle) {
 
 /// Charge un plugin sous l'identifiant `id`, à la fréquence du son de l'appli, avec ses réglages (`state`, base64) s'il y en a
 #[tauri::command]
-pub async fn ext_create(app: AppHandle, player: State<'_, pulse_engine::player::Player>, id: String, path: String, state: Option<String>) -> Result<ExtLoaded, String> {
+pub async fn ext_create(app: AppHandle, player: State<'_, pulse_engine::player::Player>, id: String, path: String, state: Option<String>, instrument: Option<bool>) -> Result<ExtLoaded, String> {
+    let allow_inst = instrument.unwrap_or(false);
     if ext::get(&id).is_some() { return Ok(ExtLoaded { name: String::new(), latency: ext::latency(&id), editor: true }); }
     let rate = match player.output_rate() { 0 => 48_000, r => r } as f64;
     let bytes = state.and_then(|s| base64::engine::general_purpose::STANDARD.decode(s).ok());
     tauri::async_runtime::spawn_blocking(move || -> Result<ExtLoaded, String> {
         verdict(&app, &path)?;
         if path.starts_with("au:") {
-            let (inst, out) = load_inst(&path, rate, &bytes)?;
+            let (inst, out) = load_inst(&path, rate, &bytes, allow_inst)?;
             ext::insert(&id, inst);
             return Ok(out);
         }
         // VST3 : chargé sur le fil principal (règle du format : certains plugins plantent ou se bloquent sinon)
         let (tx, rx) = std::sync::mpsc::channel();
         app.run_on_main_thread(move || {
-            let r = load_inst(&path, rate, &bytes).map(|(inst, out)| { ext::insert(&id, inst); out });
+            let r = load_inst(&path, rate, &bytes, allow_inst).map(|(inst, out)| { ext::insert(&id, inst); out });
             let _ = tx.send(r);
         }).map_err(|e| e.to_string())?;
         rx.recv().map_err(|_| "le chargement du plugin a été interrompu".to_string())?
@@ -322,6 +331,104 @@ pub fn ext_latencies() -> HashMap<String, u32> { ext::ids().into_iter().map(|id|
 #[derive(serde::Serialize)]
 pub struct ExtParam { pub id: u32, pub name: String, pub value: f64 }
 
+#[derive(serde::Deserialize)]
+pub struct ExtNote { pub t: f64, pub d: f64, pub p: u8, pub v: u8 }
+
+/// Instrument externe : joue des notes (début `t` et durée `d` en secondes, hauteur `p`, force `v`) et rend `seconds`
+/// secondes de son, hors temps réel. Réponse : fréquence (u32), nombre d'échantillons (u32), puis gauche et droite (f32).
+/// Une région MIDI de Pulse garde ses notes ET le son calculé : c'est ce son que le reste du logiciel lit, mixe, exporte.
+#[tauri::command]
+pub async fn ext_render_notes(player: State<'_, pulse_engine::player::Player>, id: String, notes: Vec<ExtNote>, seconds: f64) -> Result<tauri::ipc::Response, String> {
+    let rate = match player.output_rate() { 0 => 48_000, r => r };
+    let bytes = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<u8>, String> {
+        let sh = ext::get(&id).ok_or("instrument absent")?;
+        let sr = rate as f64;
+        let total = ((seconds.clamp(0.05, 900.0)) * sr).ceil() as usize;
+        // événements triés ; à la même position, les fins de note passent avant les débuts
+        let mut evs: Vec<(usize, bool, u8, u8)> = Vec::with_capacity(notes.len() * 2);
+        for n in notes.iter().take(8000) {
+            let a = (n.t.max(0.0) * sr).round() as usize; if a >= total { continue; }
+            let b = (((n.t + n.d.max(0.01)).max(0.0)) * sr).round() as usize;
+            evs.push((a, true, n.p.min(127), n.v.clamp(1, 127)));
+            evs.push((b.max(a + 1), false, n.p.min(127), 0));
+        }
+        evs.sort_by(|x, y| x.0.cmp(&y.0).then(x.1.cmp(&y.1)));
+        let (mut l, mut r) = (vec![0.0f32; total], vec![0.0f32; total]);
+        let vst = match &*sh.lock().unwrap() { ext::Inst::Vst(p) => Some(p.clone()), #[cfg(target_os = "macos")] _ => None };
+        const N: usize = 512;
+        let (mut at, mut k) = (0usize, 0usize);
+        if let Some(p) = vst {
+            use vst3_host::midi::{MidiChannel, MidiEvent};
+            let mut g = p.lock().unwrap();
+            let n_in = (g.info().audio_inputs as usize).min(2);
+            let mut buf = vst3_host::AudioBuffers::new(n_in, 2, ext::MAX_BLOCK, sr);
+            while at < total {
+                let n = (total - at).min(N);
+                for ch in buf.inputs.iter_mut() { ch.clear(); ch.resize(n, 0.0); }
+                for ch in buf.outputs.iter_mut() { ch.clear(); ch.resize(n, 0.0); }
+                buf.block_size = n;
+                while k < evs.len() && evs[k].0 < at + n {
+                    let (s, on, note, vel) = evs[k]; let off = s.saturating_sub(at) as i32;
+                    let e = if on { MidiEvent::NoteOn { channel: MidiChannel::Ch1, note, velocity: vel } } else { MidiEvent::NoteOff { channel: MidiChannel::Ch1, note, velocity: 0 } };
+                    let _ = g.send_midi_event_at(e, off); k += 1;
+                }
+                g.process_audio(&mut buf).map_err(|e| e.to_string())?;
+                l[at..at + n].copy_from_slice(&buf.outputs[0][..n]);
+                r[at..at + n].copy_from_slice(if buf.outputs.len() > 1 { &buf.outputs[1][..n] } else { &buf.outputs[0][..n] });
+                at += n;
+            }
+            // plus aucune note tenue pour le prochain calcul
+            while k < evs.len() { if !evs[k].1 { let _ = g.send_midi_event_at(MidiEvent::NoteOff { channel: MidiChannel::Ch1, note: evs[k].2, velocity: 0 }, 0); } k += 1; }
+            // on laisse l'instrument finir de sonner dans le vide (6 s au plus) : sinon la fin de ce calcul (résonance, écho)
+            // s'entendait au début du calcul suivant
+            let mut quiet = 0;
+            for _ in 0..(6.0 * sr / N as f64) as usize {
+                for ch in buf.inputs.iter_mut() { ch.clear(); ch.resize(N, 0.0); }
+                for ch in buf.outputs.iter_mut() { ch.clear(); ch.resize(N, 0.0); }
+                buf.block_size = N;
+                if g.process_audio(&mut buf).is_err() { break; }
+                let pk = buf.outputs.iter().flat_map(|c| c.iter()).fold(0.0f32, |m, v| m.max(v.abs()));
+                if pk < 1e-5 { quiet += 1; if quiet >= 8 { break; } } else { quiet = 0; }
+            }
+        } else {
+            #[cfg(target_os = "macos")]
+            {
+                use ext::rack::PluginInstance;
+                let mut g = sh.lock().unwrap();
+                if let ext::Inst::Au(p, ol, or) = &mut *g {
+                    let z = [0.0f32; N];
+                    while at < total {
+                        let n = (total - at).min(N);
+                        let mut block: Vec<ext::rack::MidiEvent> = Vec::new();
+                        while k < evs.len() && evs[k].0 < at + n {
+                            let (s, on, note, vel) = evs[k]; let off = s.saturating_sub(at) as u32;
+                            block.push(if on { ext::rack::MidiEvent::note_on(note, vel, 0, off) } else { ext::rack::MidiEvent::note_off(note, 0, 0, off) }); k += 1;
+                        }
+                        if !block.is_empty() { let _ = p.send_midi(&block); }
+                        p.process(&[&z[..n], &z[..n]], &mut [&mut ol[..n], &mut or[..n]], n).map_err(|e| e.to_string())?;
+                        l[at..at + n].copy_from_slice(&ol[..n]); r[at..at + n].copy_from_slice(&or[..n]);
+                        at += n;
+                    }
+                    let rest: Vec<ext::rack::MidiEvent> = evs[k..].iter().filter(|e| !e.1).map(|e| ext::rack::MidiEvent::note_off(e.2, 0, 0, 0)).collect();
+                    if !rest.is_empty() { let _ = p.send_midi(&rest); }
+                    let mut quiet = 0;
+                    for _ in 0..(6.0 * sr / N as f64) as usize {
+                        if p.process(&[&z[..], &z[..]], &mut [&mut ol[..N], &mut or[..N]], N).is_err() { break; }
+                        let pk = ol[..N].iter().chain(or[..N].iter()).fold(0.0f32, |m, v| m.max(v.abs()));
+                        if pk < 1e-5 { quiet += 1; if quiet >= 8 { break; } } else { quiet = 0; }
+                    }
+                }
+            }
+        }
+        let mut out = Vec::with_capacity(8 + total * 8);
+        out.extend_from_slice(&rate.to_le_bytes());
+        out.extend_from_slice(&(total as u32).to_le_bytes());
+        for v in l.iter().chain(r.iter()) { out.extend_from_slice(&v.to_le_bytes()); }
+        Ok(out)
+    }).await.map_err(|e| e.to_string())??;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
 /// Pose un réglage du plugin (0..1) tout de suite, hors lecture (tests, futurs boutons de l'interface)
 #[tauri::command]
 pub fn ext_set_param(id: String, param: u32, value: f64) -> Result<(), String> {
@@ -433,9 +540,9 @@ fn scan_folders() -> Vec<ExtInfo> {
                     }
                 }
                 if let Some(fv) = folder_vendor { vendor = fv; }
-                if category.to_lowercase().contains("instrument") { continue; }   // pour l'instant : effets seulement
+                let instrument = category.to_lowercase().contains("instrument");
                 if vendor.is_empty() { vendor = "Autres".into(); }
-                out.push(ExtInfo { name, vendor, path: p.to_string_lossy().into_owned(), category, version, editor: true });
+                out.push(ExtInfo { name, vendor, path: p.to_string_lossy().into_owned(), category, version, editor: true, instrument });
             }
         }
     }

@@ -6911,15 +6911,26 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false) {
 // Une région garde ses notes (clip.midi) ET le son qui en sort (buffer rendu par PulseSynth) : le reste de Pulse la
 // traite comme une prise normale (effets, fondus, export). clip.midi.bpm = tempo auquel le son a été calculé.
 const MIDI_INSTS = () => PulseSynth.INSTRUMENTS;
+// Instrument externe (VST3 / Audio Unit) d'une région : identifiant de l'instance, ou null
+const midiExtId = (midi) => (window.PulseExt && PulseExt.instOf) ? PulseExt.instOf(midi) : (midi && /^ext:/.test(midi.inst || '') ? midi.inst.slice(4) : null);
+const midiInstLabel = (inst) => /^ext:/.test(inst || '') ? ((window.PulseExt && PulseExt.nameOf(inst.slice(4))) || 'Instrument') : (MIDI_INSTS()[inst] || MIDI_INSTS().piano).label;
 function renderMidiBuffer(midi, bpm) {
     const ctx = PulseAudio.getContext();
+    if (midiExtId(midi)) {   // instrument externe : son calculé à part (bakeMidiClip) ; ici, un silence de la bonne longueur
+        return ctx.createBuffer(2, Math.max(1, Math.ceil(Math.max(0.05, (midi.beats || 4) * 60 / bpm) * ctx.sampleRate)), ctx.sampleRate);
+    }
     const r = PulseSynth.render(midi, bpm, ctx.sampleRate);
     const buf = ctx.createBuffer(2, r.length, ctx.sampleRate);
     buf.getChannelData(0).set(r.channels[0]); buf.getChannelData(1).set(r.channels[1]);
     return buf;
 }
 async function bakeMidiClip(clip, midi, bpm) {
-    const buf = renderMidiBuffer(midi, bpm);
+    let buf = null;
+    if (midiExtId(midi) && window.PulseExt && PulseExt.available()) {
+        try { buf = await PulseExt.renderNotes(midi, bpm); }
+        catch (e) { console.warn('instrument externe', e); flash('L\'instrument externe n\'a pas pu jouer cette région : ' + ((e && e.message) || e)); }
+    }
+    if (!buf) buf = renderMidiBuffer(midi, bpm);
     const newId = `mid_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     PulseAudio.registerBuffer(newId, buf);
     try { await PulsePersist.saveBlob(newId, PulseAudio.audioBufferToWav(buf), { kind: 'midi' }); }
@@ -6929,6 +6940,18 @@ async function bakeMidiClip(clip, midi, bpm) {
     const pid = (clip.midi && clip.midi.pid) || midi.pid;
     clip.midi = { inst: midi.inst, beats: midi.beats, notes: midi.notes, bpm, ...(midi.swing ? { swing: midi.swing } : {}), ...(pid ? { pid } : {}) };
     return buf;
+}
+
+// Recalcule le son de toutes les régions jouées par un instrument externe (après avoir changé son réglage dans sa fenêtre)
+async function rebakeExtClips(inst) {
+    let n = 0;
+    for (const t of state.project.tracks) for (const c of (t.clips || [])) {
+        if (!c.midi || c.midi.inst !== inst) continue;
+        const buf = await bakeMidiClip(c, c.midi, c.midi.bpm || bpmAtSec(c.start));
+        c.duration = Math.min(c.duration, Math.max(0.05, buf.duration - (c.offset || 0))); n++;
+    }
+    if (n) { renderTimelineTracks(); if (typeof refreshPlaybackSoon === 'function') refreshPlaybackSoon(); saveProject(); flash(n > 1 ? `Son recalculé pour ${n} régions` : 'Son recalculé'); }
+    return n;
 }
 
 async function createMidiClip(trackIdx, atSec, noUndo = false) {
@@ -6942,7 +6965,7 @@ async function createMidiClip(trackIdx, atSec, noUndo = false) {
     if (!noUndo) pushUndo();
     const inst = t.midiInst || (t.type === 'drums' ? 'drums' : 'piano');
     const n = t.clips.filter(c => c.midi).length + 1;
-    const clip = { start, duration: bar, offset: 0, name: `${MIDI_INSTS()[inst].label} ${n}`, color: t.color };
+    const clip = { start, duration: bar, offset: 0, name: `${midiInstLabel(inst)} ${n}`, color: t.color };
     await bakeMidiClip(clip, { inst, beats, notes: [] }, bpm);
     t.clips.push(clip);
     t.clips.sort((a, b) => a.start - b.start);
@@ -6954,6 +6977,17 @@ async function createMidiClip(trackIdx, atSec, noUndo = false) {
 
 const _prevCache = new Map();
 function playMidiPreview(inst, p, v) {
+    if (/^ext:/.test(inst || '')) {   // instrument externe : la note est calculée à la demande (jamais gardée : le son de l'instrument peut avoir changé)
+        if (!(window.PulseExt && PulseExt.available())) return;
+        PulseExt.renderNotes({ inst, beats: 3, notes: [{ s: 0, d: 1, p, v }] }, 120).then(buf => {
+            if (!buf) return;
+            const ctx = PulseAudio.getContext(); if (ctx.state === 'suspended') ctx.resume();
+            const src = ctx.createBufferSource(); src.buffer = buf;
+            const g = ctx.createGain(); g.gain.value = 0.8;
+            src.connect(g); g.connect(ctx.destination); src.start();
+        }).catch(e => console.warn('preview ext', e));
+        return;
+    }
     try {
         const ctx = PulseAudio.getContext();
         if (ctx.state === 'suspended') ctx.resume();
@@ -6985,6 +7019,18 @@ function openMidiEditor(trackIdx, clipIdx, fresh) {
         ghost: t.clips.filter(c => c !== clip && c.midi && !(clip.midi.pid && c.midi.pid === clip.midi.pid)).map(c => c.midi.notes),
         view: clip.midi.inst === 'drums' ? 'steps' : 'roll',
         onPreview: playMidiPreview,
+        // Instruments externes (appli seulement) : liste, nom de celui en place, choix, fenêtre de l'instrument, recalcul du son
+        extInsts: () => (window.PulseExt && PulseExt.available()) ? PulseExt.instruments() : [],
+        extName: (v) => midiInstLabel(v),
+        onPickExt: async (path) => {
+            const info = PulseExt.instruments().find(q => q.path === path);
+            const id = await PulseExt.addInstrument(t, info);
+            if (!id) return null;
+            t.midiInst = 'ext:' + id; saveProject();
+            return t.midiInst;
+        },
+        onExtOpen: (v) => PulseExt.openEditor(v.slice(4)),
+        onExtRedo: (v) => rebakeExtClips(v),
         // Curseur du projet vu depuis l'éditeur (même à l'arrêt) et clic dans sa règle : on y déplace le curseur, double-clic = lecture d'ici
         getCursorBeat: () => {
             const spb = 60 / (clip.midi.bpm || state.project.bpm);
@@ -7239,6 +7285,7 @@ function rerenderMidiForTempo(oldMap) {
             let byBpm = bufs.get(c.midi); if (!byBpm) bufs.set(c.midi, byBpm = new Map());
             if (!byBpm.has(bpm)) {
                 const buf = renderMidiBuffer(c.midi, bpm);
+                if (midiExtId(c.midi)) setTimeout(() => rebakeExtClips(c.midi.inst).catch(() => {}), 50);   // silence provisoire, vrai son juste après
                 const id = `mid_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
                 PulseAudio.registerBuffer(id, buf);
                 PulsePersist.saveBlob(id, PulseAudio.audioBufferToWav(buf), { kind: 'midi' }).catch(() => {});

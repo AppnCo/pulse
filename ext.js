@@ -29,7 +29,9 @@ window.PulseExt = (function () {
     let bad = {};
     async function loadBad() { try { bad = (await core().invoke('ext_verdicts')) || {}; } catch { bad = {}; } }
     const isBad = (p) => !!(bad[p.path] && bad[p.path] !== 'ok');
-    function visible() { const h = hidden(); return (list || []).filter(p => !h.has(keyOf(p)) && !isBad(p)); }
+    function visible() { const h = hidden(); return (list || []).filter(p => !p.instrument && !h.has(keyOf(p)) && !isBad(p)); }
+    // Instruments externes (synthés, pianos, samplers) à proposer pour les pistes de notes
+    function instruments() { const h = hidden(); return (list || []).filter(p => p.instrument && !h.has(keyOf(p)) && !isBad(p)); }
 
     function nameOf(id, owner) {
         let p = owner && owner.effectParams && owner.effectParams[id];
@@ -70,11 +72,58 @@ window.PulseExt = (function () {
                 .then(r => { loaded.add(id); if (r && r.latency) p.latency = r.latency; })
                 .catch(err => flashSafe(`« ${p.name || 'Plugin'} » n'a pas pu s'ouvrir : ${err}`)));
         }
+        // instruments externes des pistes de notes
+        for (const t of (project.tracks || [])) {
+            const x = t.extInst; if (!x || !x.path) continue;
+            names[x.id] = x.name || names[x.id];
+            if (loaded.has(x.id)) continue;
+            jobs.push(core().invoke('ext_create', { id: x.id, path: x.path, state: x.state || null, instrument: true })
+                .then(() => { loaded.add(x.id); })
+                .catch(err => flashSafe(`L'instrument « ${x.name || 'externe'} » n'a pas pu s'ouvrir : ${err}`)));
+        }
         await Promise.all(jobs);
+    }
+    // === Instruments externes ===
+    // Une piste de notes garde son instrument dans track.extInst { id, path, name, vendor, state } ; ses régions portent
+    // midi.inst = 'ext:<id>'. Le son d'une région est calculé par l'instrument (hors temps réel) puis traité comme une prise.
+    const instOf = (midi) => (midi && typeof midi.inst === 'string' && midi.inst.startsWith('ext:')) ? midi.inst.slice(4) : null;
+    async function addInstrument(track, info, quiet = false) {   // quiet : sans ouvrir la fenêtre (tests)
+        if (!available() || !info) return null;
+        if (track.extInst && track.extInst.path === info.path && loaded.has(track.extInst.id)) { openEditor(track.extInst.id); return track.extInst.id; }
+        const id = newId();
+        names[id] = info.name;
+        try { await core().invoke('ext_create', { id, path: info.path, state: null, instrument: true }); loaded.add(id); }
+        catch (err) { flashSafe(`« ${info.name} » n'a pas pu s'ouvrir : ${err}`); loadBad(); return null; }
+        track.extInst = { id, path: info.path, name: info.name, vendor: info.vendor };
+        if (!quiet) openEditor(id);
+        return id;
+    }
+    // Notes d'une région (temps en noires) → son stéréo calculé par l'instrument. Renvoie un AudioBuffer, ou null.
+    async function renderNotes(midi, bpm, seconds) {
+        const id = instOf(midi); if (!id || !available()) return null;
+        if (!loaded.has(id) && typeof state !== 'undefined' && state.project) await ensure(state.project);
+        if (!loaded.has(id)) return null;
+        const spb = 60 / bpm, swing = Math.max(0, Math.min(1, midi.swing || 0));
+        const notes = (midi.notes || []).slice(0, 4000).map(n => {
+            let st = n.s; if (swing > 0) { const k = Math.round(st * 4); if (k % 2 === 1 && Math.abs(st * 4 - k) < 0.02) st += swing * (1 / 12); }
+            return { t: st * spb, d: Math.max(0.02, n.d * spb), p: Math.max(0, Math.min(127, Math.round(n.p))), v: Math.max(1, Math.min(127, Math.round(n.v || 100))) };
+        });
+        const raw = await core().invoke('ext_render_notes', { id, notes, seconds: Math.max(0.05, seconds || (midi.beats || 4) * spb) });
+        const buf = raw instanceof ArrayBuffer ? raw : (raw && raw.buffer) ? raw.buffer.slice(raw.byteOffset || 0, (raw.byteOffset || 0) + raw.byteLength) : new Uint8Array(raw).buffer;
+        const dv = new DataView(buf), rate = dv.getUint32(0, true), n = dv.getUint32(4, true);
+        if (!n) return null;
+        const out = new AudioBuffer({ numberOfChannels: 2, length: n, sampleRate: rate });
+        out.copyToChannel(new Float32Array(buf, 8, n), 0);
+        out.copyToChannel(new Float32Array(buf, 8 + 4 * n, n), 1);
+        return out;
     }
     // Range les réglages actuels de chaque plugin dans le projet (avant d'enregistrer le fichier)
     async function saveStates(project) {
         if (!available()) return;
+        for (const t of (project.tracks || [])) {   // instruments externes des pistes de notes
+            const x = t.extInst; if (!x || !loaded.has(x.id)) continue;
+            try { const st = await core().invoke('ext_state', { id: x.id }); if (st) x.state = st; } catch {}
+        }
         for (const [o, id] of allExt(project)) {
             if (!loaded.has(id)) continue;
             try { const st = await core().invoke('ext_state', { id }); if (st) { o.effectParams[id].state = st; } } catch {}
@@ -180,7 +229,7 @@ window.PulseExt = (function () {
     // dans le projet toutes les 20 s (ils survivent ainsi à une fermeture sans enregistrer)
     if (available()) {
         // nouvelle version de la recherche (Audio Units ajoutées le 08/11) : on refait la liste une fois
-        const SV = 'pulse_ext_scan_v', v = 2;
+        const SV = 'pulse_ext_scan_v', v = 3;   // 3 : instruments ajoutés à la liste (10/11)
         setTimeout(() => { let force = false; try { force = +localStorage.getItem(SV) !== v; localStorage.setItem(SV, String(v)); } catch {} scan(force).catch(() => {}); }, 2500);
         setInterval(() => {
             if (typeof state === 'undefined' || !state.project || !has(state.project)) return;
@@ -195,5 +244,5 @@ window.PulseExt = (function () {
             if (changed && typeof refreshPlaybackSoon === 'function') refreshPlaybackSoon();
         }, 1500);
     }
-    return { available, scan, visible, nameOf, has, isExt, ensure, saveStates, add, openEditor, openManager, names, paramName, paramValue, autoPids, loadParams };
+    return { available, scan, visible, instruments, instOf, addInstrument, renderNotes, nameOf, has, isExt, ensure, saveStates, add, openEditor, openManager, names, paramName, paramValue, autoPids, loadParams };
 })();

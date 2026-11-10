@@ -1,0 +1,30 @@
+<!doctype html><meta charset="utf-8"><title>selftest instruments externes</title><body style="margin:0;background:#111;color:#0f0;font:14px monospace"><pre id="o" style="position:fixed;z-index:9;top:60px;left:10px;background:#000c;padding:8px"></pre>
+<iframe id="f" src="studio.html" style="width:100vw;height:100vh;border:0"></iframe>
+<script>
+// Instruments externes : chaque instrument de la liste joue un accord (do-mi-sol, 1 s) calculé hors temps réel ;
+// on vérifie qu'il sort du son pendant les notes et qu'il se tait après. Rien ne passe par les enceintes.
+const o=document.getElementById('o'); const log=t=>{ o.textContent+=t+'\n'; try{ window.__TAURI__.core.invoke('test_log',{text:t}); }catch{} };
+const f=document.getElementById('f'); const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const VEUT=/./i;
+(async()=>{ try{
+  await sleep(2500); const w=f.contentWindow; w.__TAURI__=window.__TAURI__; const inv=window.__TAURI__.core.invoke;
+  const list=await w.PulseExt.scan(true); const all=list.filter(p=>p.instrument); const pick=all.filter(p=>VEUT.test(p.name)||VEUT.test(p.vendor||'')).slice(0,80);
+  log('scan: '+list.length+' plugins dont '+all.length+' instruments, '+pick.length+' essayés'); let ok=0, ko=0, n=0;
+  for(const p of pick){ const id='vst#i'+(n++); const kind=p.path.startsWith('au:')?'AU ':'VST'; const nom=kind+' '+p.vendor+' / '+p.name;
+    try{
+      const t0=performance.now();
+      const cr=await Promise.race([inv('ext_create',{id,path:p.path,state:null,instrument:true}).then(x=>({x}),e=>({e:String(e)})), sleep(45000).then(()=>({to:1}))]);
+      if(cr.to){ ko++; log('BLOQUE  '+nom); continue; } if(cr.e){ ko++; log('REFUSE  '+nom+' : '+cr.e.slice(0,90)); continue; }
+      const tl=Math.round(performance.now()-t0); const t1=performance.now();
+      const ab=await inv('ext_render_notes',{id,seconds:3,notes:[{t:0.2,d:1,p:60,v:100},{t:0.2,d:1,p:64,v:100},{t:0.2,d:1,p:67,v:100}]});
+      const dv=new DataView(ab instanceof ArrayBuffer?ab:new Uint8Array(ab).buffer); const sr=dv.getUint32(0,true), len=dv.getUint32(4,true); const L=new Float32Array(dv.buffer,8,len);
+      const rms=(a,b)=>{ let s=0; for(let i=Math.round(a*sr);i<Math.round(b*sr)&&i<len;i++) s+=L[i]*L[i]; return Math.sqrt(s/Math.max(1,Math.round((b-a)*sr))); };
+      const avant=rms(0,0.15), pendant=rms(0.3,1.1), fin=rms(2.7,3); const tr=Math.round(performance.now()-t1);
+      if(pendant>0.001){ ok++; log('ok      '+nom+' : son '+pendant.toFixed(4)+' (avant '+avant.toFixed(4)+', fin '+fin.toFixed(4)+'), chargé en '+tl+' ms, 3 s calculées en '+tr+' ms'); }
+      else { ko++; log('MUET    '+nom+' : son '+pendant.toFixed(5)+', chargé en '+tl+' ms'); }
+      try{ await Promise.race([inv('ext_remove',{id}), sleep(5000)]); }catch{}
+    }catch(e){ ko++; log('erreur  '+nom+' : '+String(e).slice(0,100)); try{ await inv('ext_remove',{id}); }catch{} }
+  }
+  await sleep(26000); log('BILAN: '+ok+' instruments jouent, '+ko+' non'); log('FIN OK');
+} catch(e){ log('ERREUR '+(e&&e.stack||e)); log('FIN'); } })();
+</script>
