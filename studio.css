@@ -1,5 +1,5 @@
 /* === Pulse — Studio (écran principal) === */
-.studio-body { overflow: hidden; }
+.studio-body { overflow: hidden; animation: none; }   /* pas de fond animé dans le studio : il faisait repeindre tout l'écran en permanence */
 
 .studio {
     display: grid;
@@ -1208,6 +1208,7 @@ body.is-trimming .clip-trim-handle { opacity: 1 !important; }
 
 /* Playhead */
 .playhead {
+    will-change: transform;
     position: absolute;
     top: 0;
     bottom: 0;

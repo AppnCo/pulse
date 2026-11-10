@@ -5185,11 +5185,30 @@ function updatePlayOrigin() {
     m.style.display = 'block';
     m.style.left = `${state.playOrigin * state.pxPerSecond}px`;
 }
+let _phAnim = null;   // animation en cours de la tête de lecture { a, x0, pps }
 function updatePlayhead() {
     const ph = document.getElementById('playhead');
     const x = state.playhead * state.pxPerSecond;
-    ph.style.left = `${x}px`;
-    ph.style.transform = '';
+    // En lecture, la tête avance toute seule (animation confiée à la carte graphique : aucun recalcul de la page à chaque image) ;
+    // on ne la recale que si elle s'écarte de la vraie position (boucle, saut, zoom).
+    const moving = (state.playing || state.recording) && !document.hidden && typeof ph.animate === 'function';
+    if (moving) {
+        let ok = false;
+        if (_phAnim && _phAnim.pps === state.pxPerSecond && _phAnim.a.playState === 'running') {
+            const t = _phAnim.a.currentTime;
+            ok = t != null && Math.abs(_phAnim.x0 + t / 1000 * _phAnim.pps - x) < 1.5;
+        }
+        if (!ok) {
+            if (_phAnim) { try { _phAnim.a.cancel(); } catch (e) {} }
+            ph.style.transform = `translateX(${x}px)`;
+            const D = 600;
+            const a = ph.animate([{ transform: `translateX(${x}px)` }, { transform: `translateX(${x + D * state.pxPerSecond}px)` }], { duration: D * 1000, easing: 'linear' });
+            _phAnim = { a, x0: x, pps: state.pxPerSecond };
+        }
+    } else {
+        if (_phAnim) { try { _phAnim.a.cancel(); } catch (e) {} _phAnim = null; }
+        ph.style.transform = `translateX(${x}px)`;
+    }
     updatePlayOrigin();
     if (window.lyricsFollowOn && window.lyricsFollowOn() && window.updateLyricsFollow) window.updateLyricsFollow();
     // Auto-scroll : le curseur reste visible pendant lecture et rec (sauf si tu as zoomé / défilé toi-même)
@@ -5957,13 +5976,24 @@ function startVuMeterLoop() {
     vuRafId = requestAnimationFrame(loop);
 }
 
+let _vuEls = null, _vuElsAt = 0;
+function vuEls(now) {
+    const first = _vuEls && _vuEls.first;
+    if (_vuEls && now - _vuElsAt < 300 && (!first || first.isConnected)) return _vuEls;
+    const m = { row: [], mini: [], rail: [], first: null };
+    document.querySelectorAll('.tracks-panel .track-item[data-i]').forEach(it => { const i = it.dataset.i; if (m.row[i] !== undefined) return; m.row[i] = it.querySelector('.t-meter'); m.mini[i] = it.querySelector('.vu-mini'); if (!m.first) m.first = it; });
+    document.querySelectorAll('.mixer-strips .strip[data-kind="track"][data-i]').forEach(st => { const i = st.dataset.i; if (m.rail[i] === undefined) m.rail[i] = st.querySelector('.vu-rail'); });
+    _vuEls = m; _vuElsAt = now; return m;
+}
 function updateAllVuMeters() {
     const now = performance.now();
+    if (_phAnim && !(state.playing || state.recording)) updatePlayhead();   // sécurité : la tête ne continue jamais seule après l'arrêt
+    const els = vuEls(now);
     // Pistes
     state.project.tracks.forEach((_, i) => {
         // Vu-mètre de la ligne de piste : deux barres collées (gauche / droite), une seule si le son est mono
         const mt = PulseAudio.getTrackMeters(i);
-        const mrow = document.querySelector(`.tracks-panel .track-item[data-i="${i}"] .t-meter`);
+        const mrow = els.row[i];
         if (mrow) {
             if (mt) {
                 const l = meterPct(mt.l), r = meterPct(mt.r);
@@ -5982,10 +6012,10 @@ function updateAllVuMeters() {
         const pct = (level * 100).toFixed(1) + '%';
         const peakPct = ((_vuPeaks[i]?.peak || 0) * 100).toFixed(1) + '%';
         // Mixer strip — on set sur .vu-rail pour que ::before (peak) y accède
-        const rail = document.querySelector(`.mixer-strips .strip[data-kind="track"][data-i="${i}"] .vu-rail`);
+        const rail = els.rail[i];
         if (rail) { rail.style.setProperty('--lvl', pct); rail.style.setProperty('--peak', peakPct); }
         // Track panel
-        const panel = document.querySelector(`.tracks-panel .track-item[data-i="${i}"] .vu-mini`);
+        const panel = els.mini[i];
         if (panel) { panel.style.setProperty('--lvl', pct); panel.style.setProperty('--peak', peakPct); }
     });
     // Master
@@ -6112,7 +6142,7 @@ function updateRecLevelHint() {
 
 function hideRecLevelHint() {
     const hint = document.getElementById('recLevelHint');
-    if (hint) { hint.classList.remove('visible'); hint.className = 'rec-level-hint'; }
+    if (hint && hint.className !== 'rec-level-hint') hint.className = 'rec-level-hint';
     _clipFlashSent = false;
     _clipFrameCount = 0;
 }

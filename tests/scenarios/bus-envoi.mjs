@@ -21,22 +21,22 @@ export default async (c) => {
   const diff = Math.max(...before.map((v, i) => Math.abs(20 * Math.log10((after[i] + 1e-9) / (v + 1e-9)))));
   console.log('ancien / converti :', JSON.stringify(before), JSON.stringify(after), '| écart max', diff.toFixed(3), 'dB', diff < 0.1 ? 'PASS' : 'FAIL');
   // un plugin en plus sur le bus Reverb : un filtre coupe-bas qui doit changer la queue
-  await ev(`state.project.buses.find(b=>b.name==='Del 1/4').muted=true`);
+  await ev(`state.project.buses.find(b=>b.name==='Bus 2').muted=true`);
   const revOnly = await meas();
-  await R('filtre coupe-bas ajouté sur le bus Reverb', `const b=state.project.buses.find(b=>b.name==='Rev Long'); b.effects.push('filter'); b.effectParams.filter={hpf:2000,lpf:20000,slope:24}; return JSON.stringify(b.effects)`);
+  await R('filtre coupe-bas ajouté sur le bus Reverb', `const b=state.project.buses.find(b=>b.name==='Bus 1'); b.effects.push('filter'); b.effectParams.filter={hpf:2000,lpf:20000,slope:24}; return JSON.stringify(b.effects)`);
   const withEq = await meas();
   console.log('queue de reverb sans / avec filtre :', revOnly[1], '/', withEq[1], withEq[1] < revOnly[1] * 0.3 ? 'PASS le plugin du bus agit' : 'FAIL');
-  await ev(`state.project.buses.find(b=>b.name==='Del 1/4').muted=false; state.project.buses.find(b=>b.name==='Rev Long').effects.pop()`);
+  await ev(`state.project.buses.find(b=>b.name==='Bus 2').muted=false; state.project.buses.find(b=>b.name==='Bus 1').effects.pop()`);
   // nouveau bus depuis le « + » des envois : un bus vide, et le menu d'effets s'ouvre dessus
   await ev(`state.selectedTrack=0; renderInspector()`); await sleep(200);
   await ev(`document.querySelector('#inspector .insp-strip[data-kind="track"] .slot-plus[data-plus="send"]').click()`); await sleep(200);
   await R('menu +', `return [...document.querySelectorAll('.track-ctx-menu .ctx-item,.track-ctx-menu .ctx-head')].map(e=>e.textContent).join(' / ')`);
   await ev(`[...document.querySelectorAll('.track-ctx-menu .ctx-item')].find(e=>e.textContent==='Nouveau bus').dispatchEvent(new MouseEvent('mousedown',{bubbles:true}))`); await sleep(400);
-  await R('bus vide', `const b=state.project.buses.find(b=>b.name==='Bus'); return 'créé='+!!b+' effets='+JSON.stringify(b&&b.effects)+' envoi Lead='+(state.project.tracks[0].busSends||{})[b&&b.id]+' menu effets ouvert='+!!document.querySelector('.fx-add-menu')+' tranche gauche='+[...document.querySelectorAll('#inspector .insp-strip .strip-name')].map(e=>e.textContent).join(' + ')`);
+  await R('bus vide', `const b=state.project.buses.find(b=>b.name==='Bus 3'); return 'créé='+!!b+' effets='+JSON.stringify(b&&b.effects)+' envoi Lead='+(state.project.tracks[0].busSends||{})[b&&b.id]+' menu effets ouvert='+!!document.querySelector('.fx-add-menu')+' tranche gauche='+[...document.querySelectorAll('#inspector .insp-strip .strip-name')].map(e=>e.textContent).join(' + ')`);
   await ev(`document.querySelector('.fx-add-menu .fam-fx[data-fx="chorus"]')?.click()`); await sleep(300);
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
-  await R('chorus sur le bus', `return JSON.stringify(state.project.buses.find(b=>b.name==='Bus').effects)`);
-  await R('annuler', `undoAction(); await new Promise(r=>setTimeout(r,200)); return JSON.stringify((state.project.buses.find(b=>b.name==='Bus')||{}).effects)`);
+  await R('chorus sur le bus', `return JSON.stringify(state.project.buses.find(b=>b.name==='Bus 3').effects)`);
+  await R('annuler', `undoAction(); await new Promise(r=>setTimeout(r,200)); return JSON.stringify((state.project.buses.find(b=>b.name==='Bus 3')||{}).effects)`);
   // clic droit sur l'envoi → ouvrir le bus
   await ev(`state.selectedBus=null; renderInspector()`); await sleep(150);
   await R('clic droit envoi', `const row=document.querySelector('#inspector .insp-strip[data-kind="track"] [data-bsend]'); row.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:200,clientY:400})); await new Promise(r=>setTimeout(r,100)); return [...document.querySelectorAll('.track-ctx-menu .ctx-item')].map(e=>e.textContent).join(' / ')`);

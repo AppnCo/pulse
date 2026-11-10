@@ -1,6 +1,6 @@
 //! Mesure de puissance : N pistes stéréo avec une chaîne d'effets lourde, rendues par blocs comme en lecture.
 //! cargo run --release --example charge [-- pistes secondes]
-use pulse_engine::{render::{render_blocks, RenderOptions, Source, Media}, model::Project};
+use pulse_engine::{render::{render_blocks, RenderOptions, Source, Media, Renderer}, model::Project};
 fn main() {
     let a: Vec<String> = std::env::args().collect();
     let n: usize = a.get(1).and_then(|s| s.parse().ok()).unwrap_or(48);
@@ -21,5 +21,23 @@ fn main() {
     let t0 = std::time::Instant::now();
     let (out, _) = render_blocks(&p, &media, &RenderOptions { range: Some((0.0, secs)), ..Default::default() }, 512);
     let dt = t0.elapsed().as_secs_f64();
+    pire_bloc(&p, &media, secs);
     println!("[{list}] {n} pistes, {secs} s : rendu en {dt:.2} s → {:.1}× le temps réel (charge en lecture ≈ {:.0} %), {} échantillons", secs / dt, dt / secs * 100.0, out.len());
+}
+
+// Pire bloc : en lecture, un bloc qui dépasse sa durée = un trou dans le son
+#[allow(dead_code)]
+fn pire_bloc(p: &Project, media: &Media, secs: f64) {
+    let mut r = Renderer::new(p, media, &RenderOptions { range: Some((0.0, secs)), ..Default::default() });
+    let (mut l, mut rr) = (vec![0.0f32; 512], vec![0.0f32; 512]);
+    let (mut worst, mut over) = (0.0f64, 0);
+    let budget = 512.0 / 48000.0;
+    loop {
+        let t = std::time::Instant::now();
+        if r.process(media, &mut l, &mut rr) == 0 { break; }
+        let d = t.elapsed().as_secs_f64();
+        worst = worst.max(d);
+        if d > budget * 0.5 { over += 1; }
+    }
+    println!("pire bloc : {:.2} ms sur {:.2} ms disponibles ({:.0} %), blocs au-delà de la moitié : {over}", worst * 1e3, budget * 1e3, worst / budget * 100.0);
 }
