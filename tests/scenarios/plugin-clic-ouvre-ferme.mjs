@@ -14,7 +14,7 @@ export default async (c) => {
   check('2e clic : fenêtre fermée', await J(ev, `return document.querySelectorAll('.fx-panel.plug-win[data-fx="comp"]').length`) === 0);
   await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y }); await sleep(200);
   const z = await J(ev, `const r=[...document.querySelectorAll('#inspector .insp-fx-row')].find(e=>e.dataset.fx==='comp'); const a=r.querySelector('.fx-pow').getBoundingClientRect(), b=r.querySelector('.fx-swap').getBoundingClientRect(); return {pw:a.width,ph:a.height,sw:b.width,vis:getComputedStyle(r.querySelector('.fx-swap')).display}`);
-  check('survol : ⏻ et ⇅ visibles et assez grands', z.vis === 'grid' && z.pw >= 14 && z.ph >= 14 && z.sw >= 14, JSON.stringify(z));
+  check('survol : ⏻ et ⇅ visibles et assez grands (11 px de large en tranche étroite)', z.vis === 'grid' && z.pw >= 11 && z.ph >= 14 && z.sw >= 11, JSON.stringify(z));
   await m.click(p.l + 8, p.y); await sleep(300);
   check('clic à gauche : éteint, sans ouvrir', await J(ev, `return (state.project.tracks[0].fxOff||[]).includes('comp') && !document.querySelector('.fx-panel.plug-win')`), await J(ev, `return JSON.stringify(state.project.tracks[0].fxOff||null)`));
 };

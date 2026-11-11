@@ -2493,9 +2493,9 @@ function slotListsHtml(kind, x) {
                 <span>PulseTune</span><i class="insp-del" data-tooltip="Retirer PulseTune (Auto-Tune) de cette piste">×</i>
             </div>` : ''}
             ${chain.map((n, k) => `
-            <div class="insp-fx-row ${x.premaster || n === 'limit' || n === 'master' ? '' : 'can-drag'} ${fxIsOff(x, n) ? 'is-off' : ''}" data-fx="${n}" data-tooltip="Clic pour régler · clic maintenu et glisser pour changer l'ordre · clic droit pour copier ou supprimer">
+            <div class="insp-fx-row ${x.premaster || n === 'limit' || n === 'master' ? '' : 'can-drag'} ${fxIsOff(x, n) ? 'is-off' : ''}" data-fx="${n}" data-tooltip="${esc(fxLabel(n))} · clic : ouvrir / fermer · glisser : changer l'ordre · clic droit : copier ou supprimer">
                 ${x.premaster || x.locked || n === 'limit' || n === 'master' ? '' : `<b class="fx-pow" data-tooltip="Allumer / éteindre (clic maintenu et glisser vers le bas : plusieurs d'un coup)">${FX_POW_SVG}</b>`}
-                <span${fxType(n) === 'vst' ? ` title="${esc(fxLabel(n))}"` : ''}>${esc(fxShortLabel(n))}</span>
+                <span>${esc(fxShortLabel(n))}</span>
                 ${x.premaster || x.locked || n === 'limit' || n === 'master' ? '' : '<b class="fx-swap" data-tooltip="Remplacer par un autre plugin">⇅</b><i class="insp-del" data-tooltip="Supprimer cet effet">×</i>'}
             </div>`).join('')}
             ${x.premaster || x.locked ? '' : Array.from({ length: Math.max(4, 8 - chain.length - (kind === 'track' && showTuneSlot(x) ? 1 : 0)) }, (_, i) => `<div class="insp-slot-empty${i === 0 ? ' insp-add-fx' : ''}" data-tooltip="Emplacement libre : clique pour mettre un effet"></div>`).join('')}
@@ -3297,7 +3297,11 @@ function openAddEffectMenu(anchor, target, x, replaceId = null) {
     // Deux gammes rangées à part : les plugins Pulse et la gamme Analogique (onglets en haut de la colonne de gauche)
     const extList = window.PulseExt && PulseExt.available() ? PulseExt.visible() : [];
     const extCats = [];
-    extList.forEach((p, i) => { const k = 'ext:' + i; fxChoice[k] = p.name; const v = p.vendor || 'Autres'; let c = extCats.find(e => e[0] === v); if (!c) extCats.push(c = [v, []]); c[1].push(k); });
+    // une marque = une seule catégorie, même écrite autrement selon le format (« antares » / « Antares », « bluecataudio » / « Blue Cat Audio »)
+    const vKey = (v) => v.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const vNice = (a, b) => ((/[A-Z]/.test(b) && !/[A-Z]/.test(a)) || (/\s/.test(b) && !/\s/.test(a)) ? b : a);
+    extList.forEach((p, i) => { const k = 'ext:' + i; fxChoice[k] = p.name; const v = p.vendor || 'Autres'; let c = extCats.find(e => vKey(e[0]) === vKey(v)); if (!c) extCats.push(c = [v, []]); else c[0] = vNice(c[0], v); c[1].push(k); });
+    extCats.sort((a, b) => a[0].localeCompare(b[0], 'fr', { sensitivity: 'base' }));
     const RANGES = [['Pulse', ADD_FX_CATEGORIES], ['Analogique', ADD_FX_CATEGORIES_ANA], ...(extCats.length ? [['Externes', extCats]] : [])];
     const cats = RANGES.flatMap(([g, list]) => list.map(([c, names]) => [c, names.filter(n => fxChoice[n]), g]));
     const voice = state.project.tracks.includes(x);   // PulseTune : sur toute piste, pas sur un groupe
@@ -3894,7 +3898,7 @@ function busLabel(id) {
     if (!id || id === 'master') return 'Master';
     if (id === NO_OUT_ID) return 'Pas de sortie';
     const b = (state.project.buses || []).find(x => x.id === id);
-    return b ? b.name : id;
+    return b ? (b.name || 'Bus sans nom') : id;
 }
 
 // Faders de piste et de groupe : 0 dB aux 3/4 de la course, puis +6 dB de marge tout en haut (comme Logic).
@@ -16988,3 +16992,29 @@ function addFaderScales(root) {
         return r;
     };
 });
+
+
+// Infobulles des listes qui défilent (effets, envois, menu + Effet, table de mixage) : affichées dans un calque au-dessus de tout,
+// sinon le cadre de la liste les coupe. Même texte (data-tooltip), même délai que les autres.
+(function () {
+    const CLIP = '.insp-slots, .fam-left, .fam-right, .mixer-strips, .tracks-list, .ctx-subpanel';
+    let tip = null, timer = null, cur = null;
+    const hide = () => { clearTimeout(timer); timer = null; cur = null; if (tip) tip.classList.remove('on'); };
+    document.addEventListener('mouseover', (e) => {
+        const el = e.target.closest && e.target.closest('[data-tooltip]');
+        if (!el || !el.closest(CLIP)) { if (cur) hide(); return; }
+        if (el === cur) return;
+        hide(); cur = el;
+        timer = setTimeout(() => {
+            if (!cur || !cur.isConnected) return;
+            if (!tip) { tip = document.createElement('div'); tip.className = 'float-tip'; document.body.appendChild(tip); }
+            tip.textContent = cur.getAttribute('data-tooltip'); tip.classList.add('on');
+            const r = cur.getBoundingClientRect(), w = tip.offsetWidth, h = tip.offsetHeight;
+            let x = r.left + r.width / 2 - w / 2; x = Math.max(6, Math.min(x, innerWidth - w - 6));
+            let y = r.top - h - 6; if (y < 6) y = r.bottom + 6;
+            tip.style.left = x + 'px'; tip.style.top = y + 'px';
+        }, 450);
+    }, true);
+    ['mousedown', 'scroll', 'wheel', 'keydown'].forEach(t => document.addEventListener(t, hide, true));
+    document.addEventListener('mouseleave', hide);
+})();

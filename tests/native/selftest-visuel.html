@@ -1,0 +1,100 @@
+<!doctype html><meta charset="utf-8"><title>selftest visuel</title><body style="margin:0;background:#111">
+<script>
+// Tour visuel DANS L'APPLI (WebKit) avec de vrais plugins externes. Sauvegarde le localStorage avant, le remet après.
+// Lignes du journal : « SNAP nom » (le script shell capture la fenêtre), « HOVER x y » (il y déplace la souris), « VP w h ».
+const BK = JSON.stringify(Object.fromEntries(Object.keys(localStorage).map(k => [k, localStorage.getItem(k)])));
+const restore = () => { try { localStorage.clear(); const o = JSON.parse(BK); for (const k in o) localStorage.setItem(k, o[k]); } catch (e) {} };
+const TEST = { id: 'visu-test', name: 'Test visuel', bpm: 120, sends: [], buses: [{ id: 'mixbus1', name: 'Mix Bus 1', output: 'master', noFolder: true, row: true, premaster: true, color: '#7C3AED' }],
+  tracks: ['Lead', 'Back', 'Instru'].map((n, i) => ({ name: n, type: 'audio', output: 'mixbus1', color: ['#A855F7', '#C084FC', '#60A5FA'][i], volume: 100, clips: [] })) };
+localStorage.setItem('pulse_current_project', JSON.stringify(TEST)); localStorage.setItem('pulse_onboarded_v1', '1'); localStorage.setItem('pulse_tip_headphones', '1');
+</script>
+<iframe id="f" src="studio.html" style="width:100vw;height:100vh;border:0;display:block"></iframe>
+<script>
+const log = t => { try { window.__TAURI__.core.invoke('test_log', { text: t }); } catch {} };
+const f = document.getElementById('f'); const sleep = ms => new Promise(r => setTimeout(r, ms));
+const DETECT = `(()=>{
+  const out = [], W = innerWidth, H = innerHeight;
+  const vis = (e) => { const s = getComputedStyle(e); if (s.visibility === 'hidden' || s.display === 'none' || +s.opacity === 0) return false; const r = e.getBoundingClientRect(); return r.width > 2 && r.height > 2; };
+  const name = (e) => { let s = e.tagName.toLowerCase(); if (e.id) s += '#' + e.id; const c = [...e.classList].slice(0, 2).join('.'); if (c) s += '.' + c; const p = e.parentElement; if (p && !e.id) { const pc = [...p.classList].slice(0, 1).join('.'); if (pc) s = p.tagName.toLowerCase() + '.' + pc + ' > ' + s; } return s; };
+  const seen = new Set();
+  const add = (k, e, txt, info) => { const key = k + name(e) + txt; if (seen.has(key)) return; seen.add(key); out.push(k + ' | ' + name(e) + ' | « ' + txt.slice(0, 40) + ' »' + (info ? ' | ' + info : '')); };
+  const all = document.querySelectorAll('body *');
+  for (const e of all) {
+    if (['SCRIPT','STYLE','SVG','PATH','CANVAS','OPTION','INPUT','TEXTAREA','SELECT'].includes(e.tagName.toUpperCase())) continue;
+    const own = [...e.childNodes].filter(n => n.nodeType === 3 && n.textContent.trim()).map(n => n.textContent.trim()).join(' ');
+    if (!own || !vis(e)) continue;
+    const r = e.getBoundingClientRect();
+    if (r.bottom < 0 || r.top > H || r.right < 0 || r.left > W) continue;
+    const s = getComputedStyle(e);
+    // 1. texte coupé : le texte sort de la boîte qui le rogne (sans « … »), ou déborde de sa case
+    const tn0 = [...e.childNodes].find(n => n.nodeType === 3 && n.textContent.trim());
+    const rg0 = document.createRange(); rg0.selectNodeContents(tn0); const t0 = rg0.getBoundingClientRect();
+    let clip = null; for (let a = e; a && a !== document.body; a = a.parentElement) { const as = getComputedStyle(a); if (as.overflowX !== 'visible' || as.overflowY !== 'visible') { clip = a; break; } }
+    if (clip && t0.width > 0) { const cr = clip.getBoundingClientRect(); const ell = getComputedStyle(clip).textOverflow === 'ellipsis' || s.textOverflow === 'ellipsis';
+      if (!ell && (t0.right > cr.right + 1.5 || t0.left < cr.left - 1.5) && clip.scrollWidth <= clip.clientWidth + 2) add('COUPÉ', e, own, 'texte ' + Math.round(t0.left) + '→' + Math.round(t0.right) + ' dans ' + name(clip) + ' ' + Math.round(cr.left) + '→' + Math.round(cr.right));
+      if (!ell && (t0.bottom > cr.bottom + 2 || t0.top < cr.top - 2) && clip.scrollHeight <= clip.clientHeight + 2 && t0.top < cr.bottom && t0.bottom > cr.top) add('COUPÉ HAUT/BAS', e, own, 'dans ' + name(clip)); }
+    if (t0.width > 0 && /^(BUTTON|A)$/.test(e.tagName) && rg0.getClientRects().length > 1 && s.textOverflow !== 'ellipsis' && !e.closest('.ctx-item,.help,.modal-body')) add('SUR 2 LIGNES', e, own, Math.round(r.width) + ' px de large');
+    if (t0.width > 0 && s.textOverflow !== 'ellipsis' && s.display !== 'inline' && (t0.right > r.right + 3 || t0.left < r.left - 3)) add('DÉBORDE', e, own, 'texte ' + Math.round(t0.width) + ' px, case ' + Math.round(r.width) + ' px');
+    // 2. texte qui sort de l'écran
+    if (t0.right > W + 1 || (t0.left < -1 && t0.width)) add('HORS ÉCRAN', e, own, Math.round(t0.left) + '→' + Math.round(t0.right));
+    // 3. texte recouvert par un autre élément (on sonde le début, le milieu et la fin du texte)
+    const tn = [...e.childNodes].find(n => n.nodeType === 3 && n.textContent.trim()); if (!tn) continue;
+    const rg = document.createRange(); rg.selectNodeContents(tn); const tr = rg.getBoundingClientRect();
+    if (tr.width < 4) continue;
+    const vr = { l: Math.max(tr.left, r.left), r: Math.min(tr.right, r.right) };
+    const y = tr.top + tr.height / 2; if (y < 0 || y > H) continue;
+    for (const fx of [0.08, 0.5, 0.92]) {
+      const x = vr.l + (vr.r - vr.l) * fx; if (x < 0 || x > W) continue;
+      const t = document.elementFromPoint(x, y);
+      if (!t || t === e || e.contains(t) || t.contains(e)) continue;
+      if (t.closest('.db-tip,.tooltip,[class*=tooltip],.flash,.toast')) continue;
+      if (e.closest('#flash')) continue;
+      { const FL = '.fx-panel,.track-ctx-menu,.ctx-subpanel,[class*=modal],[class*=overlay],.plug-win,.pianoroll,.midi-editor'; const lt = t.closest(FL); if (lt && lt !== e.closest(FL)) continue; }
+      if (t.closest('svg') && t.closest('svg') === e.closest('svg')) continue;
+      { const ts0 = getComputedStyle(t); const bg = ts0.backgroundColor; const plain = (!bg || bg === 'transparent' || /rgba\\([^)]*,\\s*0\\)$/.test(bg)) && ts0.backgroundImage === 'none' && !ts0.borderTopWidth.startsWith('1') && ![...t.childNodes].some(n => n.nodeType === 3 && n.textContent.trim()) && !['svg','img','canvas','rect','path'].includes(t.tagName.toLowerCase()); if (plain) continue; }
+      const ts = getComputedStyle(t); if (ts.pointerEvents === 'none') continue;
+      add('RECOUVERT', e, own, 'par ' + name(t) + ' (' + Math.round(fx * 100) + ' %)'); break;
+    }
+  }
+  // 4. menus et fenêtres flottantes hors de l'écran
+  document.querySelectorAll('.track-ctx-menu,.ctx-subpanel,.fx-panel,[class*=-panel]:not([class*=spacer]):not(aside),[class*=modal]').forEach(m => { if (!vis(m)) return; const r = m.getBoundingClientRect(); if (r.right > W + 1 || r.bottom > H + 1 || r.left < -1 || r.top < -1) out.push('FENÊTRE HORS ÉCRAN | ' + name(m) + ' | ' + [r.left, r.top, r.right, r.bottom].map(Math.round).join(',')); });
+  return out;
+})()`;
+const VEUT = [/^Pro-Q 4$/i, /^Pro-C 2$/i, /^Saturn 2$/i, /^Auto-Tune Pro/i, /^Melodyne/i, /^UADx .*1073/i, /^EchoBoy/i, /^ValhallaVintageVerb/i];
+(async () => { try {
+  await sleep(4000); const w = f.contentWindow; w.__TAURI__ = window.__TAURI__; const inv = window.__TAURI__.core.invoke;
+  log('VP ' + innerWidth + ' ' + innerHeight);
+  const look = async (label) => { await sleep(700); const r = w.eval(DETECT); log('### ' + label + ' — ' + r.length + ' défaut(s)'); r.forEach(x => log('    ' + x)); log('SNAP ' + label); await sleep(1800); };
+  const all = await w.PulseExt.scan(false); const list = [];
+  for (const re of VEUT) { const p = all.find(p => re.test(p.name) && !p.instrument); if (p) list.push(p); }
+  log('plugins : ' + list.map(p => p.name + ' (' + (p.vendor || '?') + ')').join(', '));
+  const ST = w.eval('state'); const t = ST.project.tracks[0]; ST.selectedTrack = 0;
+  for (const p of list.slice(0, 6)) { const id = await w.PulseExt.add(t, p); if (id) { await sleep(1500); try { await inv('ext_editor', { id, title: p.name, toggle: true }); } catch {} } }
+  w.eval('renderAll()'); await sleep(1500);
+  await look('A studio avec externes');
+  // survol réel de chaque case (souris déplacée par le script shell)
+  const rows = [...w.document.querySelectorAll('.insp-fx-row')].map(e => { const r = e.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, t: e.textContent.trim().slice(0, 14) }; }).filter(o => o.y > 0);
+  // survol simulé : chaque règle « :hover » de la page recopiée sur la classe .__h (même rendu qu'avec la souris)
+  { const css = []; const walk = (rules, wrap) => { for (const r of rules) { if (r.cssRules && !r.selectorText) { const head = r.cssText.slice(0, r.cssText.indexOf('{')); walk(r.cssRules, (t) => wrap(head + '{' + t + '}')); }
+        else if (r.selectorText && r.selectorText.includes(':hover')) css.push(wrap(r.selectorText.replace(/:hover/g, '.__h') + '{' + r.style.cssText + '}')); } };
+    for (const sh of w.document.styleSheets) { try { walk(sh.cssRules, (t) => t); } catch {} }
+    const st = w.document.createElement('style'); st.textContent = css.join('\n'); w.document.head.appendChild(st); log('règles de survol recopiées : ' + css.length); }
+  const rowEls = [...w.document.querySelectorAll('.insp-fx-row')];
+  for (const [i, e] of rowEls.entries()) { e.classList.add('__h'); let a = e.parentElement; while (a) { a.classList.add('__h'); a = a.parentElement; } await look('B survol ' + i + ' ' + e.textContent.trim().slice(0, 14)); w.document.querySelectorAll('.__h').forEach(x => x.classList.remove('__h')); }
+  // menu + Effet, onglet Externes, chaque marque
+  w.eval(`closeAllMenus(); openAddEffectMenu(document.querySelector('.slot-plus')||document.body, 0, state.project.tracks[0])`); await sleep(500);
+  for (const tab of [...w.document.querySelectorAll('.fam-range')].map(b => b.textContent)) { [...w.document.querySelectorAll('.fam-range')].find(b => b.textContent === tab).click(); await look('C menu onglet ' + tab); }
+  const cats = [...w.document.querySelectorAll('.fx-add-menu .fam-cat:not([hidden])')];
+  for (const [i, c] of cats.slice(0, 8).entries()) { c.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true })); c.click(); await look('C marque ' + i + ' ' + c.textContent.trim().slice(0, 12)); }
+  w.eval('closeAllMenus()');
+  // gestionnaire des plugins externes
+  try { w.PulseExt.openManager(); await look('D gestionnaire'); w.document.querySelectorAll('[class*=modal],.ext-manager').forEach(e => e.remove()); } catch (e) { log('gestionnaire : ' + e); }
+  // table de mixage
+  w.eval('toggleMixer()'); await look('E table de mixage'); w.eval('toggleMixer()');
+  // clic sur le nom : fenêtre du plugin (native) puis refermer
+  const r0 = w.document.querySelector('.insp-fx-row[data-fx^="vst"] span'); if (r0) { r0.click(); await sleep(2500); log('SNAP F fenetre plugin'); await sleep(2500); r0.click(); await sleep(1500); }
+  await look('G apres fermeture');
+  for (const id of [...t.effects]) if (String(id).startsWith('vst')) try { await inv('ext_remove', { id }); } catch {}
+  restore(); await sleep(1000); log('FIN OK');
+} catch (e) { restore(); log('ERREUR ' + (e && e.stack || e)); log('FIN'); } })();
+</script>

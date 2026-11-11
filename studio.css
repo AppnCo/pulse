@@ -3937,3 +3937,16 @@ body[data-left-tool="fade"] .timeline-tracks .clip { cursor: ew-resize; }
 .fx-panel .lim-sb { padding-right: 20px; }
 /* fenêtres étroites (EQ 550…) : l'aide et les valeurs l'une sous l'autre, au lieu de deux colonnes écrasées */
 .ana-narrow .lim-sb { flex-direction: column; align-items: flex-start; gap: 3px; }
+/* infobulles des listes qui défilent : calque au-dessus de tout (voir fin de studio.js), l'infobulle CSS coupée est retirée */
+:is(.insp-slots, .fam-left, .fam-right, .mixer-strips, .tracks-list, .ctx-subpanel) [data-tooltip]::after { display: none; }
+.float-tip { position: fixed; z-index: 10000; pointer-events: none; max-width: 340px; padding: 5px 10px; border-radius: 7px; background: var(--bg-3); color: var(--text-1); font-size: 11.5px; line-height: 1.35; box-shadow: 0 6px 20px rgba(0,0,0,.4), 0 0 0 1px var(--border); opacity: 0; transition: opacity .15s; }
+.float-tip.on { opacity: 1; }
+/* tranche étroite : ⏻ et ⇅ plus fins au survol, le nom garde de la place */
+@container (max-width: 110px) {
+  .insp-fx-row .fx-pow, .insp-fx-row .fx-swap { width: 11px; font-size: 9px; background: rgba(255,255,255,.08); }
+  .insp-fx-row .fx-pow svg { width: 8px; height: 8px; }
+  .insp-fx-row .fx-pow { left: 1px; }
+  .insp-fx-row .fx-swap { right: 1px; }
+  .insp-fx-row:has(.fx-pow) { padding-left: 13px; }
+  .insp-fx-row:has(.fx-pow):hover { padding-right: 13px; }
+}

@@ -12,6 +12,10 @@ export default async (c) => {
   // survol de chaque case de plugin
   const rows = await J(ev, `return [...document.querySelectorAll('.insp-fx-row')].map(e=>{const r=e.getBoundingClientRect(); return {x:r.left+r.width/2,y:r.top+r.height/2,t:e.textContent.trim()}}).filter(o=>o.y>0)`);
   for (const [i, r] of rows.slice(0, 6).entries()) { await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: r.x, y: r.y }); await L('02 survol case ' + i + ' ' + r.t.slice(0, 12)); }
+  // infobulle d'une case : affichée en entier, au-dessus de tout (pas coupée par la liste)
+  if (rows[1]) { await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: rows[1].x, y: rows[1].y }); await sleep(800);
+    const tp = await J(ev, `const t=document.querySelector('.float-tip.on'); if(!t) return null; const r=t.getBoundingClientRect(); return {txt:t.textContent.slice(0,30), ok: r.left>=0 && r.right<=innerWidth && r.top>=0, top: document.elementFromPoint(r.left+r.width/2, r.top+r.height/2)===t || null}`);
+    console.log((tp && tp.ok ? 'PASS' : 'FAIL') + ' infobulle de case affichée en entier — ' + JSON.stringify(tp)); await L('02 infobulle case'); }
   await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
   // plugins externes (simulés : pas de moteur natif dans Chrome) : noms longs dans la tranche et dans l'onglet Externes
   await ev(`(()=>{ const t=state.project.tracks[3]; t.effects=['vst#1','vst#2','vst#3']; t.effectParams={'vst#1':{name:'FabFilter Pro-Q 4'},'vst#2':{name:'UAD Neve 1073 Preamp & EQ Collection'},'vst#3':{name:'Auto-Tune Pro X'}}; state.selectedTrack=3; renderInspector&&renderInspector(); refreshStrips&&refreshStrips();

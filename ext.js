@@ -214,7 +214,10 @@ window.PulseExt = (function () {
         const fill = async (force) => {
             const el = box.querySelector('.ext-man-list');
             el.textContent = 'Recherche des plugins…';
-            const l = await scan(force).catch(() => []);
+            // une marque = un seul titre, même écrite autrement selon le format (« antares » / « Antares »)
+            const vKey = (v) => (v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+            const l = (await scan(force).catch(() => [])).slice().sort((a, b) => vKey(a.vendor).localeCompare(vKey(b.vendor)) || a.name.localeCompare(b.name, 'fr', { sensitivity: 'base' }));
+            const nice = {}; l.forEach(p => { const k = vKey(p.vendor), c = nice[k]; if (!c || (/[A-Z]/.test(p.vendor || '') && !/[A-Z]/.test(c)) || (/\s/.test(p.vendor || '') && !/\s/.test(c))) nice[k] = p.vendor; });
             const h = hidden();
             // plugins mis de côté par la vérification (ils plantent ou restent bloqués au chargement)
             const bad = await core().invoke('ext_verdicts').catch(() => ({}));
@@ -222,7 +225,7 @@ window.PulseExt = (function () {
             if (!l.length) { el.textContent = 'Aucun plugin VST3 trouvé.'; return; }
             let vendor = null;
             l.forEach(p => {
-                if (p.vendor !== vendor) { vendor = p.vendor; const v = document.createElement('div'); v.className = 'ext-man-vendor'; v.textContent = vendor || 'Autres'; el.appendChild(v); }
+                if (vKey(p.vendor) !== vendor) { vendor = vKey(p.vendor); const v = document.createElement('div'); v.className = 'ext-man-vendor'; v.textContent = nice[vendor] || 'Autres'; el.appendChild(v); }
                 const row = document.createElement('label'); row.className = 'ext-man-row';
                 row.innerHTML = `<input type="checkbox" ${h.has(keyOf(p)) ? '' : 'checked'}><span></span>`;
                 row.querySelector('span').textContent = p.name;
