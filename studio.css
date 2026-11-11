@@ -3933,3 +3933,7 @@ body[data-left-tool="fade"] .timeline-tracks .clip { cursor: ew-resize; }
 .studio-body .modal-backdrop .modal { max-height: calc(100vh - 84px); }
 /* l'en-tête « Pistes » reste devant les pistes qui défilent dessous (curseur de volume, poignée de hauteur) */
 .tracks-header { z-index: 20; }
+/* ligne d'infos en bas des fenêtres : place laissée à la poignée d'agrandissement (coin bas droit) */
+.fx-panel .lim-sb { padding-right: 20px; }
+/* fenêtres étroites (EQ 550…) : l'aide et les valeurs l'une sous l'autre, au lieu de deux colonnes écrasées */
+.ana-narrow .lim-sb { flex-direction: column; align-items: flex-start; gap: 3px; }

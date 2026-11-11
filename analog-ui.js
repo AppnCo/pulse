@@ -124,6 +124,7 @@ function anaWindow(t, fx, title, W, H, anchorEl, trackIdx, pw, skin = 'noir') {
     const rect = (anchorEl && anchorEl.getBoundingClientRect) ? anchorEl.getBoundingClientRect() : { left: 80, right: 80, top: 80 };
     pw = Math.min(pw, window.innerWidth - 16);
     panel.style.width = pw + 'px';
+    if (pw < 460) panel.classList.add('ana-narrow');   // fenêtre étroite : la ligne du bas ne garde que les valeurs
     let left = rect.right + 8; if (left + pw > window.innerWidth) left = Math.max(8, rect.left - pw - 8);
     panel.style.left = Math.max(8, Math.min(left, window.innerWidth - pw - 8)) + 'px';
     panel.style.top = Math.max(8, Math.min(rect.top - 20, window.innerHeight - panel.offsetHeight - 8)) + 'px';
