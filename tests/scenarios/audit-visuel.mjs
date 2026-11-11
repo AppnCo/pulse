@@ -5,7 +5,7 @@ export default async (c) => {
   const { ev, sleep, send } = c; const m = mouse(send);
   const DIR = process.env.VISU_DIR || '/tmp'; let total = 0;
   const L = async (label) => { await sleep(250); total += (await look(c, label, DIR)).length; };
-  await boot(c, JSON.parse(JSON.stringify(RAP)), { mic: false });
+  await boot(c, JSON.parse(JSON.stringify(RAP)), { mic: false, w: +(process.env.VISU_W || 1440), h: +(process.env.VISU_H || 860) });
   await instru(ev, 8, 0, 0); await sleep(300);
   await ev(`(()=>{ const t=state.project.tracks[2]; t.effects=['eq','comp','sat','deess','delay','reverb','fet76','opto2a']; state.selectedTrack=2; renderInspector&&renderInspector(); refreshStrips&&refreshStrips(); })()`);
   await L('01 studio');
@@ -13,6 +13,19 @@ export default async (c) => {
   const rows = await J(ev, `return [...document.querySelectorAll('.insp-fx-row')].map(e=>{const r=e.getBoundingClientRect(); return {x:r.left+r.width/2,y:r.top+r.height/2,t:e.textContent.trim()}}).filter(o=>o.y>0)`);
   for (const [i, r] of rows.slice(0, 6).entries()) { await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: r.x, y: r.y }); await L('02 survol case ' + i + ' ' + r.t.slice(0, 12)); }
   await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
+  // plugins externes (simulés : pas de moteur natif dans Chrome) : noms longs dans la tranche et dans l'onglet Externes
+  await ev(`(()=>{ const t=state.project.tracks[3]; t.effects=['vst#1','vst#2','vst#3']; t.effectParams={'vst#1':{name:'FabFilter Pro-Q 4'},'vst#2':{name:'UAD Neve 1073 Preamp & EQ Collection'},'vst#3':{name:'Auto-Tune Pro X'}}; state.selectedTrack=3; renderInspector&&renderInspector(); refreshStrips&&refreshStrips();
+    const fake=[['FabFilter','Pro-Q 4'],['FabFilter','Pro-C 2'],['Universal Audio (UADx)','UADx Neve 1073 Preamp and EQ Collection'],['Universal Audio (UADx)','UADx Teletronix LA-2A Tube Compressor'],['Soundtoys','EchoBoy Jr.'],['Antares Audio Technologies','Auto-Tune Pro X'],['Celemony','Melodyne'],['Valhalla DSP, LLC','ValhallaVintageVerb']].map(([v,n],i)=>({name:n,vendor:v,path:'/fake/'+i}));
+    PulseExt.available=()=>true; PulseExt.visible=()=>fake; })()`);
+  await L('02b externes tranche');
+  const xr = await J(ev, `return [...document.querySelectorAll('.insp-fx-row')].filter(e=>e.dataset.fx&&e.dataset.fx.startsWith('vst')).map(e=>{const r=e.getBoundingClientRect(); return {x:r.left+r.width/2,y:r.top+r.height/2}})`);
+  for (const [i, r] of xr.entries()) { await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: r.x, y: r.y }); await L('02b survol externe ' + i); }
+  await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
+  await ev(`closeAllMenus(); openAddEffectMenu(document.querySelector('.slot-plus')||document.body, 3, state.project.tracks[3])`);
+  await ev(`const b=[...document.querySelectorAll('.fam-range')].find(b=>b.textContent==='Externes'); b&&b.click()`); await L('02c menu effet Externes');
+  const vend = await J(ev, `return [...document.querySelectorAll('.fx-add-menu .fam-cat:not([hidden])')].length`);
+  for (let i = 0; i < Math.min(vend, 6); i++) { await ev(`const c=[...document.querySelectorAll('.fx-add-menu .fam-cat:not([hidden])')][${i}]; c && (c.dispatchEvent(new MouseEvent('mouseenter',{bubbles:true})), c.click())`); await L('02c Externes categorie ' + i); }
+  await ev(`closeAllMenus(); state.selectedTrack=2; renderInspector&&renderInspector();`);
   // menu + Effet, chaque onglet
   await ev(`closeAllMenus(); openAddEffectMenu(document.querySelector('.slot-plus')||document.body, 2, state.project.tracks[2])`);
   await L('03 menu effet');

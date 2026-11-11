@@ -2376,6 +2376,8 @@ function chainOf(x) {
 // automation « fx:comp#2:… ». Même découpage dans les moteurs (FxChain dans fx.rs, createEffectsChain dans audio.js).
 const fxType = (id) => String(id).split('#')[0];
 const fxInstNum = (id) => { const m = /#(\d+)$/.exec(String(id)); return m ? +m[1] : 1; };
+// Case de plugin : nom sans la marque devant, comme Logic (« FabFilter Pro-Q 4 » → « Pro-Q 4 ») ; le nom complet reste dans l'infobulle
+function fxShortLabel(id) { const l = fxLabel(id); if (fxType(id) !== 'vst') return l; const s = l.replace(/^(FabFilter|UADx?|Universal Audio|Waves|Soundtoys|Arturia|Antares|Plugin Alliance|Slate Digital|iZotope|Native Instruments|Eventide|Valhalla|Kilohearts|Softube|SSL|Brainworx|bx_?)\s+/i, ''); return s || l; }
 function fxLabel(id) { const ty = fxType(id); if (ty === 'vst') return window.PulseExt ? PulseExt.nameOf(id) : 'Plugin externe'; return (FX_NAMES[ty] || ty) + (String(id).includes('#') ? ' ' + fxInstNum(id) : ''); }
 function nextFxInstance(o, ty) { let k = 2; while ((o.effects || []).includes(ty + '#' + k) || (o.fxOff || []).includes(ty + '#' + k)) k++; return ty + '#' + k; }
 // Vue d'un exemplaire pour les fenêtres d'effet (écrites pour « comp ») : la fenêtre lit et écrit « comp », la vue range dans « comp#2 »
@@ -2493,7 +2495,7 @@ function slotListsHtml(kind, x) {
             ${chain.map((n, k) => `
             <div class="insp-fx-row ${x.premaster || n === 'limit' || n === 'master' ? '' : 'can-drag'} ${fxIsOff(x, n) ? 'is-off' : ''}" data-fx="${n}" data-tooltip="Clic pour régler · clic maintenu et glisser pour changer l'ordre · clic droit pour copier ou supprimer">
                 ${x.premaster || x.locked || n === 'limit' || n === 'master' ? '' : `<b class="fx-pow" data-tooltip="Allumer / éteindre (clic maintenu et glisser vers le bas : plusieurs d'un coup)">${FX_POW_SVG}</b>`}
-                <span>${fxLabel(n)}</span>
+                <span${fxType(n) === 'vst' ? ` title="${esc(fxLabel(n))}"` : ''}>${esc(fxShortLabel(n))}</span>
                 ${x.premaster || x.locked || n === 'limit' || n === 'master' ? '' : '<b class="fx-swap" data-tooltip="Remplacer par un autre plugin">⇅</b><i class="insp-del" data-tooltip="Supprimer cet effet">×</i>'}
             </div>`).join('')}
             ${x.premaster || x.locked ? '' : Array.from({ length: Math.max(4, 8 - chain.length - (kind === 'track' && showTuneSlot(x) ? 1 : 0)) }, (_, i) => `<div class="insp-slot-empty${i === 0 ? ' insp-add-fx' : ''}" data-tooltip="Emplacement libre : clique pour mettre un effet"></div>`).join('')}

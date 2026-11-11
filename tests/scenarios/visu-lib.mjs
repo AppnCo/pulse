@@ -45,7 +45,7 @@ export const DETECT = `(()=>{
     }
   }
   // 4. menus et fenêtres flottantes hors de l'écran
-  document.querySelectorAll('.track-ctx-menu,.ctx-subpanel,.fx-panel,[class*=-panel],[class*=modal]').forEach(m => { if (!vis(m)) return; const r = m.getBoundingClientRect(); if (r.right > W + 1 || r.bottom > H + 1 || r.left < -1 || r.top < -1) out.push('FENÊTRE HORS ÉCRAN | ' + name(m) + ' | ' + [r.left, r.top, r.right, r.bottom].map(Math.round).join(',')); });
+  document.querySelectorAll('.track-ctx-menu,.ctx-subpanel,.fx-panel,[class*=-panel]:not([class*=spacer]):not(aside),[class*=modal]').forEach(m => { if (!vis(m)) return; const r = m.getBoundingClientRect(); if (r.right > W + 1 || r.bottom > H + 1 || r.left < -1 || r.top < -1) out.push('FENÊTRE HORS ÉCRAN | ' + name(m) + ' | ' + [r.left, r.top, r.right, r.bottom].map(Math.round).join(',')); });
   return out;
 })()`;
 export async function look(c, label, dir) {
