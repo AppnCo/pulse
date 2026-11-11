@@ -282,7 +282,7 @@ function initTempoLane() {
         b.setAttribute('data-tooltip', 'Piste de tempo : le tempo et la signature peuvent changer en cours de morceau (⌥T)');
         b.setAttribute('data-tooltip-placement', 'right');
         b.setAttribute('aria-label', 'Piste de tempo');
-        b.textContent = '♩';
+        if (typeof pIcon === 'function') b.innerHTML = pIcon('note'); else b.textContent = '♩';
         hdr.insertBefore(b, document.getElementById('btnAddTrack'));
         b.addEventListener('click', () => toggleTempoLane());
     }

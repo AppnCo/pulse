@@ -9,6 +9,8 @@ export default async (c) => {
   await instru(ev, 8, 0, 0); await sleep(300);
   await ev(`(()=>{ const t=state.project.tracks[2]; t.effects=['eq','comp','sat','deess','delay','reverb','fet76','opto2a']; state.selectedTrack=2; renderInspector&&renderInspector(); refreshStrips&&refreshStrips(); })()`);
   await L('01 studio');
+  const fl = await J(ev, `flash('🔒 Axe verrouillé : glisse de haut en bas pour changer de piste'); const f=document.getElementById('flash'); return f ? { svg: !!f.querySelector('svg'), txt: f.textContent } : {}`);
+  console.log((fl.svg && !/🔒/.test(fl.txt) ? 'PASS' : 'FAIL') + ' message d\'aide : icône Pulse à la place de l\'émoji — ' + JSON.stringify(fl)); await L('01 message cadenas');
   // survol de chaque case de plugin
   const rows = await J(ev, `return [...document.querySelectorAll('.insp-fx-row')].map(e=>{const r=e.getBoundingClientRect(); return {x:r.left+r.width/2,y:r.top+r.height/2,t:e.textContent.trim()}}).filter(o=>o.y>0)`);
   for (const [i, r] of rows.slice(0, 6).entries()) { await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: r.x, y: r.y }); await L('02 survol case ' + i + ' ' + r.t.slice(0, 12)); }

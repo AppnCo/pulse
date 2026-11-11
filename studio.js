@@ -423,8 +423,8 @@ function renderGroupHeader(bus) {
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
         </button>
         <div class="group-name" contenteditable="true" spellcheck="false">${esc(bus.name)}</div>
-        ${bus.spots ? '<button class="g-mini g-spots" data-tooltip="Effets ponctuels : choisis un passage de ta prise, puis un effet (Del, Pitch, Phone)">✦</button>' : ''}
-        <button class="g-mini g-son ${(bus.effects || []).length ? 'active' : ''}" data-tooltip="${bus.premaster ? 'Finition : le réglage final de tout le morceau' : 'Son du groupe : un réglage pour toutes ses pistes'}">♪</button>
+        ${bus.spots ? '<button class="g-mini g-spots" data-tooltip="Effets ponctuels : choisis un passage de ta prise, puis un effet (Del, Pitch, Phone)">' + pIcon('sparkle') + '</button>' : ''}
+        <button class="g-mini g-son ${(bus.effects || []).length ? 'active' : ''}" data-tooltip="${bus.premaster ? 'Finition : le réglage final de tout le morceau' : 'Son du groupe : un réglage pour toutes ses pistes'}">${pIcon('note')}</button>
         <button class="g-mini g-m ${bus.muted ? 'active' : ''}" data-tooltip="Couper tout le groupe">M</button>
         <button class="g-mini g-s ${allSolo ? 'active' : ''}" data-tooltip="Écouter seulement ce groupe">S</button>
         <input type="range" class="group-vol" min="0" max="100" step="0.5" data-default="${volToPos(100)}" value="${volToPos(bus.volume ?? 100)}" data-tooltip="Volume du groupe">
@@ -1476,7 +1476,7 @@ function renderClip(t, c, ci) {
         ${loopHtml}
         ${!c.recording ? '<div class="clip-loop-handle" data-loop-handle="1"></div>' : ''}
         ${clipFxHtml(c, totalWidthPx)}
-        <div class="clip-name" data-ci="${ci}">${esc(c.name || 'Clip')}${stale ? ' <span class="clip-stale-tag">⚠ audio perdu</span>' : ''}${c.midi ? ` <span class="clip-gain-tag">${c.midi.pid ? '🔗 ' : ''}${c.midi.inst === 'drums' ? 'PAS' : 'MIDI'}</span>` : ''}${c.tune ? ' <span class="clip-gain-tag">TUNE</span>' : ''}${c.rev ? ' <span class="clip-gain-tag">REV</span>' : ''}${c.warp ? ` <span class="clip-gain-tag">WARP ${Math.round(c.warp.srcBpm)}→${Math.round(c.warp.bpm)}</span>` : ''}${c.gain && c.gain !== 1 ? ` <span class="clip-gain-tag">${(20*Math.log10(c.gain)).toFixed(1)}dB</span>` : ''}</div>
+        <div class="clip-name" data-ci="${ci}">${esc(c.name || 'Clip')}${stale ? ' <span class="clip-stale-tag">' + pIcon('alert') + ' audio perdu</span>' : ''}${c.midi ? ` <span class="clip-gain-tag">${c.midi.pid ? pIcon('link') + ' ' : ''}${c.midi.inst === 'drums' ? 'PAS' : 'MIDI'}</span>` : ''}${c.tune ? ' <span class="clip-gain-tag">TUNE</span>' : ''}${c.rev ? ' <span class="clip-gain-tag">REV</span>' : ''}${c.warp ? ` <span class="clip-gain-tag">WARP ${Math.round(c.warp.srcBpm)}→${Math.round(c.warp.bpm)}</span>` : ''}${c.gain && c.gain !== 1 ? ` <span class="clip-gain-tag">${(20*Math.log10(c.gain)).toFixed(1)}dB</span>` : ''}</div>
     </div>`;
 }
 
@@ -1663,7 +1663,7 @@ function renderInstruDropzone(trackIdx) {
             </div>
             <div class="dz-panel dz-panel-file active" data-panel="file">
                 <div class="dz-big">
-                    <div class="dz-icon">🎵</div>
+                    <div class="dz-icon">${pIcon('note')}</div>
                     <div class="dz-title">Dépose ton instru ici</div>
                     <div class="dz-sub">MP3, WAV, FLAC, M4A — ou clique pour choisir</div>
                     <input type="file" class="dz-input" multiple accept="audio/*,.mp3,.wav,.m4a,.flac,.aif,.aiff,.ogg">
@@ -2469,7 +2469,7 @@ function inspectorStrip(kind, x, idx) {
     <div class="strip insp-strip" data-kind="${kind}" data-id="${isMaster ? 'master' : kind === 'track' ? idx : esc(x.id)}" style="--track-color: ${color}">
         <div class="strip-name">${esc(name)}</div>
         ${kind === 'track' && !x.isCapture ? monoButtonHtml(x) : ''}
-        ${kind === 'track' && x.frozen ? '<div class="insp-note">❄ Piste gelée : effets figés (clic droit > Son > Dégeler)</div>' : ''}
+        ${kind === 'track' && x.frozen ? '<div class="insp-note">' + pIcon('snow') + ' Piste gelée : effets figés (clic droit > Son > Dégeler)</div>' : ''}
         ${isMaster ? '<div class="insp-note">Tout le morceau sort ici</div>' : `<button class="strip-sound insp-sound" data-tooltip="${x.premaster ? 'Le réglage final de tout le morceau' : 'Réglage : charge un réglage prêt à l\'emploi (comme « Réglage » dans Logic)'}">${esc(soundLabel)} ▾</button>`}
         ${isMaster ? '' : slotListsHtml(kind, x)}
         ${(kind === 'track' || (kind === 'bus' && !x.premaster && !x.locked)) ? `<div class="insp-pan as-knob"><div class="insp-knob t-knob-look" role="slider" aria-label="Gauche / droite" data-tooltip="${panTip(x.pan || 0)}">${panKnobSvg(x.pan || 0)}</div><input type="range" class="insp-pan-input" min="-100" max="100" step="1" data-default="0" value="${x.pan || 0}" tabindex="-1" aria-hidden="true"></div>` : ''}
@@ -3380,7 +3380,7 @@ function openAddEffectMenu(anchor, target, x, replaceId = null) {
         el.className = 'ctx-item fam-fx' + (String(n).startsWith('ext:') ? ' fam-ext' : ''); el.dataset.cat = c; el.dataset.fx = n;
         // petite image de la fenêtre du plugin à côté de son nom (assets/fxthumbs)
         if (String(n).startsWith('ext:')) { el.innerHTML = `<span class="fam-txt"><span class="fam-nm">${esc(nameOf(n))}</span></span>`; el.addEventListener('click', () => pick(n)); right.appendChild(el); return; }   // plugin externe : nom seul, ligne compacte
-        el.innerHTML = `<span class="fam-thumb-wrap">${n === 'tune' ? '<span class="fam-thumb fam-thumb-none">♪</span>' : `<img class="fam-thumb" src="assets/fxthumbs/${esc(fxType(n))}.webp" alt="" loading="lazy" onerror="this.style.visibility='hidden'">`}</span><span class="fam-txt"><span class="fam-nm">${esc(n === 'tune' ? 'PulseTune' : nameOf(n))}${has(n) ? '<i class="fam-tag">déjà là · ouvrir</i>' : ''}</span><span class="fam-ds">${esc(n === 'tune' ? 'Auto-Tune : corrige la justesse de la voix' : descOf(n))}</span></span>`;
+        el.innerHTML = `<span class="fam-thumb-wrap">${n === 'tune' ? '<span class="fam-thumb fam-thumb-none">' + pIcon('note') + '</span>' : `<img class="fam-thumb" src="assets/fxthumbs/${esc(fxType(n))}.webp" alt="" loading="lazy" onerror="this.style.visibility='hidden'">`}</span><span class="fam-txt"><span class="fam-nm">${esc(n === 'tune' ? 'PulseTune' : nameOf(n))}${has(n) ? '<i class="fam-tag">déjà là · ouvrir</i>' : ''}</span><span class="fam-ds">${esc(n === 'tune' ? 'Auto-Tune : corrige la justesse de la voix' : descOf(n))}</span></span>`;
         el.addEventListener('click', () => pick(n));
         right.appendChild(el);
     }));
@@ -4675,7 +4675,7 @@ async function openMicMenu(anchor) {
     menu.innerHTML = `<div class="ctx-title">Avec quoi tu enregistres ?</div>` + inputs.map((d, i) =>
         `<div class="ctx-item${d.deviceId === current ? ' is-current' : ''}" data-id="${esc(d.deviceId)}">${d.deviceId === current ? '✓ ' : ''}${esc(d.label || `Micro ${i + 1}`)}</div>`
     ).join('');
-    menu.insertAdjacentHTML('beforeend', `<div class="ctx-sep"></div><div class="ctx-mode" data-calib="1">⏱ Caler ma voix sur l'instru (réglage auto, 3 s)</div>`);
+    menu.insertAdjacentHTML('beforeend', `<div class="ctx-sep"></div><div class="ctx-mode" data-calib="1">${pIcon('timer')} Caler ma voix sur l'instru (réglage auto, 3 s)</div>`);
     menu.querySelector('[data-calib]').addEventListener('mousedown', (e) => e.stopPropagation());
     menu.querySelector('[data-calib]').addEventListener('click', () => { closeAllMenus(); runLatencyCalibration(); });
     menu.querySelectorAll('.ctx-item').forEach(el => {
@@ -5170,7 +5170,7 @@ function tick() {
         if (clipEl) {
             clipEl.style.width = (elapsed * state.pxPerSecond) + 'px';
             const nameEl = clipEl.querySelector('.clip-name');
-            if (nameEl) nameEl.textContent = '⏺ ' + secondsToDuration(elapsed);
+            if (nameEl) nameEl.innerHTML = iconizeHtml(esc('⏺ ' + secondsToDuration(elapsed)));
             if (state.playhead >= lc.start) drawLiveRecWave(clipEl, elapsed);
         }
     }
@@ -5914,7 +5914,7 @@ function bindGlobalDragDrop() {
         overlay.className = 'global-drop-overlay';
         overlay.innerHTML = `
             <div class="global-drop-inner">
-                <div class="global-drop-icon">🎵</div>
+                <div class="global-drop-icon">${pIcon('note')}</div>
                 <div class="global-drop-title">Dépose ton audio</div>
                 <div class="global-drop-sub">Nouvelle piste créée automatiquement</div>
             </div>`;
@@ -6130,7 +6130,7 @@ function updateRecLevelHint() {
 
     if (level < 0.02) {
         hint.className = 'rec-level-hint visible lvl-silent';
-        hint.textContent = '🎙 Silence… parle dans le micro';
+        hint.innerHTML = iconizeHtml(esc('🎙 Silence… parle dans le micro'));
         _clipFrameCount = 0;
     } else if (level < 0.12) {
         hint.className = 'rec-level-hint visible lvl-low';
@@ -6144,11 +6144,11 @@ function updateRecLevelHint() {
         _clipFlashSent = false;
     } else if (level < 0.96) {
         hint.className = 'rec-level-hint visible lvl-hot';
-        hint.textContent = '⚡ Chaud — attention à la saturation';
+        hint.innerHTML = iconizeHtml(esc('⚡ Chaud — attention à la saturation'));
         _clipFrameCount = 0;
     } else {
         hint.className = 'rec-level-hint visible lvl-clip';
-        hint.textContent = '🔴 CLIP ! Baisse le gain';
+        hint.innerHTML = iconizeHtml(esc('🔴 CLIP ! Baisse le gain'));
         _clipFrameCount++;
         if (_clipFrameCount > 3 && !_clipFlashSent) {
             flash('🔴 Trop fort, ça sature ! Recule un peu du micro ou baisse le volume d\'entrée de ta carte son');
@@ -6360,14 +6360,14 @@ function openExportModal() {
                 ${hasLoop ? `
                 <div class="export-sep-label">── Exporter la sélection (${loopLabel}) ──</div>
                 <button class="export-opt" data-fmt="wav-loop">
-                    <div class="export-opt-tag" style="background:#f59e0b;color:#000">WAV ✂</div>
+                    <div class="export-opt-tag" style="background:#f59e0b;color:#000">WAV ${pIcon('scissors')}</div>
                     <div class="export-opt-info">
                         <div class="export-opt-title">WAV — zone de boucle</div>
                         <div class="export-opt-desc">Exporte uniquement la plage sélectionnée (${loopLabel}) en WAV.</div>
                     </div>
                 </button>
                 <button class="export-opt" data-fmt="mp3-loop" data-bitrate="320">
-                    <div class="export-opt-tag" style="background:#f59e0b;color:#000">MP3 ✂</div>
+                    <div class="export-opt-tag" style="background:#f59e0b;color:#000">MP3 ${pIcon('scissors')}</div>
                     <div class="export-opt-info">
                         <div class="export-opt-title">MP3 320 — zone de boucle</div>
                         <div class="export-opt-desc">Exporte uniquement la plage sélectionnée en MP3 320 kbps.</div>
@@ -7474,7 +7474,7 @@ function openWarpPanel(trackIdx, clipIdx, x, y) {
     const panel = document.createElement('div');
     panel.className = 'fx-panel warp-panel';
     panel.innerHTML = `
-        <div class="fx-panel-header"><span>⏱ Warp</span><button class="fx-panel-close">×</button></div>
+        <div class="fx-panel-header"><span>${pIcon('timer')} Warp</span><button class="fx-panel-close">×</button></div>
         <div class="fx-panel-body">
             <p class="warp-txt">${many ? `Cale ces <b>${group.length} régions</b>` : 'Cale ce son'} sur le tempo du projet, <b>sans changer sa hauteur</b>.</p>
             <div class="fx-row"><label class="fx-label">Tempo du son</label>
@@ -8501,7 +8501,7 @@ function openEqPanel(trackIdx, anchorEl) {
             <line x1="0" y1="${mid}" x2="${W}" y2="${mid}" class="viz-zero"/>
             <path d="${shade}" class="eq-cut"/>${fills}${own}${dyns}<path d="${line}" class="viz-line eq-line"/><g class="eq-live"></g>${pts}
             ${arr.length ? '' : `<text x="${W / 2}" y="${mid - 12}" class="eq-empty-txt" text-anchor="middle">Double-clic sur la courbe pour poser un point</text>`}
-            ${soloI >= 0 ? `<text x="10" y="20" class="eq-solo-txt">🎧 Solo du point ${soloI + 1} : tu n'entends que sa zone</text>` : ''}</svg>`;
+            ${soloI >= 0 ? `<text x="10" y="20" class="eq-solo-txt">Solo du point ${soloI + 1} : tu n'entends que sa zone</text>` : ''}</svg>`;
         const ep = t.effectParams.eq || {};
         panel.querySelector('.eq-out b').textContent = `${(ep.out || 0) > 0 ? '+' : ''}${(ep.out || 0).toFixed(1).replace('.', ',')} dB`;
         const b = arr[sel];
@@ -8520,7 +8520,7 @@ function openEqPanel(trackIdx, anchorEl) {
             ${PulseAudio.eqIsDynamic(b) ? `<div class="eq-dynrow">${EQ_DYN_ICON} Dynamique · plage <button class="eq-dm">−</button><b>${Number(b.dyn) > 0 ? '+' : ''}${Number(b.dyn)} dB</b><button class="eq-dp">+</button> · seuil <input class="eq-num eq-thr" type="text" value="${b.thr ?? -30}"> dB</div>` : ''}
             <div class="eq-bub-foot"><span class="eq-tname"><span class="eq-dot" style="background:${EQ_COLORS[sel % EQ_COLORS.length]}"></span>${EQ_TYPES[b.type] || ''}</span>
                 <span class="eq-ic">
-                    <button class="eq-solo ${soloI === sel ? 'on' : ''}" data-tooltip="Solo : n'écouter que la zone de ce point">🎧</button>
+                    <button class="eq-solo ${soloI === sel ? 'on' : ''}" data-tooltip="Solo : n'écouter que la zone de ce point">${pIcon('headphones')}</button>
                     <button class="eq-onoff ${b.on === false ? '' : 'on'}" data-tooltip="Met ce point en pause sans le supprimer">⏻</button>
                     <button class="eq-dyn ${PulseAudio.eqIsDynamic(b) ? 'on dyn' : ''}" ${['bell', 'lowshelf', 'highshelf', 'tilt'].includes(b.type) ? '' : 'disabled'} data-tooltip="Point dynamique : il ne bouge que quand sa zone dépasse le seuil (ex. une voix qui devient boueuse)">${EQ_DYN_ICON}</button>
                     <button class="eq-del" data-tooltip="Retirer ce point">✕</button>
@@ -9311,7 +9311,7 @@ function openGatePanel(trackIdx, anchorEl) {
             <label class="fx-bypass-label fx-power" data-tooltip="Allumer ou éteindre l'effet"><input type="checkbox" class="fx-bypass" ${t.effects?.includes('gate') ? 'checked' : ''}><span class="fx-power-btn">⏻</span></label>
             <span class="fx-title lim-title">Gate <i>— ${esc(t.name || '')}</i></span>
             <span class="lim-seg gate-sty">${Object.entries(GATE_STYLES).map(([k, s]) => `<span data-sty="${k}" data-tooltip="${esc(s.tip)}">${s.label}</span>`).join('')}</span>
-            <button class="lim-tp gate-listen" data-tooltip="Écouter le déclencheur : tu entends ce que le gate « voit » (pendant la lecture). Se coupe à la fermeture">🎧 Écouter</button>
+            <button class="lim-tp gate-listen" data-tooltip="Écouter le déclencheur : tu entends ce que le gate « voit » (pendant la lecture). Se coupe à la fermeture">${pIcon('headphones')} Écouter</button>
             <button class="fx-panel-close">×</button>
         </div>
         <div class="lim-face">
@@ -9411,7 +9411,7 @@ function openGatePanel(trackIdx, anchorEl) {
             el.classList.toggle('on', Object.keys(st).every(k => (P()[k] ?? (k === 'ratio' ? 0 : undefined)) === st[k]));
         });
         panel.querySelector('.gate-listen').classList.toggle('on', !!P().listen);
-        panel.querySelector('.gate-hint').textContent = P().listen ? '🎧 tu entends ce que le gate « voit »' : 'violet = ce qui passe · zone sombre = baissé';
+        panel.querySelector('.gate-hint').innerHTML = iconizeHtml(esc(P().listen ? '🎧 tu entends ce que le gate « voit »' : 'violet = ce qui passe · zone sombre = baissé'));
     };
     const syncKnobs = () => { kThr.set(P().threshold ?? -45); kRat.set(ratioOf()); kRng.set(P().reduction ?? 40); kKnee.set(P().knee || 0); kAtt.set(P().attack ?? 2); kHold.set(P().hold ?? 50); kRel.set(P().release ?? 150); drawRange(); draw(); };
     let lastPush = 0;
@@ -9495,7 +9495,7 @@ function openDeessPanel(trackIdx, anchorEl) {
             <span class="fx-title lim-title">De-esser <i>— ${esc(t.name || '')}</i></span>
             <span class="lim-seg ds-md"><span data-v="0" data-tooltip="Séparé : on baisse seulement les aigus, le reste de la voix ne bouge pas">Séparé</span><span data-v="1" data-tooltip="Large : toute la voix baisse un instant pendant le « s » (plus naturel sur certaines voix)">Large</span></span>
             <span class="lim-seg ds-rel"><span data-v="0" data-tooltip="Voix seule : réagit au niveau des « s » (une voix seule, bien enregistrée)">Voix seule</span><span data-v="1" data-tooltip="Tout-terrain : réagit aux « s » par rapport au reste de la voix (voix qui bouge beaucoup, bus de voix)">Tout-terrain</span></span>
-            <button class="lim-tp ds-listen" data-tooltip="Écouter seulement ce qui est détecté (la zone des « s »), pendant la lecture. Se coupe à la fermeture">🎧 Écouter</button>
+            <button class="lim-tp ds-listen" data-tooltip="Écouter seulement ce qui est détecté (la zone des « s »), pendant la lecture. Se coupe à la fermeture">${pIcon('headphones')} Écouter</button>
             <button class="fx-panel-close">×</button>
         </div>
         <div class="lim-face">
@@ -9587,7 +9587,7 @@ function openDeessPanel(trackIdx, anchorEl) {
         panel.querySelectorAll('.ds-md span').forEach(el => el.classList.toggle('on', +el.dataset.v === (P().wide ? 1 : 0)));
         panel.querySelectorAll('.ds-rel span').forEach(el => el.classList.toggle('on', +el.dataset.v === (P().rel ? 1 : 0)));
         panel.querySelector('.ds-listen').classList.toggle('on', !!P().listen);
-        panel.querySelector('.ds-hint').textContent = P().listen ? '🎧 tu entends seulement les « s » détectés'
+        panel.querySelector('.ds-hint').innerHTML = P().listen ? pIcon('headphones') + ' tu entends seulement les « s » détectés'
             : old() ? `Ancien réglage (force ${Math.round(P().amount || 0)} %) : touche un bouton pour passer au nouveau de-esser` : 'gris = la voix · orange = chaque « s » détecté, et ce qu\'il en reste';
     };
     const syncKnobs = () => { kThr.set(V('thr')); kRng.set(V('range')); drawRange(); draw(); };
@@ -13579,6 +13579,23 @@ function openClipContextMenu(x, y, trackIdx, clipIdx) {
 
 // === Icônes des menus clic droit : traits fins aux couleurs de Pulse, à la place des emojis ===
 const CTX_ICON_PATHS = {
+    lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+    unlock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 7.5-2"/>',
+    headphones: '<path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/>',
+    rec: '<circle cx="12" cy="12" r="5.5" fill="#ef4444" stroke="#ef4444"/>',
+    note: '<path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/>',
+    bolt: '<path d="M13 3 5 13h6l-1 8 8-10h-6z"/>',
+    sliders: '<path d="M6 4v16M12 4v16M18 4v16"/><rect x="4" y="13" width="4" height="3" rx="1"/><rect x="10" y="7" width="4" height="3" rx="1"/><rect x="16" y="11" width="4" height="3" rx="1"/>',
+    gear: '<circle cx="12" cy="12" r="3"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4"/>',
+    timer: '<circle cx="12" cy="13" r="7"/><path d="M12 13V9M10 3h4"/>',
+    alert: '<path d="M12 4 2.5 20h19z"/><path d="M12 10v4M12 17.2v.1"/>',
+    snow: '<path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9"/><path d="M9.5 4.5 12 7l2.5-2.5M9.5 19.5 12 17l2.5 2.5"/>',
+    sparkle: '<path d="M12 4l1.8 5.2L19 11l-5.2 1.8L12 18l-1.8-5.2L5 11l5.2-1.8z"/>',
+    check: '<path d="M5 12.5 10 17l9-10"/>',
+    undo: '<path d="M9 7 4 12l5 5"/><path d="M4 12h10a6 6 0 0 1 0 12"/>',
+    redo: '<path d="M15 7l5 5-5 5"/><path d="M20 12H10a6 6 0 0 0 0 12"/>',
+    refresh: '<path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/>',
+    pin: '<path d="M12 21s-6-5.5-6-11a6 6 0 0 1 12 0c0 5.5-6 11-6 11z"/><circle cx="12" cy="10" r="2"/>',
     pencil: '<path d="M4 20l4.5-1 10-10a2.1 2.1 0 0 0-3-3l-10 10L4 20z"/><path d="M13.5 7.5l3 3"/>',
     copy: '<rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M5 15V6.5A2.5 2.5 0 0 1 7.5 4H15"/>',
     scissors: '<circle cx="6" cy="6.5" r="2.6"/><circle cx="6" cy="17.5" r="2.6"/><path d="M8 8l12 9M8 16l12-9"/>',
@@ -13613,6 +13630,13 @@ const CTX_ICON_RULES = [
     [/supprimer la répétition|répétition/i, 'repeat'], [/supprimer|effacer|retirer|vider/i, 'trash'],
     [/couleur/i, 'palette'], [/^(ajouter|nouvelle|nouveau|créer)/i, 'plus'], [/fusion|fusionner|rassembler/i, 'wave']
 ];
+// Émojis → icônes Pulse (même trait que le reste de l'interface) : messages d'aide, notes, étiquettes
+const EMOJI_ICONS = { '🔒': 'lock', '🔓': 'unlock', '🎙': 'mic', '🎤': 'mic', '🎧': 'headphones', '🔴': 'rec', '⏺': 'rec', '🎹': 'piano', '🪘': 'drums', '🥁': 'drums',
+    '🎵': 'note', '⚡': 'bolt', '⏪': 'reverse', '👋': 'sparkle', '🎚': 'sliders', '🔊': 'volume', '📝': 'pencil', '⚙': 'gear', '⏱': 'timer', '⚠': 'alert',
+    '❄': 'snow', '🔗': 'link', '✂': 'scissors', '✦': 'sparkle', '⬆': 'upload', '✓': 'check', '↩': 'undo', '↪': 'redo', '↻': 'refresh', '📍': 'pin' };
+const EMOJI_RE = new RegExp('(' + Object.keys(EMOJI_ICONS).map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')\uFE0E?\uFE0F?', 'gu');
+function pIcon(name, cls = 'p-ic') { return `<svg class="${cls}" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${CTX_ICON_PATHS[name] || CTX_ICON_PATHS.dot}</svg>`; }
+function iconizeHtml(html) { return String(html).replace(EMOJI_RE, (m, e) => pIcon(EMOJI_ICONS[e])); }
 function ctxIconSvg(name) {
     return `<svg class="ctx-ic" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${CTX_ICON_PATHS[name] || CTX_ICON_PATHS.dot}</svg>`;
 }
@@ -16925,7 +16949,7 @@ function flash(msg) {
     const transportTop = transport ? transport.getBoundingClientRect().top : window.innerHeight;
     el.style.bottom = (window.innerHeight - transportTop + 12) + 'px';
     el.style.top = '';
-    el.textContent = msg;
+    try { el.innerHTML = iconizeHtml(esc(msg)); } catch (e) { el.textContent = msg; }   // icônes Pulse à la place des émojis
     el.style.opacity = '1';
     el.style.transform = 'translateX(-50%) translateY(0)';
     clearTimeout(el._to);

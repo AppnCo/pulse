@@ -21,7 +21,18 @@ pub struct Project {
     /// Fader Master (100 = 0 dB affiché, comme `masterVolume` du navigateur)
     #[serde(rename = "masterVolume")]
     pub master_volume: Option<f64>,
+    /// Métronome joué par le moteur (lecture seulement, jamais dans un export) : même horloge que les pistes
+    pub metronome: Option<Metronome>,
 }
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct Metronome {
+    /// temps par mesure (accent sur le premier)
+    pub bpb: u32,
+    pub volume: f64,
+}
+impl Default for Metronome { fn default() -> Self { Self { bpb: 4, volume: 1.0 } } }
 
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]

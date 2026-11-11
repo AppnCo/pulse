@@ -11,6 +11,8 @@ export const DETECT = `(()=>{
     if (['SCRIPT','STYLE','SVG','PATH','CANVAS','OPTION','INPUT','TEXTAREA','SELECT'].includes(e.tagName.toUpperCase())) continue;
     const own = [...e.childNodes].filter(n => n.nodeType === 3 && n.textContent.trim()).map(n => n.textContent.trim()).join(' ');
     if (!own || !vis(e)) continue;
+    // 0. émoji affiché (doit être une icône Pulse dessinée, pas un émoji du système)
+    if (/[\u{1F300}-\u{1FAFF}\u2600-\u26FF\u2702\u2B06\u23F1\u23FA\u23EA]/u.test(own) && !e.closest('kbd')) add('ÉMOJI', e, own);
     const r = e.getBoundingClientRect();
     if (r.bottom < 0 || r.top > H || r.right < 0 || r.left > W) continue;
     const s = getComputedStyle(e);

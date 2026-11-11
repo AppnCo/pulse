@@ -306,6 +306,9 @@ pub struct Renderer {
     base: RenderOptions,
     /// Boucle (cycle) en échantillons depuis `from` : arrivé à la fin, on repart du début sans trou ; les effets gardent leur état
     loop_ab: Option<(usize, usize)>,
+    /// Métronome : (temps par mesure, volume) et paliers de tempo (seconde de début, bpm, temps écoulés au début)
+    metro: Option<(u32, f32)>,
+    metro_segs: Vec<(f64, f64, f64)>,
     /// Vrai juste après un tour de boucle (lu une fois par `take_wrap`)
     wrapped: bool,
     /// Fondu d'entrée (≈ 2 ms) après un tour de boucle, jusqu'à cet échantillon : pas de clic à la reprise
@@ -487,11 +490,48 @@ impl Renderer {
         let limiter = opts.only_track.is_none().then(|| crate::fx::Limiter::new(project.ceiling(), sr));
         let _ = base_opts;
         Self { sr, from, to, frames, pos: 0, master_volume: opts.master_volume, only_track: opts.only_track.is_some(), n_buses: project.buses.len(), tracks, buses, sends, limiter, base: RenderOptions { sample_rate: opts.sample_rate, master_volume: base_opts.master_volume, range: opts.range, only_track: opts.only_track, start: opts.start },
-               loop_ab: None, wrapped: false, fade_in_end: None, levels: Vec::new(), master_rms: 0.0,
-               grs: Vec::new(), fxm: Vec::new(), scope_target: None, scope: vec![0.0; SCOPE], scope_i: 0 }
+               loop_ab: None, metro: None, metro_segs: Vec::new(), wrapped: false, fade_in_end: None, levels: Vec::new(), master_rms: 0.0,
+               grs: Vec::new(), fxm: Vec::new(), scope_target: None, scope: vec![0.0; SCOPE], scope_i: 0 }.with_metro(project)
     }
+    fn with_metro(mut self, project: &Project) -> Self { self.set_metro(project); self }
 
     /// Longueur totale (échantillons), queue des effets comprise
+    /// Métronome pris dans le projet (champ `metronome`, envoyé par la page pour la lecture seulement)
+    pub fn set_metro(&mut self, project: &Project) {
+        self.metro = project.metronome.as_ref().map(|m| (m.bpb.clamp(1, 12), m.volume.clamp(0.0, 2.0) as f32));
+        let mut segs = Vec::new();
+        let mut beats = 0.0;
+        let list = project.tempo_segments();
+        for (i, &(t0, bpm)) in list.iter().enumerate() {
+            segs.push((t0, bpm, beats));
+            if let Some(&(t1, _)) = list.get(i + 1) { beats += (t1 - t0) * bpm / 60.0; }
+        }
+        if segs.is_empty() { segs.push((0.0, if project.bpm > 0.0 { project.bpm } else { 120.0 }, 0.0)); }
+        self.metro_segs = segs;
+    }
+    /// Clic du métronome : carré amorti (comme celui du navigateur), 1200 Hz sur le 1er temps de la mesure, 800 Hz sinon
+    fn add_clicks(&self, left: &mut [f32], right: &mut [f32], b0: usize, n: usize, bpb: u32, vol: f32) {
+        const DUR: f64 = 0.06;
+        let k_decay = (400.0f64).ln() / 0.059;
+        for m in 0..n {
+            let t = self.from + (b0 + m) as f64 / self.sr;
+            if t < 0.0 { continue; }
+            let i = self.metro_segs.iter().rposition(|s| s.0 <= t).unwrap_or(0);
+            let (t0, bpm, beats0) = self.metro_segs[i];
+            let beat_pos = beats0 + (t - t0) * bpm / 60.0;
+            let k = (beat_pos + 1e-9).floor();
+            // instant du dernier temps (dans ce palier, ou au début du palier si le temps tombe avant)
+            let tk = t0 + (k - beats0) * 60.0 / bpm;
+            let dt = t - tk.max(t0.min(t));
+            if !(0.0..DUR).contains(&dt) { continue; }
+            let accent = (k as i64).rem_euclid(bpb as i64) == 0;
+            let f = if accent { 1200.0 } else { 800.0 };
+            let env = if dt < 0.001 { 0.4 * dt / 0.001 } else { 0.4 * (-(dt - 0.001) * k_decay).exp() };
+            let sq = if (dt * f).fract() < 0.5 { 1.0 } else { -1.0 };
+            let x = (env * sq) as f32 * vol * 0.6;
+            left[m] += x; right[m] += x;
+        }
+    }
     pub fn frames(&self) -> usize { self.frames }
     pub fn sample_rate(&self) -> f64 { self.sr }
     /// Échantillons déjà mixés
@@ -563,6 +603,7 @@ impl Renderer {
         let project = &prepared(project, media, self.base.sample_rate as f64, self.base.only_track.is_some());
         let opts = with_fader(project, &self.base);
         self.master_volume = opts.master_volume;
+        self.set_metro(project);   // métronome allumé / éteint pendant la lecture
         for tr in &mut self.tracks {
             let Some(track) = project.tracks.get(tr.idx) else { continue };
             let t = track_taps(project, track, tr.idx, &opts);
@@ -783,6 +824,8 @@ impl Renderer {
         let mut sq = 0.0f32;
         for m in 0..n { let x = (left[m] + right[m]) * 0.5; sq += x * x; }
         self.master_rms = (sq / n as f32).sqrt();
+        // 7. Métronome (lecture seulement) : ajouté après les vumètres, sur la même horloge que les pistes, à l'échantillon près
+        if let Some((bpb, vol)) = self.metro { self.add_clicks(left, right, b0, n, bpb, vol); }
         let _ = self.to;
         self.pos += n;
         if self.loop_ab.is_some_and(|(_, b)| self.pos == b) { self.wrap(); }

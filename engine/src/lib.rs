@@ -42,6 +42,30 @@ mod tests {
         assert!((a - b).abs() < 2e-3, "{a} != {b}");
     }
 
+    /// Débuts des clics du métronome (secondes) dans un rendu
+    fn metro_onsets(p: &Project) -> Vec<f64> {
+        let media = Media::from([("a".to_owned(), Source::new(SR, vec![vec![0.0f32; SR as usize * 6]]))]);
+        let (l, _) = render(p, &media, &opts());
+        let mut out = Vec::new(); let mut quiet = SR as usize;
+        for (i, x) in l.iter().enumerate() { if x.abs() > 1e-3 { if quiet > 2400 { out.push(i as f64 / SR as f64); } quiet = 0; } else { quiet += 1; } }
+        out
+    }
+    #[test]
+    fn metronome_pile_sur_les_temps() {
+        let mut p = project(vec![clip(0.0, 6.0, 0.0)]);
+        p.bpm = 100.0; p.metronome = Some(crate::model::Metronome { bpb: 4, volume: 1.0 });
+        let on = metro_onsets(&p);
+        assert!(on.len() >= 9, "{on:?}");
+        for (k, t) in on.iter().enumerate() { assert!((t - k as f64 * 0.6).abs() < 1.5 / SR as f64 + 1e-9, "temps {k} : {t}"); }
+        // changement de tempo au temps 4 : 150 bpm ensuite (0,4 s par temps)
+        p.tempos = vec![crate::model::TempoChange { beat: 4.0, bpm: 150.0 }];
+        let on = metro_onsets(&p);
+        assert!((on[4] - 2.4).abs() < 1e-3 && (on[5] - 2.8).abs() < 1e-3, "{on:?}");
+        // sans métronome : silence
+        p.metronome = None;
+        assert!(metro_onsets(&p).is_empty());
+    }
+
     #[test]
     fn offset_dans_la_source() {
         let p = project(vec![clip(1.0, 2.0, 3.0)]);

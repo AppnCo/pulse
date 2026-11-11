@@ -230,7 +230,7 @@ window.PulseExt = (function () {
                 row.innerHTML = `<input type="checkbox" ${h.has(keyOf(p)) ? '' : 'checked'}><span></span>`;
                 row.querySelector('span').textContent = p.name;
                 const vd = bad && bad[p.path];
-                if (vd && vd !== 'ok') { const t = document.createElement('em'); t.className = 'ext-man-bad'; t.style.cssText = 'margin-left:8px;font-style:normal;font-size:11px;color:#FBBF24'; t.textContent = vd === 'bloque' ? '⚠ mis de côté : reste bloqué au chargement' : '⚠ mis de côté : plante au chargement'; t.title = '« Rechercher à nouveau » lui redonne sa chance (après une mise à jour ou une activation de licence)'; row.appendChild(t); }
+                if (vd && vd !== 'ok') { const t = document.createElement('em'); t.className = 'ext-man-bad'; t.style.cssText = 'margin-left:8px;font-style:normal;font-size:11px;color:#FBBF24'; t.innerHTML = (typeof pIcon === 'function' ? pIcon('alert') + ' ' : '') + (vd === 'bloque' ? 'mis de côté : reste bloqué au chargement' : 'mis de côté : plante au chargement'); t.title = '« Rechercher à nouveau » lui redonne sa chance (après une mise à jour ou une activation de licence)'; row.appendChild(t); }
                 row.querySelector('input').addEventListener('change', (e) => { const s = hidden(); if (e.target.checked) s.delete(keyOf(p)); else s.add(keyOf(p)); setHidden(s); });
                 el.appendChild(row);
             });

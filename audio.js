@@ -3712,6 +3712,11 @@ window.PulseAudio = (function() {
     let nativeBackend = null, nativeProject = null, nativeWall = 0, nativeFrom = 0, nativeOn = false, nativeTimer = null;
     function setNativeBackend(b) { nativeBackend = b || null; }
     function isNative() { return nativeOn; }
+    // Lecture par le moteur natif : c'est lui qui joue le métronome (même horloge que les pistes, à l'échantillon près).
+    // Le métronome du navigateur jouait sur sa propre horloge et sa propre sortie : il se décalait des pistes.
+    function withMetro(p) { return metronomeEnabled && p ? Object.assign({}, p, { metronome: { bpb: metroBpbar, volume: 1 } }) : p; }
+    // métronome allumé / éteint / mesure changée pendant une lecture native : le moteur le prend en direct
+    function metroChanged() { if (nativeOn) nativeMixSoon(); }
     // Ce que le moteur natif renvoie pendant la lecture : position, niveaux (vumètres), boucle tenue par lui
     let nativeLive = null, nativeLiveTimer = null, nativeLoopOk = false, nativeLoopSent = undefined;
     function nativeLiveStart() {
@@ -3867,7 +3872,7 @@ window.PulseAudio = (function() {
         clearTimeout(nativeMixTimer);
         nativeMixTimer = setTimeout(() => {
             if (!nativeOn || !nativeProject) return;
-            nativeBackend.mix(nativeProject).catch(() => nativeRefreshSoon());
+            nativeBackend.mix(withMetro(nativeProject)).catch(() => nativeRefreshSoon());
         }, 15);
     }
     function nativeRefreshSoon() {
@@ -3966,7 +3971,7 @@ window.PulseAudio = (function() {
             // changement pendant la lecture : le moteur natif passe au nouveau mix en fondu, sans s'arrêter
             if (opts.smooth && nativeOn && isPlaying && nativeBackend.swap) {
                 nativeProject = project;
-                try { await nativeBackend.swap(project); return; }
+                try { await nativeBackend.swap(withMetro(project)); return; }
                 catch (err) { if (!nativeOn) return; /* sinon : relance complète ci-dessous */ }
             }
             stopAll();
@@ -3976,7 +3981,7 @@ window.PulseAudio = (function() {
             try {
                 nativeLoopSent = loopCfg ? loopCfg.a + ',' + loopCfg.b : null;
                 nativeLoopOk = !!(loopCfg && loopCfg.b - loopCfg.a >= 0.05);
-                await nativeBackend.play(project, fromTime, loopCfg);
+                await nativeBackend.play(withMetro(project), fromTime, loopCfg);
                 nativeWall = performance.now();
                 nativeLiveStart();
             } catch (err) {
@@ -4906,6 +4911,7 @@ window.PulseAudio = (function() {
         metronomeEnabled = !!on;
         metroBpm = bpm || metroBpm;
         if (!on) stopMetronome();
+        metroChanged();
     }
 
     function setCountIn(on) { countInEnabled = !!on; }
@@ -4914,12 +4920,13 @@ window.PulseAudio = (function() {
     // Démarre le métronome aligné sur la grille des beats du projet.
     // projectPlayheadSec : position actuelle du playhead en secondes (pour aligner)
     let metroBpbar = 4;
-    function setBeatsPerBar(n) { metroBpbar = Math.max(1, Math.min(12, Math.round(n) || 4)); }
+    function setBeatsPerBar(n) { const v = Math.max(1, Math.min(12, Math.round(n) || 4)); if (v !== metroBpbar) { metroBpbar = v; metroChanged(); } }
     // tempoMap : le projet (tempo et signature qui changent, tempo.js) — sinon tempo fixe `bpm`
     let metroMap = null, metroOrigin = 0;
     const mapVaries = (p) => !!(p && window.PulseTempo && ((p.tempos && p.tempos.length) || (p.signatures && p.signatures.length)));
     function startMetronome(bpm, projectPlayheadSec = 0, tempoMap = null) {
         metroBpm = bpm;
+        if (nativeOn) { stopMetronome(); metroChanged(); return; }   // le moteur natif le joue lui-même
         metroMap = mapVaries(tempoMap) ? tempoMap : null;
         const beatSec = 60 / bpm;
         // Prochain beat à partir du playhead (pile dessus = on le joue)
