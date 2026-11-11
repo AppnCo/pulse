@@ -15421,6 +15421,24 @@ function startClipTrim(startEvent, clipEl, trackIdx, clipIdx, side) {
             others.push({ ti, ci, c, start: c.start, dur: c.duration, off, max: Math.max(0.05, src - off) });
         }
     }
+    // Comme Logic : la forme d'onde reste FIXE dans la timeline pendant qu'on tire un bord ; la région n'en montre que sa fenêtre.
+    // On dessine une fois tout le fichier son, calé sur la timeline (avant : redessinée à chaque image, elle frétillait et glissait).
+    const fullWave = (ti, ci, c, off0) => {
+        const el = document.querySelector(`.timeline-track[data-i="${ti}"] .clip[data-ci="${ci}"]`);
+        if (!el || c.recording || c.loopEnd || c.warp || c.midi || !c.peaks) return null;
+        const old = el.querySelector('.clip-wave-svg:not(.loop-wave)'); if (!old) return null;
+        const src = (c.id && PulseAudio.getBufferDuration(c.id)) || (off0 + c.duration);
+        const W = src * state.pxPerSecond; if (!(W > 10) || W > 60000) return null;
+        const tmp = document.createElement('div');
+        tmp.innerHTML = renderClipWaveform(Object.assign({}, c, { start: c.start - off0, offset: 0, duration: src }), W);
+        const svg = tmp.firstElementChild; if (!svg || !svg.classList.contains('clip-wave-svg')) return null;
+        if (!svg.classList.contains('fine-wave')) { svg.style.width = (W - 4) + 'px'; svg.style.right = 'auto'; }
+        old.replaceWith(svg);
+        const place = () => { svg.style.transform = `translateX(${(-(c.offset || 0) * state.pxPerSecond).toFixed(2)}px)`; };
+        place(); return place;
+    };
+    const mainPlace = fullWave(trackIdx, clipIdx, clip, originalOffset);
+    for (const o of others) o.place = fullWave(o.ti, o.ci, o.c, o.off);
     const paintClip = (ti, ci, c) => {
         const el = document.querySelector(`.timeline-track[data-i="${ti}"] .clip[data-ci="${ci}"]`);
         if (!el) return;
@@ -15460,7 +15478,7 @@ function startClipTrim(startEvent, clipEl, trackIdx, clipIdx, side) {
                 // même décalage, avec les butées propres à chaque région
                 const d = Math.max(-o.off, -o.start, Math.min(o.dur - 0.05, diff));
                 o.c.start = o.start + d; o.c.duration = o.dur - d; o.c.offset = o.off + d;
-                paintClip(o.ti, o.ci, o.c);
+                paintClip(o.ti, o.ci, o.c); if (o.place) o.place();
             }
         } else {
             const raw = originalDuration + dt;
@@ -15482,7 +15500,8 @@ function startClipTrim(startEvent, clipEl, trackIdx, clipIdx, side) {
             el.style.left  = (clip.start    * state.pxPerSecond) + 'px';
             el.style.width = (clip.duration * state.pxPerSecond) + 'px';
             // On ne tire pas l'image : la forme d'onde est redessinée à chaque instant, on voit ce qui se cache derrière
-            if (!trimWaveRaf) trimWaveRaf = requestAnimationFrame(() => {
+            if (mainPlace) mainPlace();
+            else if (!trimWaveRaf) trimWaveRaf = requestAnimationFrame(() => {
                 trimWaveRaf = 0;
                 const w = clip.duration * state.pxPerSecond;
                 el.style.setProperty('--orig-w', w + 'px');
