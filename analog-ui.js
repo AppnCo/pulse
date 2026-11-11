@@ -124,7 +124,7 @@ function anaWindow(t, fx, title, W, H, anchorEl, trackIdx, pw, skin = 'noir') {
     const rect = (anchorEl && anchorEl.getBoundingClientRect) ? anchorEl.getBoundingClientRect() : { left: 80, right: 80, top: 80 };
     pw = Math.min(pw, window.innerWidth - 16);
     panel.style.width = pw + 'px';
-    if (pw < 460) panel.classList.add('ana-narrow');   // fenêtre étroite : la ligne du bas ne garde que les valeurs
+    if (pw < 640) panel.classList.add('ana-narrow');   // fenêtre étroite : la ligne du bas ne garde que les valeurs
     let left = rect.right + 8; if (left + pw > window.innerWidth) left = Math.max(8, rect.left - pw - 8);
     panel.style.left = Math.max(8, Math.min(left, window.innerWidth - pw - 8)) + 'px';
     panel.style.top = Math.max(8, Math.min(rect.top - 20, window.innerHeight - panel.offsetHeight - 8)) + 'px';
@@ -1225,7 +1225,7 @@ function openPlatePanel(trackIdx, anchorEl) {
     anaText(svg, 700, 228, 'DURÉE · s', { ...L, 'font-size': 10 });
     const small = [['pre', 'PRÉ-DÉLAI', 0, 200, 20, 'Pré-délai (ms) : la voix sort avant la réverbe'], ['bright', 'BRILLANCE', 0, 100, 60, 'Brillance : la plaque garde plus ou moins ses aigus'],
         ['lowcut', 'COUPE-BAS', 20, 500, 100, 'Coupe-bas à l\'entrée (Hz) : pas de grave qui bave'], ['width', 'LARGEUR', 0, 150, 100, 'Largeur stéréo (100 % = la plaque)'], ['mix', 'MÉLANGE', 0, 100, 25, 'Mélange (en bus : 100 %)']];
-    small.forEach(([key, lab, mn, mx, def, tip], i) => { const x = 80 + i * 105; anaTicks(svg, x, 292, 18, 7, -150, 150, null); knob({ strip: 'bakelite', cx: x, cy: 292, d: 30, key, min: mn, max: mx, def, tip }); anaText(svg, x, 322, lab, { ...L, 'font-size': 7.5, 'letter-spacing': 1 }); });
+    small.forEach(([key, lab, mn, mx, def, tip], i) => { const x = 80 + i * 105; anaTicks(svg, x, 292, 18, 7, -150, 150, null); knob({ strip: 'bakelite', cx: x, cy: 292, d: 30, key, min: mn, max: mx, def, tip }); anaText(svg, x, 331, lab, { ...L, 'font-size': 7.5, 'letter-spacing': 1 }); });   // sous les graduations (à 322 elles mordaient sur le nom)
     const vg = anaEl('g', {}, svg);
     const drawVar = () => { vg.innerHTML = ''; const cur = Math.round(P().variant ?? 0);
         NM.forEach((nm, i) => { const x = 660 + i * 80, on = i === cur, g = anaEl('g', { class: 'ana-push ana-var', 'data-v': i }, vg);
@@ -1306,7 +1306,7 @@ function openHall80Panel(trackIdx, anchorEl) {
         anaTicks(svg, x, y, 24, 9, -150, 150, null); knob({ strip: 'bakelite', cx: x, cy: y, d: 40, key, min: mn, max: mx, def, r, log: key === 'treble', tip }); anaText(svg, x, y + 38, lab, { ...L, 'font-size': 8, 'letter-spacing': 1 }); });
     const small = [['xover', 'CROISEMENT', 100, 1500, 400, 'Croisement (Hz) : où commencent les graves ×'], ['diffusion', 'DIFFUSION', 0, 100, 70, 'Diffusion : départ plus ou moins dense'],
         ['spin', 'MOUVEMENT', 0, 100, 40, 'Mouvement : les retards flottent doucement, la queue vit'], ['width', 'LARGEUR', 0, 150, 100, 'Largeur stéréo (100 % = la salle)'], ['mix', 'MÉLANGE', 0, 100, 25, 'Mélange (en bus : 100 %)']];
-    small.forEach(([key, lab, mn, mx, def, tip], i) => { const x = 70 + i * 92; anaTicks(svg, x, 288, 18, 7, -150, 150, null); knob({ strip: 'bakelite', cx: x, cy: 288, d: 30, key, min: mn, max: mx, def, log: key === 'xover', tip }); anaText(svg, x, 318, lab, { ...L, 'font-size': 7.5, 'letter-spacing': 1 }); });
+    small.forEach(([key, lab, mn, mx, def, tip], i) => { const x = 70 + i * 92; anaTicks(svg, x, 288, 18, 7, -150, 150, null); knob({ strip: 'bakelite', cx: x, cy: 288, d: 30, key, min: mn, max: mx, def, log: key === 'xover', tip }); anaText(svg, x, 327, lab, { ...L, 'font-size': 7.5, 'letter-spacing': 1 }); });
     const vg = anaEl('g', {}, svg);
     const drawVar = () => { vg.innerHTML = ''; const cur = Math.round(P().variant ?? 0);
         NM.forEach((nm, i) => { const x = 610 + i * 82, on = i === cur, g = anaEl('g', { class: 'ana-push ana-var', 'data-v': i }, vg);

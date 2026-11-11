@@ -1,6 +1,6 @@
 {
 "files": {
-"analog-ui.js": "22609cd8ee1dd73be80b52e455c82219e4c0435608585a8298b77a7612ee3a0d",
+"analog-ui.js": "7de43c0d8825787faa05830ffb0467893803ed641284967900f09aaceb4914c4",
 "assets/analog/alu-big.webp": "0584094c7144ed41bb2986eec3078dc6432530b908e0d11a5d462d82e39728df",
 "assets/analog/bakelite.webp": "7d509c304170a44d0736daf6a026b6ff7c481ab62d59fc85addd22ee63294974",
 "assets/analog/black-big.webp": "7c547fb34efadf15c59b21abda2f85c81bdb08955e1453917b235331208eee45",
@@ -95,9 +95,9 @@
 "pianoroll.js": "cf1aaeebd8e23676c525c11df77f14ca5e44e6519decf2dfb82f7578ee69ecda",
 "projectfile.js": "e214c12e0ff946f21e7cc39b9c54ce0ee44ac35632e86a93211ebb7cca15748f",
 "script.js": "db3e98a56222a9e7297b9764201671e632aeaf9e22acaf311b56c3b9be541390",
-"studio.css": "2cb7dec684bfd77130b8b6db94a325b8c10b186be2d47452a66d4a6270d59df7",
+"studio.css": "2eeb8ba3276649fa1d7f3c9ee1ae51b83d75c476f59077e736a746f4e1c478cc",
 "studio.html": "b3f6db6071e994aad3df951cd3a8a8985eb947afbbdd2fef644cc4cb63021a39",
-"studio.js": "2ad74ae0e7cc88bff78758acbc133ce5c65ecce971d50a898ffe07aea6ceedb8",
+"studio.js": "28ffd712d40e4a334d915945bc786b55b6110f2191b098aaf7b9386c759708f6",
 "styles.css": "9040ad9ca17969d48b7cc98c58afab3190dab1db6b986d245b71d0f9c438705c",
 "synth.js": "3daafe1a68a4e2abff7717bdce0af9880279f119b3e5fc52b55018b824726a8d",
 "tempo.js": "1ad0200f61ad3db6f6f5c47500b5c5ff042a585607c713ca324f752d27e33ca3",
@@ -107,5 +107,5 @@
 "vendor/lame.min.js": "15d285e2587b3bdbfd18a68de6ce07cc074f7480a82c3815da2dc1c348ec6df4",
 "warp.js": "209bb3114410db48c37af5bf718a4cd482fcb95cc5bbf7ae6f024e3420bf6f3e"
 },
-"version": "2026-11-11 20:11"
+"version": "2026-11-11 20:18"
 }

@@ -3964,3 +3964,4 @@ body[data-left-tool="fade"] .timeline-tracks .clip { cursor: ew-resize; }
 .mixer-strips .strip > .strip-output, .strip-master > .strip-output { margin-top: 0; }
 .strip-master .strip-fader-wrap { flex: 0 0 auto; }
 .strip-master .strip-fader-wrap { margin-bottom: 22px; }
+.fx-panel .fx-panel-footer { padding-right: 20px; }   /* la poignée d'agrandissement (coin bas droit) ne mord plus sur « Réinitialiser » */
