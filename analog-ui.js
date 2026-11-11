@@ -127,6 +127,8 @@ function anaWindow(t, fx, title, W, H, anchorEl, trackIdx, pw, skin = 'noir') {
     let left = rect.right + 8; if (left + pw > window.innerWidth) left = Math.max(8, rect.left - pw - 8);
     panel.style.left = Math.max(8, Math.min(left, window.innerWidth - pw - 8)) + 'px';
     panel.style.top = Math.max(8, Math.min(rect.top - 20, window.innerHeight - panel.offsetHeight - 8)) + 'px';
+    // les réglages sont ajoutés après coup : on recale la fenêtre une fois sa vraie hauteur connue
+    requestAnimationFrame(() => { const t = parseFloat(panel.style.top) || 0, h = panel.offsetHeight; if (t + h > window.innerHeight - 8) panel.style.top = Math.max(8, window.innerHeight - h - 8) + 'px'; });
     return { panel, svg };
 }
 

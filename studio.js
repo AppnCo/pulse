@@ -2475,7 +2475,7 @@ function inspectorStrip(kind, x, idx) {
             <input type="range" class="fader insp-fader" min="0" max="100" step="0.5" data-vmap="1" data-default="${volToPos(100)}" value="${volToPos(vol)}" ${x && x.locked && !showAll() ? 'disabled' : ''}>
             <div class="strip-db">${volumeToDb(vol)} dB</div>
         </div>
-        ${isMaster ? '<div class="strip-output"></div>' : (x.locked ? `<div class="strip-output">→ ${esc(busLabel(x.output))}</div>` : `<button class="strip-output insp-output" data-tooltip="Où va le son de ${kind === 'bus' ? 'ce groupe' : 'cette piste'} : clique pour changer la direction">→ ${esc(busLabel(x.output))} ▾</button>`)}
+        ${isMaster ? '<div class="strip-output"></div>' : (x.locked ? `<div class="strip-output">→ ${esc(busLabel(x.output))}</div>` : `<button class="strip-output insp-output" data-tooltip="Où va le son de ${kind === 'bus' ? 'ce groupe' : 'cette piste'} : clique pour changer la direction">→ <span class="out-n">${esc(busLabel(x.output))}</span> ▾</button>`)}
     </div>`;
 }
 const FX_POW_SVG = '<svg viewBox="0 0 12 12" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M6 1.5v4"/><path d="M3.3 3.2a4 4 0 1 0 5.4 0"/></svg>';
@@ -8060,7 +8060,7 @@ function delayVizSvg(p, bpm) {
 function reverbVizSvg(p) {
     const W = 420, H = 150, base = H - 16, secs = 5, X = (t) => 6 + t / secs * (W - 12);
     let g = '';
-    for (let s2 = 0; s2 <= secs; s2++) g += `<line x1="${X(s2).toFixed(1)}" x2="${X(s2).toFixed(1)}" y1="4" y2="${base}" class="viz-grid"/><text x="${(X(s2) + 3).toFixed(1)}" y="${H - 3}" class="viz-txt">${s2} s</text>`;
+    for (let s2 = 0; s2 <= secs; s2++) g += `<line x1="${X(s2).toFixed(1)}" x2="${X(s2).toFixed(1)}" y1="4" y2="${base}" class="viz-grid"/><text x="${(X(s2) + (X(s2) > W - 24 ? -3 : 3)).toFixed(1)}" y="${H - 3}" class="viz-txt"${X(s2) > W - 24 ? ' text-anchor="end"' : ''}>${s2} s</text>`;
     const pre = (p.pre || 0) / 1000, size = p.size ?? 1.8, decay = p.decay ?? 2.5, duck = (p.duck || 0) / 100;
     if (pre > 0) g += `<rect x="${X(0)}" y="4" width="${(X(pre) - X(0)).toFixed(1)}" height="${base - 4}" class="rv-pre"/>`;
     g += `<rect x="${X(0)}" y="${base - 9}" width="${(X(1.2) - X(0)).toFixed(1)}" height="7" rx="3" class="dl-voice"/><text x="${X(0) + 3}" y="${base - 12}" class="viz-txt">voix</text>`;
@@ -13264,7 +13264,8 @@ function ctxAddSubmenu(menu, item) {
         // posé sur la page, pas dans le menu : un menu qui défile (bus 1-32) coupait le sous-menu
         panel._owner = menu; document.body.appendChild(panel);
         const watch = setInterval(() => { if (!menu.isConnected || !panel) { clearInterval(watch); closePanel(); } }, 150);
-        const rr = row.getBoundingClientRect(), pr = panel.getBoundingClientRect();
+        // offsetWidth / offsetHeight : la vraie taille, sans l'animation d'ouverture qui rétrécit le sous-menu un instant
+        const rr = row.getBoundingClientRect(), pr = { width: panel.offsetWidth, height: panel.offsetHeight };
         let left = rr.right + 2; if (left + pr.width > window.innerWidth) left = Math.max(4, rr.left - pr.width - 2);
         let top = rr.top - 6; if (top + pr.height > window.innerHeight) top = Math.max(4, window.innerHeight - pr.height - 6);
         panel.style.left = left + 'px'; panel.style.top = top + 'px';
