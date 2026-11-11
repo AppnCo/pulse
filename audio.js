@@ -2107,6 +2107,7 @@ window.PulseAudio = (function() {
                         lvl = this.penv;
                     }
                     if (m === 1 || m === 3) { this.env2 += (sq - this.env2) * this.rmsC; lvl = Math.sqrt(this.env2) * Math.SQRT2; }
+                    if (lvl > (this.mLvl || 0)) this.mLvl = lvl;   // niveau d'entrée vu par le détecteur (point sur la courbe, comme Pro-C)
                     let want = 0;
                     if (lvl > 1e-5) {
                         const over = 20 * Math.log10(lvl) - thr;
@@ -2125,7 +2126,7 @@ window.PulseAudio = (function() {
                         out[ch][i] = (1 - this.mix) * x + this.mix * w;
                     }
                 }
-                if (this.report && (this.cnt += n) >= 480) { this.cnt = 0; this.port.postMessage(this.red * this.mix); }
+                if (this.report && (this.cnt += n) >= 480) { this.cnt = 0; this.port.postMessage({ gr: this.red * this.mix, inp: this.mLvl > 1e-6 ? 20 * Math.log10(this.mLvl) : -120 }); this.mLvl = 0; }
                 return true;
             }
         }
@@ -2731,6 +2732,7 @@ window.PulseAudio = (function() {
         try { n.port.postMessage({ set: r }); return true; } catch (e) { return false; }
     }
     const compGRts = new Map();
+    const compIn = new Map();   // niveau d'entrée du Compresseur Pulse (dB), pour le point sur sa courbe
     // La valeur de l'aiguille vient du compresseur en cours de lecture ; si plus rien n'arrive (arrêt, graphe reconstruit), elle est périmée
     // Gate en lecture : { e: niveau vu par le gate, g: gain appliqué } pour son écran
     const gateLive = new Map();
@@ -2741,6 +2743,9 @@ window.PulseAudio = (function() {
     // Limiteur en lecture : { i: crête d'entrée, o: crête de sortie, gr: gain le plus bas } pour son écran
     const limLive = new Map();
     function getLimiterMeter(key) { if (nativeOn) return nativeFxMeter(key, 'limit'); const v = limLive.get(key); return v && performance.now() - v.ts < 250 ? v : null; }
+    // Niveau d'entrée du Compresseur (dB) en lecture : point qui se promène sur la courbe entrée / sortie, comme Pro-C
+    function getCompInput(key) { if (nativeOn) { const lv = nativeLive && nativeLive.levels; if (!lv || !lv.cin || performance.now() - nativeLive.at > 1500) return null; const bus = key[0] === 'b', idx = bus ? nativeBusIndex(key.slice(1)) : parseInt(key.slice(1), 10); const g = lv.cin.find(x => x[0] === bus && x[1] === idx); return g ? g[2] : null; }
+        return compIn.has(key) && performance.now() - (compGRts.get(key) || 0) < 250 ? compIn.get(key) : null; }
     function getCompReduction(key) { if (nativeOn) return nativeCompGR(key); return compGR.has(key) && performance.now() - (compGRts.get(key) || 0) < 250 ? compGR.get(key) : null; }
     function getBusSpectrum(busId) { if (nativeOn) { const i = nativeBusIndex(busId); return i >= 0 ? nativeSpectrum([true, i]) : null; } return liveBusSpec.get(busId) || null; }
     function getTrackSpectrum(trackIdx) { if (nativeOn) return nativeSpectrum([false, trackIdx]); const n = liveNodes.get(trackIdx); return n && n.spec ? n.spec : null; }
@@ -4655,7 +4660,7 @@ window.PulseAudio = (function() {
                     });
                     if (live) {
                         const old = compLive.get(gk('comp')); if (old && old !== node) old.port.onmessage = null;   // l'ancien compresseur ne parle plus (sinon l'aiguille saute entre deux)
-                        node.port.onmessage = (e) => { compGR.set(gk('comp'), e.data); compGRts.set(gk('comp'), performance.now()); };
+                        node.port.onmessage = (e) => { const d = e.data; compGR.set(gk('comp'), typeof d === 'number' ? d : d.gr); if (d && typeof d === 'object') compIn.set(gk('comp'), d.inp); compGRts.set(gk('comp'), performance.now()); };
                         compLive.set(gk('comp'), node);
                     }
                     connect(node);
@@ -5077,7 +5082,7 @@ window.PulseAudio = (function() {
         debugLive: () => [...liveNodes].map(([i, n]) => ({ i, name: n.tname, audible: !!n.audible, vol: n.vol, fx: n.tfx, clips: n.tclips })),
         clipSig, liveFxSet,
         debugLiveBuses: () => [...liveBusNodes].map(([id, g]) => ({ id, gain: g.gain.value })),
-        getTrackAnalyser, getTrackMeters, trackChannelCount, getMasterAnalyser, getTrackSpectrum, getBusSpectrum, getCompReduction, setMasterVolume,
+        getTrackAnalyser, getTrackMeters, trackChannelCount, getMasterAnalyser, getTrackSpectrum, getBusSpectrum, getCompReduction, getCompInput, setMasterVolume,
         setMetronome, setMetronomeBpm, setCountIn, isCountInEnabled,
         startMetronome, stopMetronome, playCountIn, stopCountIn, isCountingIn,
         exportWav, exportTrackWav, renderFreeze, audioBufferToWav, computeNormalizeGain, setLoop, loopScheduled, getRecWraps, getRecLinearPosition,

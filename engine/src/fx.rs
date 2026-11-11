@@ -933,6 +933,8 @@ pub struct Compressor {
     hold_dec: f64,
     penv: f64,
     hcnt: u32,
+    /// Crête du détecteur depuis la dernière lecture (point sur la courbe de la fenêtre, comme Pro-C)
+    peak_in: f64,
 }
 
 impl Compressor {
@@ -990,6 +992,7 @@ impl Compressor {
             hold_dec: (-1.0 / (0.002 * sr)).exp(),
             penv: 0.0,
             hcnt: 0,
+            peak_in: 0.0,
         }
     }
     pub fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
@@ -1007,6 +1010,7 @@ impl Compressor {
             self.env2 += (pk * pk - self.env2) * self.rms_c;
             lvl = self.env2.sqrt() * std::f64::consts::SQRT_2;
         }
+        if lvl > self.peak_in { self.peak_in = lvl; }
         let half = self.knee / 2.0;
         let mut want = 0.0;
         if lvl > 1e-5 {
@@ -2131,6 +2135,8 @@ impl Chain {
     }
     /// Réduction de gain du compresseur en ce moment (dB, dosée par le mélange), comme l'aiguille du navigateur
     pub fn comp_gr(&self) -> Option<f32> { self.comp.as_ref().map(|c| (c.red * c.mix) as f32) }
+    /// Niveau d'entrée du Compresseur (dB, crête du détecteur depuis la dernière lecture, remise à zéro)
+    pub fn comp_in(&mut self) -> Option<f32> { self.comp.as_mut().map(|c| { let v = c.peak_in; c.peak_in = 0.0; if v > 1e-6 { (20.0 * v.log10()) as f32 } else { -120.0 } }) }
     /// Réduction des compresseurs de la gamme Analogique (dB), pour l'aiguille de leur façade
     pub fn analog_gr(&self, out: &mut Vec<(&'static str, f32)>) {
         let r = |x: f64| x.abs() as f32;
@@ -2838,6 +2844,7 @@ impl FxChain {
         }
     }
     pub fn comp_gr(&self) -> Option<f32> { self.parts.iter().find_map(|(c, _)| c.comp_gr()) }
+    pub fn comp_in(&mut self) -> Option<f32> { self.parts.iter_mut().find_map(|(c, _)| c.comp_in()) }
     pub fn analog_gr(&self) -> Vec<(&'static str, f32)> { let mut v = Vec::new(); for (c, _) in &self.parts { c.analog_gr(&mut v); } v }
     pub fn take_meters(&mut self) -> Option<FxMeters> {
         let mut out: Option<FxMeters> = None;

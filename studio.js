@@ -8382,6 +8382,7 @@ function compVizSvg(p) {
         <line x1="${xy(LO)}" y1="${yy(LO)}" x2="${xy(0)}" y2="${yy(0)}" class="viz-grid"/>
         <line x1="${xy(th)}" y1="7" x2="${xy(th)}" y2="${S - 7}" class="viz-grid"/>
         <path d="${pathC}L${xy(0)},${yy(0)}L${xy(th)},${yy(th)}Z" class="viz-fill"/><path d="${pathC}" class="viz-line"/>
+        <g class="viz-live" data-lo="${LO}" data-s="${S}" style="display:none"><line class="viz-live-bar" x1="7" x2="7" y1="${S - 7}" y2="${S - 7}"/><line class="viz-live-gr" x1="0" x2="0" y1="0" y2="0"/><circle class="viz-live-dot" r="4.5" cx="0" cy="0"/></g>
         <circle cx="${xy(th)}" cy="${yy(th)}" r="6" class="viz-pt" data-key="threshold"/>
         <circle cx="${xy(0)}" cy="${yy(out0)}" r="6" class="viz-pt" data-key="ratio"/>
         <text x="9" y="18" class="viz-txt">sortie</text><text x="${S - 40}" y="${S - 10}" class="viz-txt">entrée</text></g></svg>
@@ -11394,9 +11395,28 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
             drawViz();
         });
         // Aiguille : réduction estimée d'après le niveau du son après compression (même courbe que le réglage)
-        let buf = null;
+        let buf = null, liveIn = null;
         const tick = () => {
             if (!panel.isConnected) return;
+            // Courbe : le signal se promène dessus pendant la lecture (point = niveau d'entrée → niveau de sortie, comme Pro-C)
+            const live = viz.querySelector('.viz-live');
+            if (live) {
+                const inDb = (state.playing || state.recording) && t.effects && t.effects.includes('comp') && PulseAudio.getCompInput ? PulseAudio.getCompInput(fxKeyOf(trackIdx, t)) : null;
+                if (inDb === null || inDb < -60) live.style.display = 'none';
+                else {
+                    const p = curP(), LO = +live.dataset.lo, S = +live.dataset.s, xy = (d) => (Math.max(LO, Math.min(0, d)) - LO) / -LO * (S - 14) + 7, yy = (d) => S - xy(d);
+                    const th = p.threshold, r = Math.max(1, p.ratio), sl = 1 - 1 / r, knee = Math.max(0, p.knee ?? 10), half = knee / 2;
+                    const o = inDb - th, red = o >= half ? o * sl : (o > -half && knee > 0) ? sl * (o + half) * (o + half) / (2 * knee) : 0;
+                    liveIn = liveIn === null ? inDb : liveIn + (inDb - liveIn) * (inDb > liveIn ? 0.6 : 0.18);
+                    const ri = liveIn - th, rr = ri >= half ? ri * sl : (ri > -half && knee > 0) ? sl * (ri + half) * (ri + half) / (2 * knee) : 0;
+                    const x = xy(liveIn), y = yy(liveIn - rr);
+                    live.style.display = '';
+                    const dot = live.querySelector('.viz-live-dot'); dot.setAttribute('cx', x.toFixed(1)); dot.setAttribute('cy', y.toFixed(1));
+                    const bar = live.querySelector('.viz-live-bar'); bar.setAttribute('x1', x.toFixed(1)); bar.setAttribute('x2', x.toFixed(1)); bar.setAttribute('y1', (S - 7).toFixed(1)); bar.setAttribute('y2', y.toFixed(1));
+                    const grl = live.querySelector('.viz-live-gr'); grl.setAttribute('x1', x.toFixed(1)); grl.setAttribute('x2', x.toFixed(1)); grl.setAttribute('y1', yy(liveIn).toFixed(1)); grl.setAttribute('y2', y.toFixed(1));
+                    void red;
+                }
+            }
             if (analog) {
                 let target = 0;
                 // La vraie réduction, envoyée par le compresseur lui-même ; à défaut, une estimation d'après le son qui sort

@@ -21,6 +21,9 @@ pub struct Levels {
     /// Réduction des compresseurs analogiques (groupe ?, indice, machine, dB) pour l'aiguille de leur façade
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub agr: Vec<(bool, usize, String, f32)>,
+    /// Niveau d'entrée du Compresseur Pulse (groupe ?, indice, dB)
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub cin: Vec<(bool, usize, f32)>,
     /// Afficheurs des fenêtres de plugin (gate, de-esser, multibande, limiteur) : (groupe ?, indice, mesures)
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub fx: Vec<(bool, usize, crate::fx::FxMeters)>,
@@ -292,7 +295,7 @@ fn spawn_feeder(mut renderer: Box<Renderer>, mut media: Arc<Media>, ring: Arc<Ri
                 let (tracks, master) = renderer.levels();
                 let mut sh = shared.lock().unwrap();
                 if n > 0 {
-                    sh.levels.push_back((lin, Levels { tracks: tracks.to_vec(), master, gr: renderer.grs().to_vec(), agr: renderer.agrs().iter().map(|&(b, i, k, g)| (b, i, k.to_string(), g)).collect(), fx: renderer.fx_meters().to_vec(), scope: renderer.scope() }));
+                    sh.levels.push_back((lin, Levels { tracks: tracks.to_vec(), master, gr: renderer.grs().to_vec(), agr: renderer.agrs().iter().map(|&(b, i, k, g)| (b, i, k.to_string(), g)).collect(), cin: renderer.cins().to_vec(), fx: renderer.fx_meters().to_vec(), scope: renderer.scope() }));
                     while sh.levels.len() > 256 { sh.levels.pop_front(); }
                 }
                 lin += n;

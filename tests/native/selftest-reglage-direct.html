@@ -35,11 +35,12 @@ const f = document.getElementById('f'); const sleep = ms => new Promise(r => set
   log((under === 0 ? 'ok      ' : 'ECHEC   ') + 'aucun trou de son (underruns +' + under + ')');
   { const lv = await inv('native_live'); log('avant changement : playing=' + lv.playing + ' pos=' + (lv.position||0).toFixed(2)); }
   // aiguilles des compresseurs analogiques : la réduction doit arriver du moteur natif
-  E(`(()=>{ const t=state.project.tracks[0]; t.effects=['fet76','opto2a']; t.effectParams.fet76={input:40,output:24,attack:3,release:5,ratio:20,mix:100,variant:0}; t.effectParams.opto2a={gain:40,peak:80}; })()`);
+  E(`(()=>{ const t=state.project.tracks[0]; t.effects=['comp','fet76','opto2a']; t.effectParams.comp={threshold:-30,ratio:4}; t.effectParams.fet76={input:40,output:24,attack:3,release:5,ratio:20,mix:100,variant:0}; t.effectParams.opto2a={gain:40,peak:80}; })()`);
   E(`togglePlay()`); await sleep(400); E(`state.playhead = 0; togglePlay()`); await sleep(1500);
   for (let q = 0; q < 6; q++) { await sleep(700); const lv = await inv('native_live'); log('t+' + (q*0.7).toFixed(1) + ' s : playing=' + lv.playing + ' pos=' + (lv.position||0).toFixed(2) + ' agr=' + JSON.stringify(lv.levels && lv.levels.agr) + ' state.playing=' + E('state.playing')); }
   const g1 = E(`JSON.stringify([PulseAudio.getCompReduction('fet76|' + fxKeyOf(0, state.project.tracks[0])), PulseAudio.getCompReduction('opto2a|' + fxKeyOf(0, state.project.tracks[0]))])`);
   const gg = JSON.parse(g1);
+  { const ci = E(`JSON.stringify(PulseAudio.getCompInput('t0'))`); log((ci !== 'null' && +ci > -60 ? 'ok      ' : 'ECHEC   ') + 'Compresseur : niveau d\'entrée reçu du moteur (' + ci + ' dB)'); }
   { const lv = await inv('native_live'); log('live : playing=' + lv.playing + ' gr=' + JSON.stringify(lv.levels && lv.levels.gr) + ' agr=' + JSON.stringify(lv.levels && lv.levels.agr) + ' effets=' + JSON.stringify(E('state.project.tracks[0].effects'))); }
   log((gg[0] && gg[0].gr > 0.5 && gg[1] && gg[1].gr > 0.5 ? 'ok      ' : 'ECHEC   ') + 'aiguilles analogiques : réduction reçue du moteur ' + g1);
   E(`togglePlay()`); await sleep(500);

@@ -3995,3 +3995,7 @@ body.fx-drag-copy .insp-fx-row.fx-dragging::after { content: '+'; position: abso
 .strip-send-row:hover .sb-del { display: block; }
 .strip-send-row.is-off { opacity: .5; }
 .strip-send-row.is-off .sb-name { text-decoration: line-through; text-decoration-color: rgba(255,255,255,.3); }
+/* Compresseur : le signal sur la courbe pendant la lecture (comme Pro-C) — barre du niveau d'entrée, réduction en rouge, point sur la courbe */
+.viz-live-bar { stroke: rgba(196, 181, 253, .35); stroke-width: 3; stroke-linecap: round; }
+.viz-live-gr { stroke: #f87171; stroke-width: 3; stroke-linecap: round; }
+.viz-live-dot { fill: #fff; stroke: #a855f7; stroke-width: 2; filter: drop-shadow(0 0 4px #a855f7); }
