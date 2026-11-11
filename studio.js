@@ -3301,6 +3301,7 @@ function openAddEffectMenu(anchor, target, x, replaceId = null) {
     const vKey = (v) => v.toLowerCase().replace(/[^a-z0-9]/g, '');
     const vNice = (a, b) => ((/[A-Z]/.test(b) && !/[A-Z]/.test(a)) || (/\s/.test(b) && !/\s/.test(a)) ? b : a);
     extList.forEach((p, i) => { const k = 'ext:' + i; fxChoice[k] = p.name; const v = p.vendor || 'Autres'; let c = extCats.find(e => vKey(e[0]) === vKey(v)); if (!c) extCats.push(c = [v, []]); else c[0] = vNice(c[0], v); c[1].push(k); });
+    extCats.forEach(e => { if (e[0] === e[0].toLowerCase()) e[0] = e[0].charAt(0).toUpperCase() + e[0].slice(1); });   // « cableguys » → « Cableguys »
     extCats.sort((a, b) => a[0].localeCompare(b[0], 'fr', { sensitivity: 'base' }));
     const RANGES = [['Pulse', ADD_FX_CATEGORIES], ['Analogique', ADD_FX_CATEGORIES_ANA], ...(extCats.length ? [['Externes', extCats]] : [])];
     const cats = RANGES.flatMap(([g, list]) => list.map(([c, names]) => [c, names.filter(n => fxChoice[n]), g]));
@@ -3372,8 +3373,9 @@ function openAddEffectMenu(anchor, target, x, replaceId = null) {
     // Colonne de droite : tous les effets existent (rangés par catégorie), on montre ceux de la catégorie choisie ou de la recherche
     cats.forEach(([c, names]) => names.forEach(n => {
         const el = document.createElement('div');
-        el.className = 'ctx-item fam-fx'; el.dataset.cat = c; el.dataset.fx = n;
+        el.className = 'ctx-item fam-fx' + (String(n).startsWith('ext:') ? ' fam-ext' : ''); el.dataset.cat = c; el.dataset.fx = n;
         // petite image de la fenêtre du plugin à côté de son nom (assets/fxthumbs)
+        if (String(n).startsWith('ext:')) { el.innerHTML = `<span class="fam-txt"><span class="fam-nm">${esc(nameOf(n))}</span></span>`; el.addEventListener('click', () => pick(n)); right.appendChild(el); return; }   // plugin externe : nom seul, ligne compacte
         el.innerHTML = `<span class="fam-thumb-wrap">${n === 'tune' ? '<span class="fam-thumb fam-thumb-none">♪</span>' : `<img class="fam-thumb" src="assets/fxthumbs/${esc(fxType(n))}.webp" alt="" loading="lazy" onerror="this.style.visibility='hidden'">`}</span><span class="fam-txt"><span class="fam-nm">${esc(n === 'tune' ? 'PulseTune' : nameOf(n))}${has(n) ? '<i class="fam-tag">déjà là · ouvrir</i>' : ''}</span><span class="fam-ds">${esc(n === 'tune' ? 'Auto-Tune : corrige la justesse de la voix' : descOf(n))}</span></span>`;
         el.addEventListener('click', () => pick(n));
         right.appendChild(el);

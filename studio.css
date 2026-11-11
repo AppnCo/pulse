@@ -3950,3 +3950,7 @@ body[data-left-tool="fade"] .timeline-tracks .clip { cursor: ew-resize; }
   .insp-fx-row:has(.fx-pow) { padding-left: 13px; }
   .insp-fx-row:has(.fx-pow):hover { padding-right: 13px; }
 }
+/* Menu + Effet, plugins externes : nom seul sur une ligne compacte (pas d'image ni de description) */
+.fx-add-menu .fam-fx.fam-ext { padding: 5px 12px; min-height: 0; }
+.fx-add-menu .fam-fx.fam-ext .fam-nm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.fx-add-menu .fam-fx.fam-ext .fam-txt { width: 100%; }
