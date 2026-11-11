@@ -17020,3 +17020,25 @@ function addFaderScales(root) {
     ['mousedown', 'scroll', 'wheel', 'keydown'].forEach(t => document.addEventListener(t, hide, true));
     document.addEventListener('mouseleave', hide);
 })();
+
+// Appli Mac : la barre de titre (boutons rouge / jaune / vert) est posée sur le haut de la page.
+// Un menu ou une fenêtre flottante ne commence jamais dessous (sinon son haut est caché et un clic ferme la fenêtre).
+(function () {
+    if (!window.__TAURI__) return;
+    const SAFE = 34;
+    const fix = (el) => {
+        if (!el.isConnected || getComputedStyle(el).position !== 'fixed') return;
+        const top = parseFloat(el.style.top);
+        if (!(top < SAFE)) return;
+        el.style.top = SAFE + 'px';
+        el.style.maxHeight = `calc(100vh - ${SAFE + 8}px)`;
+        if (getComputedStyle(el).overflowY === 'visible') el.style.overflowY = 'auto';
+    };
+    const SEL = '.track-ctx-menu, .ctx-subpanel, .fx-panel';
+    new MutationObserver((ms) => {
+        for (const m of ms) {
+            if (m.type === 'attributes') { if (m.target.matches && m.target.matches(SEL)) fix(m.target); continue; }
+            m.addedNodes.forEach(n => { if (n.nodeType === 1 && n.matches(SEL)) requestAnimationFrame(() => fix(n)); });
+        }
+    }).observe(document.body, { childList: true, attributes: true, attributeFilter: ['style'], subtree: false });
+})();
