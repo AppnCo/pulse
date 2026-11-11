@@ -3982,3 +3982,6 @@ body[data-left-tool="fade"] .timeline-tracks .clip { cursor: ew-resize; }
 .clip-stale-tag .p-ic, .clip-gain-tag .p-ic { width: 10px; height: 10px; vertical-align: -1px; color: currentColor; }
 button .p-ic { color: currentColor; }
 .dz-icon .p-ic, .global-drop-icon .p-ic { width: 34px; height: 34px; stroke-width: 1.5; }
+/* Glisser un plugin d'une tranche à l'autre (⌥ = copier), comme Logic */
+.strip.fx-drop-target { outline: 2px solid var(--violet-2, #A855F7); outline-offset: -2px; }
+body.fx-drag-copy .insp-fx-row.fx-dragging::after { content: '+'; position: absolute; right: -6px; top: -6px; width: 14px; height: 14px; border-radius: 50%; background: #22c55e; color: #fff; font: 700 11px/14px -apple-system, sans-serif; text-align: center; }

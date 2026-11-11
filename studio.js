@@ -3491,34 +3491,94 @@ function moveEffectTo(x, name, to) {
     refreshStrips(); refreshPlaybackSoon(); saveProject();
     flash(`${fxLabel(name)} déplacé : le son passe maintenant par ${chain.map(n => fxLabel(n)).join(' → ')}`);
 }
-// Clic maintenu sur un effet puis glisser vers le haut ou le bas : la ligne suit la souris, un trait montre où elle va tomber
+// Tranche sous la souris → piste ou groupe (tranches de gauche et table de mixage, même fabrique)
+function ownerOfStrip(st) {
+    if (!st || !st.dataset) return null;
+    if (st.dataset.kind === 'track') { const i = +(st.dataset.i ?? st.dataset.id); return Number.isFinite(i) ? state.project.tracks[i] || null : null; }
+    if (st.dataset.kind === 'bus') return st.dataset.id ? busById(st.dataset.id) : (state.project.buses || [])[+st.dataset.i] || null;
+    return null;
+}
+// Place `id` à la position `at` de la chaîne de `o`
+function placeFxAt(o, id, at) {
+    const chain = chainOf(o).filter(n => n !== id);
+    chain.splice(Math.max(0, Math.min(chain.length, at)), 0, id);
+    o.fxOrder = [...chain, ...FX_ORDER.filter(n => !chain.includes(n))];
+}
+// Comme Logic : glisser un plugin sur une autre tranche le DÉPLACE, avec ⌥ il est COPIÉ (réglages compris) ; ⌥ dans la même tranche = copie juste là
+async function transferEffect(src, dst, id, copy, at) {
+    const ty = fxType(id);
+    if (!dst || ty === 'tune' || id === 'limit' || id === 'master' || dst.premaster || dst.locked) return;
+    pushUndo();
+    let nid;
+    if (ty === 'vst') {
+        if (!window.PulseExt) return;
+        const info = (src.effectParams || {})[id] || {};
+        const st = await PulseExt.stateOf(src, id);
+        nid = await PulseExt.addWithState(dst, { path: info.path, name: info.name, vendor: info.vendor }, st, null);
+        if (!nid) return;
+    } else {
+        const has = (o, k) => (o.effects || []).includes(k) || (o.fxOff || []).includes(k);
+        nid = has(dst, ty) ? nextFxInstance(dst, ty) : ty;
+        dst.effects = [...(dst.effects || []), nid];
+        dst.effectParams = dst.effectParams || {};
+        if (src.effectParams && src.effectParams[id] !== undefined) dst.effectParams[nid] = JSON.parse(JSON.stringify(src.effectParams[id]));
+        if (ty === 'eq' && nid === 'eq' && id === 'eq' && Array.isArray(src.eqBands)) dst.eqBands = JSON.parse(JSON.stringify(src.eqBands));
+        if ((src.fxOff || []).includes(id)) { dst.fxOff = [...(dst.fxOff || []), nid]; dst.effects = dst.effects.filter(n => n !== nid); }
+    }
+    placeFxAt(dst, nid, at);
+    if (!copy && src !== dst) {
+        src.effects = (src.effects || []).filter(n => n !== id);
+        if (src.fxOff) { src.fxOff = src.fxOff.filter(n => n !== id); if (!src.fxOff.length) delete src.fxOff; }
+        if (Array.isArray(src.fxOrder)) src.fxOrder = src.fxOrder.filter(n => n !== id);
+        if (String(id).includes('#') || ty === 'vst') { if (src.effectParams) delete src.effectParams[id]; }
+        if (ty === 'vst' && window.__TAURI__) window.__TAURI__.core.invoke('ext_remove', { id }).catch(() => {});
+        const fw = findPlugWin(src, id); if (fw) fw.remove();
+    }
+    saveProject(); refreshPlaybackSoon(); renderInspector();
+    if (state.mixerOpen) { renderMixer(); bindMixerEvents(); }
+    flash(`${fxLabel(nid)} ${copy ? 'copié' : 'déplacé'} sur « ${dst.name} »${copy ? ' (réglage compris)' : ''} — ⌘Z pour annuler`);
+}
+// Clic maintenu sur un effet puis glisser : la ligne suit la souris ; même tranche = changer l'ordre,
+// autre tranche = déplacer (⌥ = copier), comme Logic. Un trait montre où il va tomber.
 function bindFxDrag(strip, x) {
     const rows = () => [...strip.querySelectorAll('.insp-fx-row.can-drag')];
     rows().forEach(row => row.addEventListener('mousedown', (e) => {
         if (e.button !== 0 || e.target.closest('.insp-del, .fx-pow, .fx-swap')) return;
-        const y0 = e.clientY; let on = false, target = -1, mark = null;
+        const x0 = e.clientX, y0 = e.clientY; let on = false, target = -1, mark = null, dst = x, dstStrip = strip;
         const list = rows(), from = list.indexOf(row);
         const move = (ev) => {
-            if (!on && Math.abs(ev.clientY - y0) < 4) return;   // petit seuil : un simple clic ouvre toujours l'effet
+            if (!on && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 4) return;   // petit seuil : un simple clic ouvre toujours l'effet
             if (!on) { on = true; row.classList.add('fx-dragging'); document.body.classList.add('fx-drag-on');
-                mark = document.createElement('div'); mark.className = 'fx-drop-mark'; row.parentNode.appendChild(mark); }
-            row.style.transform = `translateY(${ev.clientY - y0}px)`;
+                mark = document.createElement('div'); mark.className = 'fx-drop-mark'; }
+            row.style.transform = `translate(${ev.clientX - x0}px, ${ev.clientY - y0}px)`;
+            document.body.classList.toggle('fx-drag-copy', ev.altKey);
+            // tranche visée (la ligne tirée ne capte pas la souris pendant le geste)
+            const over = document.elementFromPoint(ev.clientX, ev.clientY);
+            const st = over && over.closest('.strip');
+            const o2 = ownerOfStrip(st);
+            if (o2 && st.querySelector('.insp-fx-box') && !o2.premaster && !o2.locked) { dst = o2; dstStrip = st; } else { dst = x; dstStrip = strip; }
+            document.querySelectorAll('.strip.fx-drop-target').forEach(s => { if (s !== dstStrip) s.classList.remove('fx-drop-target'); });
+            if (dstStrip !== strip) dstStrip.classList.add('fx-drop-target');
             // position visée : avant la première ligne dont le milieu est sous la souris
-            const others = list.filter(r => r !== row);
+            const box = dstStrip.querySelector('.insp-fx-box') || row.parentNode;
+            const others = [...box.querySelectorAll('.insp-fx-row.can-drag')].filter(r => r !== row);
             let k = others.findIndex(r => { const b = r.getBoundingClientRect(); return ev.clientY < b.top + b.height / 2; });
             if (k < 0) k = others.length;
             target = k;
-            const ref = others[k] || others[others.length - 1];
-            if (ref) { const b = ref.getBoundingClientRect(), pb = row.parentNode.getBoundingClientRect();
-                mark.style.top = ((others[k] ? b.top : b.bottom) - pb.top - 1) + 'px'; }
+            if (mark.parentNode !== box) box.appendChild(mark);
+            const ref = others[k] || others[others.length - 1], pb = box.getBoundingClientRect();
+            mark.style.top = (ref ? ((others[k] ? ref.getBoundingClientRect().top : ref.getBoundingClientRect().bottom) - pb.top - 1) : 2) + 'px';
         };
-        const up = () => {
+        const up = (ev) => {
             document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up);
             if (!on) return;
             row._dragged = true; setTimeout(() => { row._dragged = false; }, 0);
-            row.classList.remove('fx-dragging'); row.style.transform = ''; document.body.classList.remove('fx-drag-on');
+            row.classList.remove('fx-dragging'); row.style.transform = ''; document.body.classList.remove('fx-drag-on', 'fx-drag-copy');
+            document.querySelectorAll('.strip.fx-drop-target').forEach(s => s.classList.remove('fx-drop-target'));
             if (mark) mark.remove();
-            if (target >= 0 && target !== from) moveEffectTo(x, row.dataset.fx, target);
+            if (target < 0) return;
+            if (dst !== x || ev.altKey) transferEffect(x, dst, row.dataset.fx, ev.altKey, target);
+            else if (target !== from) moveEffectTo(x, row.dataset.fx, target);
         };
         document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
     }));
