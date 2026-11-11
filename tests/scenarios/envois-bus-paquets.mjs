@@ -16,6 +16,7 @@ export default async (c) => {
   const r = await J(ev, `const row = [...document.querySelectorAll('.track-ctx-menu .ctx-has-sub')].find(e => e.textContent === '33 – 64'); row.dispatchEvent(new MouseEvent('mouseenter')); 
     const it = [...document.querySelectorAll('.ctx-subpanel .ctx-item')].find(e => e.textContent === 'Bus 40'); if (!it) return null; it.scrollIntoView({ block: 'nearest' }); const b = it.getBoundingClientRect(); return { x: b.left + 10, y: b.top + b.height / 2, n: document.querySelectorAll('.ctx-subpanel .ctx-item').length }`);
   check('sous-menu : 32 bus', r && r.n === 32, JSON.stringify(r));
+  check('sous-menu visible à l\'écran (pas coupé par le menu qui défile)', await J(ev, `const it = [...document.querySelectorAll('.ctx-subpanel .ctx-item')].find(e => e.textContent === 'Bus 40'); const p = it.closest('.ctx-subpanel'); return p.parentElement === document.body && document.elementFromPoint(${r && r.x}, ${r && r.y}) === it`));
   await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: r.x, y: r.y });
   await c.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: r.x, y: r.y, button: 'left', buttons: 1, clickCount: 1 });
   await c.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: r.x, y: r.y, button: 'left', buttons: 0, clickCount: 1 }); await sleep(400);

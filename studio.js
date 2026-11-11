@@ -13246,11 +13246,11 @@ function ctxAddSubmenu(menu, item) {
     const closePanel = () => { if (panel) { panel.remove(); panel = null; } };
     const open = () => {
         clearTimeout(timer);
-        menu.querySelectorAll('.ctx-subpanel').forEach(p => { if (p !== panel) p.remove(); });
+        document.querySelectorAll('.ctx-subpanel').forEach(p => { if (p !== panel && p._owner === menu) p.remove(); });
         if (panel) return;
         panel = document.createElement('div');
         panel.className = 'track-ctx-menu clip-ctx-menu ctx-subpanel';
-        panel.style.cssText = 'position:fixed;z-index:201;';
+        panel.style.cssText = 'position:fixed;z-index:301;max-height:calc(100vh - 12px);overflow-y:auto;';
         item.children.filter(Boolean).forEach(ch => {
             if (ch.sep) { const d = document.createElement('div'); d.className = 'ctx-sep'; panel.appendChild(d); return; }
             const el = document.createElement('div');
@@ -13258,10 +13258,12 @@ function ctxAddSubmenu(menu, item) {
             el.textContent = ch.label;
             if (ch.title) el.title = ch.title;
             el.addEventListener('mousedown', (ev) => ev.stopPropagation());
-            el.addEventListener('click', () => { ch.action(); menu.remove(); });
+            el.addEventListener('click', () => { ch.action(); closePanel(); menu.remove(); });
             panel.appendChild(el);
         });
-        menu.appendChild(panel);
+        // posé sur la page, pas dans le menu : un menu qui défile (bus 1-32) coupait le sous-menu
+        panel._owner = menu; document.body.appendChild(panel);
+        const watch = setInterval(() => { if (!menu.isConnected || !panel) { clearInterval(watch); closePanel(); } }, 150);
         const rr = row.getBoundingClientRect(), pr = panel.getBoundingClientRect();
         let left = rr.right + 2; if (left + pr.width > window.innerWidth) left = Math.max(4, rr.left - pr.width - 2);
         let top = rr.top - 6; if (top + pr.height > window.innerHeight) top = Math.max(4, window.innerHeight - pr.height - 6);
