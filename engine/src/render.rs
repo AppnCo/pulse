@@ -496,6 +496,13 @@ impl Renderer {
     fn with_metro(mut self, project: &Project) -> Self { self.set_metro(project); self }
 
     /// Longueur totale (échantillons), queue des effets comprise
+    /// Réglage d'effet changé en direct (bouton tourné pendant la lecture) : appliqué sans reconstruire le mixeur,
+    /// les effets gardent leur état (pas de craquement, la queue de reverb continue). `bus` : groupe (indice dans project.buses)
+    pub fn fx_live(&mut self, bus: bool, idx: usize, fx: &str, key: &str, v: f64) -> bool {
+        if !v.is_finite() { return false; }
+        if bus { self.buses.iter_mut().find(|b| b.i == idx).map(|b| b.chain.set_live(fx, key, v)).unwrap_or(false) }
+        else { self.tracks.iter_mut().find(|t| t.idx == idx).map(|t| t.chain.set_live(fx, key, v)).unwrap_or(false) }
+    }
     /// Métronome pris dans le projet (champ `metronome`, envoyé par la page pour la lecture seulement)
     pub fn set_metro(&mut self, project: &Project) {
         self.metro = project.metronome.as_ref().map(|m| (m.bpb.clamp(1, 12), m.volume.clamp(0.0, 2.0) as f32));

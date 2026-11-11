@@ -98,6 +98,8 @@ window.PulseNative = (function () {
     const stop = () => isAvailable() ? core().invoke('native_stop') : Promise.resolve();
     // volumes, pan, mute / solo… changés pendant la lecture : le moteur les prend en direct, sans relancer
     const mix = (project) => isAvailable() ? core().invoke('native_mix', { json: JSON.stringify(project) }) : Promise.resolve();
+    // réglages d'effets tournés pendant la lecture : [groupe ?, indice, effet, réglage, valeur] — appliqués en direct, sans reconstruire
+    const fxLive = (items) => isAvailable() ? core().invoke('native_fx_live', { items }) : Promise.resolve();
     // Boucle posée / changée / enlevée pendant la lecture
     const loop = (l) => isAvailable() ? core().invoke('native_loop', { lp: l ? [l.a, l.b] : null }) : Promise.resolve();
     // Position dans le morceau, niveaux pour les vumètres, boucle tenue par le moteur
@@ -125,7 +127,7 @@ window.PulseNative = (function () {
     };
     // le canal est testé dès le chargement (quelques ms), avant la première lecture
     if (isAvailable()) setTimeout(() => { rawWorks().catch(() => {}); }, 0);
-    return { get available() { return isAvailable(); }, get chunked() { return rawOk === false; }, render, play, swap, scope, stop, mix, loop, live, info, isEnabled, setEnabled, monitor, sendBytes, readBytes, onError: null };
+    return { get available() { return isAvailable(); }, get chunked() { return rawOk === false; }, render, play, swap, scope, stop, mix, fxLive, loop, live, info, isEnabled, setEnabled, monitor, sendBytes, readBytes, onError: null };
 })();
 
 // Claviers MIDI dans l'appli : la fenêtre n'a pas « Web MIDI », on lui prête la même interface avec CoreMIDI (Rust).

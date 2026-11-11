@@ -2663,8 +2663,38 @@ window.PulseAudio = (function() {
     // Réduction réelle du compresseur (dB) par piste ('t' + numéro) ou groupe ('b' + id), mise à jour pendant la lecture
     const compGR = new Map();
     const compLive = new Map();   // grKey -> compresseur en cours de lecture (réglages en direct)
+    // Moteur natif (appli) : le réglage part en direct au moteur (set_live), sans reconstruire le mixage —
+    // avant, chaque cran de bouton reconstruisait tout pendant la lecture : craquements, effets remis à zéro
+    function nativeFxLive(ownerKey, id, changed, prev) {
+        if (!(nativeBackend && nativeBackend.fxLive) || !nativeProject) return false;
+        let bus = false, idx = -1;
+        if (/^t\d+$/.test(ownerKey)) idx = +ownerKey.slice(1);
+        else if (ownerKey[0] === 'b') { bus = true; idx = (nativeProject.buses || []).findIndex(b => 'b' + b.id === ownerKey); }
+        if (idx < 0) return false;
+        const kind = String(id).split('#')[0];
+        const items = [];
+        if (kind === 'eq') {
+            if (Object.keys(changed || {}).some(k => k !== 'bands')) return false;
+            const A = prev.bands, B = changed.bands;
+            if (!Array.isArray(A) || !Array.isArray(B) || A.length !== B.length || B.length > 24) return false;
+            for (let i = 0; i < B.length; i++) {
+                const a = A[i] || {}, b = B[i] || {};
+                for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) if (JSON.stringify(a[k]) !== JSON.stringify(b[k]) && !['freq', 'gain', 'q'].includes(k)) return false;
+                if (eqIsDynamic(b) || eqIsDynamic(a) || b.on === false || !(b.freq > 0) || !(a.freq > 0)) { if (JSON.stringify(a) !== JSON.stringify(b)) return false; continue; }
+                for (const k of ['freq', 'gain', 'q']) if (a[k] !== b[k]) { const v = k === 'freq' ? Math.max(20, Math.min(20000, b.freq)) : (b[k] ?? (k === 'q' ? 1 : 0)); if (!Number.isFinite(v)) return false; items.push([bus, idx, id, 'b' + i + '-' + k, v]); }
+            }
+        } else {
+            const keys = Object.keys(changed || {});
+            if (!keys.length || !keys.every(k => autoRanges['fx:' + kind + ':' + k] && Number.isFinite(changed[k]))) return false;
+            if (kind === 'sat' && 'drive' in changed && !(changed.drive > 0)) return false;
+            if (kind === 'deess' && (('thr' in changed && prev.thr === undefined) || ('amount' in changed && !(changed.amount > 0)))) return false;
+            for (const k of keys) items.push([bus, idx, id, k, changed[k]]);
+        }
+        if (items.length) nativeBackend.fxLive(items).catch(() => nativeRefreshSoon());
+        return true;
+    }
     function liveFxSet(ownerKey, id, changed, prev = {}) {
-        if (nativeOn) return false;
+        if (nativeOn) return nativeFxLive(ownerKey, id, changed, prev);
         const kind = String(id).split('#')[0];
         const n = liveFx.get((String(id).includes('#') ? ownerKey + '~' + id : ownerKey) + '|' + kind);
         if (!n) return false;

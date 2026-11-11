@@ -2114,7 +2114,7 @@ impl Chain {
                 let Some((idx, field)) = k.strip_prefix('b').and_then(|r| r.split_once('-')) else { return false };
                 let Ok(bi) = idx.parse::<usize>() else { return false };
                 let Some((bd, Some((fi, _)))) = self.eq_bands.get_mut(bi) else { return false };
-                if field == "freq" { bd.freq = v } else { bd.gain = v }
+                match field { "freq" => bd.freq = v, "gain" => bd.gain = v, "q" => bd.q = v, _ => return false }
                 let fi = *fi;
                 for (j, b) in eq_sections(bd, self.sr).into_iter().enumerate() {
                     for ch in 0..2 { self.filters[fi + j][ch].retune(b.clone()); }

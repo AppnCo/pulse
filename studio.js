@@ -29,6 +29,18 @@ function isVoiceTrack(t) { return !!t && (t.type === 'audio' || !t.type) && !t.i
 function isInstruTrack(t) { return !!t && (t.preset === 'instru' || t.type === 'instru' || t.type === 'inst'); }
 
 // Petit helper d'échappement HTML — pour tous les noms user-provided
+// Boutons qui tournent (tous les plugins, tranches) : sensibilité douce ; ⌘ ou Maj maintenu = réglage très fin, comme Logic
+function knobFine(ev) { return !!(ev && (ev.shiftKey || ev.metaKey)); }
+// Molette proportionnelle à la force du geste (≈ 1 cran pour un cran de molette, une fraction pour un petit geste au trackpad) ;
+// ⌘ ou Maj = 4× plus fin. wheelSteps : nombre entier de pas, le reste s'accumule (un geste lent finit quand même par bouger)
+function wheelAmt(e) {
+    const px = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY;
+    return Math.max(-4, Math.min(4, -px / 50)) * (knobFine(e) ? 0.25 : 1);
+}
+function wheelSteps(el, e, perNotch = 1) {
+    el._wacc = (el._wacc || 0) + wheelAmt(e) * perNotch;
+    const n = Math.trunc(el._wacc); el._wacc -= n; return n;
+}
 function esc(s) {
     return String(s ?? '')
         .replace(/&/g, '&amp;')
@@ -2616,7 +2628,7 @@ function bindInspKnob(input) {
     k.addEventListener('dblclick', (e) => { e.preventDefault(); e.stopPropagation(); if (typeof openValueEntry === 'function') openValueEntry(input); });
     k.addEventListener('wheel', (e) => {
         e.preventDefault();
-        set((parseInt(input.value) || 0) + (e.deltaY < 0 ? 2 : -2));
+        { const n = wheelSteps(k, e, 2); if (!n) return; set((parseInt(input.value) || 0) + n); }
         clearTimeout(k._wt); k._wt = setTimeout(() => input.dispatchEvent(new Event('change', { bubbles: true })), 300);
     }, { passive: false });
 }
@@ -2983,17 +2995,29 @@ let _fxClip = null;
 function openFxCopyMenu(cx, cy, fx, x) {
     if (!x || !fx) return;
     closeAllMenus();
-    const name = fx === 'tune' ? 'Auto-Tune' : (FX_NAMES[fx] || fx);
+    const isVst = fxType(fx) === 'vst';
+    const name = fx === 'tune' ? 'Auto-Tune' : isVst ? fxLabel(fx) : (FX_NAMES[fx] || fx);
     const menu = document.createElement('div');
     menu.className = 'track-ctx-menu';
     menu.style.cssText = `position:fixed;left:${Math.min(cx, window.innerWidth - 220)}px;top:${Math.min(cy, window.innerHeight - 120)}px;z-index:300;min-width:200px`;
     const items = [];
-    items.push({ label: `Copier le réglage (${name})`, run: () => {
+    if (isVst) {
+        // plugin externe : on copie son état (lu dans le plugin), on le colle sur le même plugin ou en plus sur une autre piste
+        const info = (x.effectParams || {})[fx] || {};
+        items.push({ label: `Copier le réglage (${name})`, run: async () => {
+            const st = window.PulseExt ? await PulseExt.stateOf(x, fx) : null;
+            _fxClip = { fx: 'vst', path: info.path, name: info.name || name, vendor: info.vendor, state: st, from: x.name };
+            flash(`Réglage ${name} copié — clic droit sur un plugin d'une autre piste : « Coller »`);
+        } });
+        if (_fxClip && _fxClip.fx === 'vst' && _fxClip.path === info.path) items.push({ label: `Coller le réglage (${_fxClip.name} de « ${_fxClip.from} »)`, run: () => pasteExtClip(x, fx) });
+    } else items.push({ label: `Copier le réglage (${name})`, run: () => {
         const params = fx === 'tune' ? (x.autotune ? JSON.parse(JSON.stringify(x.autotune)) : null) : JSON.parse(JSON.stringify((x.effectParams || {})[fx] || {}));
         _fxClip = { fx, params, eqBands: fx === 'eq' && Array.isArray(x.eqBands) ? JSON.parse(JSON.stringify(x.eqBands)) : undefined, from: x.name };
         flash(`Réglage ${name} copié — clic droit sur le même effet d'une autre piste pour le coller`);
     } });
-    if (_fxClip && _fxClip.fx === fx) items.push({ label: `Coller le réglage (${name} de « ${_fxClip.from} »)`, run: () => pasteFxSetting(fx, x) });
+    if (!isVst && _fxClip && _fxClip.fx === fx) items.push({ label: `Coller le réglage (${name} de « ${_fxClip.from} »)`, run: () => pasteFxSetting(fx, x) });
+    // un plugin externe copié peut être ajouté sur n'importe quelle piste, réglage compris
+    if (_fxClip && _fxClip.fx === 'vst' && !x.premaster && !x.locked) items.push({ label: `Coller « ${_fxClip.name} » ici en plus (réglage de « ${_fxClip.from} »)`, run: () => pasteExtClip(x, null) });
     // Supprimer l'effet de la chaîne (Auto-Tune : retire aussi la correction des prises)
     const removable = fx === 'tune' ? !!x.tuneSlot || !!x.autotune : (x.effects || []).includes(fx) && !x.premaster && fx !== 'limit' && fx !== 'master';
     if (removable) items.push({ label: `Supprimer l'effet (${name})`, run: () => removeFx(fx, x) });
@@ -3097,6 +3121,16 @@ async function removeFx(fx, x) {
     renderInspector();
     if (state.mixerOpen) { renderMixer(); bindMixerEvents(); }
     flash(group.length > 1 ? `${name} supprimé de ${group.length} pistes — ⌘Z pour annuler` : `${name} supprimé de « ${x.name} » — ⌘Z pour annuler`);
+}
+// Coller un plugin externe copié : à la place de `replaceId` (même plugin) ou en plus en fin de chaîne
+async function pasteExtClip(x, replaceId) {
+    if (!_fxClip || _fxClip.fx !== 'vst' || !window.PulseExt) return;
+    pushUndo();
+    const id = await PulseExt.addWithState(x, { path: _fxClip.path, name: _fxClip.name, vendor: _fxClip.vendor }, _fxClip.state, replaceId);
+    if (!id) return;
+    saveProject(); refreshPlaybackSoon(); renderInspector();
+    if (state.mixerOpen) { renderMixer(); bindMixerEvents(); }
+    flash(`« ${_fxClip.name} » collé sur « ${x.name} » avec le réglage de « ${_fxClip.from} »`);
 }
 function pasteFxSetting(fx, x) {
     if (!_fxClip || _fxClip.fx !== fx) return;
@@ -3603,7 +3637,7 @@ function sendKnobHtml(v) { return `<span class="send-knob" data-tooltip="Glisser
         let y0 = e.clientY, v = parseFloat(inp.value) || 0;
         k.classList.add('turning');
         const move = (ev) => {
-            const nv = Math.max(0, Math.min(100, v + (y0 - ev.clientY) * (ev.shiftKey ? 0.1 : 0.6)));
+            const nv = Math.max(0, Math.min(100, v + (y0 - ev.clientY) * (knobFine(ev) ? 0.04 : 0.3)));
             if (Math.round(nv) === Math.round(parseFloat(inp.value))) return;
             inp.value = Math.round(nv); inp.dispatchEvent(new Event('input', { bubbles: true }));
         };
@@ -6799,7 +6833,7 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false) {
         knob.addEventListener('mousedown', (e) => {
             if (e.button !== 0) return; e.preventDefault();
             const y0 = e.clientY, v0 = K[kd.key];
-            const mv = (ev) => { const nv = Math.round(Math.max(0, Math.min(100, v0 + (y0 - ev.clientY) * (ev.shiftKey ? 0.1 : 0.5)))); if (nv !== K[kd.key]) { K[kd.key] = nv; draw(); } };
+            const mv = (ev) => { const nv = Math.round(Math.max(0, Math.min(100, v0 + (y0 - ev.clientY) * (knobFine(ev) ? 0.04 : 0.25)))); if (nv !== K[kd.key]) { K[kd.key] = nv; draw(); } };
             const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); changed(); };
             document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
         });
@@ -8191,7 +8225,7 @@ function bindFxEq(panel, t, fxName = 'reverb') {
     host.addEventListener('wheel', (e) => {
         const i = ptOf(e) >= 0 ? ptOf(e) : sel, arr = bands(), b = arr[i]; if (!b) return;
         e.preventDefault();
-        b.q = Math.round(Math.max(0.1, Math.min(18, (b.q || 1) * (e.deltaY < 0 ? 1.08 : 1 / 1.08))) * 1000) / 1000;
+        b.q = Math.round(Math.max(0.1, Math.min(18, (b.q || 1) * Math.pow(1.08, wheelAmt(e)))) * 1000) / 1000;
         sel = i; save(arr);
     }, { passive: false });
     host.addEventListener('contextmenu', (e) => {
@@ -9124,7 +9158,7 @@ function proKnob(host, { label, min, max, val, fmt, onChange, onEnd, log, color 
     let y0 = null, f0 = 0;
     el.addEventListener('mousedown', (e) => {
         e.preventDefault(); e.stopPropagation(); y0 = e.clientY; f0 = fr();
-        const mv = (ev) => { const f = Math.max(0, Math.min(1, f0 + (y0 - ev.clientY) / (ev.shiftKey ? 600 : 150))); val = log ? min * Math.pow(max / min, f) : min + f * (max - min); draw(); onChange && onChange(val); if (key) el.dispatchEvent(new Event('input', { bubbles: true })); };
+        const mv = (ev) => { const f = Math.max(0, Math.min(1, f0 + (y0 - ev.clientY) / (knobFine(ev) ? 1500 : 300))); val = log ? min * Math.pow(max / min, f) : min + f * (max - min); draw(); onChange && onChange(val); if (key) el.dispatchEvent(new Event('input', { bubbles: true })); };
         const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); onEnd && onEnd(val); };
         document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
     });
@@ -10393,13 +10427,13 @@ function openPitchPanel(trackIdx, anchorEl) {
         e.preventDefault();
         const y0 = e.clientY, v0 = val(d); let moved = false;
         // 12 px par demi-ton ; Maj = réglage fin (au dixième pour le formant)
-        const mv = (ev) => { const v = v0 + (y0 - ev.clientY) / (ev.shiftKey ? 60 : 12); const before = val(d); if (!moved && Math.abs(Math.round(v / d.step) * d.step - before) < d.step / 2) return;
+        const mv = (ev) => { const v = v0 + (y0 - ev.clientY) / (knobFine(ev) ? 150 : 24); const before = val(d); if (!moved && Math.abs(Math.round(v / d.step) * d.step - before) < d.step / 2) return;
             if (!moved) arm(); moved = true; setVal(d, v); autoTouch(t, 'fx:pitch:' + d.key); };
         const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); if (moved) finish(); };
         document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
     });
     svg.addEventListener('dblclick', (e) => { const d = dialAt(e); if (d) step(() => setVal(d, 0)); });
-    svg.addEventListener('wheel', (e) => { const d = dialAt(e); if (!d) return; e.preventDefault(); step(() => setVal(d, val(d) + (e.deltaY < 0 ? 1 : -1) * (d.key === 'semi' ? 1 : 0.5))); }, { passive: false });
+    svg.addEventListener('wheel', (e) => { const d = dialAt(e); if (!d) return; e.preventDefault(); { const n = wheelSteps(svg, e); if (n) step(() => setVal(d, val(d) + n * (d.key === 'semi' ? 1 : 0.5))); } }, { passive: false });
     panel.querySelector('.fx-panel-close').addEventListener('click', () => panel.remove());
     panel.querySelector('.fx-bypass').addEventListener('change', (e) => {
         pushUndo(); t.effects = t.effects || [];
@@ -11194,7 +11228,9 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
     let zoom = 1;
     try { zoom = FX_SIZES.includes(+localStorage.getItem('pulse_fx_size')) ? +localStorage.getItem('pulse_fx_size') : 1; } catch {}
     const rect = anchorEl.getBoundingClientRect();
-    const fits = (z) => panel.offsetWidth * z <= window.innerWidth - 16 && panel.offsetHeight * z <= window.innerHeight - 16;
+    // taille de base plus grande pour le Compresseur (retour terrain 11/11 : l'ancien 125 % devient son 100 %)
+    const BASE = fxName === 'comp' ? 1.25 : 1;
+    const fits = (z) => panel.offsetWidth * z * BASE <= window.innerWidth - 16 && panel.offsetHeight * z * BASE <= window.innerHeight - 16;
     // Agrandi avec « zoom » (et non une transformation) : la fenêtre est redessinée à sa vraie taille, donc nette
     // (une transformation faisait agrandir une image à 100 % par la carte graphique du Mac : flou).
     // Avec zoom, left / top sont aussi multipliés : on les divise (plugSetPos).
@@ -11203,8 +11239,9 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
         if (!fits(zoom)) zoom = [...FX_SIZES].reverse().find(fits) || 1;   // jamais de fenêtre coupée par l'écran
         panel.querySelectorAll('.fx-size button').forEach(b => { b.disabled = !fits(+b.dataset.z); b.title = b.disabled ? 'Pas assez de place à l\'écran pour cette taille' : ''; });
         panel.style.transform = '';
-        panel.style.zoom = zoom === 1 ? '' : String(zoom);
-        const pw = panel.offsetWidth * zoom, ph = panel.offsetHeight * zoom;
+        const Z = zoom * BASE;
+        panel.style.zoom = Z === 1 ? '' : String(Z);
+        const pw = panel.offsetWidth * Z, ph = panel.offsetHeight * Z;
         let left = keepLeft !== undefined ? keepLeft : rect.right + 8;
         if (left + pw > window.innerWidth - 8) left = keepLeft !== undefined ? window.innerWidth - pw - 8 : rect.left - pw - 8;
         plugSetPos(panel, Math.max(8, left), Math.max(8, Math.min(curTop != null ? curTop : rect.top - 20, window.innerHeight - ph - 8)));
@@ -11420,15 +11457,15 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
             kn.focus();
             const y0 = e.clientY, f0 = fracNow();
             panel.classList.add('dragging');
-            const move = (ev) => toFrac(Math.max(0, Math.min(1, f0 + (y0 - ev.clientY) / (ev.shiftKey ? 800 : 160))));
+            const move = (ev) => toFrac(Math.max(0, Math.min(1, f0 + (y0 - ev.clientY) / (knobFine(ev) ? 2000 : 320))));
             const up = () => { panel.classList.remove('dragging'); endGesture(key); document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
             document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
         });
         kn.addEventListener('dblclick', () => resetKey(key));
         kn.addEventListener('wheel', (e) => {
             e.preventDefault();
-            if (stepped()) setStep(d, idxNow() - Math.sign(e.deltaY));
-            else setParam(key, fxFromFrac(d, Math.max(0, Math.min(1, fracNow() - Math.sign(e.deltaY) * (e.shiftKey ? 0.005 : 0.025)))));
+            if (stepped()) { const n = wheelSteps(kn, e); if (n) setStep(d, idxNow() + n); }
+            else setParam(key, fxFromFrac(d, Math.max(0, Math.min(1, fracNow() + wheelAmt(e) * 0.02))));
             clearTimeout(kn._wt); kn._wt = setTimeout(() => endGesture(key), 400);
         }, { passive: false });
         kn.addEventListener('keydown', (e) => {
@@ -13907,7 +13944,7 @@ function bindTrackEvents() {
         el.addEventListener('wheel', (e) => {
             e.preventDefault();
             const t = state.project.tracks[i]; if (!t) return;
-            apply((t.pan || 0) + (e.deltaY < 0 ? 2 : -2), true);
+            { const n = wheelSteps(el, e, 2); if (n) apply((t.pan || 0) + n, true); }
         }, { passive: false });
         el.addEventListener('keydown', (e) => {
             if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;

@@ -597,6 +597,7 @@ int rack_au_gui_show_window(RackAUGui* gui, const char* title) {
             [gui->window makeKeyAndOrderFront:nil];
             [gui->window center];
             [gui->window setLevel:NSFloatingWindowLevel];  // Keep window on top initially
+            [gui->window setHidesOnDeactivate:YES];   // Pulse : cachée quand on passe à une autre appli, comme Logic
         }
     });
 

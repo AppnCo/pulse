@@ -25,6 +25,7 @@
     "allow-migration-done",
     "allow-native-play-project",
     "allow-native-mix",
+    "allow-native-fx-live",
     "allow-native-swap",
     "allow-native-loop",
     "allow-native-live",

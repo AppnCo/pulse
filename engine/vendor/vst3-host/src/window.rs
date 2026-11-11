@@ -220,6 +220,10 @@ impl PluginWindow {
             // double-free that crashes on close. We own the lifetime, so opt out.
             // SAFETY: standard AppKit setter on the main thread.
             unsafe { window.setReleasedWhenClosed(false) };
+            // Pulse : la fenêtre du plugin reste devant Pulse (un clic dans le projet ne la fait plus passer derrière),
+            // et se cache quand on passe à une autre appli — comme les fenêtres de plugins de Logic.
+            window.setLevel(3); // NSFloatingWindowLevel
+            window.setHidesOnDeactivate(true);
 
             let title = NSString::from_str(&format!("{} - VST3", plugin_info.name));
             window.setTitle(&title);

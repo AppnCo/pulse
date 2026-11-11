@@ -192,6 +192,34 @@ window.PulseExt = (function () {
         openEditor(id);
         return id;
     }
+    // Copier / coller un plugin externe : son réglage = l'état que le plugin donne (lu en direct s'il est chargé)
+    async function stateOf(owner, id) {
+        if (available()) { try { const st = await core().invoke('ext_state', { id }); if (st) return st; } catch {} }
+        return ((owner && owner.effectParams || {})[id] || {}).state || null;
+    }
+    // Nouvelle instance avec ce réglage : à la place de `replaceId` (coller sur le même plugin), sinon ajoutée en fin de chaîne
+    async function addWithState(x, info, st, replaceId = null) {
+        if (!available()) { flashSafe('Les plugins externes se collent dans l\'appli Pulse'); return null; }
+        const id = newId();
+        names[id] = info.name;
+        try { await core().invoke('ext_create', { id, path: info.path, state: st || null }); loaded.add(id); }
+        catch (err) { flashSafe(`« ${info.name} » n'a pas pu s'ouvrir : ${err}`); loadBad(); return null; }
+        x.effects = x.effects || [];
+        x.effectParams = x.effectParams || {};
+        x.effectParams[id] = { path: info.path, name: info.name, vendor: info.vendor, ...(st ? { state: st } : {}) };
+        if (replaceId && x.effects.includes(replaceId)) {
+            x.effects = x.effects.map(f => f === replaceId ? id : f);
+            if (Array.isArray(x.fxOrder)) x.fxOrder = x.fxOrder.map(f => f === replaceId ? id : f);
+            delete x.effectParams[replaceId];
+            loaded.delete(replaceId);
+            core().invoke('ext_remove', { id: replaceId }).catch(() => {});
+        } else {
+            const chain = typeof chainOf === 'function' ? chainOf(x) : [...x.effects];
+            x.effects.push(id);
+            if (typeof FX_ORDER !== 'undefined') x.fxOrder = [...chain, id, ...FX_ORDER.filter(k => !chain.includes(k))];
+        }
+        return id;
+    }
     async function openEditor(id, toggle) {
         if (!available()) { flashSafe('Les plugins externes s\'ouvrent dans l\'appli Pulse (pas dans le navigateur)'); return; }
         // projet rouvert : le plugin n'est peut-être pas encore chargé (il l'est d'habitude au lancement de la lecture)
@@ -272,5 +300,5 @@ window.PulseExt = (function () {
     if (available() && /studio\.html/.test(location.pathname)) { if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bootScreen); else bootScreen(); }
     else if (available()) setTimeout(() => { scan().catch(() => {}); }, 1200);
     const ready = () => !!list;
-    return { available, ready, scan, visible, instruments, instOf, addInstrument, renderNotes, nameOf, has, isExt, ensure, saveStates, add, openEditor, openManager, names, paramName, paramValue, autoPids, loadParams };
+    return { available, ready, scan, visible, stateOf, addWithState, instruments, instOf, addInstrument, renderNotes, nameOf, has, isExt, ensure, saveStates, add, openEditor, openManager, names, paramName, paramValue, autoPids, loadParams };
 })();

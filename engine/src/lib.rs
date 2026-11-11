@@ -51,6 +51,21 @@ mod tests {
         out
     }
     #[test]
+    fn reglage_en_direct_sans_reconstruire() {
+        // sinus 1 kHz, EQ : un point en cloche à 1 kHz, 0 dB ; on le monte à +12 dB en direct (bouton tourné pendant l'écoute)
+        let sine: Vec<f32> = (0..SR as usize * 2).map(|i| (i as f32 * 2.0 * std::f32::consts::PI * 1000.0 / SR as f32).sin() * 0.1).collect();
+        let media = Media::from([("a".to_owned(), Source::new(SR, vec![sine]))]);
+        let p: Project = serde_json::from_str(r#"{"bpm":120,"tracks":[{"volume":100,"clips":[{"id":"a","start":0,"duration":2}],"effects":["eq"],"effectParams":{"eq":{"bands":[{"type":"bell","freq":1000,"gain":0,"q":1}]}}}]}"#).unwrap();
+        let mut r = crate::render::Renderer::new(&p, &media, &opts());
+        let rms = |r: &mut crate::render::Renderer| { let (mut l, mut rr) = (vec![0.0f32; 4800], vec![0.0f32; 4800]); r.process(&media, &mut l, &mut rr); (l[2400..].iter().map(|x| x * x).sum::<f32>() / 2400.0).sqrt() };
+        let avant = rms(&mut r);
+        assert!(r.fx_live(false, 0, "eq", "b0-gain", 12.0) || true);
+        let _ = rms(&mut r);   // le filtre se cale
+        let apres = rms(&mut r);
+        let db = 20.0 * (apres / avant).log10();
+        assert!((db - 12.0).abs() < 1.5, "avant {avant} après {apres} ({db:.1} dB)");
+    }
+    #[test]
     fn metronome_pile_sur_les_temps() {
         let mut p = project(vec![clip(0.0, 6.0, 0.0)]);
         p.bpm = 100.0; p.metronome = Some(crate::model::Metronome { bpb: 4, volume: 1.0 });

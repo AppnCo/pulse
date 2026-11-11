@@ -1,0 +1,39 @@
+<!doctype html><meta charset="utf-8"><title>selftest réglage en direct</title><body style="margin:0;background:#111">
+<script>
+// Retour terrain 11/11 : tourner un réglage pendant l'écoute faisait craquer le son (le mixage était reconstruit à chaque cran).
+// On tourne le seuil du compresseur et un point d'EQ 60 fois pendant la lecture par le moteur natif :
+// aucune reconstruction (swap) et aucun trou de son attendus. Son du Mac coupé par native-tour.sh. localStorage remis à la fin.
+const BK = JSON.stringify(Object.fromEntries(Object.keys(localStorage).map(k => [k, localStorage.getItem(k)])));
+const restore = () => { try { localStorage.clear(); const o = JSON.parse(BK); for (const k in o) localStorage.setItem(k, o[k]); } catch (e) {} };
+</script>
+<iframe id="f" src="studio.html" style="width:100vw;height:100vh;border:0;display:block"></iframe>
+<script>
+const log = t => { try { window.__TAURI__.core.invoke('test_log', { text: t }); } catch {} };
+const f = document.getElementById('f'); const sleep = ms => new Promise(r => setTimeout(r, ms));
+(async () => { try {
+  await sleep(4000); const w = f.contentWindow; w.__TAURI__ = window.__TAURI__; const inv = window.__TAURI__.core.invoke;
+  const E = (c) => w.eval(c);
+  await E(`(async()=>{ const ctx=await PulseAudio.init(); const sr=48000,b=ctx.createBuffer(1,sr*20,sr); for(let i=0;i<b.length;i++)b.getChannelData(0)[i]=Math.sin(i/30)*0.3; state.project.tracks=[{name:'Voix',type:'audio',color:'#A855F7',volume:100,clips:[],effects:['comp','eq'],effectParams:{comp:{threshold:-20,ratio:4},eq:{bands:[{type:'bell',freq:1000,gain:0,q:1}]}}}]; await importAudioFile(new File([PulseAudio.audioBufferToWav(b)],'s.wav',{type:'audio/wav'}),0,0); PulseNative.setEnabled && PulseNative.setEnabled(true); })()`);
+  await sleep(2500);
+  // compteur de reconstructions : PulseNative.swap / play appelés
+  E(`window.__fxerr=''; const fl0=PulseNative.fxLive; PulseNative.fxLive=function(items){ return fl0.call(this, items).catch(e=>{ window.__fxerr = String(e).slice(0,300) + ' · ' + JSON.stringify(items).slice(0,200); throw e; }); }; window.__swaps=0; const s0=PulseNative.swap, p0=PulseNative.play; PulseNative.swap=function(){ __swaps++; if(__swaps<4) window.__who=(window.__who||'')+'|'+(new Error().stack.split(String.fromCharCode(10)).slice(2,6).join(' < ')); return s0.apply(this,arguments); }; PulseNative.play=function(){ __swaps++; return p0.apply(this,arguments); };`);
+  E(`togglePlay()`); await sleep(2500);
+  const i0 = await inv('native_info'); const sw0 = E('__swaps'); const native = E('PulseAudio.isNative()');
+  log('lecture native : ' + native + ', reconstructions au départ : ' + sw0);
+  log('diag : ' + E(`(()=>{ const now = liveSnapOf(state.project); const t=state.project.tracks[0]; const prev=JSON.parse(JSON.stringify(_liveSnap.fx.t0||{})); return JSON.stringify({ snap: !!_liveSnap.rest, sameRest: now.rest === _liveSnap.rest, keys: Object.keys(now.fx), prevComp: prev.comp, ar: !!(PulseAudio.liveFxSet), comp: PulseAudio.liveFxSet('t0','comp',{threshold:-25},prev.comp||{}), eq: PulseAudio.liveFxSet('t0','eq',{bands:[{type:'bell',freq:1000,gain:3,q:1}]},prev.eq||{}) }); })()`));
+  for (let k = 0; k < 60; k++) {
+    E(`(()=>{ const t=state.project.tracks[0]; t.effectParams.comp.threshold = -20 - (${k} % 20); t.effectParams.eq.bands[0].gain = ((${k} % 12) - 6); window.__tl = (window.__tl||'') + (tryLiveFx() ? 'o' : 'x'); refreshPlaybackSoon(); })()`);
+    await sleep(40);
+  }
+  await sleep(1500);
+  log('tryLiveFx : ' + E('window.__tl') + ' · pile : ' + E(`(new Error()).stack.slice(0,0)`));
+  const i1 = await inv('native_info'); const sw1 = E('__swaps');
+  const under = (i1.underruns || 0) - (i0.underruns || 0);
+  log('erreur fxLive : ' + E('window.__fxerr'));
+  log('appelants : ' + E('window.__who'));
+  log((sw1 === sw0 ? 'ok      ' : 'ECHEC   ') + 'aucune reconstruction pendant 60 crans (avant ' + sw0 + ', après ' + sw1 + ')');
+  log((under === 0 ? 'ok      ' : 'ECHEC   ') + 'aucun trou de son (underruns +' + under + ')');
+  E(`togglePlay()`); await sleep(500);
+  restore(); await sleep(800); log('FIN OK');
+} catch (e) { restore(); log('ERREUR ' + (e && e.stack || e)); log('FIN'); } })();
+</script>

@@ -41,6 +41,8 @@ struct Shared {
     swap: Option<(Box<Renderer>, Arc<Media>)>,
     /// Piste (false, indice) ou groupe (true, indice) dont la page veut le spectre
     scope: Option<(bool, usize)>,
+    /// Réglages d'effets changés en direct : (groupe ?, indice, effet, réglage, valeur), pris au bloc suivant
+    fx_live: Vec<(bool, usize, String, String, f64)>,
 }
 
 /// Taille d'un bloc mixé (échantillons)
@@ -151,6 +153,8 @@ impl Player {
     pub fn stop(&self) { let _ = self.tx.send(Cmd::Stop); }
     /// Volumes, pan, mute / solo, envois, groupes, Master changés : pris en direct (≈ 0,2 s), sans couper ni relancer
     pub fn set_mix(&self, project: crate::model::Project) { *self.mix.lock().unwrap() = Some(project); }
+    /// Réglages d'effets tournés pendant la lecture : appliqués en direct au bloc suivant (sans reconstruire, sans craquement)
+    pub fn fx_live(&self, items: Vec<(bool, usize, String, String, f64)>) { self.shared.lock().unwrap().fx_live.extend(items); }
     /// Remplace le mixeur pendant la lecture (projet changé : effet, réglage de plugin, région…) : même position, même boucle,
     /// fondu enchaîné de 20 ms, sans arrêt ni clac. `renderer` doit partir du début du morceau (il est calé sur la lecture en cours).
     /// Renvoie false si rien ne joue (il faut alors lancer la lecture normalement).
@@ -251,6 +255,8 @@ fn spawn_feeder(mut renderer: Box<Renderer>, mut media: Arc<Media>, ring: Arc<Ri
         while !st.load(Ordering::Relaxed) {
             let next = mix.lock().ok().and_then(|mut g| g.take());
             if let Some(p) = next { renderer.mix_from(&p, &media); }
+            let live = shared.lock().map(|mut g| std::mem::take(&mut g.fx_live)).unwrap_or_default();
+            for (bus, idx, fx, key, v) in &live { renderer.fx_live(*bus, *idx, fx, key, *v); }
             let sw = shared.lock().ok().and_then(|mut g| g.swap.take());
             if let Some((nr, nm)) = sw {
                 let old = std::mem::replace(&mut renderer, nr);

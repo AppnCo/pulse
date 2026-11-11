@@ -71,7 +71,7 @@ function anaKnob(parent, { strip, cx, cy, d, key, min, max, def, steps, get, set
         e.preventDefault(); e.stopPropagation();
         const y0 = e.clientY, f0 = frac(get()); let moved = false;
         const mv = (ev) => {
-            const v = fromFrac(f0 + (y0 - ev.clientY) / (ev.shiftKey ? 700 : (steps ? 25 * (steps.length - 1) : 160)));
+            const v = fromFrac(f0 + (y0 - ev.clientY) / ((typeof knobFine === 'function' ? knobFine(ev) : ev.shiftKey) ? 1750 : (steps ? 25 * (steps.length - 1) : 320)));
             if (v === get()) return;
             if (!moved) { moved = true; onStart && onStart(); }
             set(v); draw(); g.dispatchEvent(new Event('input', { bubbles: true }));
@@ -81,7 +81,11 @@ function anaKnob(parent, { strip, cx, cy, d, key, min, max, def, steps, get, set
     });
     g.addEventListener('wheel', (e) => {
         e.preventDefault();
-        const dir = e.deltaY < 0 ? 1 : -1, v = steps ? steps[Math.max(0, Math.min(steps.length - 1, steps.indexOf(quant(get())) + dir))] : quant(get() + dir * (max - min) / 60);
+        // molette proportionnelle à la force du geste (wheelAmt / wheelSteps, studio.js)
+        const amt = typeof wheelAmt === 'function' ? wheelAmt(e) : (e.deltaY < 0 ? 1 : -1);
+        const dir = steps ? (typeof wheelSteps === 'function' ? wheelSteps(g, e) : Math.sign(amt)) : amt;
+        if (!dir) return;
+        const v = steps ? steps[Math.max(0, Math.min(steps.length - 1, steps.indexOf(quant(get())) + dir))] : quant(get() + dir * (max - min) / 80);
         if (v === get()) return;
         onStart && onStart(); set(v); draw(); onEnd && onEnd();
     }, { passive: false });
