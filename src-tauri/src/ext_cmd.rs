@@ -197,12 +197,8 @@ pub async fn ext_create(app: AppHandle, player: State<'_, pulse_engine::player::
     let bytes = state.and_then(|s| base64::engine::general_purpose::STANDARD.decode(s).ok());
     tauri::async_runtime::spawn_blocking(move || -> Result<ExtLoaded, String> {
         verdict(&app, &path)?;
-        if path.starts_with("au:") {
-            let (inst, out) = load_inst(&path, rate, &bytes, allow_inst)?;
-            ext::insert(&id, inst);
-            return Ok(out);
-        }
-        // VST3 : chargé sur le fil principal (règle du format : certains plugins plantent ou se bloquent sinon)
+        // VST3 et Audio Units : chargés sur le fil principal, comme Logic (règle du format VST3 ; et l'interface de certaines
+        // Audio Units, FabFilter par ex., ne se dessine pas si le plugin a été créé sur un autre fil)
         let (tx, rx) = std::sync::mpsc::channel();
         app.run_on_main_thread(move || {
             let r = load_inst(&path, rate, &bytes, allow_inst).map(|(inst, out)| { ext::insert(&id, inst); out });

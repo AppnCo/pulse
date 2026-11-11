@@ -258,5 +258,19 @@ window.PulseExt = (function () {
             if (changed && typeof refreshPlaybackSoon === 'function') refreshPlaybackSoon();
         }, 1500);
     }
-    return { available, scan, visible, instruments, instOf, addInstrument, renderNotes, nameOf, has, isExt, ensure, saveStates, add, openEditor, openManager, names, paramName, paramValue, autoPids, loadParams };
+    // Ouverture de l'appli, comme Logic : petit écran de chargement le temps de lire les plugins installés,
+    // pour que tout soit prêt (menu « + Effet » complet dès le premier clic). 20 s au plus, jamais bloquant au-delà.
+    function bootScreen() {
+        if (!available() || !document.body || document.getElementById('pulseBoot')) return;
+        const el = document.createElement('div'); el.id = 'pulseBoot';
+        el.innerHTML = '<div class="pb-card"><div class="pb-logo">Pulse</div><div class="pb-txt">Chargement des plugins…</div><div class="pb-bar"><i></i></div></div>';
+        document.body.appendChild(el);
+        const done = () => { el.classList.add('out'); setTimeout(() => el.remove(), 350); };
+        const t = setTimeout(done, 20000);
+        scan().then(l => { const n = (l || []).length; el.querySelector('.pb-txt').textContent = n ? `${n} plugins prêts` : 'Prêt'; setTimeout(() => { clearTimeout(t); done(); }, 250); }).catch(() => { clearTimeout(t); done(); });
+    }
+    if (available() && /studio\.html/.test(location.pathname)) { if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bootScreen); else bootScreen(); }
+    else if (available()) setTimeout(() => { scan().catch(() => {}); }, 1200);
+    const ready = () => !!list;
+    return { available, ready, scan, visible, instruments, instOf, addInstrument, renderNotes, nameOf, has, isExt, ensure, saveStates, add, openEditor, openManager, names, paramName, paramValue, autoPids, loadParams };
 })();

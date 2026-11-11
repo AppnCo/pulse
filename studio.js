@@ -3296,6 +3296,10 @@ function openAddEffectMenu(anchor, target, x, replaceId = null) {
     try { recent = JSON.parse(localStorage.getItem('pulse_fx_recent') || '[]').filter(n => fxChoice[n]); } catch {}
     // Deux gammes rangées à part : les plugins Pulse et la gamme Analogique (onglets en haut de la colonne de gauche)
     const extList = window.PulseExt && PulseExt.available() ? PulseExt.visible() : [];
+    // liste des externes pas encore lue (tout début de séance) : le menu se complète tout seul dès qu'elle arrive
+    if (window.PulseExt && PulseExt.available() && PulseExt.ready && !PulseExt.ready()) {
+        PulseExt.scan().then(() => { if (menu.isConnected && PulseExt.visible().length) { menu.remove(); openAddEffectMenu(anchor, target, x, replaceId); } }).catch(() => {});
+    }
     const extCats = [];
     // une marque = une seule catégorie, même écrite autrement selon le format (« antares » / « Antares », « bluecataudio » / « Blue Cat Audio »)
     const vKey = (v) => v.toLowerCase().replace(/[^a-z0-9]/g, '');

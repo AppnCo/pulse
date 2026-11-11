@@ -1,0 +1,34 @@
+<!doctype html><meta charset="utf-8"><title>selftest clic plugin</title><body style="margin:0;background:#111">
+<script>
+// Clic sur le nom d'un plugin dans les inserts : 1er clic ouvre sa fenêtre, 2e clic la referme (Pulse et externes VST3 / AU).
+// « WINS étiquette » dans le journal : le script shell compte alors les fenêtres de l'appli. localStorage remis à la fin.
+const BK = JSON.stringify(Object.fromEntries(Object.keys(localStorage).map(k => [k, localStorage.getItem(k)])));
+const restore = () => { try { localStorage.clear(); const o = JSON.parse(BK); for (const k in o) localStorage.setItem(k, o[k]); } catch (e) {} };
+</script>
+<iframe id="f" src="studio.html" style="width:100vw;height:100vh;border:0;display:block"></iframe>
+<script>
+const log = t => { try { window.__TAURI__.core.invoke('test_log', { text: t }); } catch {} };
+const f = document.getElementById('f'); const sleep = ms => new Promise(r => setTimeout(r, ms));
+(async () => { try {
+  await sleep(4000); const w = f.contentWindow; w.__TAURI__ = window.__TAURI__; const inv = window.__TAURI__.core.invoke;
+  const all = await w.PulseExt.scan(false);
+  const pick = [/^ValhallaVintageVerb$/i, /^AUGraphicEQ$/i, /^Pro-C 2$/i].map(re => all.find(p => re.test(p.name) && !p.instrument && p.path.startsWith('au:'))).filter(Boolean); log('essai : ' + pick.map(p => p.name).join(', '));
+  const ST = w.eval('state'); const t = ST.project.tracks[0]; ST.selectedTrack = 0;
+  t.effects = (t.effects || []).filter(x => !String(x).startsWith('vst')); if (!t.effects.includes('eq')) t.effects.push('eq');
+  const ids = [];
+  for (const p of pick) { const id = await w.PulseExt.add(t, p); if (id) { ids.push([id, p.name, p.path.split('.').pop()]); await sleep(8000); log('WINS ouvert Pro-C premiere ouverture ' + p.name.replace(/\W/g, '')); try { await inv('ext_editor', { id, title: p.name, toggle: true }); } catch {} await sleep(800); } }
+  w.eval('renderAll()'); await sleep(1500); log('WINS depart');  await sleep(1500);
+  const row = (fx) => w.document.querySelector(`.insp-strip .insp-fx-row[data-fx="${fx}"] span, .insp-fx-row[data-fx="${fx}"] span`);
+  // Pulse : EQ
+  row('eq').click(); await sleep(700); const o1 = !!w.document.querySelector('.fx-panel'); row('eq').click(); await sleep(700); const o2 = !!w.document.querySelector('.fx-panel');
+  log((o1 && !o2 ? 'ok     ' : 'ECHEC  ') + 'EQ Pulse : 1er clic ouvre ' + o1 + ', 2e clic referme ' + !o2);
+  for (const [id, name, fmt] of ids) {
+    row(id).click(); await sleep(6000); log('WINS ouvert ' + name + ' (' + fmt + ')'); await sleep(1500);
+    row(id).click(); await sleep(2000); log('WINS ferme ' + name + ' (' + fmt + ')'); await sleep(1500);
+    row(id).click(); await sleep(2500); log('WINS rouvert ' + name + ' (' + fmt + ')'); await sleep(1500);
+    row(id).click(); await sleep(2000); log('WINS referme ' + name + ' (' + fmt + ')'); await sleep(1500);
+  }
+  for (const [id] of ids) try { await inv('ext_remove', { id }); } catch {}
+  restore(); await sleep(1000); log('FIN OK');
+} catch (e) { restore(); log('ERREUR ' + (e && e.stack || e)); log('FIN'); } })();
+</script>

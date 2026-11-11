@@ -1,6 +1,7 @@
 #include "rack_au.h"
 #import <AudioToolbox/AudioToolbox.h>
 #import <CoreAudioKit/CoreAudioKit.h>
+#import <AudioToolbox/AUCocoaUIView.h>
 #import <AppKit/AppKit.h>
 #import <CoreFoundation/CoreFoundation.h>
 #include <cstring>
@@ -323,7 +324,11 @@ static NSView* try_load_auv2_gui(AudioComponentInstance audio_unit) {
 
             // Create view instance
             // The view class should have an initWithAudioUnit: method
-            if ([viewClass instancesRespondToSelector:@selector(initWithAudioUnit:)]) {
+            // Pulse : méthode standard (celle de Logic) : la classe est une fabrique qui donne la vue du plugin EN SERVICE
+            if ([viewClass conformsToProtocol:@protocol(AUCocoaUIBase)] || [viewClass instancesRespondToSelector:@selector(uiViewForAudioUnit:withSize:)]) {
+                id<AUCocoaUIBase> factory = [[viewClass alloc] init];
+                auView = [factory uiViewForAudioUnit:audio_unit withSize:NSZeroSize];
+            } else if ([viewClass instancesRespondToSelector:@selector(initWithAudioUnit:)]) {
                 // Use NSInvocation to avoid performSelector warning
                 SEL selector = @selector(initWithAudioUnit:);
                 NSMethodSignature *signature = [viewClass instanceMethodSignatureForSelector:selector];
@@ -383,7 +388,19 @@ void rack_au_gui_create_async(
     // Ensure we're on main thread for GUI operations
     dispatch_async(dispatch_get_main_queue(), ^{
         @autoreleasepool {
-            // Try AUv3 GUI first (asynchronous)
+            // Pulse : d'abord l'interface du plugin EN SERVICE (AUv2, comme Logic). L'ancien ordre (AUv3 d'abord) créait une
+            // deuxième copie du plugin : fenêtre vide, et ses boutons n'auraient pas touché le son.
+            {
+                NSView* v2 = try_load_auv2_gui(audio_unit);
+                if (v2 != nil) {
+                    RackAUGui* gui = new RackAUGui();
+                    gui->audio_unit = audio_unit; gui->view_controller = nil; gui->view = v2; gui->window = nil;
+                    gui->slider_targets = nil; gui->owns_view_controller = false; gui->owns_view = true; gui->error_message[0] = '\0';
+                    rack_live_guis().insert(gui);
+                    callback(user_data, gui, RACK_AU_OK);
+                    return;
+                }
+            }
             try_load_auv3_gui(audio_unit, ^(AUViewControllerBase* viewController) {
                 if (viewController != nil) {
                     // AUv3 succeeded
@@ -548,7 +565,7 @@ int rack_au_gui_show_window(RackAUGui* gui, const char* title) {
             // Ensure NSApp is initialized (required for windows to appear)
             // This is safe to call multiple times
             [NSApplication sharedApplication];
-            [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+            // Pulse : ne pas changer le type d'appli (Pulse est une vraie appli, avec Dock et menus)
 
             // Get view size
             NSSize viewSize = [gui->view frame].size;
@@ -565,7 +582,13 @@ int rack_au_gui_show_window(RackAUGui* gui, const char* title) {
 
                 // Pulse : la fenêtre fermée à la croix reste en vie (sinon la rouvrir faisait planter l'appli)
                 [gui->window setReleasedWhenClosed:NO];
-                [gui->window setContentView:gui->view];
+                // Pulse : comme les logiciels de son, la vue du plugin va dans un conteneur à calque (certaines interfaces,
+                // FabFilter par ex., ne se dessinent pas quand elles sont directement le contenu de la fenêtre)
+                NSView* box = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, viewSize.width, viewSize.height)];
+                [box setWantsLayer:YES];
+                [gui->view setFrameOrigin:NSZeroPoint];
+                [box addSubview:gui->view];
+                [gui->window setContentView:box];
                 [gui->window setTitle:windowTitle];
             }
 
