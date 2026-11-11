@@ -2735,7 +2735,7 @@ function bindSlotLists(strip, kind, x, idx) {
             else {
                 // Chaque effet ouvre son plug ; le panneau « Son » seulement pour ce qui n'a pas de fenêtre
                 openEffectPanel(kind === 'track' ? idx : x, n, row);
-                if (!findPlugWin(x, n)) openSoundPanel(kind === 'track' ? idx : x, row);
+                if (fxType(n) !== 'vst' && !findPlugWin(x, n)) openSoundPanel(kind === 'track' ? idx : x, row);   // plugin externe : sa propre fenêtre, rien d'autre
             }
         });
         row.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); openFxCopyMenu(e.clientX, e.clientY, row.dataset.fx, x); });

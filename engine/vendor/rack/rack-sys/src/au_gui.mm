@@ -550,6 +550,8 @@ int rack_au_gui_show_window(RackAUGui* gui, const char* title) {
                                                             backing:NSBackingStoreBuffered
                                                               defer:NO];
 
+                // Pulse : la fenêtre fermée à la croix reste en vie (sinon la rouvrir faisait planter l'appli)
+                [gui->window setReleasedWhenClosed:NO];
                 [gui->window setContentView:gui->view];
                 [gui->window setTitle:windowTitle];
             }

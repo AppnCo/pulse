@@ -1022,8 +1022,8 @@ fn main() {
     }));
     journal_write("démarrage", env!("CARGO_PKG_VERSION"));
     let mut context = tauri::generate_context!();
-    // Test automatique : fenêtre invisible, pour ne rien afficher à l'écran
-    if std::env::var_os("PULSE_TEST").is_some() {
+    // Test automatique : fenêtre invisible, pour ne rien afficher à l'écran (PULSE_TEST_VISIBLE=1 : visible, pour mesurer l'affichage)
+    if std::env::var_os("PULSE_TEST").is_some() && std::env::var_os("PULSE_TEST_VISIBLE").is_none() {
         for w in context.config_mut().app.windows.iter_mut() {
             w.visible = false;
         }

@@ -1,0 +1,37 @@
+<!doctype html><meta charset="utf-8"><title>selftest fluidité</title><body style="margin:0;background:#111;color:#0f0;font:14px monospace"><pre id="o" style="position:fixed;z-index:9;top:60px;left:10px;background:#000c;padding:8px;pointer-events:none"></pre>
+<iframe id="f" style="width:100vw;height:100vh;border:0"></iframe>
+<script>
+// Fluidité de l'affichage dans la vraie appli (WebKit) : 48 pistes, 6 groupes, au repos / en lecture / avec la table.
+// Par phase : images affichées, écart entre deux images, et temps pris par chaque image sur le fil principal
+// (du début de l'image jusqu'à la fin de sa mise en page). Fenêtre visible obligatoire : PULSE_TEST_VISIBLE=1. Aucun son.
+const o=document.getElementById('o'); const log=t=>{ o.textContent+=t+'\n'; try{ window.__TAURI__.core.invoke('test_log',{text:t}); }catch{} };
+const f=document.getElementById('f'); const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const buses=Array.from({length:6},(_,g)=>({id:'g'+g,name:'Groupe '+g,isGroup:true,output:'master',color:'#A855F7',volume:100}));
+const tracks=Array.from({length:48},(_,i)=>({name:'P'+(i+1),type:'audio',color:'#3B82F6',output:'g'+(i%6),effects:['eq','comp'],clips:Array.from({length:4},(_,k)=>({id:'c'+i+'_'+k,name:'r',start:k*20,duration:15,offset:0,peaks:Array.from({length:200},()=>Math.random())}))}));
+const AVANT=localStorage.getItem('pulse_current_project');
+localStorage.setItem('pulse_onboarded_v1','1'); localStorage.setItem('pulse_tip_headphones','1');
+localStorage.setItem('pulse_current_project',JSON.stringify({id:'bl',name:'BL',bpm:120,sends:[],buses,tracks}));
+f.src='studio.html';
+(async()=>{ try{
+  await sleep(3500); const w=f.contentWindow; w.__TAURI__=window.__TAURI__;
+  log('pistes: '+w.eval('state.project.tracks.length')+' | fenêtre '+innerWidth+'x'+innerHeight+' visible='+(document.visibilityState));
+  const phase=async(nom,ms=4000)=>{
+    const fr=[], cout=[]; let on=true;
+    const ch=new w.MessageChannel(); let t0=0; ch.port1.onmessage=()=>{ cout.push(w.performance.now()-t0); };
+    (function g(t){ if(!on) return; fr.push(w.performance.now()); t0=w.performance.now(); ch.port2.postMessage(0); w.requestAnimationFrame(g); })();
+    await sleep(ms); on=false;
+    const d=[]; for(let i=1;i<fr.length;i++) d.push(fr[i]-fr[i-1]); d.sort((a,b)=>a-b); cout.sort((a,b)=>a-b);
+    const q=(a,p)=>a.length?a[Math.min(a.length-1,Math.floor(a.length*p))]:0;
+    log('## '+nom+' : '+d.length+' images, écart médian '+q(d,.5).toFixed(1)+' ms, p95 '+q(d,.95).toFixed(1)+', max '+q(d,1).toFixed(1)+', lentes (>20 ms) '+d.filter(x=>x>20).length+' | coût par image : médian '+q(cout,.5).toFixed(2)+' ms, p95 '+q(cout,.95).toFixed(2)+', total '+cout.reduce((a,b)=>a+b,0).toFixed(0)+' ms sur '+ms);
+  };
+  await phase('repos');
+  w.eval('togglePlay()'); await sleep(600);
+  await phase('lecture');
+  w.eval('toggleMixer()'); await sleep(600);
+  await phase('lecture + table');
+  w.eval('togglePlay()'); await sleep(300);
+  await phase('table au repos');
+  log('FIN OK');
+}catch(e){ log('ERREUR '+(e&&e.stack||e)); log('FIN'); }
+finally{ if(AVANT===null) localStorage.removeItem('pulse_current_project'); else localStorage.setItem('pulse_current_project',AVANT); } })();
+</script>
