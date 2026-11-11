@@ -278,7 +278,8 @@ pub fn ext_editor(app: AppHandle, id: String, title: Option<String>, toggle: Opt
             if let ext::Inst::Au(p, ..) = &mut *g {
                 let (id2, t2) = (id.clone(), title.clone());
                 p.create_gui(move |res| {
-                    if let Ok(gui) = res { let _ = gui.show_window(t2.as_deref()); AU_GUIS.with(|m| { m.borrow_mut().insert(id2, gui); }); }
+                    // plugin retiré pendant le chargement de sa fenêtre : on la jette sans l'afficher (sinon fenêtre d'un plugin mort)
+                    if let Ok(gui) = res { if ext::get(&id2).is_none() { drop(gui); return Ok(()); } let _ = gui.show_window(t2.as_deref()); AU_GUIS.with(|m| { m.borrow_mut().insert(id2, gui); }); }
                     Ok(())
                 });
             }

@@ -5,6 +5,11 @@
 #import <CoreFoundation/CoreFoundation.h>
 #include <cstring>
 #include <dispatch/dispatch.h>
+#include <set>
+
+// Pulse : fenêtres encore vivantes (touché seulement sur le fil principal). Afficher / cacher passe par un bloc lancé
+// plus tard : si le plugin a été retiré entre-temps, le bloc ne doit pas toucher une fenêtre détruite (plantage).
+static std::set<void*>& rack_live_guis() { static std::set<void*> s; return s; }
 
 // GUI implementation structure
 struct RackAUGui {
@@ -392,6 +397,8 @@ void rack_au_gui_create_async(
                     gui->owns_view = false;  // View is owned by view controller
                     gui->error_message[0] = '\0';
 
+                    rack_live_guis().insert(gui);
+
                     callback(user_data, gui, RACK_AU_OK);
                 } else {
                     // AUv3 failed, try AUv2
@@ -409,6 +416,8 @@ void rack_au_gui_create_async(
                         gui->owns_view = true;
                         gui->error_message[0] = '\0';
 
+                        rack_live_guis().insert(gui);
+
                         callback(user_data, gui, RACK_AU_OK);
                     } else {
                         // Both AUv3 and AUv2 failed, create generic parameter UI as fallback
@@ -424,6 +433,8 @@ void rack_au_gui_create_async(
                         gui->owns_view_controller = false;
                         gui->owns_view = true;
                         gui->error_message[0] = '\0';
+
+                        rack_live_guis().insert(gui);
 
                         callback(user_data, gui, RACK_AU_OK);
                     }
@@ -445,6 +456,7 @@ void rack_au_gui_destroy(RackAUGui* gui) {
     // Lambda for cleanup code (used in both sync and async paths)
     auto cleanup = ^{
         @autoreleasepool {
+            rack_live_guis().erase(gui);
             // Close window if we created one
             if (gui->window != nil) {
                 [gui->window close];
@@ -531,6 +543,7 @@ int rack_au_gui_show_window(RackAUGui* gui, const char* title) {
     }
 
     dispatch_async(dispatch_get_main_queue(), ^{
+        if (!rack_live_guis().count(gui)) return;   // Pulse : plugin retiré entre-temps
         @autoreleasepool {
             // Ensure NSApp is initialized (required for windows to appear)
             // This is safe to call multiple times
@@ -580,6 +593,7 @@ int rack_au_gui_hide_window(RackAUGui* gui) {
     }
 
     dispatch_async(dispatch_get_main_queue(), ^{
+        if (!rack_live_guis().count(gui)) return;   // Pulse : plugin retiré entre-temps
         if (gui->window != nil) {
             [gui->window orderOut:nil];
         }

@@ -1,0 +1,29 @@
+<!doctype html><meta charset="utf-8"><title>selftest fenêtres de plugins</title><body style="margin:0;background:#111;color:#0f0;font:14px monospace"><pre id="o" style="position:fixed;z-index:9;top:60px;left:10px;background:#000c;padding:8px"></pre>
+<iframe id="f" src="studio.html" style="width:100vw;height:100vh;border:0"></iframe>
+<script>
+// Fenêtres de plugins (retour terrain 11/11 : Pro-Q 3 plantait à la réouverture) : ouvrir, refermer (2e clic), rouvrir,
+// retirer le plugin fenêtre ouverte, retirer juste après avoir demandé la fenêtre. L'appli doit survivre. Aucun son joué.
+const o=document.getElementById('o'); const log=t=>{ o.textContent+=t+'\n'; try{ window.__TAURI__.core.invoke('test_log',{text:t}); }catch{} };
+const f=document.getElementById('f'); const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const VEUT=/^(Pro-Q 3|Pro-C 2|Auto-Tune Pro|Pro-Q 4|Saturn 2)$/i;
+(async()=>{ try{
+  await sleep(2500); const w=f.contentWindow; w.__TAURI__=window.__TAURI__; const inv=window.__TAURI__.core.invoke;
+  const list=(await w.PulseExt.scan(false)).filter(p=>VEUT.test(p.name)&&!p.instrument);
+  log('plugins essayés : '+list.map(p=>p.name+' ('+p.path.split('.').pop()+')').join(', '));
+  let n=0;
+  for(const p of list){
+    const ed=(id,tg)=>inv('ext_editor',{id,title:p.name,toggle:tg});
+    const id='fen'+(n++);
+    try{ await inv('ext_create',{id,path:p.path,state:null}); }catch(e){ log('saute '+p.name+' : '+e); continue; }
+    for(let k=0;k<4;k++){ await ed(id,false); await sleep(1200); await ed(id,true); await sleep(500); }   // ouvrir / refermer
+    await ed(id,false); await sleep(1000);
+    await inv('ext_remove',{id}); await sleep(300);   // retiré fenêtre ouverte
+    try{ await ed(id,false); }catch(e){}            // fenêtre demandée pour un plugin retiré : doit être refusée sans planter
+    const id2=id+'b'; await inv('ext_create',{id:id2,path:p.path,state:null});
+    ed(id2,false); await inv('ext_remove',{id:id2});   // retiré juste après la demande de fenêtre
+    await sleep(1500);
+    log('ok '+p.name+' : 4 ouvrir/refermer, retiré fenêtre ouverte, retiré pendant l\'ouverture');
+  }
+  await sleep(2500); log('FIN OK (appli vivante)');
+}catch(e){ log('ERREUR '+(e&&e.stack||e)); log('FIN'); } })();
+</script>

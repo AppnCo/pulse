@@ -3206,7 +3206,7 @@ body.is-splitting, body.is-splitting * { cursor: col-resize !important; }
 .fx-add-menu .ctx-sep { height: 1px; background: var(--border); margin: 4px 6px; }
 .fx-add-menu .fam-cat { display: flex; align-items: center; gap: 8px; }
 .fam-ranges { display: flex; gap: 4px; margin: 0 0 6px; padding: 3px; background: #0d0915; border: 1px solid #2a2038; border-radius: 8px; }
-.fam-range { flex: 1; border: 0; border-radius: 6px; padding: 5px 8px; background: transparent; color: #a99cc4; font: 600 11.5px -apple-system, system-ui, sans-serif; letter-spacing: .03em; cursor: pointer; }
+.fam-range { flex: 1 1 0; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border: 0; border-radius: 6px; padding: 5px 6px; background: transparent; color: #a99cc4; font: 600 11.5px -apple-system, system-ui, sans-serif; letter-spacing: .03em; cursor: pointer; }
 .fam-range.on { background: linear-gradient(180deg, #7c3aed, #5b21b6); color: #fff; }
 .fx-add-menu .fam-cat[hidden] { display: none; }
 .fam-dot { width: 7px; height: 7px; border-radius: 50%; background: #5B21B6; box-shadow: 0 0 0 1px rgba(168,85,247,.35); flex-shrink: 0; }
@@ -3886,6 +3886,8 @@ body[data-left-tool="fade"] .timeline-tracks .clip { cursor: ew-resize; }
 .insp-fx-row.is-off span { text-decoration: line-through; text-decoration-color: rgba(255,255,255,.25); }
 .insp-fx-row.is-off .fx-pow { color: var(--text-3, #7a6b96); }
 .insp-fx-row .insp-del { padding: 0 3px; }
+/* au survol, le nom se raccourcit (…) avant ⇅ et × au lieu de passer dessous */
+.insp-fx-row:has(.fx-pow):hover { padding-right: 34px; }
 .strip-sends-title .fx-all { margin-left: auto; margin-right: 3px; width: 16px; height: 16px; padding: 0; display: inline-grid; place-items: center; border-radius: 4px; border: 1px solid var(--border, #3a2c50); background: transparent; color: var(--text-3, #9a8cb8); cursor: pointer; }
 .strip-sends-title .fx-all.on { background: #7C3AED; border-color: #A855F7; color: #fff; }
 .strip-sends-title .fx-all + .slot-plus { margin-left: 0; }
