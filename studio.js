@@ -2733,9 +2733,8 @@ function bindSlotLists(strip, kind, x, idx) {
             if (n === 'tune') { const r = row.getBoundingClientRect(); openTunePanel(idx, -1, r.left - 290, r.top - 20, true); return; }
             if (kind === 'bus' && x.premaster) openMasterPanel(x, row);
             else {
-                // Chaque effet ouvre son plug ; le panneau « Son » seulement pour ce qui n'a pas de fenêtre
+                // Chaque effet ouvre son plug, et rien d'autre (le panneau « Son » ne s'ouvre que par le bouton « Réglage »)
                 openEffectPanel(kind === 'track' ? idx : x, n, row);
-                if (fxType(n) !== 'vst' && !findPlugWin(x, n)) openSoundPanel(kind === 'track' ? idx : x, row);   // plugin externe : sa propre fenêtre, rien d'autre
             }
         });
         row.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); openFxCopyMenu(e.clientX, e.clientY, row.dataset.fx, x); });
