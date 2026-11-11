@@ -192,11 +192,11 @@ window.PulseExt = (function () {
         openEditor(id);
         return id;
     }
-    async function openEditor(id) {
+    async function openEditor(id, toggle) {
         if (!available()) { flashSafe('Les plugins externes s\'ouvrent dans l\'appli Pulse (pas dans le navigateur)'); return; }
         // projet rouvert : le plugin n'est peut-être pas encore chargé (il l'est d'habitude au lancement de la lecture)
         if (!loaded.has(id) && typeof state !== 'undefined' && state.project) await ensure(state.project);
-        core().invoke('ext_editor', { id, title: nameOf(id) }).catch(err => flashSafe('Fenêtre du plugin : ' + err));
+        core().invoke('ext_editor', { id, title: nameOf(id), toggle: !!toggle }).catch(err => flashSafe('Fenêtre du plugin : ' + err));
     }
     function flashSafe(m) { if (typeof flash === 'function') flash(m); else console.warn(m); }
 

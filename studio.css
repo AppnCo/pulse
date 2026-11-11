@@ -3869,6 +3869,9 @@ body[data-left-tool="fade"] .timeline-tracks .clip { cursor: ew-resize; }
 
 /* Cases de plugins comme Logic : ⏻ à gauche, nom au milieu (ouvre), ⇅ à droite (remplacer) ; éteint = grisé, garde sa place */
 .insp-fx-row .fx-pow, .insp-fx-row .fx-swap { position: absolute; top: 50%; transform: translateY(-50%); display: none; place-items: center; width: 13px; height: 13px; border-radius: 3px; font-weight: 400; font-size: 9px; color: var(--text-3, #9a8cb8); cursor: pointer; background: inherit; }
+/* au survol, deux vraies zones bien visibles (comme Logic) : ⏻ à gauche, ⇅ à droite */
+.insp-fx-row .fx-pow, .insp-fx-row .fx-swap { top: 1px; bottom: 1px; transform: none; height: auto; width: 15px; font-size: 11px; background: rgba(255,255,255,.10); border-radius: 3px; }
+.insp-fx-row .fx-pow svg { width: 10px; height: 10px; }
 /* les icônes passent par-dessus le nom (il garde toute sa largeur), comme dans Logic */
 .insp-fx-row:has(.fx-pow) { padding-left: 16px; }
 .insp-fx-row .fx-pow { left: 2px; }

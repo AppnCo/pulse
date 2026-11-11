@@ -220,6 +220,9 @@ impl AudioUnitGui {
     /// # Ok(())
     /// # }
     /// ```
+    /// Pulse : la fenêtre est-elle à l'écran ? (fil principal)
+    pub fn is_visible(&self) -> bool { unsafe { ffi::rack_au_gui_is_visible(self.handle) == 1 } }
+
     pub fn hide_window(&self) -> Result<()> {
         let result = unsafe { ffi::rack_au_gui_hide_window(self.handle) };
 

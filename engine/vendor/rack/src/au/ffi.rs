@@ -612,4 +612,6 @@ extern "C" {
     /// - `gui` must be a valid pointer returned via `rack_au_gui_create_async` callback
     /// - Must be called from main thread
     pub fn rack_au_gui_hide_window(gui: *mut RackAUGui) -> c_int;
+    /// Pulse : 1 si la fenêtre est à l'écran (fil principal)
+    pub fn rack_au_gui_is_visible(gui: *mut RackAUGui) -> c_int;
 }

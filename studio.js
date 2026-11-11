@@ -2733,7 +2733,10 @@ function bindSlotLists(strip, kind, x, idx) {
             if (n === 'tune') { const r = row.getBoundingClientRect(); openTunePanel(idx, -1, r.left - 290, r.top - 20, true); return; }
             if (kind === 'bus' && x.premaster) openMasterPanel(x, row);
             else {
-                // Chaque effet ouvre son plug, et rien d'autre (le panneau « Son » ne s'ouvre que par le bouton « Réglage »)
+                // Clic sur le nom : ouvre la fenêtre du plug, la referme si elle est déjà ouverte (comme Logic)
+                if (fxType(n) === 'vst') { if (window.PulseExt) PulseExt.openEditor(n, true); return; }
+                const w0 = findPlugWin(x, n);
+                if (w0) { const cb = w0.querySelector('.fx-panel-close'); if (cb) cb.click(); else w0.remove(); return; }
                 openEffectPanel(kind === 'track' ? idx : x, n, row);
             }
         });

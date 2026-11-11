@@ -568,6 +568,12 @@ int rack_au_gui_show_window(RackAUGui* gui, const char* title) {
 }
 
 // Hide window
+// Pulse : fenêtre à l'écran ? (à appeler sur le fil principal)
+int rack_au_gui_is_visible(RackAUGui* gui) {
+    if (!gui || gui->window == nil) return 0;
+    return [gui->window isVisible] ? 1 : 0;
+}
+
 int rack_au_gui_hide_window(RackAUGui* gui) {
     if (!gui) {
         return RACK_AU_ERROR_INVALID_PARAM;

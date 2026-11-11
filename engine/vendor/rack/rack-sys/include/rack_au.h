@@ -343,6 +343,7 @@ int rack_au_gui_show_window(RackAUGui* gui, const char* title);
 // Returns 0 on success, negative error code on failure
 // Thread-safety: Must be called from main thread
 int rack_au_gui_hide_window(RackAUGui* gui);
+int rack_au_gui_is_visible(RackAUGui* gui);
 
 #ifdef __cplusplus
 }

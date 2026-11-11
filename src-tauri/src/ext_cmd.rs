@@ -253,13 +253,15 @@ thread_local! { static AU_GUIS: std::cell::RefCell<HashMap<String, ext::rack::au
 
 /// Ouvre (ou ramène devant) la vraie fenêtre du plugin — sur le fil de l'interface, comme l'exigent les plugins
 #[tauri::command]
-pub fn ext_editor(app: AppHandle, id: String, title: Option<String>) -> Result<(), String> {
+pub fn ext_editor(app: AppHandle, id: String, title: Option<String>, toggle: Option<bool>) -> Result<(), String> {
+    // toggle : déjà ouverte → on la ferme (clic sur le nom du plugin, comme Logic)
+    let toggle = toggle.unwrap_or(false);
     let sh = ext::get(&id).ok_or("plugin absent")?;
     let vst = match &*sh.lock().unwrap() { ext::Inst::Vst(p) => Some(p.clone()), #[cfg(target_os = "macos")] _ => None };
     if let Some(p) = vst {
         return app.run_on_main_thread(move || WINDOWS.with(|w| {
             let mut w = w.borrow_mut();
-            if let Some(win) = w.get(&id) { if win.is_open() && !win.closed_by_user() { return; } }
+            if let Some(win) = w.get_mut(&id) { if win.is_open() && !win.closed_by_user() { if toggle { win.close(); } return; } }
             w.remove(&id);
             let mut win = vst3_host::PluginWindow::new(p);
             if win.open().is_ok() { w.insert(id, win); }
@@ -270,7 +272,7 @@ pub fn ext_editor(app: AppHandle, id: String, title: Option<String>) -> Result<(
         let sh2 = sh.clone();
         return app.run_on_main_thread(move || {
             // déjà ouverte : on la remontre
-            let shown = AU_GUIS.with(|m| m.borrow().get(&id).map(|g| g.show_window(title.as_deref()).is_ok()).unwrap_or(false));
+            let shown = AU_GUIS.with(|m| m.borrow().get(&id).map(|g| { if toggle && g.is_visible() { let _ = g.hide_window(); true } else { g.show_window(title.as_deref()).is_ok() } }).unwrap_or(false));
             if shown { return; }
             let mut g = sh2.lock().unwrap();
             if let ext::Inst::Au(p, ..) = &mut *g {
