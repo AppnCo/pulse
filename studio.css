@@ -3927,3 +3927,9 @@ body[data-left-tool="fade"] .timeline-tracks .clip { cursor: ew-resize; }
 
 /* Solo protégé (⌃ + clic sur S) : S barré en pointillés */
 .t-mini.m-s.safe, .strip-ms .strip-s.safe { border: 1px dashed #22D3EE; color: #22D3EE; background: repeating-linear-gradient(135deg, #22D3EE22 0 3px, transparent 3px 6px); }
+
+/* Fenêtres (Réglages, Export…) : la barre du haut reste au-dessus, donc elles commencent sous elle (le haut et la croix ne passent plus dessous) */
+.studio-body .modal-backdrop { padding-top: 68px; padding-bottom: 16px; }
+.studio-body .modal-backdrop .modal { max-height: calc(100vh - 84px); }
+/* l'en-tête « Pistes » reste devant les pistes qui défilent dessous (curseur de volume, poignée de hauteur) */
+.tracks-header { z-index: 20; }

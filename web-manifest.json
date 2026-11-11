@@ -95,7 +95,7 @@
 "pianoroll.js": "cf1aaeebd8e23676c525c11df77f14ca5e44e6519decf2dfb82f7578ee69ecda",
 "projectfile.js": "e214c12e0ff946f21e7cc39b9c54ce0ee44ac35632e86a93211ebb7cca15748f",
 "script.js": "db3e98a56222a9e7297b9764201671e632aeaf9e22acaf311b56c3b9be541390",
-"studio.css": "5f442a7e03e8ac12efb075d27292bafbd9c861e8838e35e40a79e3423ff34a18",
+"studio.css": "1609b67b56a1680b31cea3dbb916f604d4f5738a99708eef8dfe3abe28d38dd4",
 "studio.html": "b3f6db6071e994aad3df951cd3a8a8985eb947afbbdd2fef644cc4cb63021a39",
 "studio.js": "1aa0d6cc5a0e0631f178e2aa4264d32417693446c664ec304315a67ac10ca8ea",
 "styles.css": "9040ad9ca17969d48b7cc98c58afab3190dab1db6b986d245b71d0f9c438705c",
@@ -107,5 +107,5 @@
 "vendor/lame.min.js": "15d285e2587b3bdbfd18a68de6ce07cc074f7480a82c3815da2dc1c348ec6df4",
 "warp.js": "209bb3114410db48c37af5bf718a4cd482fcb95cc5bbf7ae6f024e3420bf6f3e"
 },
-"version": "2026-11-11 18:48"
+"version": "2026-11-11 18:53"
 }

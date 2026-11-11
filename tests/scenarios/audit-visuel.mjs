@@ -53,7 +53,7 @@ export default async (c) => {
   await ev(`openExportModal()`); await L('10 export'); await ev(`document.querySelectorAll('[class*=modal]').forEach(e=>e.remove())`);
   await ev(`openCheatSheet()`); await L('11 raccourcis'); await ev(`document.querySelectorAll('[class*=modal],[class*=cheat]').forEach(e=>e.remove())`);
   // piano roll
-  await ev(`(()=>{ const t={name:'Piano',type:'keys',color:'#22D3EE',volume:100,clips:[{start:0,duration:2,midi:{inst:'piano',beats:4,notes:[{s:0,d:1,p:60,v:100}],bpm:120}}]}; state.project.tracks.push(t); renderTracks&&renderTracks(); openMidiEditor(state.project.tracks.length-1,0,true); })()`);
+  await ev(`(()=>{ const t={name:'Piano',type:'keys',color:'#22D3EE',volume:100,clips:[{start:0,duration:2,midi:{inst:'piano',beats:4,notes:[{s:0,d:1,p:60,v:100}],bpm:120}}]}; state.project.tracks.push(t); renderAll(); openMidiEditor(state.project.tracks.length-1,0,true); })()`);
   await L('12 piano roll');
   console.log('=== TOTAL défauts relevés : ' + total);
 };
