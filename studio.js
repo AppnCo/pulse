@@ -8663,7 +8663,18 @@ function openEqPanel(trackIdx, anchorEl) {
         hover.style.top = (pr.bottom - g.top + 6 + hover.offsetHeight > g.height ? pr.top - g.top - hover.offsetHeight - 6 : pr.bottom - g.top + 6) + 'px';
     });
     graph.addEventListener('mouseleave', () => { hoverI = -1; hideHover(); });
-    graph.addEventListener('dblclick', (e) => {
+    // Double-clic détecté à la main : le 1er clic redessine le graphique, l'élément sous la souris change
+    // et le navigateur ne voyait plus de double-clic (point impossible à ajouter / retirer par moments)
+    let lastDown = null;
+    graph.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        const now = performance.now();
+        if (lastDown && now - lastDown.t < 400 && Math.hypot(e.clientX - lastDown.x, e.clientY - lastDown.y) < 6) {
+            lastDown = null; e.stopPropagation(); e.preventDefault(); onDbl(e); return;
+        }
+        lastDown = { t: now, x: e.clientX, y: e.clientY };
+    }, true);
+    const onDbl = (e) => {
         if (e.target.closest && e.target.closest('.eq-bub')) return;
         const pt = e.target.closest && e.target.closest('.eq-pt');
         if (pt) { removeBand(parseInt(pt.dataset.i)); return; }
@@ -8671,7 +8682,7 @@ function openEqPanel(trackIdx, anchorEl) {
         // Comme Pro-Q : double-clic tout à gauche = coupe-bas, tout à droite = coupe-haut
         if (x < W * 0.05 || x > W * 0.95) { addBand(Math.round(xf(x)), 0, x < W * 0.05 ? 'hpf' : 'lpf'); return; }
         addBand(Math.round(xf(x)), Math.round(yd(y) * 2) / 2);
-    });
+    };
     let wheelAcc = 0;
     graph.addEventListener('wheel', (e) => {
         if (e.target.closest && e.target.closest('.eq-bub')) return;
