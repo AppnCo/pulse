@@ -3985,3 +3985,13 @@ button .p-ic { color: currentColor; }
 /* Glisser un plugin d'une tranche à l'autre (⌥ = copier), comme Logic */
 .strip.fx-drop-target { outline: 2px solid var(--violet-2, #A855F7); outline-offset: -2px; }
 body.fx-drag-copy .insp-fx-row.fx-dragging::after { content: '+'; position: absolute; right: -6px; top: -6px; width: 14px; height: 14px; border-radius: 50%; background: #22c55e; color: #fff; font: 700 11px/14px -apple-system, sans-serif; text-align: center; }
+/* Envois : mêmes zones au survol que les plugins (⏻ couper, ⇅ changer de bus, × retirer) */
+.strip-send-row { position: relative; }
+.strip-send-row .sb-pow, .strip-send-row .sb-swap { position: absolute; top: 1px; bottom: 1px; display: none; place-items: center; width: 13px; border-radius: 3px; font-size: 9px; color: #c4b5fd; background: rgba(20,14,30,.85); cursor: pointer; z-index: 2; }
+.strip-send-row .sb-pow { left: 1px; } .strip-send-row .sb-pow svg { width: 9px; height: 9px; }
+.strip-send-row .sb-swap { right: 15px; }
+.strip-send-row .sb-del { position: absolute; right: 1px; top: 50%; transform: translateY(-50%); margin: 0; padding: 0 3px; display: none; z-index: 2; background: rgba(20,14,30,.85); }
+.strip-send-row:hover .sb-pow, .strip-send-row:hover .sb-swap, .strip-send-row.is-off .sb-pow { display: grid; }
+.strip-send-row:hover .sb-del { display: block; }
+.strip-send-row.is-off { opacity: .5; }
+.strip-send-row.is-off .sb-name { text-decoration: line-through; text-decoration-color: rgba(255,255,255,.3); }

@@ -2517,14 +2517,16 @@ function slotListsHtml(kind, x) {
             <div class="strip-sends-title">Envois<button class="slot-plus" data-plus="send" data-tooltip="Ajouter un envoi : vers un nouveau bus ou un bus existant">+</button></div>
             <div class="insp-slots insp-sends-box" data-add="send">
             ${sends.map(sd => `
-            <label class="strip-send-row send-bar-row ${(x.sends || {})[sd.id] > 0 ? 'on' : ''}" data-send="${esc(sd.id)}" style="--lvl:${(x.sends || {})[sd.id] || 0}%" data-tooltip="Glisser pour envoyer plus · double-clic = écrire le chiffre · ⌘ + clic = remettre à 0 · Maj = réglage fin · clic droit = avant / après le fader">
+            <label class="strip-send-row send-bar-row ${(x.sends || {})[sd.id] > 0 ? 'on' : ''} ${(x.sendMute || {})['send:' + sd.id] !== undefined ? 'is-off' : ''}" data-send="${esc(sd.id)}" style="--lvl:${(x.sends || {})[sd.id] || 0}%" data-tooltip="Glisser pour envoyer plus · double-clic = écrire le chiffre · ⌘ + clic = remettre à 0 · Maj = réglage fin · clic droit = avant / après le fader">
                 <span class="sb-name">${esc(sd.name)}</span>${(x.preSends || {})['send:' + sd.id] ? '<b class="sb-pre" data-tooltip="Envoi pris avant le fader (Pre)">PRE</b>' : ''}<em class="sb-val">${Math.round((x.sends || {})[sd.id] || 0)}</em>
                 <input type="range" class="insp-send" min="0" max="100" data-default="0" value="${(x.sends || {})[sd.id] || 0}" hidden>
+                <b class="fx-pow sb-pow" data-tooltip="Couper / rallumer cet envoi (son niveau est gardé)">${FX_POW_SVG}</b><i class="insp-del sb-del" data-tooltip="Retirer cet envoi">×</i>
             </label>`).join('')}
             ${Object.keys(x.busSends || {}).filter(id => busById(id)).map(id => `
-            <label class="strip-send-row send-bar-row on" data-bsend="${esc(id)}" style="--lvl:${x.busSends[id]}%" data-tooltip="Envoi vers le groupe « ${esc(busById(id).name)} » · glisser pour régler · double-clic = écrire le chiffre · ⌥ + clic = remettre à 0 · clic droit = avant / après le fader, retirer">
+            <label class="strip-send-row send-bar-row on ${(x.sendMute || {})['busSend:' + id] !== undefined ? 'is-off' : ''}" data-bsend="${esc(id)}" style="--lvl:${x.busSends[id]}%" data-tooltip="Envoi vers le groupe « ${esc(busById(id).name)} » · glisser pour régler · double-clic = écrire le chiffre · ⌥ + clic = remettre à 0 · clic droit = avant / après le fader, retirer">
                 <span class="sb-name">→ ${esc(busById(id).name)}</span>${(x.preSends || {})['busSend:' + id] ? '<b class="sb-pre" data-tooltip="Envoi pris avant le fader (Pre)">PRE</b>' : ''}<em class="sb-val">${Math.round(x.busSends[id])}</em>
                 <input type="range" class="insp-send" min="0" max="100" data-default="0" value="${x.busSends[id]}" hidden>
+                <b class="fx-pow sb-pow" data-tooltip="Couper / rallumer cet envoi (son niveau est gardé)">${FX_POW_SVG}</b><b class="fx-swap sb-swap" data-tooltip="Changer de bus (le niveau est gardé)">⇅</b><i class="insp-del sb-del" data-tooltip="Retirer cet envoi">×</i>
             </label>`).join('')}
             ${Array.from({ length: Math.max(2, 4 - sends.length - Object.keys(x.busSends || {}).length) }, (_, i) => `<div class="insp-slot-empty${i === 0 ? ' insp-add-send' : ''}" data-tooltip="Emplacement libre : clique pour envoyer vers une reverb, un écho ou un groupe"></div>`).join('')}
             </div>
@@ -2532,6 +2534,11 @@ function slotListsHtml(kind, x) {
 }
 // Après un changement dans une liste : la tranche de gauche et la table de mixage se redessinent ensemble
 function refreshStrips() {
+    const sw = state._sendSwap;
+    if (sw && performance.now() - sw.at < 60000) {
+        const nk = Object.keys(sw.x.busSends || {}).find(k => !sw.keys.includes(k));
+        if (nk) { sw.x.busSends[nk] = sw.val; delete sw.x.busSends[sw.id]; if (sw.x.preSends && sw.x.preSends['busSend:' + sw.id]) { sw.x.preSends['busSend:' + nk] = true; delete sw.x.preSends['busSend:' + sw.id]; } state._sendSwap = null; saveProject(); refreshPlaybackSoon(); }
+    } else if (sw) state._sendSwap = null;
     renderInspector();
     if (state.mixerOpen) { renderMixer(); bindMixerEvents(); }
 }
@@ -2781,8 +2788,34 @@ function bindSlotLists(strip, kind, x, idx) {
         const srow = sl.closest('.strip-send-row');
         const isBusSend = !!srow.dataset.bsend, id = srow.dataset.send || srow.dataset.bsend;
         let undoPushed = false;
+        // Comme les plugins : au survol ⏻ coupe / rallume (niveau gardé), ⇅ change de bus, × retire
+        const skey = (isBusSend ? 'busSend:' : 'send:') + id;
+        const lvlOf = (o) => isBusSend ? ((o.busSends || {})[id] || 0) : ((o.sends || {})[id] || 0);
+        const setLvl = (o, v) => { if (isBusSend) { o.busSends = o.busSends || {}; o.busSends[id] = v; } else { o.sends = o.sends || {}; o.sends[id] = v; } };
+        srow.querySelector('.sb-pow')?.addEventListener('click', (e) => {
+            e.preventDefault(); e.stopPropagation(); pushUndo();
+            const muted = (x.sendMute || {})[skey] !== undefined;
+            group().forEach(o => { o.sendMute = o.sendMute || {};
+                if (muted) { setLvl(o, o.sendMute[skey] ?? lvlOf(o)); delete o.sendMute[skey]; }
+                else { o.sendMute[skey] = lvlOf(o); setLvl(o, 0); }
+                if (!Object.keys(o.sendMute).length) delete o.sendMute; });
+            saveProject(); refreshPlaybackSoon(); refreshStrips();
+            flash(muted ? 'Envoi rallumé' : 'Envoi coupé (son niveau est gardé : reclique pour le rallumer)');
+        });
+        srow.querySelector('.sb-del')?.addEventListener('click', (e) => {
+            e.preventDefault(); e.stopPropagation(); pushUndo();
+            group().forEach(o => { if (isBusSend) { if (o.busSends) delete o.busSends[id]; } else setLvl(o, 0); if (o.preSends) delete o.preSends[skey]; if (o.sendMute) delete o.sendMute[skey]; });
+            saveProject(); refreshPlaybackSoon(); refreshStrips(); flash('Envoi retiré — ⌘Z pour annuler');
+        });
+        srow.querySelector('.sb-swap')?.addEventListener('click', (e) => {
+            e.preventDefault(); e.stopPropagation();
+            state._sendSwap = { x, id, val: lvlOf(x), keys: Object.keys(x.busSends || {}), at: performance.now() };
+            openSendTargetMenu(srow, kind, x);
+        });
+        srow.querySelectorAll('.sb-pow, .sb-swap, .sb-del').forEach(b => b.addEventListener('mousedown', (e) => e.stopPropagation()));
         sl.addEventListener('input', () => {
             if (!undoPushed) { pushUndo(); undoPushed = true; }
+            if (x.sendMute && x.sendMute[skey] !== undefined) { delete x.sendMute[skey]; srow.classList.remove("is-off"); }   // bouger un envoi coupé le rallume
             const v = parseInt(sl.value);
             // la piste, ou le groupe de cette tranche — et, si plusieurs pistes sont choisies, toutes les pistes choisies
             const targets = group();
