@@ -12,12 +12,11 @@ export default async (c) => {
   await click('.track-item');
   await click('#inspector .insp-add-fx');
   const ranges = await J(ev, `return [...document.querySelectorAll('.fx-add-menu .fam-range')].map(b=>b.textContent).join(',')`);
-  check('menu : deux gammes', ranges === 'Pulse,Analogique', ranges);
+  check('menu : onglet Pulse seul (Analogique dedans)', ranges === 'Pulse', ranges);
   const pulseCats = await J(ev, `return [...document.querySelectorAll('.fx-add-menu .fam-cat')].filter(e=>!e.hidden).map(e=>e.textContent.trim()).join(',')`);
-  check('gamme Pulse : pas de machines analogiques dans ses catégories', pulseCats.includes('Dynamique') && !pulseCats.includes('Compresseurs'), pulseCats);
-  await click('.fx-add-menu .fam-range', 'Analogique');
-  const anaCats = await J(ev, `return [...document.querySelectorAll('.fx-add-menu .fam-cat')].filter(e=>!e.hidden).map(e=>e.textContent.trim()).join(',')`);
-  check('gamme Analogique : ses catégories seules', anaCats === 'Compresseurs,Préamplis et EQ,Bandes et couleur,Espace', anaCats);
+  check('onglet Pulse : ses catégories puis « Analogique » et les siennes', pulseCats.includes('Dynamique') && pulseCats.endsWith('Compresseurs,Préamplis et EQ,Bandes et couleur,Espace'), pulseCats);
+  check('sous-titre Analogique visible', await J(ev, `const h=document.querySelector('.fx-add-menu .fam-sub'); return !!h && !h.hidden && h.textContent==='Analogique'`));
+  await click('.fx-add-menu .fam-cat', 'Compresseurs');
   check('menu : Éclair 76 cliqué', await click('.fx-add-menu .fam-fx', 'Éclair 76'));
   await sleep(600);
   const f = JSON.parse(await J(ev, `const p=document.querySelector('.fx-panel.plug-win[data-fx="fet76"]'); const imgs=p?[...p.querySelectorAll('image')]:[];
@@ -46,7 +45,7 @@ export default async (c) => {
   // Pulse 73
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   await click('#inspector .slot-plus[data-plus="fx"]');
-  await click('.fx-add-menu .fam-range', 'Analogique');
+  await click('.fx-add-menu .fam-cat', 'Compresseurs');
   await click('.fx-add-menu .fam-cat', 'Préamplis'); await sleep(100);
   check('menu : Pulse 73 cliqué', await click('.fx-add-menu .fam-fx', 'Pulse 73')); await sleep(500);
   check('Pulse 73 ajouté', await J(ev, `return state.project.tracks[0].effects.includes('pre73') && !!document.querySelector('.fx-panel.plug-win[data-fx="pre73"]')`) === true);
@@ -66,7 +65,7 @@ export default async (c) => {
   // Optique 2A : variantes (la façade change de couleur, réglages gardés), Compression / Limitation
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   await click('#inspector .slot-plus[data-plus="fx"]');
-  await click('.fx-add-menu .fam-range', 'Analogique');
+  await click('.fx-add-menu .fam-cat', 'Compresseurs');
   check('menu : Optique 2A cliqué', await click('.fx-add-menu .fam-fx', 'Optique 2A')); await sleep(500);
   check('Optique 2A ajouté, façade ouverte', await J(ev, `return state.project.tracks[0].effects.includes('opto2a') && !!document.querySelector('.fx-panel.plug-win[data-fx="opto2a"]')`) === true);
   const stop0 = await J(ev, `return document.querySelector('.fx-panel.plug-win[data-fx="opto2a"] #anaPanel stop').getAttribute('stop-color')`);
@@ -80,7 +79,7 @@ export default async (c) => {
   // Égaliseur P1 : dans « Préamplis et EQ », façade ouverte, un bouton tourné
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   await click('#inspector .slot-plus[data-plus="fx"]');
-  await click('.fx-add-menu .fam-range', 'Analogique');
+  await click('.fx-add-menu .fam-cat', 'Compresseurs');
   await click('.fx-add-menu .fam-cat', 'Préamplis'); await sleep(100);
   check('menu : Égaliseur P1 cliqué', await click('.fx-add-menu .fam-fx', 'Égaliseur P1')); await sleep(500);
   const pb = await pos('.fx-panel.plug-win[data-fx="eqp1"] .ana-k[data-key="lowBoost"] circle');
@@ -90,14 +89,14 @@ export default async (c) => {
   // Bus G : dans « Compresseurs », façade ouverte, variante Noir
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   await click('#inspector .slot-plus[data-plus="fx"]');
-  await click('.fx-add-menu .fam-range', 'Analogique');
+  await click('.fx-add-menu .fam-cat', 'Compresseurs');
   check('menu : Bus G cliqué', await click('.fx-add-menu .fam-fx', 'Bus G')); await sleep(500);
   await click('.fx-panel.plug-win[data-fx="busg"] .ana-var[data-v="1"]');
   check('Bus G : variante Noir', await J(ev, `return state.project.tracks[0].effectParams.busg.variant`) === 1);
   // Bande 80 : dans « Bandes et couleur », façade avec ses bobines, machine Cassette
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   await click('#inspector .slot-plus[data-plus="fx"]');
-  await click('.fx-add-menu .fam-range', 'Analogique');
+  await click('.fx-add-menu .fam-cat', 'Compresseurs');
   await click('.fx-add-menu .fam-cat', 'Bandes'); await sleep(100);
   check('menu : Bande 80 cliquée', await click('.fx-add-menu .fam-fx', 'Bande 80')); await sleep(500);
   check('Bande 80 : bobines', await J(ev, `return [...document.querySelectorAll('.fx-panel.plug-win[data-fx="tape"] image')].filter(i=>/reel/.test(i.getAttribute('href'))).length`) === 2);
@@ -106,20 +105,20 @@ export default async (c) => {
   // Lampe 670 : dans « Compresseurs », façade ouverte, constante de temps 6
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   await click('#inspector .slot-plus[data-plus="fx"]');
-  await click('.fx-add-menu .fam-range', 'Analogique');
+  await click('.fx-add-menu .fam-cat', 'Compresseurs');
   check('menu : Lampe 670 cliquée', await click('.fx-add-menu .fam-fx', 'Lampe 670')); await sleep(500);
   check('Lampe 670 : façade', await J(ev, `return !!document.querySelector('.fx-panel.plug-win[data-fx="l670"] .ana-k[data-key="thr"]')`) === true);
   // Détresse : façade, ratio Nuke, distorsion « 3 »
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   await click('#inspector .slot-plus[data-plus="fx"]');
-  await click('.fx-add-menu .fam-range', 'Analogique');
+  await click('.fx-add-menu .fam-cat', 'Compresseurs');
   check('menu : Détresse cliquée', await click('.fx-add-menu .fam-fx', 'Détresse')); await sleep(500);
   await click('.fx-panel.plug-win[data-fx="dtr"] [data-k="dist3"] rect');
   check('Détresse : distorsion « 3 »', await J(ev, `return state.project.tracks[0].effectParams.dtr.dist`) === 2);
   // Tranche E : façade, gain des hauts-médiums tourné, variante Noir
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   await click('#inspector .slot-plus[data-plus="fx"]');
-  await click('.fx-add-menu .fam-range', 'Analogique');
+  await click('.fx-add-menu .fam-cat', 'Compresseurs');
   await click('.fx-add-menu .fam-cat', 'Préamplis'); await sleep(100);
   check('menu : Tranche E cliquée', await click('.fx-add-menu .fam-fx', 'Tranche E')); await sleep(500);
   const hm = await pos('.fx-panel.plug-win[data-fx="stripe"] .ana-k[data-key="hmf"] circle');
@@ -130,7 +129,7 @@ export default async (c) => {
   // EQ 550 : façade, médiums par crans de 2
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   await click('#inspector .slot-plus[data-plus="fx"]');
-  await click('.fx-add-menu .fam-range', 'Analogique');
+  await click('.fx-add-menu .fam-cat', 'Compresseurs');
   await click('.fx-add-menu .fam-cat', 'Préamplis'); await sleep(100);
   check('menu : EQ 550 cliqué', await click('.fx-add-menu .fam-fx', 'EQ 550')); await sleep(500);
   const m5 = await pos('.fx-panel.plug-win[data-fx="eq550"] .ana-k[data-key="mf"] circle');
@@ -140,7 +139,7 @@ export default async (c) => {
   // Comp 25 : façade, type contre-réaction
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   await click('#inspector .slot-plus[data-plus="fx"]');
-  await click('.fx-add-menu .fam-range', 'Analogique');
+  await click('.fx-add-menu .fam-cat', 'Compresseurs');
   check('menu : Comp 25 cliqué', await click('.fx-add-menu .fam-fx', 'Comp 25')); await sleep(500);
   const tg25 = await pos('.fx-panel.plug-win[data-fx="comp25"] .ana-push rect');
   if (tg25) { await mouse('mouseMoved', tg25, { buttons: 0 }); await mouse('mousePressed', tg25); await mouse('mouseReleased', tg25); await sleep(200); }
@@ -148,14 +147,14 @@ export default async (c) => {
   // Bus 33 : façade, limiteur en service
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   await click('#inspector .slot-plus[data-plus="fx"]');
-  await click('.fx-add-menu .fam-range', 'Analogique');
+  await click('.fx-add-menu .fam-cat', 'Compresseurs');
   check('menu : Bus 33 cliqué', await click('.fx-add-menu .fam-fx', 'Bus 33')); await sleep(500);
   await click('.fx-panel.plug-win[data-fx="bus33"] [data-k="lon"] rect');
   check('Bus 33 : limiteur en service', await J(ev, `return state.project.tracks[0].effectParams.bus33.lon`) === 1);
   // EQ Massif : façade, bande 4 en cloche
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   await click('#inspector .slot-plus[data-plus="fx"]');
-  await click('.fx-add-menu .fam-range', 'Analogique');
+  await click('.fx-add-menu .fam-cat', 'Compresseurs');
   await click('.fx-add-menu .fam-cat', 'Préamplis'); await sleep(100);
   check('menu : EQ Massif cliqué', await click('.fx-add-menu .fam-fx', 'EQ Massif')); await sleep(500);
   await click('.fx-panel.plug-win[data-fx="massif"] [data-k="shelf4"] rect');
@@ -163,7 +162,7 @@ export default async (c) => {
   // Plaque 140 : dans « Espace », façade avec la plaque, variante Chaude
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   await click('#inspector .slot-plus[data-plus="fx"]');
-  await click('.fx-add-menu .fam-range', 'Analogique');
+  await click('.fx-add-menu .fam-cat', 'Compresseurs');
   await click('.fx-add-menu .fam-cat', 'Espace'); await sleep(100);
   check('menu : Plaque 140 cliquée', await click('.fx-add-menu .fam-fx', 'Plaque 140')); await sleep(500);
   await click('.fx-panel.plug-win[data-fx="plate"] .ana-var[data-v="1"] rect');
@@ -171,7 +170,7 @@ export default async (c) => {
   // Écho à bande : façade, vitesse tournée
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   await click('#inspector .slot-plus[data-plus="fx"]');
-  await click('.fx-add-menu .fam-range', 'Analogique');
+  await click('.fx-add-menu .fam-cat', 'Compresseurs');
   await click('.fx-add-menu .fam-cat', 'Espace'); await sleep(100);
   check('menu : Écho à bande cliqué', await click('.fx-add-menu .fam-fx', 'Écho à bande')); await sleep(500);
   const rk = await pos('.fx-panel.plug-win[data-fx="techo"] .ana-k[data-key="rate"] circle');
@@ -180,7 +179,7 @@ export default async (c) => {
   // Salle 80 : façade avec l'écran à LED, programme Chambre, durée tournée (bouton logarithmique)
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   await click('#inspector .slot-plus[data-plus="fx"]');
-  await click('.fx-add-menu .fam-range', 'Analogique');
+  await click('.fx-add-menu .fam-cat', 'Compresseurs');
   await click('.fx-add-menu .fam-cat', 'Espace'); await sleep(100);
   check('menu : Salle 80 cliquée', await click('.fx-add-menu .fam-fx', 'Salle 80')); await sleep(500);
   await click('.fx-panel.plug-win[data-fx="hall80"] .ana-var[data-v="1"] rect');
@@ -192,7 +191,7 @@ export default async (c) => {
   // Harmoniseur 910 : façade, préréglage Octave, modèle 949
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   await click('#inspector .slot-plus[data-plus="fx"]');
-  await click('.fx-add-menu .fam-range', 'Analogique');
+  await click('.fx-add-menu .fam-cat', 'Compresseurs');
   await click('.fx-add-menu .fam-cat', 'Espace'); await sleep(100);
   check('menu : Harmoniseur 910 cliqué', await click('.fx-add-menu .fam-fx', 'Harmoniseur 910')); await sleep(500);
   await click('.fx-panel.plug-win[data-fx="h910"] .h9-pre[data-i="2"] rect');
@@ -202,7 +201,7 @@ export default async (c) => {
   // Dimension : façade, mode 4, Ensemble
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   await click('#inspector .slot-plus[data-plus="fx"]');
-  await click('.fx-add-menu .fam-range', 'Analogique');
+  await click('.fx-add-menu .fam-cat', 'Compresseurs');
   await click('.fx-add-menu .fam-cat', 'Espace'); await sleep(100);
   check('menu : Dimension cliquée', await click('.fx-add-menu .fam-fx', 'Dimension')); await sleep(500);
   await click('.fx-panel.plug-win[data-fx="dim"] .dim-mode[data-m="3"] rect');
@@ -212,7 +211,7 @@ export default async (c) => {
   // Préampli 76V : dans « Préamplis et EQ », tranche fine, variante Radio
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   await click('#inspector .slot-plus[data-plus="fx"]');
-  await click('.fx-add-menu .fam-range', 'Analogique');
+  await click('.fx-add-menu .fam-cat', 'Compresseurs');
   await click('.fx-add-menu .fam-cat', 'Préamplis'); await sleep(100);
   check('menu : Préampli 76V cliqué', await click('.fx-add-menu .fam-fx', 'Préampli 76V')); await sleep(500);
   await click('.fx-panel.plug-win[data-fx="prev76"] .ana-var[data-v="1"] rect'); await sleep(300);
@@ -220,7 +219,7 @@ export default async (c) => {
   // Éclat : dans « Bandes et couleur », variante Plein
   await ev(`document.querySelectorAll('.fx-panel').forEach(p=>p.remove())`);
   await click('#inspector .slot-plus[data-plus="fx"]');
-  await click('.fx-add-menu .fam-range', 'Analogique');
+  await click('.fx-add-menu .fam-cat', 'Compresseurs');
   await click('.fx-add-menu .fam-cat', 'Bandes'); await sleep(100);
   check('menu : Éclat cliqué', await click('.fx-add-menu .fam-fx', 'Éclat')); await sleep(500);
   await click('.fx-panel.plug-win[data-fx="eclat"] .ana-var[data-v="1"] rect');

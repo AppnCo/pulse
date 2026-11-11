@@ -3301,7 +3301,8 @@ function openAddEffectMenu(anchor, target, x, replaceId = null) {
     const left = document.createElement('div'); left.className = 'fam-left';
     const right = document.createElement('div'); right.className = 'fam-right';
     menu.append(left, right);
-    left.innerHTML = `<div class="fam-ranges">${RANGES.map(([g]) => `<button class="fam-range" data-range="${g}">${g}</button>`).join('')}</div><input class="fam-search" type="text" placeholder="Chercher un effet…" spellcheck="false">`;
+    // onglets : Pulse (avec la gamme Analogique en sous-partie) et Externes à part
+    left.innerHTML = `<div class="fam-ranges">${RANGES.filter(([g]) => g !== 'Analogique').map(([g]) => `<button class="fam-range" data-range="${g}">${g}</button>`).join('')}</div><input class="fam-search" type="text" placeholder="Chercher un effet…" spellcheck="false">`;
     const search = left.querySelector('.fam-search');
     const addHead = (box, txt) => { const h = document.createElement('div'); h.className = 'ctx-head'; h.textContent = txt; box.appendChild(h); };
     const pick = (n) => {
@@ -3371,10 +3372,11 @@ function openAddEffectMenu(anchor, target, x, replaceId = null) {
     }));
     const head = document.createElement('div'); head.className = 'ctx-head fam-title'; right.prepend(head);
     const empty = document.createElement('div'); empty.className = 'fam-empty'; empty.textContent = 'Aucun effet ne correspond. Essaie « écho », « reverb », « compresseur »…'; right.appendChild(empty);
-    const rangeOf = (c) => (cats.find(k => k[0] === c) || [])[2] || 'Pulse';
+    const rangeOf = (c) => { const g = (cats.find(k => k[0] === c) || [])[2] || 'Pulse'; return g === 'Analogique' ? 'Pulse' : g; };
     const showRange = (g) => {
         left.querySelectorAll('.fam-range').forEach(b => b.classList.toggle('on', b.dataset.range === g));
         left.querySelectorAll('.fam-cat').forEach(el => { el.hidden = rangeOf(el.dataset.cat) !== g; });
+        left.querySelectorAll('.fam-sub').forEach(el => { el.hidden = g !== 'Pulse'; });
     };
     const showCat = (c) => {
         showRange(rangeOf(c));
@@ -3390,7 +3392,8 @@ function openAddEffectMenu(anchor, target, x, replaceId = null) {
         });
         const sep = document.createElement('div'); sep.className = 'ctx-sep'; left.appendChild(sep);
     }
-    cats.forEach(([c]) => {
+    cats.forEach(([c, , g], i) => {
+        if (g === 'Analogique' && (cats[i - 1] || [])[2] !== 'Analogique') { const h = document.createElement('div'); h.className = 'ctx-head fam-sub'; h.textContent = 'Analogique'; left.appendChild(h); }
         const el = document.createElement('div'); el.className = 'ctx-item fam-cat'; el.dataset.cat = c; el.innerHTML = `<span class="fam-dot"></span>${esc(c)}`;
         el.addEventListener('mouseenter', () => { if (!search.value) showCat(c); });
         el.addEventListener('click', () => { search.value = ''; showCat(c); });
