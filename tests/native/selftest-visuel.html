@@ -94,6 +94,26 @@ const VEUT = [/^Pro-Q 4$/i, /^Pro-C 2$/i, /^Saturn 2$/i, /^Auto-Tune Pro/i, /^Me
   // clic sur le nom : fenêtre du plugin (native) puis refermer
   const r0 = w.document.querySelector('.insp-fx-row[data-fx^="vst"] span'); if (r0) { r0.click(); await sleep(2500); log('SNAP F fenetre plugin'); await sleep(2500); r0.click(); await sleep(1500); }
   await look('G apres fermeture');
+  // ---- tour complet (comme audit-visuel.mjs, mais dans le moteur de l'appli) ----
+  const E = (c) => w.eval(c);
+  await E(`(async()=>{ const ctx=await PulseAudio.init(); const sr=48000,b=ctx.createBuffer(1,sr*8,sr); for(let i=0;i<b.length;i++)b.getChannelData(0)[i]=Math.sin(i/40)*0.3; await importAudioFile(new File([PulseAudio.audioBufferToWav(b)],'instru.wav',{type:'audio/wav'}),2,0); })()`); await sleep(2500);
+  E(`(()=>{ const t=state.project.tracks[1]; t.effects=['eq','comp','sat','deess','delay','reverb','fet76','opto2a']; state.selectedTrack=1; renderAll(); })()`); await sleep(800);
+  await look('H studio');
+  E(`closeAllMenus(); openSendTargetMenu(document.querySelector('.slot-plus')||document.body, 'track', state.project.tracks[1])`); await look('I menu envois');
+  E(`const r=[...document.querySelectorAll('.ctx-has-sub')].find(e=>e.textContent.includes('33')); r && r.dispatchEvent(new MouseEvent('mouseenter'))`); await look('I envois 33-64');
+  E(`closeAllMenus(); openTrackContextMenu(300, 200, 1, state.project.tracks[1])`); await look('J menu piste');
+  for (let i = 0; i < w.document.querySelectorAll('.track-ctx-menu > .ctx-has-sub').length; i++) { const el = w.document.querySelectorAll('.track-ctx-menu > .ctx-has-sub')[i]; el.dispatchEvent(new MouseEvent('mouseenter')); await look('J piste > ' + el.textContent.trim().slice(0, 16)); }
+  E(`closeAllMenus(); const ti=state.project.tracks.findIndex(t=>(t.clips||[]).length); openClipContextMenu(500, 300, ti, 0)`); await look('K menu region');
+  for (let i = 0; i < w.document.querySelectorAll('.track-ctx-menu > .ctx-has-sub').length; i++) { const el = w.document.querySelectorAll('.track-ctx-menu > .ctx-has-sub')[i]; el.dispatchEvent(new MouseEvent('mouseenter')); await look('K region > ' + el.textContent.trim().slice(0, 16)); }
+  E('closeAllMenus()');
+  for (const fx of E('FX_ORDER')) { E(`document.querySelectorAll('.fx-panel,.plug-win').forEach(p=>p.remove()); try { openEffectPanel(1, ${JSON.stringify(fx)}, document.querySelector('.insp-fx-row')||document.body) } catch(e) { console.log(e) }`); await sleep(400); await look('L effet ' + fx); }
+  E(`document.querySelectorAll('.fx-panel,.plug-win').forEach(p=>p.remove())`);
+  E('toggleMixer()'); await look('M table de mixage'); E('toggleMixer()');
+  E('openSettings()'); await look('N reglages'); E(`document.querySelectorAll('[class*=modal]').forEach(e=>e.remove())`);
+  E('openExportModal()'); await look('O export'); E(`document.querySelectorAll('[class*=modal]').forEach(e=>e.remove())`);
+  E('openCheatSheet()'); await look('P raccourcis'); E(`document.querySelectorAll('[class*=modal],[class*=cheat]').forEach(e=>e.remove())`);
+  E(`(()=>{ const t={name:'Piano',type:'keys',color:'#22D3EE',volume:100,clips:[{start:0,duration:2,midi:{inst:'piano',beats:4,notes:[{s:0,d:1,p:60,v:100},{s:1,d:1,p:64,v:90}],bpm:120}}]}; state.project.tracks.push(t); renderAll(); openMidiEditor(state.project.tracks.length-1,0,true); })()`); await sleep(1200);
+  await look('Q piano roll');
   for (const id of [...t.effects]) if (String(id).startsWith('vst')) try { await inv('ext_remove', { id }); } catch {}
   restore(); await sleep(1000); log('FIN OK');
 } catch (e) { restore(); log('ERREUR ' + (e && e.stack || e)); log('FIN'); } })();

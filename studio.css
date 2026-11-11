@@ -2867,7 +2867,7 @@ body.midi-open .workspace { padding-bottom: var(--midi-h, 340px); }
 .lyrics-follow-bar[hidden], .lyrics-follow[hidden], #lyricsText[hidden] { display: none; }
 
 /* Infobulles des poignées : leur ::after dessine déjà la poignée, l'infobulle passe donc par ::before */
-.track-resize[data-tooltip]::before, .group-resize[data-tooltip]::before, #panelResizer[data-tooltip]::before, #inspResizer[data-tooltip]::before, .pan-knob[data-tooltip]::before, .knob[data-tooltip]::before {
+.track-resize[data-tooltip]::before, .group-resize[data-tooltip]::before, #panelResizer[data-tooltip]::before, #inspResizer[data-tooltip]::before, .strip-pan-knob[data-tooltip]::before, .pan-knob[data-tooltip]::before, .knob[data-tooltip]::before {
     content: attr(data-tooltip);
     position: absolute; bottom: calc(100% + 6px); left: 50%;
     transform: translateX(-50%) translateY(4px);
@@ -2877,7 +2877,7 @@ body.midi-open .workspace { padding-bottom: var(--midi-h, 340px); }
     transition: opacity .2s var(--ease) .5s, transform .2s var(--ease) .5s;
     box-shadow: 0 6px 20px rgba(0, 0, 0, .4), 0 0 0 1px var(--border);
 }
-.track-resize[data-tooltip]:hover::before, .group-resize[data-tooltip]:hover::before, #panelResizer[data-tooltip]:hover::before, #inspResizer[data-tooltip]:hover::before, .pan-knob[data-tooltip]:hover::before, .knob[data-tooltip]:hover::before { opacity: 1; transform: translateX(-50%) translateY(0); }
+.track-resize[data-tooltip]:hover::before, .group-resize[data-tooltip]:hover::before, #panelResizer[data-tooltip]:hover::before, #inspResizer[data-tooltip]:hover::before, .strip-pan-knob[data-tooltip]:hover::before, .pan-knob[data-tooltip]:hover::before, .knob[data-tooltip]:hover::before { opacity: 1; transform: translateX(-50%) translateY(0); }
 #panelResizer[data-tooltip]::before, #inspResizer[data-tooltip]::before { left: 0; transform: translateY(4px); }
 #panelResizer[data-tooltip]:hover::before, #inspResizer[data-tooltip]:hover::before { transform: translateY(0); }
 /* Poignée d'agrandissement des fenêtres : elle ne mord plus sur les boutons du bas */
@@ -3938,7 +3938,7 @@ body[data-left-tool="fade"] .timeline-tracks .clip { cursor: ew-resize; }
 /* fenêtres étroites (EQ 550…) : l'aide et les valeurs l'une sous l'autre, au lieu de deux colonnes écrasées */
 .ana-narrow .lim-sb { flex-direction: column; align-items: flex-start; gap: 3px; }
 /* infobulles des listes qui défilent : calque au-dessus de tout (voir fin de studio.js), l'infobulle CSS coupée est retirée */
-:is(.insp-slots, .fam-left, .fam-right, .mixer-strips, .tracks-list, .ctx-subpanel) [data-tooltip]::after { display: none; }
+:is(.insp-slots, .fam-left, .fam-right, .ctx-subpanel) [data-tooltip]:not(.strip-pan-knob, .pan-knob, .knob)::after { display: none; }
 .float-tip { position: fixed; z-index: 10000; pointer-events: none; max-width: 340px; padding: 5px 10px; border-radius: 7px; background: var(--bg-3); color: var(--text-1); font-size: 11.5px; line-height: 1.35; box-shadow: 0 6px 20px rgba(0,0,0,.4), 0 0 0 1px var(--border); opacity: 0; transition: opacity .15s; }
 .float-tip.on { opacity: 1; }
 /* tranche étroite : ⏻ et ⇅ plus fins au survol, le nom garde de la place */
@@ -3954,3 +3954,13 @@ body[data-left-tool="fade"] .timeline-tracks .clip { cursor: ew-resize; }
 .fx-add-menu .fam-fx.fam-ext { padding: 5px 12px; min-height: 0; }
 .fx-add-menu .fam-fx.fam-ext .fam-nm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .fx-add-menu .fam-fx.fam-ext .fam-txt { width: 100%; }
+/* Table de mixage comme Logic : tous les faders alignés en bas (Mix Bus, Master compris), titres « Effets / Envois » à la même hauteur partout */
+.mixer-strips .strip .strip-fader-wrap, .strip-master .strip-fader-wrap { margin-top: auto; }
+.insp-fx .strip-sends-title, .strip-sends .strip-sends-title { min-height: 16px; line-height: 16px; }
+
+/* Bouton de panoramique des tranches : le repère (::after) reste visible ; son infobulle passe par ::before comme les autres boutons ronds */
+.strip-pan-knob[data-tooltip]::after { content: ''; opacity: 1; bottom: auto; top: 4px; padding: 0; border-radius: 1px; box-shadow: none; white-space: normal; transition: none; z-index: 1; background: var(--violet-2); transform: translateX(-50%); }
+/* faders alignés en bas : la sortie ne prend plus la moitié de l'espace libre */
+.mixer-strips .strip > .strip-output, .strip-master > .strip-output { margin-top: 0; }
+.strip-master .strip-fader-wrap { flex: 0 0 auto; }
+.strip-master .strip-fader-wrap { margin-bottom: 22px; }

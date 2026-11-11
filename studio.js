@@ -16999,12 +16999,12 @@ function addFaderScales(root) {
 // Infobulles des listes qui défilent (effets, envois, menu + Effet, table de mixage) : affichées dans un calque au-dessus de tout,
 // sinon le cadre de la liste les coupe. Même texte (data-tooltip), même délai que les autres.
 (function () {
-    const CLIP = '.insp-slots, .fam-left, .fam-right, .mixer-strips, .tracks-list, .ctx-subpanel';
+    const CLIP = '.insp-slots, .fam-left, .fam-right, .ctx-subpanel';
     let tip = null, timer = null, cur = null;
     const hide = () => { clearTimeout(timer); timer = null; cur = null; if (tip) tip.classList.remove('on'); };
     document.addEventListener('mouseover', (e) => {
         const el = e.target.closest && e.target.closest('[data-tooltip]');
-        if (!el || !el.closest(CLIP)) { if (cur) hide(); return; }
+        if (!el || !el.closest(CLIP) || el.matches('.strip-pan-knob, .pan-knob, .knob')) { if (cur) hide(); return; }
         if (el === cur) return;
         hide(); cur = el;
         timer = setTimeout(() => {
