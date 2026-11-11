@@ -24,6 +24,25 @@ const ANA_SKINS = {
     graphite: { stops: ['#3d3c44', '#2c2b32', '#1d1c22'], txt: '#e4dcf5', sub: '#c4b5fd', tick: '#d8c8f5', grain: '.08', stroke: '#000' }
 };
 const ANA_NS = 'http://www.w3.org/2000/svg';
+// Chaque façade a ses propres dégradés / filtres / masques (suffixe unique) : avec un nom commun (« anaPanel »…),
+// le navigateur prenait ceux de la PREMIÈRE fenêtre ouverte → toutes les façades avaient la même couleur.
+let ANA_UID = 0;
+function anaFixRefs(root, sfx) {
+    const all = root.querySelectorAll ? [root, ...root.querySelectorAll('*')] : [];
+    for (const e of all) {
+        if (!e.getAttribute) continue;
+        const id = e.getAttribute('id'); if (id && /^ana[A-Za-z]+$/.test(id)) e.setAttribute('id', id + sfx);
+        for (const at of [...(e.attributes || [])]) if (at.value.includes('url(#ana') || at.value.startsWith('#ana')) {
+            const v = at.value.replace(/url\(#(ana[A-Za-z]+)\)/g, `url(#$1${sfx})`).replace(/^#(ana[A-Za-z]+)$/, `#$1${sfx}`);
+            if (v !== at.value) e.setAttribute(at.name, v);
+        }
+    }
+}
+function anaUniq(svg) {
+    const sfx = '_' + (++ANA_UID); svg.dataset.sfx = sfx; anaFixRefs(svg, sfx);
+    new MutationObserver(ms => { for (const m of ms) { if (m.type === 'childList') m.addedNodes.forEach(n => { if (n.nodeType === 1) anaFixRefs(n, sfx); }); else if (m.target.nodeType === 1) anaFixRefs(m.target, sfx); } })
+        .observe(svg, { childList: true, subtree: true, attributes: true, attributeFilter: ['fill', 'filter', 'stroke', 'clip-path', 'mask', 'href', 'id'] });
+}
 const anaEl = (tag, attrs = {}, parent) => { const e = document.createElementNS(ANA_NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; };
 
 // Une image de la bande, posée centrée sur (cx, cy) pour un bouton de diamètre d ; renvoie de quoi changer d'image
@@ -122,6 +141,7 @@ function anaWindow(t, fx, title, W, H, anchorEl, trackIdx, pw, skin = 'noir') {
     anaEl('rect', { x: 1, y: 1, width: W - 2, height: H - 2, rx: 6, fill: 'url(#anaBevel)' }, svg);
     anaEl('rect', { x: 5, y: 5, width: W - 10, height: H - 10, rx: 3, fill: 'url(#anaPanel)' }, svg);
     anaEl('rect', { x: 5, y: 5, width: W - 10, height: H - 10, rx: 3, filter: 'url(#anaBrush)' }, svg);
+    anaUniq(svg);
     anaSkin(svg, skin);
     const m = 18; [[m, m], [W - m, m], [m, H - m], [W - m, H - m]].forEach(([x, y]) => anaSprite(svg, 'screw', x, y, 14).frame(0));
     panel.querySelector('.fx-panel-close').addEventListener('click', () => panel.remove());
@@ -140,8 +160,9 @@ function anaWindow(t, fx, title, W, H, anchorEl, trackIdx, pw, skin = 'noir') {
 // Change la couleur de la façade (variante) : panneau, grain, gravures (.ana-lbl) et sous-titres (.ana-sub)
 function anaSkin(svg, name) {
     const k = ANA_SKINS[name] || ANA_SKINS.noir;
-    svg.querySelectorAll('#anaPanel stop').forEach((st, i) => st.setAttribute('stop-color', k.stops[i]));
-    const cm = svg.querySelector('#anaBrush feColorMatrix'); if (cm) cm.setAttribute('values', `0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 ${k.grain} 0`);
+    const sfx = svg.dataset.sfx || '';
+    svg.querySelectorAll(`#anaPanel${sfx} stop`).forEach((st, i) => st.setAttribute('stop-color', k.stops[i]));
+    const cm = svg.querySelector(`#anaBrush${sfx} feColorMatrix`); if (cm) cm.setAttribute('values', `0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 ${k.grain} 0`);
     svg.querySelectorAll('.ana-lbl').forEach(e => { e.setAttribute('fill', k.txt); if (e.getAttribute('stroke')) e.setAttribute('stroke', k.stroke); });
     svg.querySelectorAll('.ana-sub').forEach(e => e.setAttribute('fill', k.sub));
     svg.querySelectorAll('.ana-tk line').forEach(e => e.setAttribute('stroke', k.tick));
@@ -238,7 +259,7 @@ function openFet76Panel(trackIdx, anchorEl) {
     });
     const a7 = (-48 + 96 * 7 / 10) * Math.PI / 180, a10 = 48 * Math.PI / 180;
     anaEl('path', { d: `M${cx + Math.sin(a7) * R} ${cy - Math.cos(a7) * R} A${R} ${R} 0 0 1 ${cx + Math.sin(a10) * R} ${cy - Math.cos(a10) * R}`, fill: 'none', stroke: '#f0abfc', 'stroke-width': 3, filter: 'url(#anaGlow)' }, vu);
-    const needle = anaEl('line', { x1: cx, y1: cy, x2: cx, y2: cy - R - 4, stroke: '#fff', 'stroke-width': 1.6, filter: 'url(#anaGlow)' }, vu);
+    const needle = anaEl('g', { class: 'ana-needle' }, vu); anaEl('line', { x1: cx, y1: cy, x2: cx, y2: cy - R - 4, stroke: '#fff', 'stroke-opacity': .22, 'stroke-width': 5.12, 'stroke-linecap': 'round' }, needle); anaEl('line', { x1: cx, y1: cy, x2: cx, y2: cy - R - 4, stroke: '#fff', 'stroke-width': 1.6, 'stroke-linecap': 'round' }, needle);
     const vuLbl = anaText(svg, vx + 14, vy + vh - 12, 'RÉDUCTION · dB', { fill: '#a78bfa', 'text-anchor': 'start', class: '' });
     anaEl('rect', { x: vx, y: vy, width: vw, height: vh, rx: 4, fill: 'url(#anaGlass)', 'pointer-events': 'none' }, svg);
     // Sélecteur « tête de poulet » : GR, +8, +4, OFF (réglage d'affichage, pas de son : gardé dans le projet comme sur la machine)
@@ -415,7 +436,7 @@ function openOpto2APanel(trackIdx, anchorEl) {
         anaEl('line', { x1: cx + Math.sin(a) * R, y1: cy - Math.cos(a) * R, x2: cx + Math.sin(a) * (R + 8), y2: cy - Math.cos(a) * (R + 8), stroke: col, 'stroke-width': 1.3 }, vu);
         if (i % 2 === 0 || i === 7) anaText(vu, cx + Math.sin(a) * (R + 18), cy - Math.cos(a) * (R + 18) + 3, (v > 0 ? '+' : '') + v, { fill: col, 'font-size': 8.5, 'letter-spacing': 0, class: '' });
     });
-    const needle = anaEl('line', { x1: cx, y1: cy, x2: cx, y2: cy - R - 4, stroke: '#fff', 'stroke-width': 1.6, filter: 'url(#anaGlow)' }, vu);
+    const needle = anaEl('g', { class: 'ana-needle' }, vu); anaEl('line', { x1: cx, y1: cy, x2: cx, y2: cy - R - 4, stroke: '#fff', 'stroke-opacity': .22, 'stroke-width': 5.12, 'stroke-linecap': 'round' }, needle); anaEl('line', { x1: cx, y1: cy, x2: cx, y2: cy - R - 4, stroke: '#fff', 'stroke-width': 1.6, 'stroke-linecap': 'round' }, needle);
     const vuLbl = anaText(svg, vx + 12, vy + vh - 12, '', { fill: '#a78bfa', 'text-anchor': 'start', class: '' });
     anaEl('rect', { x: vx, y: vy, width: vw, height: vh, rx: 4, fill: 'url(#anaGlass)', 'pointer-events': 'none' }, svg);
     // rangée du bas : Compression / Limitation, accentuation des aigus, sélecteur du vumètre, variantes, mélange
@@ -579,7 +600,7 @@ function openBusGPanel(trackIdx, anchorEl) {
     const GR = [20, 15, 10, 8, 6, 4, 2, 0], grA = (g) => -45 + 90 * Math.max(0, Math.min(1, 1 - g / 20));
     GR.forEach((g) => { const a = grA(g) * Math.PI / 180; anaEl('line', { x1: cx + Math.sin(a) * R, y1: cy - Math.cos(a) * R, x2: cx + Math.sin(a) * (R + 7), y2: cy - Math.cos(a) * (R + 7), stroke: '#e9d5ff', 'stroke-width': 1.2 }, vu);
         anaText(vu, cx + Math.sin(a) * (R + 15), cy - Math.cos(a) * (R + 15) + 3, String(g), { fill: '#e9d5ff', 'font-size': 7.5, 'letter-spacing': 0, class: '' }); });
-    const needle = anaEl('line', { x1: cx, y1: cy, x2: cx, y2: cy - R - 3, stroke: '#fff', 'stroke-width': 1.5, filter: 'url(#anaGlow)' }, vu);
+    const needle = anaEl('g', { class: 'ana-needle' }, vu); anaEl('line', { x1: cx, y1: cy, x2: cx, y2: cy - R - 3, stroke: '#fff', 'stroke-opacity': .22, 'stroke-width': 4.8, 'stroke-linecap': 'round' }, needle); anaEl('line', { x1: cx, y1: cy, x2: cx, y2: cy - R - 3, stroke: '#fff', 'stroke-width': 1.5, 'stroke-linecap': 'round' }, needle);
     anaText(svg, vx + 10, vy + vh - 9, 'RÉDUCTION · dB', { fill: '#a78bfa', 'text-anchor': 'start', 'font-size': 7.5, class: '' });
     anaEl('rect', { x: vx, y: vy, width: vw, height: vh, rx: 4, fill: 'url(#anaGlass)', 'pointer-events': 'none' }, svg);
     // coupe-bas du détecteur, mélange, variantes
@@ -732,7 +753,7 @@ function openL670Panel(trackIdx, anchorEl) {
     const grA = (g) => -45 + 90 * Math.max(0, Math.min(1, 1 - g / 20));
     [20, 15, 10, 6, 4, 2, 0].forEach((g) => { const a = grA(g) * Math.PI / 180; anaEl('line', { x1: cx + Math.sin(a) * R, y1: cy - Math.cos(a) * R, x2: cx + Math.sin(a) * (R + 7), y2: cy - Math.cos(a) * (R + 7), stroke: '#e9d5ff', 'stroke-width': 1.2 }, vu);
         anaText(vu, cx + Math.sin(a) * (R + 15), cy - Math.cos(a) * (R + 15) + 3, String(g), { fill: '#e9d5ff', 'font-size': 7.5, 'letter-spacing': 0, class: '' }); });
-    const needle = anaEl('line', { x1: cx, y1: cy, x2: cx, y2: cy - R - 3, stroke: '#fff', 'stroke-width': 1.5, filter: 'url(#anaGlow)' }, vu);
+    const needle = anaEl('g', { class: 'ana-needle' }, vu); anaEl('line', { x1: cx, y1: cy, x2: cx, y2: cy - R - 3, stroke: '#fff', 'stroke-opacity': .22, 'stroke-width': 4.8, 'stroke-linecap': 'round' }, needle); anaEl('line', { x1: cx, y1: cy, x2: cx, y2: cy - R - 3, stroke: '#fff', 'stroke-width': 1.5, 'stroke-linecap': 'round' }, needle);
     anaText(svg, vx + 10, vy + vh - 9, 'RÉDUCTION · dB', { fill: '#a78bfa', 'text-anchor': 'start', 'font-size': 7.5, class: '' });
     anaEl('rect', { x: vx, y: vy, width: vw, height: vh, rx: 4, fill: 'url(#anaGlass)', 'pointer-events': 'none' }, svg);
     // constante de temps (6 crans), sortie, mélange
@@ -1032,7 +1053,7 @@ function openComp25Panel(trackIdx, anchorEl) {
     const grA = (g) => -45 + 90 * Math.max(0, Math.min(1, 1 - g / 20));
     [20, 10, 6, 3, 0].forEach((g) => { const a = grA(g) * Math.PI / 180; anaEl('line', { x1: cx + Math.sin(a) * R, y1: cy - Math.cos(a) * R, x2: cx + Math.sin(a) * (R + 7), y2: cy - Math.cos(a) * (R + 7), stroke: '#e9d5ff', 'stroke-width': 1.2 }, vu);
         anaText(vu, cx + Math.sin(a) * (R + 15), cy - Math.cos(a) * (R + 15) + 3, String(g), { fill: '#e9d5ff', 'font-size': 7.5, 'letter-spacing': 0, class: '' }); });
-    const needle = anaEl('line', { x1: cx, y1: cy, x2: cx, y2: cy - R - 3, stroke: '#fff', 'stroke-width': 1.5, filter: 'url(#anaGlow)' }, vu);
+    const needle = anaEl('g', { class: 'ana-needle' }, vu); anaEl('line', { x1: cx, y1: cy, x2: cx, y2: cy - R - 3, stroke: '#fff', 'stroke-opacity': .22, 'stroke-width': 4.8, 'stroke-linecap': 'round' }, needle); anaEl('line', { x1: cx, y1: cy, x2: cx, y2: cy - R - 3, stroke: '#fff', 'stroke-width': 1.5, 'stroke-linecap': 'round' }, needle);
     anaEl('rect', { x: vx, y: vy, width: vw, height: vh, rx: 4, fill: 'url(#anaGlass)', 'pointer-events': 'none' }, svg);
     anaTicks(svg, 940, 110, 24, 7, -150, 150, ['0', '', '', '10', '', '', '20'], 6.5);
     knob({ strip: 'hf73', cx: 940, cy: 110, d: 38, key: 'makeup', min: 0, max: 20, def: 0, tip: 'Gain de compensation (dB)' });
@@ -1499,7 +1520,7 @@ function openPreV76Panel(trackIdx, anchorEl) {
     const glow = anaEl('ellipse', { cx: X, cy: 116, rx: 34, ry: 34, fill: 'url(#v76Glow)', opacity: 0.5 }, svg);
     anaEl('rect', { x: X - 16, y: 70, width: 32, height: 74, rx: 15, fill: 'url(#v76Glass)', stroke: '#ffffff30' }, svg);
     for (let k = 0; k < 4; k++) anaEl('line', { x1: X - 9, y1: 96 + k * 9, x2: X + 9, y2: 96 + k * 9, stroke: '#3a2a20', 'stroke-width': 2 }, svg);
-    const fil = anaEl('line', { x1: X, y1: 92, x2: X, y2: 128, stroke: '#ff9a3c', 'stroke-width': 1.6, filter: 'url(#anaGlow)' }, svg);
+    const fil = anaEl('line', { x1: X, y1: 92, x2: X, y2: 128, stroke: '#ff9a3c', 'stroke-width': 1.6, 'stroke-linecap': 'round' }, svg);   // sans filtre : une ligne verticale filtrée ne s'affiche pas
     const read = panel.querySelector('.ana-read');
     const LOWL = ['arrêt', '40', '80', '120', '200'], SOFTL = ['arrêt', '15 k', '10 k', '6 k'];
     const say = () => { const p = P(), d = (p.gain ?? 12) / 36;

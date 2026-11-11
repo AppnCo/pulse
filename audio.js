@@ -3869,7 +3869,15 @@ window.PulseAudio = (function() {
     const nativeBusIndex = (busId) => nativeProject && nativeProject.buses ? nativeProject.buses.findIndex(b => b.id === busId) : -1;
     function nativeCompGR(key) {
         const lv = nativeLive && nativeLive.levels;
-        if (!lv || !lv.gr || performance.now() - nativeLive.at > 1500) return null;   // nativeLive est remis à null à l'arrêt
+        if (!lv || performance.now() - nativeLive.at > 1500) return null;   // nativeLive est remis à null à l'arrêt
+        // compresseurs analogiques : clé « machine|t0 » (ou « machine|b<id> ») → { gr } comme le message de leur worklet
+        if (String(key).includes('|')) {
+            const [kind, own] = String(key).split('|'); const kd = kind.split('#')[0];
+            const bus = own[0] === 'b', idx = bus ? nativeBusIndex(own.slice(1)) : parseInt(own.slice(1), 10);
+            const g = (lv.agr || []).find(x => x[0] === bus && x[1] === idx && x[2] === kd);
+            return g ? { gr: g[3] } : null;
+        }
+        if (!lv.gr) return null;
         const bus = key[0] === 'b', idx = bus ? nativeBusIndex(key.slice(1)) : parseInt(key.slice(1), 10);
         const g = lv.gr.find(x => x[0] === bus && x[1] === idx);
         return g ? g[2] : null;

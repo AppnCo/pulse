@@ -2131,6 +2131,17 @@ impl Chain {
     }
     /// Réduction de gain du compresseur en ce moment (dB, dosée par le mélange), comme l'aiguille du navigateur
     pub fn comp_gr(&self) -> Option<f32> { self.comp.as_ref().map(|c| (c.red * c.mix) as f32) }
+    /// Réduction des compresseurs de la gamme Analogique (dB), pour l'aiguille de leur façade
+    pub fn analog_gr(&self, out: &mut Vec<(&'static str, f32)>) {
+        let r = |x: f64| x.abs() as f32;
+        if let Some((m, _)) = &self.fet76 { out.push(("fet76", r(m.reduction()))); }
+        if let Some((m, _)) = &self.opto2a { out.push(("opto2a", r(m.reduction()))); }
+        if let Some((m, _)) = &self.busg { out.push(("busg", r(m.reduction()))); }
+        if let Some((m, _)) = &self.l670 { out.push(("l670", r(m.reduction()))); }
+        if let Some((m, _)) = &self.dtr { out.push(("dtr", r(m.reduction()))); }
+        if let Some((m, _)) = &self.comp25 { out.push(("comp25", r(m.reduction()))); }
+        if let Some((m, _)) = &self.bus33 { out.push(("bus33", r(m.reduction()))); }
+    }
     /// Afficheurs des fenêtres de plugin (gate, de-esser, multibande, limiteur) : mêmes mesures que les worklets, remises à zéro à la lecture
     pub fn take_meters(&mut self) -> Option<FxMeters> {
         let m = FxMeters {
@@ -2827,6 +2838,7 @@ impl FxChain {
         }
     }
     pub fn comp_gr(&self) -> Option<f32> { self.parts.iter().find_map(|(c, _)| c.comp_gr()) }
+    pub fn analog_gr(&self) -> Vec<(&'static str, f32)> { let mut v = Vec::new(); for (c, _) in &self.parts { c.analog_gr(&mut v); } v }
     pub fn take_meters(&mut self) -> Option<FxMeters> {
         let mut out: Option<FxMeters> = None;
         for (c, _) in &mut self.parts {

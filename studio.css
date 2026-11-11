@@ -3755,7 +3755,7 @@ body[data-left-tool="fade"] .timeline-tracks .clip { cursor: ew-resize; }
 .sat-fp { left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100% - 24px); }
 .sat-fams { grid-template-columns: repeat(4, auto); }
 .sat-panel .sat-ag { margin-left: auto; }
-.sat-needle { stroke: #C084FC; stroke-width: 2.5; filter: drop-shadow(0 0 6px #A855F7); }
+.sat-needle { stroke: #C084FC; stroke-width: 2.5; stroke-linecap: round; }   /* sans filtre : à la verticale, une ligne filtrée disparaît */
 .sat-mini { stroke-width: 2; filter: drop-shadow(0 0 4px #A855F7); }
 
 /* Filtre : écran plein */
