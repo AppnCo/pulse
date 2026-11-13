@@ -15,7 +15,7 @@ const VOL_PAD = 7;
 function autoOwnerKey(o) { if (o && o.__real) return autoOwnerKey(o.__real) + '~' + o.__fxId; const i = state.project.tracks.indexOf(o); return i >= 0 ? 't' + i : 'b' + o.id; }
 function autoOwnerFromKey(k) { return k[0] === 't' ? state.project.tracks[+k.slice(1)] : busById(k.slice(1)); }
 // Réglages d'effet que le moteur sait suivre pendant la lecture (les autres viendront effet par effet)
-const AUTO_FX = { comp: ['threshold', 'ratio', 'mix', 'attack', 'release', 'knee', 'makeup'], delay: ['wet', 'feedback', 'dry'], reverb: ['wet'], filter: ['hpf', 'lpf'],
+const AUTO_FX = { comp: ['threshold', 'ratio', 'mix', 'attack', 'release', 'knee', 'makeup', 'scHp', 'range'], delay: ['wet', 'feedback', 'dry'], reverb: ['wet'], filter: ['hpf', 'lpf'],
     deess: ['amount', 'thr', 'range'], limit: ['ceiling', 'release', 'gain'], msat: ['mix', 'out'], sat: ['drive', 'input', 'tone', 'mix', 'out'], gate: ['threshold', 'release', 'reduction', 'ratio', 'knee', 'attack', 'hold'], crush: ['bits', 'down', 'mix'], util: ['gain'], width: ['width'], pitch: ['semi', 'mix', 'formant'],
     fet76: ['input', 'output', 'attack', 'release', 'mix'], pre73: ['gain', 'output', 'high', 'lmid', 'mid', 'low'], opto2a: ['gain', 'peak', 'emph', 'mix'], busg: ['thr', 'makeup', 'mix'], tape: ['input', 'output', 'bias', 'noise', 'wow', 'mix'], l670: ['input', 'thr', 'output', 'mix'], dtr: ['input', 'output', 'attack', 'release', 'mix'], stripe: ['lf', 'lmf', 'hmf', 'hf', 'cthr', 'output'], eq550: ['lf', 'mf', 'hf', 'output'], comp25: ['thr', 'makeup', 'mix'], bus33: ['cthr', 'lthr', 'makeup', 'mix'], massif: ['g1', 'g2', 'g3', 'g4', 'output'], plate: ['decay', 'pre', 'bright', 'mix'], hall80: ['decay', 'pre', 'size', 'bass', 'treble', 'spin', 'mix'], h910: ['pitchL', 'pitchR', 'delay', 'feedback', 'mix'], dim: ['mix', 'width'], prev76: ['gain', 'output'], eclat: ['intensity', 'output', 'noise'], souffle: ['mid', 'high', 'trim'], techo: ['rate', 'intensity', 'echo', 'spring'], horizon: ['g1', 'g2', 'g3', 'g4', 'g5', 'earth', 'air', 'strength', 'output'], eqp1: ['lowBoost', 'lowAtten', 'highBoost', 'bw', 'highAtten', 'output'],
     tremolo: ['rate', 'depth'], phaser: ['rate', 'depth', 'feedback', 'mix'], flanger: ['rate', 'depth', 'feedback', 'mix'], chorus: ['rate', 'depth', 'mix'],
@@ -54,7 +54,7 @@ function bandAutoDefs(name, o) {
 function fxNumericDefs(name, o) { if (name === 'eq') return eqAutoDefs(o); if (BAND_AUTO_DEFS[name]) return [...bandAutoDefs(name, o), ...(AUTO_EXTRA_DEFS[name] || [])]; return fxAllDefs(name).filter(d => !d.choices && !d.toggle && d.min !== undefined && (AUTO_FX[name] || []).includes(d.key)); }
 // Le moteur audio reçoit les plages de ces réglages (les courbes sont rangées entre 0 et 1)
 if (window.PulseAudio && PulseAudio.setAutoRanges) PulseAudio.setAutoRanges(Object.fromEntries(Object.entries(AUTO_FX).flatMap(([fx, keys]) =>
-    keys.map(k => fxAllDefs(fx).find(d => d.key === k)).filter(Boolean).map(d => [`fx:${fx}:${d.key}`, { min: d.min, max: d.max, log: !!(d.log && d.min > 0) }]))));
+    keys.map(k => fxAllDefs(fx).find(d => d.key === k)).filter(Boolean).map(d => [`fx:${fx}:${d.key}`, { min: d.min, max: d.max, log: !!(d.log && d.min > 0), def: d.def }]))));
 function autoInfo(o, pid) {
     if (pid === 'volume') return { label: 'Volume', cur: () => 1, norm: v => v, denorm: v => v, fmt: v => Math.round(v * 100) + ' %' };
     const lin = (label, min, max, cur, fmt) => ({ label, cur, norm: v => Math.max(0, Math.min(1, (v - min) / (max - min))), denorm: n => min + n * (max - min), fmt });

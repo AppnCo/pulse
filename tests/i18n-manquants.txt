@@ -25,6 +25,7 @@ Cacher / remontrer toutes les fenêtres de plugins
 Chorus
 Coller à la position du curseur (plusieurs pistes : à partir de la piste choisie, l'écart entre les régions est gardé)
 Comp 25
+Compresseur · clic : ouvrir / fermer · glisser : changer l'ordre · clic droit : copier ou supprimer
 Compresseurs
 Copier / coller les réglages de tranche (plugins) sur les pistes choisies
 Copier la région choisie (ou toutes les régions choisies)
@@ -32,6 +33,7 @@ Couper ce bus
 Couper les régions là où est le curseur (les régions choisies, sinon celles de la piste choisie)
 Ctrl + 0 à 9
 De-esser
+De-esser · clic : ouvrir / fermer · glisser : changer l'ordre · clic droit : copier ou supprimer
 Dimension
 Décaler la région choisie (ou toutes les régions choisies) d'un cran
 Détresse
@@ -39,6 +41,7 @@ E / Z
 EQ 550
 EQ Horizon
 EQ Massif
+EQ · clic : ouvrir / fermer · glisser : changer l'ordre · clic droit : copier ou supprimer
 Entrée
 Fermer la fenêtre de plugin de devant
 Flanger
@@ -51,8 +54,10 @@ Le déplacer (aimanté, Shift = libre) · le renommer (clic droit : supprimer)
 Le son ne sort plus (ses envois vers les bus continuent) — comme « Pas de sortie » dans Logic
 Lecture
 Marqueur · glisser · double-clic
+Master
 Menu des outils (Pointeur, Crayon, Gomme…) sous la souris
 Mix Bus 1
+Mix Bus 2
 New project
 Nouvelle piste (menu) · ⌘⌫ = supprimer la piste choisie
 Optique 2A
@@ -83,6 +88,7 @@ Reverb
 Répéter la région choisie une fois de plus, juste après (autant de fois que tu appuies) · plusieurs régions : tout le bloc est recopié après lui
 S'allume dès qu'un solo est actif — clic : plus aucun solo (⌃⌥⌘S)
 Salle 80
+Saturation · clic : ouvrir / fermer · glisser : changer l'ordre · clic droit : copier ou supprimer
 Simple Beat
 Simple setup: 1 vocal + 1 instrumental. Perfect for a quick first track.
 Slapback
@@ -126,6 +132,7 @@ ms
 une voie de console complète : filtres, EQ 4 bandes, compresseur et gate (Brun, Noir)
 vi
 vii°
+À toi de jouer !
 Écho à bande
 Éclair 76
 Éclat

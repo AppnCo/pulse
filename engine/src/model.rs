@@ -370,7 +370,7 @@ pub struct Eq550Json {
     pub band: Option<f64>, pub on: Option<f64>, pub output: Option<f64>,
 }
 
-/// Tranche E : hpf (Hz, < 16 = éteint), lpf (kHz, ≥ 22 = éteint), lf/lfF/lfBell, lmf/lmfF/lmfQ, hmf/hmfF/hmfQ, hf/hfF/hfBell, eq, variant (0 Brun · 1 Noir),
+/// Tranche E : hpf (Hz, < 16 = éteint), lpf (kHz, ≥ 22 = éteint), lf/lfF/lfBell, lmf/lmfF/lmfQ, hmf/hmfF/hmfQ, hf/hfF/hfBell, eq, variant (0 Brun · 1 Noir · 2 Soie · 3 Cristal · 4 Lampe),
 /// cthr (dBFS)/cratio (1-20, 20 = ∞)/crel (s)/cfast, gthr (dBFS, −80 = éteint)/grange (dB)/grel (s), dynPre, output (dB)
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
@@ -384,6 +384,8 @@ pub struct StripEJson {
     pub cthr: Option<f64>, pub cratio: Option<f64>, pub crel: Option<f64>, pub cfast: Option<f64>,
     pub gthr: Option<f64>, pub grange: Option<f64>, pub grel: Option<f64>,
     pub dyn_pre: Option<f64>, pub output: Option<f64>,
+    /// 1 = le gate devient un expandeur (2:1 sous le seuil, sans maintien)
+    pub gexp: Option<f64>,
 }
 
 /// Détresse : input/output/attack/release 0-10, ratio 0-7 (1:1, 2, 3, 4, 6, 10, 20, Nuke), detHp/detBand 0/1, dist 0 propre · 1 « 2 » · 2 « 3 », mix %
@@ -647,6 +649,11 @@ pub struct CompParams {
     pub auto_rel: Option<f64>,
     /// Mélange compressé / d'origine, 0–100 (défaut 100)
     pub mix: Option<f64>,
+    /// Coupe-bas du détecteur en Hz (20 = éteint, jusqu'à 500) : les graves ne déclenchent plus la compression. Le son, lui, n'est pas filtré.
+    #[serde(rename = "scHp")]
+    pub sc_hp: Option<f64>,
+    /// Réduction maximale en dB (40 = sans limite)
+    pub range: Option<f64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]

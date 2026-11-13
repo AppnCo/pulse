@@ -5,6 +5,8 @@ set +e
 cd "$(dirname "$0")/.."
 WAS_MUTED=$(osascript -e 'output muted of (get volume settings)' 2>/dev/null || echo false)
 osascript -e 'set volume output muted true' 2>/dev/null || true
+# le son du Mac est remis comme avant à la fin (sinon il restait muet après le tour — vu le 13/11)
+trap 'osascript -e "set volume output muted $WAS_MUTED" 2>/dev/null || true' EXIT
 export PATH=$HOME/.cargo/bin:$HOME/Library/Python/3.9/bin:$PATH CARGO_TARGET_DIR=$HOME/pulse-build/tauri-target
 ./make-web.sh >/dev/null
 cp tests/native/selftest-ext-tour.html web-dist/selftest-ext-tour.html; cp tests/native/selftest-ext-endurance.html web-dist/selftest-ext-endurance.html; cp tests/native/selftest-ext-etat.html web-dist/selftest-ext-etat.html; cp tests/native/selftest-ext-double.html web-dist/selftest-ext-double.html; cp tests/native/selftest-ext-instru.html web-dist/selftest-ext-instru.html; cp tests/native/selftest-ext-region.html web-dist/selftest-ext-region.html; cp tests/native/selftest-fluide.html web-dist/selftest-fluide.html; cp tests/native/selftest-ext-fenetres.html web-dist/selftest-ext-fenetres.html; cp tests/native/selftest-visuel.html web-dist/selftest-visuel.html; cp tests/native/selftest-clic-plugin.html web-dist/selftest-clic-plugin.html; cp tests/native/selftest-reglage-direct.html web-dist/selftest-reglage-direct.html

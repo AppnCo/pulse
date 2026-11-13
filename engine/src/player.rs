@@ -47,8 +47,8 @@ struct Shared {
     swap: Option<(Box<Renderer>, Arc<Media>)>,
     /// Piste (false, indice) ou groupe (true, indice) dont la page veut le spectre
     scope: Option<(bool, usize)>,
-    /// Réglages d'effets changés en direct : (groupe ?, indice, effet, réglage, valeur), pris au bloc suivant
-    fx_live: Vec<(bool, usize, String, String, f64)>,
+    /// Réglages d'effets changés en direct : (groupe ?, indice, effet, réglage, valeur, valeur de départ si connue), pris au bloc suivant, en glissant
+    fx_live: Vec<(bool, usize, String, String, f64, Option<f64>)>,
 }
 
 /// Taille d'un bloc mixé (échantillons)
@@ -160,12 +160,14 @@ impl Player {
     /// Volumes, pan, mute / solo, envois, groupes, Master changés : pris en direct (≈ 0,2 s), sans couper ni relancer
     pub fn set_mix(&self, project: crate::model::Project) { *self.mix.lock().unwrap() = Some(project); }
     /// Réglages d'effets tournés pendant la lecture : appliqués en direct au bloc suivant (sans reconstruire, sans craquement)
-    pub fn fx_live(&self, items: Vec<(bool, usize, String, String, f64)>) { self.shared.lock().unwrap().fx_live.extend(items); }
+    pub fn fx_live(&self, items: Vec<(bool, usize, String, String, f64, Option<f64>)>) { self.shared.lock().unwrap().fx_live.extend(items); }
     /// Remplace le mixeur pendant la lecture (projet changé : effet, réglage de plugin, région…) : même position, même boucle,
     /// fondu enchaîné de 20 ms, sans arrêt ni clac. `renderer` doit partir du début du morceau (il est calé sur la lecture en cours).
     /// Renvoie false si rien ne joue (il faut alors lancer la lecture normalement).
     pub fn swap(&self, renderer: Renderer, media: Arc<Media>) -> bool {
         if !self.is_playing() { return false; }
+        let mut renderer = renderer;
+        prewarm(&mut renderer, &media, || self.position());
         self.shared.lock().unwrap().swap = Some((Box::new(renderer), media));
         true
     }
@@ -208,13 +210,44 @@ fn old_rate(r: &Renderer) -> f64 { r.sample_rate() }
 /// Ancien mixeur qui s'efface pendant un remplacement (fondu enchaîné de XFADE échantillons)
 pub struct Fade { old: Box<Renderer>, media: Arc<Media>, done: usize }
 
+/// Avant un remplacement en lecture : si le projet a des échos / reverbs, le nouveau mixeur rejoue « à blanc » les 2 dernières
+/// secondes, pour arriver avec leur queue déjà pleine (sinon elle repart de zéro : un trou qu'on entend à chaque plugin ajouté,
+/// type d'EQ changé…). Fait par celui qui demande le remplacement, pas par le fil mixeur (la réserve de son ne se vide pas) ;
+/// `now` = position de lecture, relue après chaque passe pour rattraper le temps passé à calculer.
+pub fn prewarm(new: &mut Renderer, media: &Media, now: impl Fn() -> f64) {
+    let w = new.warm_secs();
+    if w <= 0.0 { return; }
+    let sr = new.sample_rate();
+    new.seek((now() - w).max(0.0));
+    let (mut l, mut r) = (vec![0.0f32; BLOCK], vec![0.0f32; BLOCK]);
+    for _ in 0..4 {
+        let gap = now() - new.time();
+        if gap < 0.02 { break; }
+        let mut left = (gap * sr).round() as usize;
+        while left > 0 {
+            let k = left.min(BLOCK);
+            let n = new.process(media, &mut l[..k], &mut r[..k]);
+            if n == 0 { break; }
+            left -= n;
+        }
+    }
+    let _ = new.take_wrap();
+    new.warmed = true;
+}
+
 /// Cale le nouveau mixeur pile où en est l'ancien (même instant, même boucle) et prépare le fondu
 pub fn start_fade(new: &mut Renderer, new_media: &Media, old: Box<Renderer>, media: Arc<Media>) -> Fade {
     // Le nouveau mixeur tourne d'abord ≈ 50 ms « à blanc » juste avant : le limiteur et les effets sont amorcés
     // (sinon leur retard interne donne quelques échantillons de silence → un clac pendant le fondu)
     let t = old.time();
-    let pre = (t - 0.05).max(0.0);
-    new.seek(pre);
+    // déjà rejoué à blanc jusqu'à (presque) maintenant par `prewarm` : on finit juste le chemin, sans revenir en arrière
+    // (échos et reverbs gardent leur queue). Sinon (boucle qui vient de tourner, saut) : amorce courte ci-dessous.
+    let warm = new.warmed && new.time() <= t && t - new.time() < 1.5;
+    new.warmed = false;
+    // … plus le retard des effets du nouveau mixeur (Pitch ≈ 59 ms, plugins externes) : sans ça ils arrivent « froids »
+    // pendant le fondu (silence puis entrée brutale = clic au 1er cran du Pitch, mesuré au banc zipper : ×46 → ×0,3)
+    let pre = (t - 0.05 - new.max_latency().min(0.5)).max(0.0);
+    if !warm { new.seek(pre); }
     let mut left = ((t - new.time()) * old_rate(&old)).round() as usize;
     let (mut l, mut r) = (vec![0.0f32; BLOCK], vec![0.0f32; BLOCK]);
     while left > 0 {
@@ -262,7 +295,7 @@ fn spawn_feeder(mut renderer: Box<Renderer>, mut media: Arc<Media>, ring: Arc<Ri
             let next = mix.lock().ok().and_then(|mut g| g.take());
             if let Some(p) = next { renderer.mix_from(&p, &media); }
             let live = shared.lock().map(|mut g| std::mem::take(&mut g.fx_live)).unwrap_or_default();
-            for (bus, idx, fx, key, v) in &live { renderer.fx_live(*bus, *idx, fx, key, *v); }
+            for (bus, idx, fx, key, v, from) in &live { renderer.fx_live_from(*bus, *idx, fx, key, *v, *from); }
             let sw = shared.lock().ok().and_then(|mut g| g.swap.take());
             if let Some((nr, nm)) = sw {
                 let old = std::mem::replace(&mut renderer, nr);

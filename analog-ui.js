@@ -153,7 +153,17 @@ function anaWindow(t, fx, title, W, H, anchorEl, trackIdx, pw, skin = 'noir') {
     panel.style.left = Math.max(8, Math.min(left, window.innerWidth - pw - 8)) + 'px';
     panel.style.top = Math.max(8, Math.min(rect.top - 20, window.innerHeight - panel.offsetHeight - 8)) + 'px';
     // les réglages sont ajoutés après coup : on recale la fenêtre une fois sa vraie hauteur connue
-    requestAnimationFrame(() => { const t = parseFloat(panel.style.top) || 0, h = panel.offsetHeight; if (t + h > window.innerHeight - 8) panel.style.top = Math.max(8, window.innerHeight - h - 8) + 'px'; });
+    // … et si elle est plus haute que l'écran (machine en hauteur sur un petit écran : Préampli 73 en 1280×720), on la rétrécit
+    // juste assez pour qu'elle tienne en entier (la façade garde ses proportions), puis on la recale
+    const fit = () => {
+        const max = window.innerHeight - 16; let h = panel.offsetHeight;
+        if (h > max) {
+            const face = svg.getBoundingClientRect().height, chrome = h - face, w = parseFloat(panel.style.width) || pw;
+            if (face > 0 && max - chrome > 120) { panel.style.width = Math.max(240, Math.floor(w * (max - chrome) / face)) + 'px'; if (parseFloat(panel.style.width) < 640) panel.classList.add('ana-narrow'); h = panel.offsetHeight; }
+        }
+        const t = parseFloat(panel.style.top) || 0; if (t + h > window.innerHeight - 8) panel.style.top = Math.max(8, window.innerHeight - h - 8) + 'px';
+    };
+    fit(); requestAnimationFrame(fit);
     return { panel, svg };
 }
 
@@ -163,7 +173,13 @@ function anaSkin(svg, name) {
     const sfx = svg.dataset.sfx || '';
     svg.querySelectorAll(`#anaPanel${sfx} stop`).forEach((st, i) => st.setAttribute('stop-color', k.stops[i]));
     const cm = svg.querySelector(`#anaBrush${sfx} feColorMatrix`); if (cm) cm.setAttribute('values', `0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 ${k.grain} 0`);
-    svg.querySelectorAll('.ana-lbl').forEach(e => { e.setAttribute('fill', k.txt); if (e.getAttribute('stroke')) e.setAttribute('stroke', k.stroke); });
+    // Petites étiquettes : sur une façade claire, le liseré blanc « gravé » mangeait les lettres (illisible sous 9 px) → liseré presque éteint + lettres plus grasses
+    svg.querySelectorAll('.ana-lbl').forEach(e => {
+        e.setAttribute('fill', k.txt);
+        const small = (+e.getAttribute('font-size') || 9) < 9.5;
+        if (e.getAttribute('stroke')) { e.setAttribute('stroke', k.stroke); if (small) e.setAttribute('stroke-opacity', k.stroke === '#fff' ? '.1' : '.3'); }
+        if (small && !e.getAttribute('font-weight')) e.setAttribute('font-weight', '600');
+    });
     svg.querySelectorAll('.ana-sub').forEach(e => e.setAttribute('fill', k.sub));
     svg.querySelectorAll('.ana-tk line').forEach(e => e.setAttribute('stroke', k.tick));
     svg.querySelectorAll('.ana-tk text').forEach(e => e.setAttribute('fill', k.tick));
@@ -865,54 +881,75 @@ function openStripEPanel(trackIdx, anchorEl) {
     const already = findPlugWin(t, 'stripe');
     if (already) { plugFront(already); return; }
     t.effectParams = t.effectParams || {};
-    if (!t.effectParams.stripe) t.effectParams.stripe = { hpf: 0, lpf: 22, lf: 0, lfF: 100, lfBell: 0, lmf: 0, lmfF: 600, lmfQ: 1, hmf: 0, hmfF: 2500, hmfQ: 1, hf: 0, hfF: 8000, hfBell: 0, eq: 1, variant: 0, cthr: 10, cratio: 1, crel: 0.3, cfast: 0, gthr: -80, grange: 20, grel: 0.3, dynPre: 0, output: 0 };
+    if (!t.effectParams.stripe) t.effectParams.stripe = { hpf: 0, lpf: 22, lf: 0, lfF: 100, lfBell: 0, lmf: 0, lmfF: 600, lmfQ: 1, hmf: 0, hmfF: 2500, hmfQ: 1, hf: 0, hfF: 8000, hfBell: 0, eq: 1, variant: 0, cthr: 10, cratio: 1, crel: 0.3, cfast: 0, gthr: -80, grange: 20, grel: 0.3, dynPre: 0, output: 0, gexp: 0 };
     const P = () => t.effectParams.stripe, ed = anaEdit(t, 'stripe');
-    const W = 1000, H = 330, SK = ['gris', 'noir'], NM = ['Brun', 'Noir'];
-    const { panel, svg } = anaWindow(t, 'stripe', 'Tranche E', W, H, anchorEl, trackIdx, 1000, SK[Math.round(P().variant ?? 0)]);
+    // Cinq tables, cinq caractères (nos imitations, à notre sauce) : la couleur de la façade change avec la table
+    const W = 620, H = 590, SK = ['gris', 'noir', 'grisbleu', 'argent', 'brun'], NM = ['Brun', 'Noir', 'Soie', 'Cristal', 'Lampe'];
+    const VTIP = ['Brun : largeur fixe, l\'EQ doux et musical', 'Noir : les cloches se resserrent quand on pousse (précis, plus agressif)', 'Soie : les cloches s\'élargissent quand on pousse, compresseur plus lent et progressif — doux, ça colle', 'Cristal : très propre, aigus ouverts, compresseur rapide et net', 'Lampe : large et rond, compresseur lent, la lampe ajoute de la chaleur'];
+    const { panel, svg } = anaWindow(t, 'stripe', 'Tranche E', W, H, anchorEl, trackIdx, 620, SK[Math.round(P().variant ?? 0)]);
     const L = { style: 'paint-order:stroke', 'stroke-opacity': '.35', 'stroke-width': '.6', stroke: '#000' };
     anaText(svg, 44, 36, 'PULSE · TRANCHE E', { ...L, 'text-anchor': 'start', 'font-size': 14, 'font-weight': 700, 'letter-spacing': 3 });
     const sub = anaText(svg, 44, 52, '', { class: 'ana-sub', 'text-anchor': 'start', 'letter-spacing': 2.5 });
     const read = panel.querySelector('.ana-read');
     const fmtF = (f) => f >= 1000 ? (Math.round(f / 100) / 10).toString().replace('.', ',') + ' k' : Math.round(f) + ' Hz';
-    const say = () => { const p = P(); read.innerHTML = `${NM[Math.round(p.variant ?? 0)]} · Graves <b>${p.lf}</b> · Bas-méd. <b>${p.lmf}</b> · Hauts-méd. <b>${p.hmf}</b> · Aigus <b>${p.hf}</b>${p.cratio > 1 ? ` · Comp ${Math.round(p.cratio * 10) / 10}:1 à ${p.cthr} dB` : ''}${p.gthr > -79.9 ? ` · Gate ${p.gthr} dB` : ''}`; };
+    const say = () => { const p = P(); read.innerHTML = `${NM[Math.round(p.variant ?? 0)]} · Graves <b>${p.lf ?? 0}</b> · Bas-méd. <b>${p.lmf ?? 0}</b> · Hauts-méd. <b>${p.hmf ?? 0}</b> · Aigus <b>${p.hf ?? 0}</b>${p.cratio > 1 ? ` · Comp ${Math.round(p.cratio * 10) / 10}:1 à ${p.cthr} dB` : ''}${p.gthr > -79.9 ? ` · ${(p.gexp ?? 0) >= 0.5 ? 'Expandeur' : 'Gate'} ${p.gthr} dB` : ''}`; };
     // bouton linéaire (gain, seuil…) ou en fréquence (logarithmique)
     const lin = (cx, cy, key, mn, mx, def, lab, tip, strip = 'hf73', d = 34) => {
         anaTicks(svg, cx, cy, d / 2 + 6, 11, -150, 150, null);
         anaKnob(svg, { strip, cx, cy, d, key, min: mn, max: mx, def, tip, get: () => P()[key] ?? def, set: (v) => { P()[key] = Math.round(v * 10) / 10; ed.touch(key); say(); }, onStart: ed.start, onEnd: ed.end });
-        anaText(svg, cx, cy + d / 2 + 15, lab, { ...L, 'font-size': 7, 'letter-spacing': .8 });
+        anaText(svg, cx, cy + d / 2 + 18, lab, { ...L, 'font-size': 7.5, 'letter-spacing': .8 });
     };
     const freq = (cx, cy, key, fmin, fmax, def, lab, tip, off) => {
         anaTicks(svg, cx, cy, 23, 11, -150, 150, null);
         const toN = (f) => Math.log(Math.max(fmin, f) / fmin) / Math.log(fmax / fmin);
         anaKnob(svg, { strip: 'bakelite', cx, cy, d: 30, key, min: 0, max: 1, def: toN(def), tip, get: () => toN(P()[key] ?? def),
             set: (v) => { let f = fmin * Math.pow(fmax / fmin, v); f = f >= 1000 ? Math.round(f / 10) * 10 : Math.round(f); P()[key] = f; say(); }, onStart: ed.start, onEnd: ed.end }).g.classList.remove('pk');
-        anaText(svg, cx, cy + 30, lab, { ...L, 'font-size': 7, 'letter-spacing': .8 });
+        anaText(svg, cx, cy + 33, lab, { ...L, 'font-size': 7.5, 'letter-spacing': .8 });
     };
     const push = (g, x, y, w, txt, on, tip) => { anaEl('rect', { x: x - w / 2, y: y - 8, width: w, height: 16, rx: 3, fill: on ? '#7c3aed' : '#1c1426', stroke: '#3a2b52', ...(on ? { filter: 'url(#anaGlow)' } : {}) }, g); anaText(g, x, y + 3, txt, { fill: on ? '#fff' : '#a78bfa', 'font-size': 7, 'letter-spacing': .5, class: '' }); anaEl('title', {}, g).textContent = tip; };
-    const sep = (x) => anaEl('line', { x1: x, y1: 66, x2: x, y2: 312, stroke: '#00000044' }, svg);
-    const section = (x, txt) => anaText(svg, x, 76, txt, { class: 'ana-sub', 'font-size': 8, 'letter-spacing': 2 });
-    // filtres
-    section(70, 'FILTRES');
-    freq(70, 125, 'hpf', 16, 350, 16, 'COUPE-BAS', 'Coupe-bas 18 dB/oct : tout à gauche = éteint, jusqu\'à 350 Hz');
-    freq(70, 215, 'lpf', 3, 22, 22, 'COUPE-HAUT', 'Coupe-haut 12 dB/oct : tout à droite = éteint, jusqu\'à 3 kHz');
-    sep(130);
-    // EQ 4 bandes
-    section(395, 'ÉGALISEUR');
-    const bands = [['lf', 'lfF', 30, 450, 'GRAVES', 'lfBell'], ['lmf', 'lmfF', 200, 2500, 'BAS-MÉD.', 'lmfQ'], ['hmf', 'hmfF', 600, 7000, 'HAUTS-MÉD.', 'hmfQ'], ['hf', 'hfF', 1500, 16000, 'AIGUS', 'hfBell']];
+    // Forme « voie de console » (demande de Ridwane) : la tranche en hauteur, trois colonnes —
+    // 1) filtres, compresseur, gate / expandeur · 2) l'EQ bande par bande, des aigus (en haut) aux graves · 3) sortie, niveau, choix de la table
+    const sep = (x) => anaEl('line', { x1: x, y1: 66, x2: x, y2: H - 22, stroke: '#00000044' }, svg);
+    const section = (x, y, txt) => anaText(svg, x, y, txt, { class: 'ana-sub', 'font-size': 8, 'letter-spacing': 2 });
+    // colonne 1
+    section(120, 78, 'FILTRES');
+    freq(80, 122, 'hpf', 16, 350, 16, 'COUPE-BAS', 'Coupe-bas 18 dB/oct : tout à gauche = éteint, jusqu\'à 350 Hz');
+    freq(160, 122, 'lpf', 3, 22, 22, 'COUPE-HAUT', 'Coupe-haut 12 dB/oct : tout à droite = éteint, jusqu\'à 3 kHz');
+    section(120, 192, 'COMPRESSEUR');
+    lin(80, 238, 'cthr', -30, 10, 10, 'SEUIL', 'Compresseur : seuil (dBFS) ; tout à droite = éteint');
+    lin(160, 238, 'cratio', 1, 20, 1, 'RATIO', 'Ratio : 1 (rien) … 20 (l\'infini)');
+    lin(80, 314, 'crel', 0.1, 4, 0.3, 'RELÂCHE', 'Relâchement : 0,1 à 4 s', 'bakelite', 28);
+    const leds = [1, 3, 6, 10, 14, 20].map((db, i) => { anaText(svg, 203, 214 + i * 13 + 3, String(db), { 'font-size': 6.5, 'letter-spacing': 0, 'text-anchor': 'end' }); return anaEl('circle', { cx: 212, cy: 214 + i * 13, r: 4, fill: '#1c1426', stroke: '#000' }, svg); });
+    section(120, 374, 'GATE · EXPANDEUR');
+    lin(80, 420, 'gthr', -80, 0, -80, 'SEUIL', 'Gate / expandeur : seuil (dBFS) ; tout à gauche = éteint');
+    lin(160, 420, 'grange', 0, 40, 20, 'PROFONDEUR', 'Gate / expandeur : de combien il baisse au plus (dB)', 'bakelite', 28);
+    lin(80, 496, 'grel', 0.1, 4, 0.3, 'RELÂCHE', 'Gate / expandeur : relâchement (s)', 'bakelite', 28);
+    sep(232);
+    // colonne 2 : l'EQ, des aigus aux graves
+    section(365, 78, 'ÉGALISEUR');
+    const bands = [['hf', 'hfF', 1500, 16000, 'AIGUS', 'hfBell'], ['hmf', 'hmfF', 600, 7000, 'HAUTS-MÉD.', 'hmfQ'], ['lmf', 'lmfF', 200, 2500, 'BAS-MÉD.', 'lmfQ'], ['lf', 'lfF', 30, 450, 'GRAVES', 'lfBell']];
     const pushes = anaEl('g', {}, svg);
     bands.forEach(([g, f, fmin, fmax, lab, extra], i) => {
-        const x = 190 + i * 70, lim = (g === 'lf' || g === 'hf') ? 16.5 : 15;
-        lin(x, 120, g, -lim, lim, 0, lab, `${lab.toLowerCase()} : gain (dB)`);
-        freq(x, 195, f, fmin, fmax, ({ lf: 100, lmf: 600, hmf: 2500, hf: 8000 })[g], 'FRÉQ.', `Fréquence (${fmin} Hz à ${fmax >= 1000 ? fmax / 1000 + ' kHz' : fmax + ' Hz'})`);
-        if (extra.endsWith('Q')) lin(x, 262, extra, 0.5, 2.5, 1, 'LARGEUR', 'Largeur : 0,5 large … 2,5 serrée', 'bakelite', 26);
+        const y = 122 + i * 104, lim = (g === 'lf' || g === 'hf') ? 16.5 : 15;
+        lin(290, y, g, -lim, lim, 0, lab, `${lab.toLowerCase()} : gain (dB)`);
+        freq(368, y, f, fmin, fmax, ({ lf: 100, lmf: 600, hmf: 2500, hf: 8000 })[g], 'FRÉQ.', `Fréquence (${fmin} Hz à ${fmax >= 1000 ? fmax / 1000 + ' kHz' : fmax + ' Hz'})`);
+        if (extra.endsWith('Q')) lin(440, y, extra, 0.5, 2.5, 1, 'LARGEUR', 'Largeur : 0,5 large … 2,5 serrée', 'bakelite', 26);
     });
+    sep(486);
+    // colonne 3 : sortie, niveau de sortie, table
+    section(550, 78, 'SORTIE');
+    anaTicks(svg, 550, 138, 36, 9, -150, 150, ['−20', '', '', '', '0', '', '', '', '+20'], 7);
+    anaKnob(svg, { strip: 'alu-big', cx: 550, cy: 138, d: 58, key: 'output', min: -20, max: 20, def: 0, tip: 'Sortie (dB)', get: () => P().output ?? 0, set: (v) => { P().output = Math.round(v * 2) / 2; ed.touch('output'); say(); }, onStart: ed.start, onEnd: ed.end });
+    const OUT_DB = [0, -3, -6, -9, -12, -18, -24, -30, -40];
+    const outLeds = OUT_DB.map((db, i) => { anaText(svg, 538, 216 + i * 15 + 3, String(db), { 'font-size': 6.5, 'letter-spacing': 0, 'text-anchor': 'end' }); return anaEl('rect', { x: 544, y: 216 + i * 15 - 4.5, width: 18, height: 9, rx: 2, fill: '#1c1426', stroke: '#000' }, svg); });
+    section(550, 378, 'TABLE');
     const drawPush = () => {
         pushes.innerHTML = '';
-        [['lfBell', 190, 'CLOCHE', 'Graves en cloche (sinon plateau)'], ['hfBell', 400, 'CLOCHE', 'Aigus en cloche (sinon plateau)'], ['eq', 470, 'EQ', 'EQ en service']].forEach(([k, x, txt, tip]) => {
-            const g = anaEl('g', { class: 'ana-push', 'data-k': k }, pushes); push(g, x, 262, 44, txt, (P()[k] ?? (k === 'eq' ? 1 : 0)) >= 0.5, tip); });
-        [0, 1].forEach(i => { const g = anaEl('g', { class: 'ana-push ana-var', 'data-v': i }, pushes); push(g, 445 + i * 50, 296, 44, NM[i].toUpperCase(), Math.round(P().variant ?? 0) === i, i ? 'Noir : les cloches se resserrent quand on pousse (précis, plus agressif)' : 'Brun : largeur fixe, l\'EQ doux et musical'); });
-        [['cfast', 600, 262, 'RAPIDE', 'Attaque rapide (1 ms au lieu de 3 ms)'], ['dynPre', 690, 296, 'DYN. AVANT EQ', 'La dynamique avant l\'EQ (sinon après)']].forEach(([k, x, y, txt, tip]) => {
-            const g = anaEl('g', { class: 'ana-push', 'data-k': k }, pushes); push(g, x, y, k === 'dynPre' ? 84 : 50, txt, (P()[k] ?? 0) >= 0.5, tip); });
+        [['hfBell', 440, 122, 'CLOCHE', 'Aigus en cloche (sinon plateau)', 44], ['lfBell', 440, 434, 'CLOCHE', 'Graves en cloche (sinon plateau)', 44], ['eq', 365, 520, 'EQ EN SERVICE', 'EQ en service', 84],
+         ['cfast', 160, 314, 'RAPIDE', 'Attaque rapide du compresseur', 50], ['gexp', 160, 496, 'EXPANDEUR', 'Expandeur : sous le seuil le son descend en douceur (2:1) au lieu d\'être coupé net comme avec le gate', 66],
+         ['dynPre', 120, 556, 'DYN. AVANT EQ', 'La dynamique avant l\'EQ (sinon après)', 84]].forEach(([k, x, y, txt, tip, w]) => {
+            const g = anaEl('g', { class: 'ana-push', 'data-k': k }, pushes); push(g, x, y, w, txt, (P()[k] ?? (k === 'eq' ? 1 : 0)) >= 0.5, tip); });
+        NM.forEach((nm, i) => { const g = anaEl('g', { class: 'ana-push ana-var', 'data-v': i }, pushes); push(g, 550, 400 + i * 24, 76, nm.toUpperCase(), Math.round(P().variant ?? 0) === i, VTIP[i]); });
         sub.textContent = 'VOIE DE CONSOLE · ' + NM[Math.round(P().variant ?? 0)].toUpperCase();
         anaSkin(svg, SK[Math.round(P().variant ?? 0)]);
     };
@@ -923,21 +960,6 @@ function openStripEPanel(trackIdx, anchorEl) {
         if (v) P().variant = +v.dataset.v; else { const k = b.dataset.k; P()[k] = (P()[k] ?? (k === 'eq' ? 1 : 0)) >= 0.5 ? 0 : 1; }
         ed.end(); drawPush(); say();
     });
-    sep(525);
-    // dynamique
-    section(650, 'DYNAMIQUE');
-    lin(560, 120, 'cthr', -30, 10, 10, 'SEUIL', 'Compresseur : seuil (dBFS) ; tout à droite = éteint');
-    lin(620, 120, 'cratio', 1, 20, 1, 'RATIO', 'Ratio : 1 (rien) … 20 (l\'infini)');
-    lin(560, 195, 'crel', 0.1, 4, 0.3, 'RELÂCHE', 'Relâchement : 0,1 à 4 s', 'bakelite', 28);
-    lin(700, 120, 'gthr', -80, 0, -80, 'GATE SEUIL', 'Gate : seuil (dBFS) ; tout à gauche = éteint');
-    lin(760, 120, 'grange', 0, 40, 20, 'PROFONDEUR', 'Gate : de combien il baisse (dB)', 'bakelite', 28);
-    lin(730, 195, 'grel', 0.1, 4, 0.3, 'G. RELÂCHE', 'Gate : relâchement (s)', 'bakelite', 28);
-    const leds = [1, 3, 6, 10, 14, 20].map((db, i) => { anaText(svg, 640, 182 + i * 13 + 3, String(db), { 'font-size': 6.5, 'letter-spacing': 0, 'text-anchor': 'end' }); return anaEl('circle', { cx: 652, cy: 182 + i * 13, r: 4, fill: '#1c1426', stroke: '#000' }, svg); });
-    sep(800);
-    section(900, 'SORTIE');
-    anaTicks(svg, 900, 150, 38, 9, -150, 150, ['−20', '', '', '', '0', '', '', '', '+20'], 7);
-    anaKnob(svg, { strip: 'alu-big', cx: 900, cy: 150, d: 62, key: 'output', min: -20, max: 20, def: 0, tip: 'Sortie (dB)', get: () => P().output ?? 0, set: (v) => { P().output = Math.round(v * 2) / 2; ed.touch('output'); say(); }, onStart: ed.start, onEnd: ed.end });
-    anaText(svg, 900, 214, 'SORTIE', { ...L, 'font-size': 9 });
     drawPush();
     const key = 'stripe|' + fxKeyOf(trackIdx, t);
     const tick = () => {
@@ -946,6 +968,8 @@ function openStripEPanel(trackIdx, anchorEl) {
         const m = on && (state.playing || state.recording) && PulseAudio.getCompReduction ? PulseAudio.getCompReduction(key) : null;
         const gr = m ? (m.gr || 0) : 0;
         [1, 3, 6, 10, 14, 20].forEach((db, i) => leds[i].setAttribute('fill', gr >= db ? (db >= 14 ? '#f0abfc' : '#a855f7') : '#1c1426'));
+        const lv = m && Number.isFinite(m.out) ? m.out : -120;
+        OUT_DB.forEach((db, i) => outLeds[i].setAttribute('fill', lv >= db ? (db >= -3 ? '#f0abfc' : '#a855f7') : '#1c1426'));
         requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
@@ -1221,7 +1245,7 @@ function openPlatePanel(trackIdx, anchorEl) {
     t.effectParams = t.effectParams || {};
     if (!t.effectParams.plate) t.effectParams.plate = { decay: 2, pre: 20, bright: 60, lowcut: 100, width: 100, mix: 25, variant: 0 };
     const P = () => t.effectParams.plate, ed = anaEdit(t, 'plate');
-    const W = 900, H = 340, NM = ['Claire', 'Chaude'];
+    const W = 900, H = 352, NM = ['Claire', 'Chaude'];
     const { panel, svg } = anaWindow(t, 'plate', 'Plaque 140', W, H, anchorEl, trackIdx, 900, 'gris');
     const L = { style: 'paint-order:stroke', 'stroke-opacity': '.35', 'stroke-width': '.6', stroke: '#fff' };
     anaText(svg, 44, 38, 'PULSE · PLAQUE 140', { ...L, 'text-anchor': 'start', 'font-size': 14, 'font-weight': 700, 'letter-spacing': 3 });
@@ -1250,7 +1274,7 @@ function openPlatePanel(trackIdx, anchorEl) {
     anaText(svg, 700, 228, 'DURÉE · s', { ...L, 'font-size': 10 });
     const small = [['pre', 'PRÉ-DÉLAI', 0, 200, 20, 'Pré-délai (ms) : la voix sort avant la réverbe'], ['bright', 'BRILLANCE', 0, 100, 60, 'Brillance : la plaque garde plus ou moins ses aigus'],
         ['lowcut', 'COUPE-BAS', 20, 500, 100, 'Coupe-bas à l\'entrée (Hz) : pas de grave qui bave'], ['width', 'LARGEUR', 0, 150, 100, 'Largeur stéréo (100 % = la plaque)'], ['mix', 'MÉLANGE', 0, 100, 25, 'Mélange (en bus : 100 %)']];
-    small.forEach(([key, lab, mn, mx, def, tip], i) => { const x = 80 + i * 105; anaTicks(svg, x, 292, 18, 7, -150, 150, null); knob({ strip: 'bakelite', cx: x, cy: 292, d: 30, key, min: mn, max: mx, def, tip }); anaText(svg, x, 331, lab, { ...L, 'font-size': 7.5, 'letter-spacing': 1 }); });   // sous les graduations (à 322 elles mordaient sur le nom)
+    small.forEach(([key, lab, mn, mx, def, tip], i) => { const x = 80 + i * 105; anaTicks(svg, x, 292, 18, 7, -150, 150, null); knob({ strip: 'bakelite', cx: x, cy: 292, d: 30, key, min: mn, max: mx, def, tip }); anaText(svg, x, 333, lab, { ...L, 'font-size': 8, 'letter-spacing': 1 }); });   // sous les graduations (à 322 elles mordaient sur le nom)
     const vg = anaEl('g', {}, svg);
     const drawVar = () => { vg.innerHTML = ''; const cur = Math.round(P().variant ?? 0);
         NM.forEach((nm, i) => { const x = 660 + i * 80, on = i === cur, g = anaEl('g', { class: 'ana-push ana-var', 'data-v': i }, vg);

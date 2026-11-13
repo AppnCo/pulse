@@ -887,7 +887,7 @@ impl Tape {
         // aigus : arrondis selon la machine et la vitesse ; la polarisation éclaircit (sous) ou assombrit (sur)
         let lp = match (m, fast) { (2, _) => 12_000.0, (1, false) => 18_000.0, (1, true) => 21_000.0, (_, false) => 20_000.0, (_, true) => 23_000.0 };
         eq.push(eq_matched("lowpass", lp, if m == 2 { 0.6 } else { 0.707 }, 0.0, s4));
-        if b.abs() > 1e-6 { eq.push(eq_matched("highshelf", 8_000.0, 0.7, -2.5 * b, s4)); }
+        eq.push(eq_matched("highshelf", 8_000.0, 0.7, -2.5 * b, s4));   // toujours là : sinon les filtres repartent de zéro (clic) quand le bouton passe par 0
         if self.eq.len() == eq.len() { for (a, n) in self.eq.iter_mut().zip(eq) { a[0].retune(n); a[1].retune(n); } } else { self.eq = eq.into_iter().map(|q| [q, q]).collect(); }
         // souffle : ½ et 2 pouces de −80 à −60 dBFS, cassette de −70 à −50
         let n = p.noise.clamp(0.0, 100.0) / 100.0;
@@ -1214,10 +1214,12 @@ pub struct StripEParams {
     pub gthr: f64, pub grange: f64, pub grel: f64,
     pub dyn_pre: bool,
     pub output: f64,
+    /// Le gate en expandeur (2:1 sous le seuil, sans maintien)
+    pub gexp: bool,
 }
 impl Default for StripEParams {
     fn default() -> Self { Self { hpf: 0.0, lpf: 22.0, lf: 0.0, lf_f: 100.0, lf_bell: false, lmf: 0.0, lmf_f: 600.0, lmf_q: 1.0, hmf: 0.0, hmf_f: 2500.0, hmf_q: 1.0,
-        hf: 0.0, hf_f: 8000.0, hf_bell: false, eq: true, variant: 0, cthr: 10.0, cratio: 1.0, crel: 0.3, cfast: false, gthr: -80.0, grange: 20.0, grel: 0.3, dyn_pre: false, output: 0.0 } }
+        hf: 0.0, hf_f: 8000.0, hf_bell: false, eq: true, variant: 0, cthr: 10.0, cratio: 1.0, crel: 0.3, cfast: false, gthr: -80.0, grange: 20.0, grel: 0.3, dyn_pre: false, output: 0.0, gexp: false } }
 }
 impl From<&crate::model::StripEJson> for StripEParams {
     fn from(j: &crate::model::StripEJson) -> Self {
@@ -1225,9 +1227,9 @@ impl From<&crate::model::StripEJson> for StripEParams {
         let b = |v: Option<f64>, def: bool| v.map_or(def, |v| v >= 0.5);
         Self { hpf: j.hpf.unwrap_or(d.hpf), lpf: j.lpf.unwrap_or(d.lpf), lf: j.lf.unwrap_or(0.0), lf_f: j.lf_f.unwrap_or(d.lf_f), lf_bell: b(j.lf_bell, false),
             lmf: j.lmf.unwrap_or(0.0), lmf_f: j.lmf_f.unwrap_or(d.lmf_f), lmf_q: j.lmf_q.unwrap_or(d.lmf_q), hmf: j.hmf.unwrap_or(0.0), hmf_f: j.hmf_f.unwrap_or(d.hmf_f), hmf_q: j.hmf_q.unwrap_or(d.hmf_q),
-            hf: j.hf.unwrap_or(0.0), hf_f: j.hf_f.unwrap_or(d.hf_f), hf_bell: b(j.hf_bell, false), eq: b(j.eq, true), variant: j.variant.map_or(0, |v| (v.round().max(0.0) as usize).min(1)),
+            hf: j.hf.unwrap_or(0.0), hf_f: j.hf_f.unwrap_or(d.hf_f), hf_bell: b(j.hf_bell, false), eq: b(j.eq, true), variant: j.variant.map_or(0, |v| (v.round().max(0.0) as usize).min(4)),
             cthr: j.cthr.unwrap_or(d.cthr), cratio: j.cratio.unwrap_or(d.cratio), crel: j.crel.unwrap_or(d.crel), cfast: b(j.cfast, false),
-            gthr: j.gthr.unwrap_or(d.gthr), grange: j.grange.unwrap_or(d.grange), grel: j.grel.unwrap_or(d.grel), dyn_pre: b(j.dyn_pre, false), output: j.output.unwrap_or(0.0) }
+            gthr: j.gthr.unwrap_or(d.gthr), grange: j.grange.unwrap_or(d.grange), grel: j.grel.unwrap_or(d.grel), dyn_pre: b(j.dyn_pre, false), output: j.output.unwrap_or(0.0), gexp: b(j.gexp, false) }
     }
 }
 impl StripEParams {
@@ -1235,9 +1237,9 @@ impl StripEParams {
         match k {
             "hpf" => self.hpf = v, "lpf" => self.lpf = v, "lf" => self.lf = v, "lfF" => self.lf_f = v, "lfBell" => self.lf_bell = v >= 0.5,
             "lmf" => self.lmf = v, "lmfF" => self.lmf_f = v, "lmfQ" => self.lmf_q = v, "hmf" => self.hmf = v, "hmfF" => self.hmf_f = v, "hmfQ" => self.hmf_q = v,
-            "hf" => self.hf = v, "hfF" => self.hf_f = v, "hfBell" => self.hf_bell = v >= 0.5, "eq" => self.eq = v >= 0.5, "variant" => self.variant = (v.round().max(0.0) as usize).min(1),
+            "hf" => self.hf = v, "hfF" => self.hf_f = v, "hfBell" => self.hf_bell = v >= 0.5, "eq" => self.eq = v >= 0.5, "variant" => self.variant = (v.round().max(0.0) as usize).min(4),
             "cthr" => self.cthr = v, "cratio" => self.cratio = v, "crel" => self.crel = v, "cfast" => self.cfast = v >= 0.5,
-            "gthr" => self.gthr = v, "grange" => self.grange = v, "grel" => self.grel = v, "dynPre" => self.dyn_pre = v >= 0.5, "output" => self.output = v,
+            "gthr" => self.gthr = v, "grange" => self.grange = v, "grel" => self.grel = v, "dynPre" => self.dyn_pre = v >= 0.5, "output" => self.output = v, "gexp" => self.gexp = v >= 0.5,
             _ => return false }
         true
     }
@@ -1256,12 +1258,18 @@ pub struct StripE {
     gthr: f64, gfloor: f64, grel: f64, gatt: f64, gg: f64, gon: bool, ghold: usize, gcount: usize,
     gout: f64,
     os: Box<[Os4; 2]>,
+    /// Version de table : 0 Brun · 1 Noir · 2 Soie · 3 Cristal · 4 Lampe
+    variant: usize,
+    cknee: f64,
+    gexp: bool,
+    dc: [f64; 2],
+    dc_c: f64,
 }
 impl StripE {
     pub const LATENCY: usize = 31;
     pub fn new(p: &StripEParams, sr: f64) -> Self {
         let mut s = Self { sr, filt: Vec::new(), eq: Vec::new(), dyn_pre: false, cthr: 10.0, cslope: 0.0, catt: 0.0, crel: 0.0, cgr: 0.0, con: false,
-            gthr: -80.0, gfloor: 1.0, grel: 0.0, gatt: 0.0, gg: 1.0, gon: false, ghold: 0, gcount: 0, gout: 1.0, os: Box::new([Os4::new(), Os4::new()]) };
+            gthr: -80.0, gfloor: 1.0, grel: 0.0, gatt: 0.0, gg: 1.0, gon: false, ghold: 0, gcount: 0, gout: 1.0, os: Box::new([Os4::new(), Os4::new()]), variant: 0, cknee: 6.0, gexp: false, dc: [0.0; 2], dc_c: 1.0 - (-2.0 * PI * 8.0 / sr).exp() };
         s.set(p);
         s
     }
@@ -1273,13 +1281,18 @@ impl StripE {
         if p.lpf < 21.9 { filt.push(eq_matched("lowpass", p.lpf.clamp(3.0, 22.0) * 1000.0, 0.707, 0.0, sr)); }
         let mut eq: Vec<Biquad> = Vec::new();
         if p.eq {
-            let noir = p.variant == 1;
-            // Noir : largeur proportionnelle (plus on pousse, plus la cloche se resserre)
-            let pq = |q: f64, g: f64| if noir { q * (1.0 + g.abs() / 10.0) } else { q };
-            if p.lf.abs() > 1e-6 { let f = p.lf_f.clamp(30.0, 450.0); let g = p.lf.clamp(-16.5, 16.5); eq.push(if p.lf_bell { eq_matched("peaking", f, pq(0.8, g), g, sr) } else { eq_matched("lowshelf", f, 0.7, g, sr) }); }
+            // Largeur des cloches selon la table — Brun : fixe · Noir : se resserre quand on pousse · Soie : s'élargit quand on pousse (doux) ·
+            // Cristal : fixe · Lampe : toujours large
+            let v = p.variant;
+            let pq = |q: f64, g: f64| match v { 1 => q * (1.0 + g.abs() / 10.0), 2 => q * (1.0 - 0.35 * g.abs().min(15.0) / 15.0), 4 => q * 0.7, _ => q };
+            let shq = if v == 4 { 0.55 } else { 0.7 };
+            if p.lf.abs() > 1e-6 { let f = p.lf_f.clamp(30.0, 450.0); let g = p.lf.clamp(-16.5, 16.5); eq.push(if p.lf_bell { eq_matched("peaking", f, pq(0.8, g), g, sr) } else { eq_matched("lowshelf", f, shq, g, sr) });
+                // Soie : le plateau creuse un peu juste au-dessus (le grave monte sans épaissir le bas-médium)
+                if v == 2 && !p.lf_bell { eq.push(eq_matched("peaking", f * 2.2, 0.9, -0.18 * g, sr)); } }
             if p.lmf.abs() > 1e-6 { let g = p.lmf.clamp(-15.0, 15.0); eq.push(eq_matched("peaking", p.lmf_f.clamp(200.0, 2500.0), pq(p.lmf_q.clamp(0.5, 2.5), g), g, sr)); }
             if p.hmf.abs() > 1e-6 { let g = p.hmf.clamp(-15.0, 15.0); eq.push(eq_matched("peaking", p.hmf_f.clamp(600.0, 7000.0), pq(p.hmf_q.clamp(0.5, 2.5), g), g, sr)); }
-            if p.hf.abs() > 1e-6 { let f = p.hf_f.clamp(1500.0, 16000.0); let g = p.hf.clamp(-16.5, 16.5); eq.push(if p.hf_bell { eq_matched("peaking", f, pq(0.8, g), g, sr) } else { eq_matched("highshelf", f, 0.7, g, sr) }); }
+            if p.hf.abs() > 1e-6 { let f = p.hf_f.clamp(1500.0, 16000.0); let g = p.hf.clamp(-16.5, 16.5); eq.push(if p.hf_bell { eq_matched("peaking", f, pq(0.8, g), g, sr) } else { eq_matched("highshelf", f, shq, g, sr) });
+                if v == 2 && !p.hf_bell { eq.push(eq_matched("peaking", f / 2.2, 0.9, -0.18 * g, sr)); } }
         }
         let keep = |old: &mut Vec<[Biquad; 2]>, new: Vec<Biquad>| { if old.len() == new.len() { for (a, n) in old.iter_mut().zip(new) { a[0].retune(n); a[1].retune(n); } } else { *old = new.into_iter().map(|b| [b, b]).collect(); } };
         keep(&mut self.filt, filt);
@@ -1290,8 +1303,12 @@ impl StripE {
         self.con = r > 1.0 + 1e-6 && p.cthr < 10.0;
         self.cslope = if r >= 19.99 { 1.0 } else { 1.0 - 1.0 / r };
         self.cthr = p.cthr.clamp(-30.0, 10.0);
-        self.catt = co(if p.cfast { 0.001 } else { 0.003 });
-        self.crel = co(p.crel.clamp(0.1, 4.0));
+        // Compresseur selon la table — Brun / Noir : 3 ms (rapide 1), genou 6 dB · Soie : 10 ms (3), genou 12 · Cristal : 1 ms (0,3), genou 2 ·
+        // Lampe : 12 ms (5), genou 10, relâchement 1,5 fois plus long
+        let (a_slow, a_fast, knee, rel_k) = match p.variant { 2 => (0.010, 0.003, 12.0, 1.0), 3 => (0.001, 0.0003, 2.0, 1.0), 4 => (0.012, 0.005, 10.0, 1.5), _ => (0.003, 0.001, 6.0, 1.0) };
+        self.variant = p.variant; self.cknee = knee; self.gexp = p.gexp;
+        self.catt = co(if p.cfast { a_fast } else { a_slow });
+        self.crel = co(p.crel.clamp(0.1, 4.0) * rel_k);
         // gate : seuil (−80 = éteint), profondeur (dB), relâchement ; attaque 0,1 ms, maintien 20 ms
         self.gon = p.gthr > -79.9;
         self.gthr = 10f64.powf(p.gthr.clamp(-80.0, 0.0) / 20.0);
@@ -1306,14 +1323,16 @@ impl StripE {
         let mut pk = 0.0f64;
         for ch in 0..nc { pk = pk.max(x[ch].abs()); }
         if self.gon {
-            if pk > self.gthr { self.gcount = self.ghold; }
-            let target = if self.gcount > 0 { self.gcount -= 1; 1.0 } else { self.gfloor };
+            // Expandeur : sous le seuil, le son descend deux fois plus vite que l'entrée (2:1), jusqu'à la profondeur ; pas de maintien
+            let target = if self.gexp { if pk >= self.gthr { 1.0 } else { (pk / self.gthr).max(self.gfloor) } }
+                else { if pk > self.gthr { self.gcount = self.ghold; } if self.gcount > 0 { self.gcount -= 1; 1.0 } else { self.gfloor } };
             self.gg += (target - self.gg) * if target > self.gg { self.gatt } else { self.grel };
         } else { self.gg = 1.0; }
         if self.con {
             let over = 20.0 * (pk + 1e-12).log10() - self.cthr;
-            // genou doux de 6 dB
-            let want = if over <= -3.0 { 0.0 } else if over >= 3.0 { over * self.cslope } else { self.cslope * (over + 3.0).powi(2) / 12.0 };
+            // genou doux (6 dB sur Brun / Noir)
+            let (h, k2) = (self.cknee / 2.0, self.cknee * 2.0);
+            let want = if over <= -h { 0.0 } else if over >= h { over * self.cslope } else { self.cslope * (over + h).powi(2) / k2 };
             self.cgr += (want - self.cgr) * if want > self.cgr { self.catt } else { self.crel };
         } else { self.cgr = 0.0; }
         let g = self.gg * 10f64.powf(-self.cgr / 20.0);
@@ -1330,7 +1349,14 @@ impl StripE {
         if !self.dyn_pre { self.dynamics(x, nc); }
         for ch in 0..nc {
             // étage de sortie de la voie : très propre, il n'arrondit que les crêtes extrêmes
-            x[ch] = self.os[ch].run(x[ch], |u| (u * HRE).tanh() / HRE) * self.gout;
+            // (Soie : un peu plus de grain · Cristal : encore plus propre · Lampe : la lampe arrondit plus tôt et ajoute de l'harmonique paire)
+            let w = match self.variant {
+                2 => self.os[ch].run(x[ch], |u| (u * 0.14).tanh() / 0.14),
+                3 => self.os[ch].run(x[ch], |u| (u * 0.05).tanh() / 0.05),
+                4 => { let w = self.os[ch].run(x[ch], |u| { let z = u * 0.3; (z + 0.2 * z * z).tanh() / 0.3 }); self.dc[ch] += (w - self.dc[ch]) * self.dc_c; w - self.dc[ch] }
+                _ => self.os[ch].run(x[ch], |u| (u * HRE).tanh() / HRE),
+            };
+            x[ch] = w * self.gout;
         }
     }
 }
@@ -1820,7 +1846,7 @@ impl Ap {
 }
 pub struct Plate {
     sr: f64, sc: f64,
-    pre: Dl, pre_n: usize,
+    pre: Dl, pre_n: usize, pre_s: f64,
     hp: (f64, f64), hpa: f64,
     bw: f64, bwz: f64,
     ap_in: [Ap; 4],
@@ -1834,7 +1860,7 @@ impl Plate {
     pub fn new(p: &PlateParams, sr: f64) -> Self {
         let sc = sr / PLATE_FS;
         let n = |v: f64| (v * sc).round() as usize;
-        let mut s = Self { sr, sc, pre: Dl::new((0.25 * sr) as usize + 4), pre_n: 0, hp: (0.0, 0.0), hpa: 0.0, bw: 0.9995, bwz: 0.0,
+        let mut s = Self { sr, sc, pre: Dl::new((0.25 * sr) as usize + 4), pre_n: 0, pre_s: -1.0, hp: (0.0, 0.0), hpa: 0.0, bw: 0.9995, bwz: 0.0,
             ap_in: [Ap::new(n(142.0)), Ap::new(n(107.0)), Ap::new(n(379.0)), Ap::new(n(277.0))],
             lap1: Ap::new(n(672.0) + 40), ld1: Dl::new(n(4453.0) + 2), lap2: Ap::new(n(1800.0)), ld2: Dl::new(n(3720.0) + 2), ldz: 0.0,
             rap1: Ap::new(n(908.0) + 40), rd1: Dl::new(n(4217.0) + 2), rap2: Ap::new(n(2656.0)), rd2: Dl::new(n(3163.0) + 2), rdz: 0.0,
@@ -1865,7 +1891,7 @@ impl Plate {
         let inp = if nc > 1 { 0.5 * (x[0] + x[1]) } else { x[0] };
         // pré-délai, coupe-bas (1er ordre), bande passante d'entrée
         self.pre.push(inp);
-        let v = self.pre.at(self.pre_n);
+        let v = { let t = self.pre_n as f64; if self.pre_s < 0.0 { self.pre_s = t; } if self.pre_s != t { self.pre_s += (t - self.pre_s) / (0.05 * self.sr); if (t - self.pre_s).abs() < 1e-3 { self.pre_s = t; } self.pre.atf(self.pre_s) } else { self.pre.at(self.pre_n) } };
         let (xp, yp) = self.hp; let h = self.hpa * (yp + v - xp); self.hp = (v, h);
         self.bwz += (h - self.bwz) * self.bw;
         let mut d = self.bwz;
@@ -1936,13 +1962,15 @@ impl Hall80Params {
         true
     }
 }
-struct H80Sec { ap1: Ap, d1: Dl, ap2: Ap, d2: Dl, n1: usize, n2: usize, tz: f64, lz: f64, ghi: f64, glo: f64, ph: f64 }
+struct H80Sec { ap1: Ap, d1: Dl, ap2: Ap, d2: Dl, n1: usize, n2: usize, tz: f64, lz: f64, ghi: f64, glo: f64, ph: f64, fr: [f64; 4] }
 pub struct Hall80 {
-    sr: f64, pre: Dl, pre_n: usize,
+    sr: f64, pre: Dl, pre_n: usize, pre_s: f64,
     inz: [f64; 2], ina: f64, din: [[Ap; 4]; 2],
     sec: Vec<H80Sec>, fb: [f64; 4],
     ta: f64, xa: f64, g1: f64, g2: f64, gi: [f64; 2], exc: f64, rate: f64, wph: f64,
     oz: [[f64; 4]; 2], ob: [f64; 5], width: f64, mix: f64,
+    /// Taille : facteur en cours et visé (il glisse, les lignes à retard changent d'un échantillon à la fois), déclin et grave gardés pour recalculer
+    fz: f64, fz_to: f64, fs: f64, rt: f64, bm: f64, dfr: [[f64; 4]; 2],
 }
 impl Hall80 {
     pub fn new(p: &Hall80Params, sr: f64) -> Self {
@@ -1950,9 +1978,9 @@ impl Hall80 {
         let marg = (0.002 * sr) as usize + 8;
         let din = |k: f64| [Ap::new(mx(H80_IN[0] * k)), Ap::new(mx(H80_IN[1] * k)), Ap::new(mx(H80_IN[2] * k)), Ap::new(mx(H80_IN[3] * k))];
         let sec = H80_SEC.iter().enumerate().map(|(k, s)| H80Sec { ap1: Ap::new(mx(s[0]) + marg), d1: Dl::new(mx(s[1])), ap2: Ap::new(mx(s[2])), d2: Dl::new(mx(s[3])),
-            n1: 2, n2: 2, tz: 0.0, lz: 0.0, ghi: 0.0, glo: 0.0, ph: k as f64 * 1.3 }).collect();
-        let mut h = Self { sr, pre: Dl::new((0.5 * sr) as usize + 8), pre_n: 0, inz: [0.0; 2], ina: 1.0, din: [din(1.0), din(1.07)], sec, fb: [0.0; 4],
-            ta: 1.0, xa: 0.0, g1: 0.6, g2: 0.5, gi: [0.75, 0.625], exc: 0.0, rate: 1.0, wph: 0.0, oz: [[0.0; 4]; 2], ob: [1.0, 0.0, 0.0, 0.0, 0.0], width: 1.0, mix: 0.25 };
+            n1: 2, n2: 2, tz: 0.0, lz: 0.0, ghi: 0.0, glo: 0.0, ph: k as f64 * 1.3, fr: [0.0; 4] }).collect();
+        let mut h = Self { sr, pre: Dl::new((0.5 * sr) as usize + 8), pre_n: 0, pre_s: -1.0, inz: [0.0; 2], ina: 1.0, din: [din(1.0), din(1.07)], sec, fb: [0.0; 4],
+            ta: 1.0, xa: 0.0, g1: 0.6, g2: 0.5, gi: [0.75, 0.625], exc: 0.0, rate: 1.0, wph: 0.0, oz: [[0.0; 4]; 2], ob: [1.0, 0.0, 0.0, 0.0, 0.0], width: 1.0, mix: 0.25, fz: -1.0, fz_to: 1.0, fs: 0.0, rt: 2.0, bm: 1.0, dfr: [[0.0; 4]; 2] };
         h.set(p);
         h
     }
@@ -1960,17 +1988,14 @@ impl Hall80 {
         let sr = self.sr;
         let v = H80_VAR[p.variant.min(2)];
         let f = (p.size.clamp(50.0, 150.0) / 100.0) * v[0];
-        let smp = |ms: f64| ((ms * f * sr / 1000.0).round() as usize).max(2);
         self.pre_n = ((p.pre.clamp(0.0, 200.0) / 1000.0) * sr) as usize;
-        for (c, k) in [(0usize, 1.0f64), (1, 1.07)] { for i in 0..4 { self.din[c][i].n = ((H80_IN[i] * k * f * sr / 1000.0).round() as usize).max(2); } }
-        let rt = p.decay.clamp(0.3, 20.0);
-        let bm = p.bass.clamp(0.5, 2.5);
-        for (s, l) in self.sec.iter_mut().zip(H80_SEC.iter()) {
-            s.ap1.n = smp(l[0]); s.n1 = smp(l[1]); s.ap2.n = smp(l[2]); s.n2 = smp(l[3]);
-            let t = (s.ap1.n + s.n1 + s.ap2.n + s.n2) as f64 / sr;
-            s.ghi = 10f64.powf(-3.0 * t / rt).min(0.999);
-            s.glo = 10f64.powf(-3.0 * t / (rt * bm)).min(0.999);
-        }
+        self.rt = p.decay.clamp(0.3, 20.0);
+        self.bm = p.bass.clamp(0.5, 2.5);
+        // taille tournée en lecture : le facteur glisse (voir tick), les lignes à retard ne sautent pas de centaines d'échantillons
+        self.fz_to = f;
+        if self.fz < 0.0 { self.fz = f; }
+        if self.fz != self.fz_to { self.fs = 1.0; }
+        self.resize();
         let oc = |fc: f64| 1.0 - (-2.0 * PI * fc / sr).exp();
         self.ta = oc(p.treble.clamp(1000.0, 16_000.0).min(0.45 * sr));
         self.xa = oc(p.xover.clamp(100.0, 1500.0));
@@ -1985,18 +2010,58 @@ impl Hall80 {
         self.width = p.width.clamp(0.0, 150.0) / 100.0;
         self.mix = (p.mix / 100.0).clamp(0.0, 1.0);
     }
+    /// Longueurs des lignes à retard et gains de déclin pour le facteur de taille en cours.
+    /// Pendant un glissement (`fz != fz_to`), on garde aussi la partie entre deux échantillons (`fr`, `dfr`) : les lignes se lisent
+    /// alors en interpolant, la longueur glisse au lieu d'avancer par à-coups. Au repos elle vaut 0 (lecture entière, comme avant).
+    fn resize(&mut self) {
+        let (sr, f, rt, bm) = (self.sr, self.fz, self.rt, self.bm);
+        let fs = self.fs;
+        let ex = |ms: f64| ms * f * sr / 1000.0;
+        let smp = |ms: f64| (ex(ms).round() as usize).max(2);
+        let frac = |ms: f64| if fs > 0.0 { (ex(ms).max(2.0) - smp(ms) as f64) * fs } else { 0.0 };
+        for (c, k) in [(0usize, 1.0f64), (1, 1.07)] { for i in 0..4 { self.din[c][i].n = smp(H80_IN[i] * k); self.dfr[c][i] = frac(H80_IN[i] * k); } }
+        for (s, l) in self.sec.iter_mut().zip(H80_SEC.iter()) {
+            s.ap1.n = smp(l[0]); s.n1 = smp(l[1]); s.ap2.n = smp(l[2]); s.n2 = smp(l[3]);
+            s.fr = [frac(l[0]), frac(l[1]), frac(l[2]), frac(l[3])];
+            let t = (s.ap1.n + s.n1 + s.ap2.n + s.n2) as f64 / sr;
+            s.ghi = 10f64.powf(-3.0 * t / rt).min(0.999);
+            s.glo = 10f64.powf(-3.0 * t / (rt * bm)).min(0.999);
+        }
+    }
     pub fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
+        if self.fz != self.fz_to {
+            // la plus longue ligne (149,6 ms) avance d'1/8 d'échantillon par échantillon : toute la course de la taille en ≈ 1,2 s
+            let step = 1000.0 / (149.6 * self.sr) / 8.0;
+            self.fz = if (self.fz_to - self.fz).abs() <= step { self.fz_to } else { self.fz + step * (self.fz_to - self.fz).signum() };
+            self.fs = 1.0;
+            self.resize();
+        } else if self.fs > 0.0 {
+            // arrivé : la partie entre deux échantillons s'efface en ≈ 40 ms (retour à la lecture entière, sans à-coup)
+            self.fs = (self.fs - 1.0 / (0.04 * self.sr)).max(0.0);
+            self.resize();
+        }
+        let sl = self.fs > 0.0;
         let (dl, dr) = if nc > 1 { (x[0], x[1]) } else { (x[0], x[0]) };
         // pré-délai (stéréo : la droite est relue dans le même tampon décalé d'un échantillon par paire)
         self.pre.push(dl); self.pre.push(dr);
-        let il = self.pre.at(2 * self.pre_n + 1); let ir = self.pre.at(2 * self.pre_n);
+        let t = self.pre_n as f64;
+        if self.pre_s < 0.0 { self.pre_s = t; }
+        let (il, ir) = if self.pre_s != t {
+            // pré-délai tourné en lecture : il glisse (lecture entre deux échantillons), il ne saute pas
+            self.pre_s += (t - self.pre_s) / (0.05 * self.sr);
+            if (t - self.pre_s).abs() < 1e-3 { self.pre_s = t; }
+            let n0 = self.pre_s.floor() as usize; let f = self.pre_s - n0 as f64;
+            let (a1, a2, b1, b2) = (self.pre.at(2 * n0 + 1), self.pre.at(2 * n0 + 3), self.pre.at(2 * n0), self.pre.at(2 * n0 + 2));
+            (a1 + (a2 - a1) * f, b1 + (b2 - b1) * f)
+        } else { (self.pre.at(2 * self.pre_n + 1), self.pre.at(2 * self.pre_n)) };
         // convertisseurs d'époque : bande passante limitée, puis diffusion d'entrée
         let mut inj = [0.0; 2];
         for (c, v) in [il, ir].into_iter().enumerate() {
             self.inz[c] += (v - self.inz[c]) * self.ina;
             let mut d = self.inz[c];
             let (a, b) = (self.gi[0], self.gi[1]);
-            d = self.din[c][0].run(d, a); d = self.din[c][1].run(d, a); d = self.din[c][2].run(d, b); d = self.din[c][3].run(d, b);
+            if sl { let q = self.dfr[c]; d = self.din[c][0].run_mod(d, a, q[0]); d = self.din[c][1].run_mod(d, a, q[1]); d = self.din[c][2].run_mod(d, b, q[2]); d = self.din[c][3].run_mod(d, b, q[3]); }
+            else { d = self.din[c][0].run(d, a); d = self.din[c][1].run(d, a); d = self.din[c][2].run(d, b); d = self.din[c][3].run(d, b); }
             inj[c] = d;
         }
         // flottement lent des retards (chaque section à sa vitesse) + dérive très lente commune
@@ -2009,18 +2074,19 @@ impl Hall80 {
             s.ph += step * H80_RATES[k]; if s.ph > 2.0 * PI { s.ph -= 2.0 * PI; }
             let m = exc * (s.ph.sin() + wander) * if k % 2 == 0 { 1.0 } else { -1.0 };
             let u = self.fb[(k + 3) % 4] + if k == 0 { inj[0] } else if k == 2 { inj[1] } else { 0.0 };
-            let a = s.ap1.run_mod(u, -g1, m);
+            let a = s.ap1.run_mod(u, -g1, m + s.fr[0]);
             s.d1.push(a);
-            let b = s.d1.at(s.n1 - 1);
+            let b = if sl { s.d1.atf(s.n1 as f64 - 1.0 + s.fr[1]) } else { s.d1.at(s.n1 - 1) };
             s.tz += (b - s.tz) * ta;
             s.lz += (s.tz - s.lz) * xa;
             let y = s.lz * s.glo + (s.tz - s.lz) * s.ghi;
-            let c = s.ap2.run(y, g2);
+            let c = if sl { s.ap2.run_mod(y, g2, s.fr[2]) } else { s.ap2.run(y, g2) };
             s.d2.push(c);
-            out[k] = s.d2.at(s.n2 - 1);
+            out[k] = if sl { s.d2.atf(s.n2 as f64 - 1.0 + s.fr[3]) } else { s.d2.at(s.n2 - 1) };
         }
         self.fb = out;
-        let tp = |s: &H80Sec, two: bool, fr: f64| if two { s.d2.at((s.n2 as f64 * fr).round() as usize) } else { s.d1.at((s.n1 as f64 * fr).round() as usize) };
+        let tp = |s: &H80Sec, two: bool, fr: f64| if sl { if two { s.d2.atf((s.n2 as f64 + s.fr[3]) * fr) } else { s.d1.atf((s.n1 as f64 + s.fr[1]) * fr) } }
+            else if two { s.d2.at((s.n2 as f64 * fr).round() as usize) } else { s.d1.at((s.n1 as f64 * fr).round() as usize) };
         let sc = &self.sec;
         let yl = tp(&sc[0], false, 0.11) + tp(&sc[0], false, 0.67) - tp(&sc[1], true, 0.45) + tp(&sc[2], false, 0.33) - tp(&sc[3], true, 0.71) + tp(&sc[0], true, 0.21) - tp(&sc[3], false, 0.52);
         let yr = tp(&sc[2], false, 0.13) + tp(&sc[2], false, 0.61) - tp(&sc[3], true, 0.39) + tp(&sc[0], false, 0.29) - tp(&sc[1], true, 0.77) + tp(&sc[2], true, 0.17) - tp(&sc[1], false, 0.48);
@@ -2064,13 +2130,13 @@ impl H910Params {
 }
 struct H910Voice { buf: Dl, ph: f64, step: f64, fb: f64, lp: f64 }
 pub struct H910 {
-    sr: f64, v: [H910Voice; 2], win: f64, d0: f64, fb: f64, mix: f64, lpa: f64, edge: f64,
+    sr: f64, v: [H910Voice; 2], win: f64, d0: f64, d0_s: f64, fb: f64, mix: f64, lpa: f64, edge: f64,
 }
 impl H910 {
     pub fn new(p: &H910Params, sr: f64) -> Self {
         let n = (0.3 * sr) as usize + 8;
         let mk = || H910Voice { buf: Dl::new(n), ph: 0.0, step: 0.0, fb: 0.0, lp: 0.0 };
-        let mut h = Self { sr, v: [mk(), mk()], win: 1.0, d0: 0.0, fb: 0.0, mix: 0.35, lpa: 1.0, edge: 0.5 };
+        let mut h = Self { sr, v: [mk(), mk()], win: 1.0, d0: 0.0, d0_s: -1.0, fb: 0.0, mix: 0.35, lpa: 1.0, edge: 0.5 };
         h.set(p);
         h
     }
@@ -2099,7 +2165,9 @@ impl H910 {
         for c in 0..2 {
             let inp = if c == 0 { dl } else { dr };
             let fbv = self.v[c].fb;
-            let (win, d0, lpa) = (self.win, self.d0, self.lpa);
+            if self.d0_s < 0.0 { self.d0_s = self.d0; }
+            if self.d0_s != self.d0 { self.d0_s += (self.d0 - self.d0_s) / (0.05 * self.sr); if (self.d0 - self.d0_s).abs() < 1e-3 { self.d0_s = self.d0; } }
+            let (win, d0, lpa) = (self.win, self.d0_s, self.lpa);
             let vc = &mut self.v[c];
             vc.lp += (inp + fbv * self.fb - vc.lp) * lpa;
             vc.buf.push(vc.lp);

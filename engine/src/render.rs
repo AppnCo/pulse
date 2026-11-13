@@ -238,6 +238,46 @@ fn with_frozen(project: &Project, media: &Media) -> Option<Project> {
 type SendTap = (usize, f32, Option<Curve>, bool);
 type AuxTap = (f32, Option<Curve>, f32, Option<usize>, bool);
 
+/// Doses d'envoi changées en direct (`mix_from`) : chaque nouvel envoi reprend la dose ENTENDUE de l'ancien (elle glissera vers la
+/// nouvelle, ≈ 10 ms, au lieu de sauter au début du bloc = un clic par cran) ; un envoi nouveau part de 0 ; un envoi retiré
+/// (dose à 0, envoi coupé) reste le temps de s'éteindre (dose 0), au lieu d'être coupé net.
+fn carry_sends(old: &[SendTap], old_s: &[f32], new: &mut Vec<SendTap>) -> Vec<f32> {
+    let mut used = vec![false; old.len()];
+    let mut out: Vec<f32> = new.iter().map(|n| {
+        match (0..old.len()).find(|&j| !used[j] && old[j].0 == n.0 && old[j].3 == n.3) {
+            Some(j) => { used[j] = true; old_s.get(j).copied().unwrap_or(n.1) }
+            None => 0.0,
+        }
+    }).collect();
+    for j in 0..old.len() {
+        let h = old_s.get(j).copied().unwrap_or(0.0);
+        if !used[j] && old[j].2.is_none() && h.abs() > 1e-4 { new.push((old[j].0, 0.0, None, old[j].3)); out.push(h); }
+    }
+    out
+}
+/// Pareil pour les envois vers un groupe
+fn carry_aux(old: &[AuxTap], old_s: &[f32], new: &mut Vec<AuxTap>) -> Vec<f32> {
+    let mut used = vec![false; old.len()];
+    let mut out: Vec<f32> = new.iter().map(|n| {
+        match (0..old.len()).find(|&j| !used[j] && old[j].3 == n.3 && old[j].4 == n.4) {
+            Some(j) => { used[j] = true; old_s.get(j).copied().unwrap_or(n.0) }
+            None => 0.0,
+        }
+    }).collect();
+    for j in 0..old.len() {
+        let h = old_s.get(j).copied().unwrap_or(0.0);
+        if !used[j] && old[j].1.is_none() && h.abs() > 1e-4 { new.push((0.0, None, old[j].2, old[j].3, old[j].4)); out.push(h); }
+    }
+    out
+}
+/// Dose entendue d'un envoi à cet échantillon : la courbe d'automation si elle existe, sinon la dose qui glisse vers le réglage
+#[inline]
+fn heard(s: &mut f32, level: f32, c: &Option<Curve>, t: f64, k: f32) -> f32 {
+    if let Some(c) = c { return c.at(t) as f32; }
+    if *s != level { *s += (level - *s) * k; if (level - *s).abs() < 1e-6 { *s = level; } }
+    *s
+}
+
 /// Une région prête à jouer : fondus enchaînés calculés, chaîne d'effets de région gardée d'un bloc à l'autre
 struct ClipRt { clip: Clip, xin: f64, xout: f64, fx: Option<crate::fx::FxChain>, src_stereo: bool, out_stereo: bool, first: usize, last: usize }
 
@@ -262,6 +302,9 @@ struct TrackRt {
     dest: Option<usize>,
     sends: Vec<SendTap>,
     aux: Vec<AuxTap>,
+    /// Doses d'envoi entendues (même ordre que `sends` / `aux`) : elles glissent vers les réglages
+    sends_s: Vec<f32>,
+    aux_s: Vec<f32>,
     curve: Option<Curve>,
     pan_curve: Option<Curve>,
     pan0: f64,
@@ -284,6 +327,8 @@ struct BusRt {
     route_s: f32,
     aux: Vec<AuxTap>,
     sends: Vec<SendTap>,
+    sends_s: Vec<f32>,
+    aux_s: Vec<f32>,
 }
 
 /// Mixeur bloc par bloc : même calcul que `render`, mais le morceau peut être joué au fil de l'eau
@@ -291,6 +336,12 @@ struct BusRt {
 /// Les sons (`Media`) sont donnés à chaque bloc : le mixeur ne garde que le projet et l'état des effets.
 pub struct Renderer {
     sr: f64,
+    /// Plus grand retard d'effets du projet (s) : le Pitch, les machines analogiques, les plugins externes — sert à amorcer un mixeur neuf
+    lat_max: f64,
+    /// Effets à longue queue dans le projet (écho, reverb…) : durée à rejouer « à blanc » avant de remplacer un mixeur en lecture
+    warm: f64,
+    /// Déjà rejoué à blanc par `player::prewarm` (le fondu n'a plus qu'à finir le chemin)
+    pub(crate) warmed: bool,
     from: f64,
     to: f64,
     frames: usize,
@@ -383,6 +434,10 @@ impl Renderer {
         let project = &prepared(project, media, opts.sample_rate as f64, opts.only_track.is_some());
         let opts = &with_fader(project, opts);
         let sr = opts.sample_rate as f64;
+        let stem = opts.only_track.is_some();
+        let lat_max = project.tracks.iter().map(|t| fx_latency(&t.effects, &t.effect_params, Some(&t.automation), sr)
+            + bus_latency(project, t.output.as_deref(), stem, sr)
+            + t.clips.iter().map(|c| c.fx.as_ref().map_or(0.0, |f| fx_latency(&f.effects, &f.effect_params, None, sr))).fold(0.0, f64::max)).fold(0.0, f64::max);
         let (from, to) = opts.range.unwrap_or((opts.start.max(0.0).min(project.end()), project.end()));
         // Queue : comme le navigateur, on laisse mourir les échos (4 s) ou la reverb (2,5 s) quand on rend tout le projet
         let uses = |name: &str| {
@@ -401,6 +456,10 @@ impl Renderer {
         let tail: f64 = if opts.range.is_some() { 0.0 } else if uses("delay") || send_used(true) { 4.0 } else if uses("reverb") || send_used(false) { 2.5 } else { 0.0 };
         let tail = if has_ext && opts.range.is_none() { tail.max(3.0) } else { tail };
         let frames = ((to - from + tail).max(0.0) * sr).ceil() as usize;
+        // queue à retrouver quand ce mixeur en remplace un autre en lecture (sinon échos et reverbs repartent de zéro : un trou dans la queue)
+        let long = |fx: &[String]| fx.iter().any(|e| matches!(crate::model::fx_type(e), "delay" | "reverb" | "plate" | "hall80" | "techo" | "h910" | "slapback"));
+        let warm = if project.tracks.iter().any(|t| long(&t.effects) || t.clips.iter().any(|c| c.fx.as_ref().is_some_and(|f| long(&f.effects))))
+            || project.buses.iter().any(|b| long(&b.effects)) || send_used(true) || send_used(false) { 2.0 } else { 0.0 };
 
         let mut tracks = Vec::new();
         for (idx, track) in project.tracks.iter().enumerate() {
@@ -447,6 +506,7 @@ impl Renderer {
             tracks.push(TrackRt {
                 idx, on: if taps.on { 1.0 } else { 0.0 }, on_s: if taps.on { 1.0 } else { 0.0 }, vol_s: taps.vol, pan_s: taps.pan0, route_s: taps.route_gain,
                 clips: rt_clips, force_mono, stereo_in, mono_in, stereo, chain, vol: taps.vol, route_gain: taps.route_gain, dest: taps.dest,
+                sends_s: taps.sends.iter().map(|x| x.1).collect(), aux_s: taps.aux.iter().map(|x| x.0).collect(),
                 sends: taps.sends, aux: taps.aux, curve: taps.curve, pan_curve: taps.pan_curve, pan0: taps.pan0,
             });
         }
@@ -488,12 +548,13 @@ impl Renderer {
                         (lvl > 0.0 || c.is_some()).then(|| (k, (lvl / 100.0) as f32, c, bus.pre_sends.get(&format!("send:{}", sd.id)).copied().unwrap_or(false)))
                     })
                     .collect(),
+                sends_s: Vec::new(), aux_s: Vec::new(),
             }
-        }).collect();
+        }).map(|mut b: BusRt| { b.sends_s = b.sends.iter().map(|x| x.1).collect(); b.aux_s = b.aux.iter().map(|x| x.0).collect(); b }).collect();
         let sends = project.sends.iter().map(|sd| (!sd.muted).then(|| crate::fx::SendFx::new(sd, sr, project.bpm))).collect();
         let limiter = opts.only_track.is_none().then(|| crate::fx::Limiter::new(project.ceiling(), sr));
         let _ = base_opts;
-        Self { sr, from, to, frames, pos: 0, master_volume: opts.master_volume, only_track: opts.only_track.is_some(), n_buses: project.buses.len(), tracks, buses, sends, limiter, base: RenderOptions { sample_rate: opts.sample_rate, master_volume: base_opts.master_volume, range: opts.range, only_track: opts.only_track, start: opts.start },
+        Self { sr, lat_max, warm, warmed: false, from, to, frames, pos: 0, master_volume: opts.master_volume, only_track: opts.only_track.is_some(), n_buses: project.buses.len(), tracks, buses, sends, limiter, base: RenderOptions { sample_rate: opts.sample_rate, master_volume: base_opts.master_volume, range: opts.range, only_track: opts.only_track, start: opts.start },
                loop_ab: None, metro: None, metro_segs: Vec::new(), wrapped: false, fade_in_end: None, levels: Vec::new(), master_rms: 0.0,
                grs: Vec::new(), agrs: Vec::new(), cins: Vec::new(), fxm: Vec::new(), scope_target: None, scope: vec![0.0; SCOPE], scope_i: 0 }.with_metro(project)
     }
@@ -502,10 +563,12 @@ impl Renderer {
     /// Longueur totale (échantillons), queue des effets comprise
     /// Réglage d'effet changé en direct (bouton tourné pendant la lecture) : appliqué sans reconstruire le mixeur,
     /// les effets gardent leur état (pas de craquement, la queue de reverb continue). `bus` : groupe (indice dans project.buses)
-    pub fn fx_live(&mut self, bus: bool, idx: usize, fx: &str, key: &str, v: f64) -> bool {
+    pub fn fx_live(&mut self, bus: bool, idx: usize, fx: &str, key: &str, v: f64) -> bool { self.fx_live_from(bus, idx, fx, key, v, None) }
+    /// Pareil, avec la valeur d'où part le bouton (le tout premier geste glisse aussi, sans clic)
+    pub fn fx_live_from(&mut self, bus: bool, idx: usize, fx: &str, key: &str, v: f64, from: Option<f64>) -> bool {
         if !v.is_finite() { return false; }
-        if bus { self.buses.iter_mut().find(|b| b.i == idx).map(|b| b.chain.set_live(fx, key, v)).unwrap_or(false) }
-        else { self.tracks.iter_mut().find(|t| t.idx == idx).map(|t| t.chain.set_live(fx, key, v)).unwrap_or(false) }
+        if bus { self.buses.iter_mut().find(|b| b.i == idx).map(|b| b.chain.set_live_from(fx, key, v, from)).unwrap_or(false) }
+        else { self.tracks.iter_mut().find(|t| t.idx == idx).map(|t| t.chain.set_live_from(fx, key, v, from)).unwrap_or(false) }
     }
     /// Métronome pris dans le projet (champ `metronome`, envoyé par la page pour la lecture seulement)
     pub fn set_metro(&mut self, project: &Project) {
@@ -545,6 +608,10 @@ impl Renderer {
     }
     pub fn frames(&self) -> usize { self.frames }
     pub fn sample_rate(&self) -> f64 { self.sr }
+    /// Plus grand retard d'effets du projet, en secondes (0 sans Pitch, machine analogique à retard ni plugin externe)
+    pub fn max_latency(&self) -> f64 { self.lat_max }
+    /// Secondes à rejouer à blanc avant un remplacement en lecture (0 = aucun effet à longue queue)
+    pub fn warm_secs(&self) -> f64 { self.warm }
     /// Échantillons déjà mixés
     pub fn position(&self) -> usize { self.pos }
     pub fn is_done(&self) -> bool { self.pos >= self.frames && !self.loop_ab.is_some_and(|(_, b)| self.pos < b) }
@@ -622,7 +689,10 @@ impl Renderer {
             let t = track_taps(project, track, tr.idx, &opts);
             if t.dest != tr.dest { continue; }
             tr.on = if t.on { 1.0 } else { 0.0 };
-            tr.vol = t.vol; tr.route_gain = t.route_gain; tr.sends = t.sends; tr.aux = t.aux;
+            let (mut ns, mut na) = (t.sends, t.aux);
+            tr.sends_s = carry_sends(&tr.sends, &tr.sends_s, &mut ns);
+            tr.aux_s = carry_aux(&tr.aux, &tr.aux_s, &mut na);
+            tr.vol = t.vol; tr.route_gain = t.route_gain; tr.sends = ns; tr.aux = na;
             tr.curve = t.curve; tr.pan_curve = t.pan_curve; tr.pan0 = t.pan0;
         }
         for b in &mut self.buses {
@@ -636,8 +706,10 @@ impl Renderer {
             b.law0 = balance_gains(b.pan0);
             b.curve = bus.automation.curve("volume");
             b.pan_curve = bus.automation.curve("pan");
-            b.aux = aux_sends(project, &bus.bus_sends, &bus.automation, &bus.pre_sends, bus.output.as_deref(), opts.master_volume);
-            b.sends = project.sends.iter().enumerate()
+            let mut na = aux_sends(project, &bus.bus_sends, &bus.automation, &bus.pre_sends, bus.output.as_deref(), opts.master_volume);
+            b.aux_s = carry_aux(&b.aux, &b.aux_s, &mut na);
+            b.aux = na;
+            let mut ns: Vec<SendTap> = project.sends.iter().enumerate()
                 .filter(|(_, sd)| !sd.muted)
                 .filter_map(|(k, sd)| {
                     let lvl = bus.sends.get(&sd.id).copied().unwrap_or(0.0);
@@ -645,6 +717,8 @@ impl Renderer {
                     (lvl > 0.0 || c.is_some()).then(|| (k, (lvl / 100.0) as f32, c, bus.pre_sends.get(&format!("send:{}", sd.id)).copied().unwrap_or(false)))
                 })
                 .collect();
+            b.sends_s = carry_sends(&b.sends, &b.sends_s, &mut ns);
+            b.sends = ns;
         }
     }
 
@@ -692,6 +766,7 @@ impl Renderer {
                     None => (&mut *left, &mut *right),
                 };
                 let k = smooth_k(sr);
+                let ks = k as f32;
                 let (mut pk_l, mut pk_r, mut sq) = (0.0f32, 0.0f32, 0.0f32);
                 for m in 0..n {
                     let t = from + (b0 + m) as f64 / sr;
@@ -722,14 +797,14 @@ impl Renderer {
                     sq += ((l + r) * 0.5) * ((l + r) * 0.5);
                     dl[m] += l * tr.route_s;
                     dr[m] += r * tr.route_s;
-                    for (i, level, c, pre) in &tr.sends {
-                        let level = c.as_ref().map_or(*level, |c| c.at(t) as f32);
+                    for ((i, level, c, pre), s) in tr.sends.iter().zip(tr.sends_s.iter_mut()) {
+                        let level = heard(s, *level, c, t, ks);
                         let (sl, sr2) = if *pre { (pre_l, pre_r) } else { (l, r) };
                         send_in[*i].0[m] += sl * level;
                         send_in[*i].1[m] += sr2 * level;
                     }
-                    for (k, (level, c, _, _, pre)) in tr.aux.iter().enumerate() {
-                        let level = c.as_ref().map_or(*level, |c| c.at(t) as f32);
+                    for (k, ((level, c, _, _, pre), s)) in tr.aux.iter().zip(tr.aux_s.iter_mut()).enumerate() {
+                        let level = heard(s, *level, c, t, ks);
                         let (sl, sr2) = if *pre { (pre_l, pre_r) } else { (l, r) };
                         aux_buf[k].0[m] += sl * level;
                         aux_buf[k].1[m] += sr2 * level;
@@ -771,6 +846,7 @@ impl Renderer {
                 let route = (b.up * if b.dest.is_some() { 1.0 } else { self.master_volume }) as f32;
                 let busmute = if b.muted { 0.0f32 } else { 1.0 };
                 let k = smooth_k(sr);
+                let ks = k as f32;
                 for m in 0..n {
                     let t = from + (b0 + m) as f64 / sr;
                     b.own_s += (b.own - b.own_s) * k;
@@ -786,14 +862,14 @@ impl Renderer {
                     let (l, r) = (xl * gl, xr * gr);
                     dl[m] += l * route;
                     dr[m] += r * route;
-                    for (k, level, c, pre) in &b.sends {
-                        let level = c.as_ref().map_or(*level, |c| c.at(t) as f32);
+                    for ((k, level, c, pre), s) in b.sends.iter().zip(b.sends_s.iter_mut()) {
+                        let level = heard(s, *level, c, t, ks);
                         let (sl, sr2) = if *pre { (pre_l, pre_r) } else { (l, r) };
                         send_in[*k].0[m] += sl * level;
                         send_in[*k].1[m] += sr2 * level;
                     }
-                    for (k, (level, c, _, _, pre)) in b.aux.iter().enumerate() {
-                        let level = c.as_ref().map_or(*level, |c| c.at(t) as f32);
+                    for (k, ((level, c, _, _, pre), s)) in b.aux.iter().zip(b.aux_s.iter_mut()).enumerate() {
+                        let level = heard(s, *level, c, t, ks);
                         let (sl, sr2) = if *pre { (pre_l, pre_r) } else { (l, r) };
                         aux_buf[k].0[m] += sl * level;
                         aux_buf[k].1[m] += sr2 * level;

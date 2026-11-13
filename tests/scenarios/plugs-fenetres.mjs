@@ -24,7 +24,7 @@ export default async (c) => {
   const after = await ev(`document.querySelector('.plug-win[data-fx="comp"]').getBoundingClientRect().left`);
   check('le compresseur se déplace à la souris', Math.abs((before - after) - 200) < 2, `${before} → ${after}`);
   await ev(`document.querySelector('.plug-win[data-fx="comp"] .fx-size button[data-z="1.5"]')?.click()`); await sleep(100);
-  check('à 150 % : agrandi avec zoom (net), pas une image étirée', await ev(`(()=>{ const p=document.querySelector('.plug-win[data-fx="comp"]'); return p.style.zoom==='1.5' && getComputedStyle(p).transform==='none'; })()`));
+  check('à 150 % : agrandi avec zoom (net), pas une image étirée', await ev(`(()=>{ const p=document.querySelector('.plug-win[data-fx="comp"]'); const b=p.querySelector('.fx-size button[data-z="1.5"]'); /* Compresseur : base 125 % depuis le 11/11 → 150 % = zoom 1,875, ou bouton grisé si ça ne tient pas à l'écran */ return (b.disabled ? p.style.zoom==='1.25' : p.style.zoom==='1.875') && getComputedStyle(p).transform==='none'; })()`));
   {
     const h2 = await ev(`(() => { const r = document.querySelector('.plug-win[data-fx="comp"] .fx-title').getBoundingClientRect(); return { x: r.left + 20, y: r.top + 6 }; })()`);
     const b2 = await ev(`(()=>{ const r=document.querySelector('.plug-win[data-fx="comp"]').getBoundingClientRect(); return [r.left, r.top]; })()`);

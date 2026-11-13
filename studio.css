@@ -2829,6 +2829,14 @@ body.midi-open .workspace { padding-bottom: var(--midi-h, 340px); }
 .fx-grip { position: absolute; right: 0; bottom: 0; width: 18px; height: 18px; cursor: nwse-resize; z-index: 6; }
 .fx-grip::after { content: ""; position: absolute; right: 5px; bottom: 5px; width: 7px; height: 7px; border-right: 2px solid var(--violet-3); border-bottom: 2px solid var(--violet-3); border-radius: 0 0 3px 0; opacity: .55; }
 .fx-grip:hover::after { opacity: 1; }
+/* la poignée porte une infobulle (data-tooltip) : son ::after héritait du fond / de l'ombre de la bulle → un rectangle violet dépassait du coin de chaque fenêtre */
+.fx-grip[data-tooltip]::after { left: auto; top: auto; transform: none; background: none; padding: 0; box-shadow: none; transition: opacity .12s; z-index: auto; }
+/* barre du haut des fenêtres « pro » : tout tient sur une ligne (A / B était coupé dans le Compresseur) */
+.fx-toolbar > * { flex-shrink: 0; }
+.fx-toolbar .fx-autogain { margin-right: 0; }
+.fx-pro .fx-toolbar { gap: 5px; padding: 6px 8px; }
+.fx-pro .fx-toolbar .fx-seg button { padding: 3px 7px; }
+.fx-pro .fx-toolbar .fx-autogain, .fx-pro .fx-toolbar .fx-view { padding: 3px 7px; font-size: 10.5px; }
 .fx-panel { box-sizing: border-box; }
 .eq-panel .eq-svg { width: 100%; height: auto; }
 .eq-panel .eq-graph { box-sizing: border-box; }
@@ -3267,7 +3275,7 @@ body.fx-drag-on, body.fx-drag-on * { cursor: grabbing !important; user-select: n
     background: radial-gradient(ellipse at 50% 0%, #2c1f45 0%, #1a1226 65%); font-size: 12px; }
 .tune-b .fx-panel-header { background: #120c1c; border-bottom: 1px solid #2a1f3a; padding: 8px 10px; gap: 10px; }
 .tune-b .fx-title { flex: 1; display: flex; flex-direction: column; line-height: 1.2; font-size: 13px; color: #f1ebfb; }
-.tune-b .fx-cat { font-style: normal; font-size: 9px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: #A3E635; }
+.tune-b .fx-cat { font-style: normal; font-size: 9px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: #C084FC; }
 .tb-power { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-size: 13px; cursor: pointer;
     background: #241a33; color: #6b5a88; border: 1px solid #3a2c50; transition: all .15s; }
 .tune-b.is-on .tb-power { background: radial-gradient(circle at 40% 35%, #c084fc, #7c3aed); color: #fff; border-color: transparent; box-shadow: 0 0 10px rgba(168,85,247,.55); }
@@ -3314,7 +3322,7 @@ body.fx-drag-on, body.fx-drag-on * { cursor: grabbing !important; user-select: n
 /* === PulseTune (planche « Pro » du 22/10) : barre de gamme, indicateur d'écart, 4 boutons métal === */
 .tune-panel.tune-pro { width: 620px; background: linear-gradient(#1d1430, #140e21); border-radius: 14px; }
 .tp-brand { flex: 1; display: flex; flex-direction: column; line-height: 1.15; }
-.tp-brand i { font-style: normal; font-size: 9px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; color: #A3E635; }
+.tp-brand i { font-style: normal; font-size: 9px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; color: #C084FC; }
 .tp-brand b { font-size: 15px; letter-spacing: .02em; color: #f1ebfb; }
 .tp-brand b span { color: #C084FC; font-weight: 800; }
 .tp-brand em { font-style: normal; font-size: 10px; color: #9A8CB8; }
@@ -3999,3 +4007,60 @@ body.fx-drag-copy .insp-fx-row.fx-dragging::after { content: '+'; position: abso
 .viz-live-bar { stroke: rgba(196, 181, 253, .35); stroke-width: 3; stroke-linecap: round; }
 .viz-live-gr { stroke: #f87171; stroke-width: 3; stroke-linecap: round; }
 .viz-live-dot { fill: #fff; stroke: #a855f7; stroke-width: 2; filter: drop-shadow(0 0 4px #a855f7); }
+
+/* Multibande vide : points de départ */
+.mb-start-row { display: flex; gap: 8px; grid-template-columns: none; }
+.mb-start { padding: 7px 14px; font-size: 12px; white-space: nowrap; }
+.mb-starts { gap: 10px; padding: 4px 8px 8px; }
+
+/* En-tête commun des fenêtres d'effet : famille en petit, nom, piste */
+.plug-win .fx-title.has-cat { display: flex; flex-direction: column; line-height: 1.2; }
+.plug-win .fx-title.has-cat .fx-cat { font-style: normal; font-size: 9px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--fx-accent, #A78BFA); }
+.plug-win .fx-title .fx-nm i { font-style: normal; font-weight: 400; color: #9A8CB8; }
+
+/* EQ de l'écho / de la reverb : les réglages du grand EQ sous la courbe, et la vue agrandie */
+.rv-eq-detail { display: flex; align-items: center; gap: 12px; margin-top: 6px; padding: 5px 8px; border-radius: 10px; background: rgba(24,16,36,.82); border: 1px solid rgba(168,85,247,.22); }
+.rv-eq-detail[hidden] { display: none; }
+.rv-eq-detail .eq-vals { margin: 0; flex: 1; }
+.rv-eq-btn { background: #1a1228; border: 1px solid #3a2c50; color: #a99bc4; border-radius: 6px; font-size: 10.5px; padding: 2px 8px; cursor: pointer; white-space: nowrap; }
+.rv-eq-btn:hover { color: #fff; border-color: #A855F7; }
+.rv-eq-btn.on { color: #fff; border-color: #A855F7; background: #2a1840; }
+.rv-eq-detail .eq-num { width: 62px; background: #0d0915; color: #fff; border: 1px solid #3a2c50; border-radius: 5px; padding: 2px 5px; font: 600 12.5px -apple-system, system-ui, sans-serif; text-align: left; }
+.rv-eq-detail .eq-num:disabled { opacity: .4; }
+.rv-eq-detail select.eq-num { width: 92px; }
+.fx-pro.fx-screen.rveq-wide .fx-face { grid-template-columns: 1fr; }
+.fx-pro.fx-screen.rveq-wide .scr-col { display: none; }
+
+/* PulseTune : tracé de la correction */
+.tp-trace { position: relative; margin: 6px 12px 4px; height: 96px; border-radius: 12px; overflow: hidden; background: linear-gradient(#0b0712, #120b1f); border: 1px solid rgba(168,85,247,.22); box-shadow: inset 0 2px 14px #000a; }
+.tp-trace canvas { display: block; width: 100%; height: 100%; }
+.tp-trace-leg { position: absolute; right: 8px; top: 5px; display: flex; align-items: center; gap: 5px; font-size: 9.5px; color: #9A8CB8; pointer-events: none; }
+.tp-trace-leg i { display: inline-block; width: 12px; height: 2px; border-radius: 2px; margin-left: 6px; }
+.tp-trace-leg i.g { background: rgba(255,255,255,.45); } .tp-trace-leg i.v { background: #C084FC; box-shadow: 0 0 5px #A855F7; }
+.tp-trace-empty { position: absolute; inset: 0; display: grid; place-items: center; font-size: 11px; color: #7d6f9c; pointer-events: none; }
+.tp-trace.has .tp-trace-empty { display: none; } .tp-trace:not(.has) .tp-trace-leg { display: none; }
+
+/* PulseTune : gros cadrans lumineux, et les deux vues (Réglages / Graphique) */
+.tp-knobs { align-items: flex-start; padding: 14px 6px 6px; }
+.tp-k { gap: 2px; }
+.tp-lbl { font-size: 10.5px; font-weight: 700; color: #e4dbf5; margin-bottom: 2px; }
+.tp-knob svg { display: block; transition: transform .12s; }
+.tp-knob:hover svg { transform: scale(1.04); }
+.tp-val { font-size: 12.5px; font-weight: 600; color: #E9D5FF; margin-top: 2px; }
+.tp-k:not([data-k="strength"]) .tp-val { display: none; }
+.tp-k:not([data-k="strength"]) { padding-top: 8px; }
+.tp-view { margin-right: 6px; }
+.tp-view button { padding: 5px 11px; font-weight: 600; }
+.tune-panel .tp-trace { display: none; }
+.tune-panel.tp-graph .tp-trace { display: block; height: 300px; margin-top: 12px; }
+.tune-panel.tp-graph .tp-meter, .tune-panel.tp-graph .tp-knobs { display: none; }
+
+.tp-trace-help { display: none; position: absolute; left: 10px; right: 10px; bottom: 5px; font-size: 10px; color: #8a7cab; pointer-events: none; text-align: center; }
+.tune-panel.tp-graph .tp-trace.has .tp-trace-help { display: block; }
+.tune-panel.tp-graph .tp-trace { height: 320px; }
+.tune-panel.tp-graph .tp-trace canvas { height: calc(100% - 22px); }
+.tp-trace-help { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.tune-hint[hidden] { display: none; }
+.tune-quick .tune-help-btn { width: 24px; height: 24px; padding: 0; border-radius: 50%; font-weight: 700; margin-right: 6px; }
+.tune-quick .tune-help-btn.on { background: #7C3AED; border-color: #A855F7; color: #fff; }

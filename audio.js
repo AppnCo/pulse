@@ -1308,9 +1308,10 @@ window.PulseAudio = (function() {
         class PulseStripE extends AudioWorkletProcessor {
             constructor(o) {
                 super();
-                const p = (o && o.processorOptions) || {}, d = { hpf: 0, lpf: 22, lf: 0, lfF: 100, lfBell: 0, lmf: 0, lmfF: 600, lmfQ: 1, hmf: 0, hmfF: 2500, hmfQ: 1, hf: 0, hfF: 8000, hfBell: 0, eq: 1, variant: 0, cthr: 10, cratio: 1, crel: 0.3, cfast: 0, gthr: -80, grange: 20, grel: 0.3, dynPre: 0, output: 0 };
+                const p = (o && o.processorOptions) || {}, d = { hpf: 0, lpf: 22, lf: 0, lfF: 100, lfBell: 0, lmf: 0, lmfF: 600, lmfQ: 1, hmf: 0, hmfF: 2500, hmfQ: 1, hf: 0, hfF: 8000, hfBell: 0, eq: 1, variant: 0, cthr: 10, cratio: 1, crel: 0.3, cfast: 0, gthr: -80, grange: 20, grel: 0.3, dynPre: 0, output: 0, gexp: 0 };
                 this.p = {}; for (const k in d) this.p[k] = p[k] ?? d[k];
                 this.filt = []; this.fst = [[], []]; this.eq = []; this.est = [[], []]; this.cgr = 0; this.gg = 1; this.gcount = 0; this.os = [new AnaOs(), new AnaOs()];
+                this.dc = [0, 0]; this.dcC = 1 - Math.exp(-2 * Math.PI * 8 / sampleRate);
                 this.report = !!p.report; this.mN = 0; this.mS = 0; this.mGr = 0;
                 this.set();
             }
@@ -1321,18 +1322,22 @@ window.PulseAudio = (function() {
                 if (p.lpf < 21.9) filt.push(eqMatched('lowpass', cl(p.lpf, 3, 22) * 1000, 0.707, 0, sr));
                 const eq = [];
                 if (p.eq >= 0.5) {
-                    const noir = Math.round(p.variant) === 1, pq = (q, g) => noir ? q * (1 + Math.abs(g) / 10) : q;
-                    if (Math.abs(p.lf) > 1e-6) { const f = cl(p.lfF, 30, 450), g = cl(p.lf, -16.5, 16.5); eq.push(p.lfBell >= 0.5 ? eqMatched('peaking', f, pq(0.8, g), g, sr) : eqMatched('lowshelf', f, 0.7, g, sr)); }
+                    // Largeur des cloches selon la table (Brun fixe · Noir se resserre · Soie s'élargit · Cristal fixe · Lampe large) — comme StripE (analog.rs)
+                    const vr = Math.min(4, Math.max(0, Math.round(p.variant))), pq = (q, g) => vr === 1 ? q * (1 + Math.abs(g) / 10) : vr === 2 ? q * (1 - 0.35 * Math.min(Math.abs(g), 15) / 15) : vr === 4 ? q * 0.7 : q, shq = vr === 4 ? 0.55 : 0.7;
+                    if (Math.abs(p.lf) > 1e-6) { const f = cl(p.lfF, 30, 450), g = cl(p.lf, -16.5, 16.5); eq.push(p.lfBell >= 0.5 ? eqMatched('peaking', f, pq(0.8, g), g, sr) : eqMatched('lowshelf', f, shq, g, sr)); if (vr === 2 && !(p.lfBell >= 0.5)) eq.push(eqMatched('peaking', f * 2.2, 0.9, -0.18 * g, sr)); }
                     if (Math.abs(p.lmf) > 1e-6) { const g = cl(p.lmf, -15, 15); eq.push(eqMatched('peaking', cl(p.lmfF, 200, 2500), pq(cl(p.lmfQ, 0.5, 2.5), g), g, sr)); }
                     if (Math.abs(p.hmf) > 1e-6) { const g = cl(p.hmf, -15, 15); eq.push(eqMatched('peaking', cl(p.hmfF, 600, 7000), pq(cl(p.hmfQ, 0.5, 2.5), g), g, sr)); }
-                    if (Math.abs(p.hf) > 1e-6) { const f = cl(p.hfF, 1500, 16000), g = cl(p.hf, -16.5, 16.5); eq.push(p.hfBell >= 0.5 ? eqMatched('peaking', f, pq(0.8, g), g, sr) : eqMatched('highshelf', f, 0.7, g, sr)); }
+                    if (Math.abs(p.hf) > 1e-6) { const f = cl(p.hfF, 1500, 16000), g = cl(p.hf, -16.5, 16.5); eq.push(p.hfBell >= 0.5 ? eqMatched('peaking', f, pq(0.8, g), g, sr) : eqMatched('highshelf', f, shq, g, sr)); if (vr === 2 && !(p.hfBell >= 0.5)) eq.push(eqMatched('peaking', f / 2.2, 0.9, -0.18 * g, sr)); }
                 }
                 if (filt.length !== this.filt.length) this.fst = [filt.map(() => [0, 0, 0, 0]), filt.map(() => [0, 0, 0, 0])];
                 if (eq.length !== this.eq.length) this.est = [eq.map(() => [0, 0, 0, 0]), eq.map(() => [0, 0, 0, 0])];
                 this.filt = filt; this.eq = eq; this.dynPre = p.dynPre >= 0.5;
                 const r = cl(p.cratio, 1, 20);
                 this.con = r > 1 + 1e-6 && p.cthr < 10; this.cslope = r >= 19.99 ? 1 : 1 - 1 / r; this.cthr = cl(p.cthr, -30, 10);
-                this.catt = co(p.cfast >= 0.5 ? 0.001 : 0.003); this.crel = co(cl(p.crel, 0.1, 4));
+                // Compresseur selon la table : attaque lente / rapide (s), genou (dB), relâchement × — comme StripE (analog.rs)
+                const vv = Math.min(4, Math.max(0, Math.round(p.variant))), [aS, aF, kn, rk] = vv === 2 ? [0.010, 0.003, 12, 1] : vv === 3 ? [0.001, 0.0003, 2, 1] : vv === 4 ? [0.012, 0.005, 10, 1.5] : [0.003, 0.001, 6, 1];
+                this.variant = vv; this.cknee = kn; this.gexp = p.gexp >= 0.5;
+                this.catt = co(p.cfast >= 0.5 ? aF : aS); this.crel = co(cl(p.crel, 0.1, 4) * rk);
                 this.gon = p.gthr > -79.9; this.gthr = Math.pow(10, cl(p.gthr, -80, 0) / 20); this.gfloor = Math.pow(10, -cl(p.grange, 0, 40) / 20);
                 this.grel = co(cl(p.grel, 0.1, 4)); this.gatt = co(0.0001); this.ghold = Math.floor(0.02 * sr);
                 this.gout = Math.pow(10, cl(p.output, -20, 20) / 20);
@@ -1340,13 +1345,14 @@ window.PulseAudio = (function() {
             dyn(v, nc) {
                 let pk = 0; for (let ch = 0; ch < nc; ch++) pk = Math.max(pk, Math.abs(v[ch]));
                 if (this.gon) {
-                    if (pk > this.gthr) this.gcount = this.ghold;
-                    let target; if (this.gcount > 0) { this.gcount--; target = 1; } else target = this.gfloor;
+                    let target;
+                    if (this.gexp) target = pk >= this.gthr ? 1 : Math.max(pk / this.gthr, this.gfloor);   // expandeur 2:1, sans maintien
+                    else { if (pk > this.gthr) this.gcount = this.ghold; if (this.gcount > 0) { this.gcount--; target = 1; } else target = this.gfloor; }
                     this.gg += (target - this.gg) * (target > this.gg ? this.gatt : this.grel);
                 } else this.gg = 1;
                 if (this.con) {
-                    const over = 20 * Math.log10(pk + 1e-12) - this.cthr;
-                    const want = over <= -3 ? 0 : over >= 3 ? over * this.cslope : this.cslope * (over + 3) ** 2 / 12;
+                    const over = 20 * Math.log10(pk + 1e-12) - this.cthr, h = this.cknee / 2, k2 = this.cknee * 2;
+                    const want = over <= -h ? 0 : over >= h ? over * this.cslope : this.cslope * (over + h) ** 2 / k2;
                     this.cgr += (want - this.cgr) * (want > this.cgr ? this.catt : this.crel);
                 } else this.cgr = 0;
                 const g = this.gg * Math.pow(10, -this.cgr / 20);
@@ -1355,7 +1361,9 @@ window.PulseAudio = (function() {
             process(inputs, outputs) {
                 const inp = inputs[0], out = outputs[0];
                 if (!inp || !inp.length) return true;
-                const n = inp[0].length, nc = Math.min(inp.length, out.length, 2), v = [0, 0], sh = (u) => Math.tanh(u * HRE) / HRE;
+                const n = inp[0].length, nc = Math.min(inp.length, out.length, 2), v = [0, 0], vr = this.variant;
+                // étage de sortie selon la table (Lampe : harmonique paire, puis on retire le continu)
+                const sh = vr === 2 ? (u) => Math.tanh(u * 0.14) / 0.14 : vr === 3 ? (u) => Math.tanh(u * 0.05) / 0.05 : vr === 4 ? (u) => { const z = u * 0.3; return Math.tanh(z + 0.2 * z * z) / 0.3; } : (u) => Math.tanh(u * HRE) / HRE;
                 for (let i = 0; i < n; i++) {
                     for (let ch = 0; ch < nc; ch++) v[ch] = inp[ch][i];
                     if (this.dynPre) this.dyn(v, nc);
@@ -1366,7 +1374,7 @@ window.PulseAudio = (function() {
                         v[ch] = x;
                     }
                     if (!this.dynPre) this.dyn(v, nc);
-                    for (let ch = 0; ch < nc; ch++) { out[ch][i] = this.os[ch].run(v[ch], sh) * this.gout; if (this.report && ch === 0) { this.mS += out[0][i] * out[0][i]; this.mN++; } }
+                    for (let ch = 0; ch < nc; ch++) { let w = this.os[ch].run(v[ch], sh); if (vr === 4) { this.dc[ch] += (w - this.dc[ch]) * this.dcC; w -= this.dc[ch]; } out[ch][i] = w * this.gout; if (this.report && ch === 0) { this.mS += out[0][i] * out[0][i]; this.mN++; } }
                     if (this.report) this.mGr = Math.max(this.mGr, this.cgr);
                 }
                 if (this.report && this.mN >= 1920) { this.port.postMessage({ gr: this.mGr, out: 10 * Math.log10(this.mS / this.mN + 1e-12) }); this.mN = 0; this.mS = 0; this.mGr = 0; }
@@ -2060,7 +2068,7 @@ window.PulseAudio = (function() {
                 const p = (o && o.processorOptions) || {};
                 this.red = 0; this.report = !!p.report; this.cnt = 0;
                 this.env2 = 0; this.slow = 0; this.dc = [0, 0];
-                this.penv = 0; this.hcnt = 0;
+                this.penv = 0; this.hcnt = 0; this.sc = [[0, 0], [0, 0]];
                 this.setup(p);
                 // Réglages envoyés en direct pendant la lecture (sans reconstruire le son)
                 this.port.onmessage = (e) => { if (e.data && e.data.set) { if (this._ap) this._ap = { ...this._ap, ...e.data.set }; this.setup(this._ap ? { ...this._ap } : e.data.set); } };
@@ -2089,6 +2097,10 @@ window.PulseAudio = (function() {
                 // Bus, relâchement Auto : 0,1 s sur les pointes, jusqu'à 1,2 s quand la compression dure
                 this.autoRel = this.mode === 3 && !!p.autoRel;
                 if (this.autoRel) { this.rel = 1 - Math.exp(-1 / (0.1 * sampleRate)); this.relSlow = 1 - Math.exp(-1 / (1.2 * sampleRate)); }
+                // Coupe-bas du détecteur (20 = éteint) : les graves ne déclenchent plus la compression ; le son n'est pas filtré.
+                // Plage : réduction maximale en dB (40 = sans limite). Même calcul que Compressor dans engine/src/fx.rs
+                const sf = p.scHp ?? 20; this.scC = sf > 21 ? 1 - Math.exp(-2 * Math.PI * Math.min(500, sf) / sampleRate) : 0;
+                const rg = p.range ?? 40; this.range = rg >= 40 ? 1e9 : Math.max(0, rg);
             }
             process(inputs, outputs) {
                 const inp = inputs[0], out = outputs[0];
@@ -2098,7 +2110,11 @@ window.PulseAudio = (function() {
                 const m = this.mode;
                 for (let i = 0; i < n; i++) {
                     let pk = 0, sq = 0;
-                    for (let ch = 0; ch < nc; ch++) { const a = inp[ch][i] < 0 ? -inp[ch][i] : inp[ch][i]; if (a > pk) pk = a; if (a * a > sq) sq = a * a; }
+                    for (let ch = 0; ch < nc; ch++) {
+                        let v = inp[ch][i];
+                        if (this.scC > 0) { const s = this.sc[ch] || (this.sc[ch] = [0, 0]); s[0] += (v - s[0]) * this.scC; v -= s[0]; s[1] += (v - s[1]) * this.scC; v -= s[1]; }
+                        const a = v < 0 ? -v : v; if (a > pk) pk = a; if (a * a > sq) sq = a * a;
+                    }
                     let lvl = pk;
                     if (this.holdN > 0) {
                         if (pk >= this.penv) { this.penv = pk; this.hcnt = this.holdN; }
@@ -2114,6 +2130,7 @@ window.PulseAudio = (function() {
                         if (over >= half) want = over * this.slopeC;
                         else if (over > -half) want = this.slopeC * (over + half) * (over + half) / (2 * knee); // genou doux
                     }
+                    if (want > this.range) want = this.range;
                     let rc = this.rel;
                     if (m === 1 || this.autoRel) { this.slow += ((this.red > 3 ? 1 : 0) - this.slow) * this.slowC; rc = this.rel + (this.relSlow - this.rel) * this.slow; }
                     this.red += (want - this.red) * (want > this.red ? this.att : rc);
@@ -2666,6 +2683,8 @@ window.PulseAudio = (function() {
     const compLive = new Map();   // grKey -> compresseur en cours de lecture (réglages en direct)
     // Moteur natif (appli) : le réglage part en direct au moteur (set_live), sans reconstruire le mixage —
     // avant, chaque cran de bouton reconstruisait tout pendant la lecture : craquements, effets remis à zéro
+    // Réglages que seul le moteur natif sait suivre en direct (valeur de départ de chacun) : reverb et écho recalculés sans se vider
+    const NATIVE_LIVE_EXTRA = { reverb: { size: 1.8, decay: 2.5, pre: 0, duck: 0, low: 20, high: 20000, bright: 50, width: 100 }, delay: { duck: 0, hpf: 20, lpf: 4000 } };
     function nativeFxLive(ownerKey, id, changed, prev) {
         if (!(nativeBackend && nativeBackend.fxLive) || !nativeProject) return false;
         let bus = false, idx = -1;
@@ -2674,6 +2693,12 @@ window.PulseAudio = (function() {
         if (idx < 0) return false;
         const kind = String(id).split('#')[0];
         const items = [];
+        // appli plus ancienne (moteur d'avant le 13/11) : elle ne sait suivre en direct ni reverb / écho étendus ni multibandes →
+        // on reconstruit comme avant, sinon ces boutons ne feraient rien pendant la lecture
+        const oldEngine = nativeBackend.liveFull === false;
+        if (oldEngine && (kind === 'mband' || kind === 'msat') && changed && 'bands' in changed) return false;
+        // 6e valeur = d'où part le bouton : le moteur fait glisser le son de là jusqu'à la nouvelle valeur (aucun clic)
+        const fin = (x) => Number.isFinite(x) ? x : null;
         if (kind === 'eq') {
             if (Object.keys(changed || {}).some(k => k !== 'bands')) return false;
             const A = prev.bands, B = changed.bands;
@@ -2682,14 +2707,32 @@ window.PulseAudio = (function() {
                 const a = A[i] || {}, b = B[i] || {};
                 for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) if (JSON.stringify(a[k]) !== JSON.stringify(b[k]) && !['freq', 'gain', 'q'].includes(k)) return false;
                 if (eqIsDynamic(b) || eqIsDynamic(a) || b.on === false || !(b.freq > 0) || !(a.freq > 0)) { if (JSON.stringify(a) !== JSON.stringify(b)) return false; continue; }
-                for (const k of ['freq', 'gain', 'q']) if (a[k] !== b[k]) { const v = k === 'freq' ? Math.max(20, Math.min(20000, b.freq)) : (b[k] ?? (k === 'q' ? 1 : 0)); if (!Number.isFinite(v)) return false; items.push([bus, idx, id, 'b' + i + '-' + k, v]); }
+                for (const k of ['freq', 'gain', 'q']) if (a[k] !== b[k]) { const v = k === 'freq' ? Math.max(20, Math.min(20000, b.freq)) : (b[k] ?? (k === 'q' ? 1 : 0)); if (!Number.isFinite(v)) return false; items.push([bus, idx, id, 'b' + i + '-' + k, v, fin(a[k] ?? (k === 'q' ? 1 : 0))]); }
+            }
+        } else if ((kind === 'mband' || kind === 'msat') && changed && 'bands' in changed) {
+            // Multibande / Saturation multibande : les réglages chiffrés de chaque bande partent en direct ;
+            // une bande ajoutée / retirée / allumée, un mode… reconstruisent
+            if (Object.keys(changed).some(k => k !== 'bands')) return false;
+            const A = prev.bands, B = changed.bands, R = BAND_AUTO_RANGES[kind];
+            if (!Array.isArray(A) || !Array.isArray(B) || A.length !== B.length) return false;
+            for (let i = 0; i < B.length; i++) {
+                const a = A[i], b = B[i];
+                if (!a || !b) { if (JSON.stringify(a) !== JSON.stringify(b)) return false; continue; }
+                for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
+                    if (JSON.stringify(a[k]) === JSON.stringify(b[k])) continue;
+                    if (!R[k] || !Number.isFinite(b[k]) || !Number.isFinite(a[k]) || b.on === false || b.base && (k === 'lo' || k === 'hi')) return false;
+                    items.push([bus, idx, id, 'b' + i + '-' + k, b[k], a[k]]);
+                }
             }
         } else {
             const keys = Object.keys(changed || {});
-            if (!keys.length || !keys.every(k => autoRanges['fx:' + kind + ':' + k] && Number.isFinite(changed[k]))) return false;
+            const extra = oldEngine ? {} : (NATIVE_LIVE_EXTRA[kind] || {});
+            if (!keys.length || !keys.every(k => (autoRanges['fx:' + kind + ':' + k] || k in extra) && Number.isFinite(changed[k]))) return false;
             if (kind === 'sat' && 'drive' in changed && !(changed.drive > 0)) return false;
             if (kind === 'deess' && (('thr' in changed && prev.thr === undefined) || ('amount' in changed && !(changed.amount > 0)))) return false;
-            for (const k of keys) items.push([bus, idx, id, k, changed[k]]);
+            // Pitch à 0 partout = pas de plugin dans le moteur : le 1er cran reconstruit (sinon le bouton ne ferait rien), la suite part en direct
+            if (kind === 'pitch' && !(prev.semi || 0) && !(prev.formant || 0)) return false;
+            for (const k of keys) items.push([bus, idx, id, k, changed[k], fin(prev[k] ?? (k in extra ? extra[k] : (autoRanges['fx:' + kind + ':' + k] || {}).def))]);
         }
         if (items.length) nativeBackend.fxLive(items).catch(() => nativeRefreshSoon());
         return true;
@@ -2728,7 +2771,7 @@ window.PulseAudio = (function() {
     }
     function updateComp(key, cp) {
         const n = compLive.get(key); if (!n || !cp) return false;
-        const r = { threshold: cp.threshold, ratio: cp.ratio, attack: cp.attack, release: cp.release, knee: cp.knee, makeup: cp.makeup, mix: cp.mix, mode: cp.mode, autoRel: cp.autoRel };
+        const r = { threshold: cp.threshold, ratio: cp.ratio, attack: cp.attack, release: cp.release, knee: cp.knee, makeup: cp.makeup, mix: cp.mix, mode: cp.mode, autoRel: cp.autoRel, scHp: cp.scHp, range: cp.range };
         try { n.port.postMessage({ set: r }); return true; } catch (e) { return false; }
     }
     const compGRts = new Map();
@@ -4655,8 +4698,8 @@ window.PulseAudio = (function() {
                     const live = !!params.grKey && !(typeof OfflineAudioContext !== 'undefined' && actx instanceof OfflineAudioContext);
                     const node = new AudioWorkletNode(actx, 'pulse-comp', {
                         numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max',
-                        processorOptions: { threshold: cp.threshold, ratio: cp.ratio, attack: cp.attack, release: cp.release, knee: cp.knee, makeup: cp.makeup, mix: cp.mix, mode: cp.mode, autoRel: cp.autoRel, report: live,
-                            ...autoOpts('comp', { threshold: null, ratio: null, attack: null, release: null, knee: null, makeup: null, mix: null }) }
+                        processorOptions: { threshold: cp.threshold, ratio: cp.ratio, attack: cp.attack, release: cp.release, knee: cp.knee, makeup: cp.makeup, mix: cp.mix, mode: cp.mode, autoRel: cp.autoRel, scHp: cp.scHp, range: cp.range, report: live,
+                            ...autoOpts('comp', { threshold: null, ratio: null, attack: null, release: null, knee: null, makeup: null, mix: null, scHp: null, range: null }) }
                     });
                     if (live) {
                         const old = compLive.get(gk('comp')); if (old && old !== node) old.port.onmessage = null;   // l'ancien compresseur ne parle plus (sinon l'aiguille saute entre deux)

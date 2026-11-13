@@ -623,6 +623,8 @@ struct ModFx {
     fb: f64,
     mix: f64,
     time: f64,
+    /// Temps entendu : il glisse vers `time` quand on tourne le bouton (un saut de temps = un clic)
+    time_s: f64,
     width: f64,
     off: f64,
     /// vitesse calée sur le tempo : durée d'un cycle en temps
@@ -657,6 +659,7 @@ impl ModFx {
             fb: p.feedback.unwrap_or(fb) / 100.0,
             mix: p.mix.unwrap_or(mix) / 100.0,
             time: p.time.unwrap_or(110.0) / 1000.0,
+            time_s: p.time.unwrap_or(110.0) / 1000.0,
             width: p.width.unwrap_or(depth),
             off: if kind == ModKind::Doubler { 0.5 } else { 0.25 },
             sr,
@@ -668,6 +671,10 @@ impl ModFx {
         }
     }
     fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
+        if self.time_s != self.time {
+            self.time_s += (self.time - self.time_s) / (0.05 * self.sr);
+            if (self.time - self.time_s).abs() < 1e-7 { self.time_s = self.time; }
+        }
         for ch in 0..nc {
             let xin = x[ch];
             let lfo = (2.0 * PI * (self.ph + self.off * ch as f64)).sin();
@@ -691,7 +698,7 @@ impl ModFx {
                         ModKind::Chorus => 0.012 + self.depth / 1000.0 * lfo,
                         ModKind::Flanger => 0.0005 + self.depth / 1000.0 * (0.5 + 0.5 * lfo),
                         ModKind::Doubler => 0.025 + self.width / 100.0 * 0.006 * lfo,
-                        _ => self.time,
+                        _ => self.time_s,
                     };
                     let size = self.buf[ch].len();
                     let mut pos = self.w as f64 - dsec * self.sr;
@@ -935,6 +942,11 @@ pub struct Compressor {
     hcnt: u32,
     /// Crête du détecteur depuis la dernière lecture (point sur la courbe de la fenêtre, comme Pro-C)
     peak_in: f64,
+    /// Coupe-bas du détecteur (deux étages d'un pôle, par canal) — 0 = éteint. Même calcul que le worklet `pulse-comp`.
+    sc_c: f64,
+    sc: [[f64; 2]; 2],
+    /// Réduction maximale (dB)
+    range: f64,
 }
 
 impl Compressor {
@@ -947,6 +959,7 @@ impl Compressor {
         n.dc = self.dc;
         n.penv = self.penv;
         n.hcnt = self.hcnt;
+        n.sc = self.sc;
         let (mix, makeup) = (n.mix, n.makeup);
         n.mix = self.mix;
         n.makeup = self.makeup;
@@ -993,12 +1006,20 @@ impl Compressor {
             penv: 0.0,
             hcnt: 0,
             peak_in: 0.0,
+            sc_c: { let f = p.sc_hp.unwrap_or(20.0); if f > 21.0 { 1.0 - (-2.0 * std::f64::consts::PI * f.min(500.0) / sr).exp() } else { 0.0 } },
+            sc: [[0.0; 2]; 2],
+            range: { let r = p.range.unwrap_or(40.0); if r >= 40.0 { 1e9 } else { r.max(0.0) } },
         }
     }
     pub fn tick(&mut self, x: &mut [f64; 2], nc: usize) {
         self.glide.step(&mut self.mix, &mut self.makeup);
         let m = self.mode;
-        let pk = x[..nc].iter().fold(0.0f64, |m, v| m.max(v.abs()));
+        let mut pk = 0.0f64;
+        for ch in 0..nc {
+            let mut v = x[ch];
+            if self.sc_c > 0.0 { let s = &mut self.sc[ch]; s[0] += (v - s[0]) * self.sc_c; v -= s[0]; s[1] += (v - s[1]) * self.sc_c; v -= s[1]; }
+            pk = pk.max(v.abs());
+        }
         let mut lvl = pk;
         if self.hold_n > 0 {
             if pk >= self.penv { self.penv = pk; self.hcnt = self.hold_n; }
@@ -1021,6 +1042,7 @@ impl Compressor {
                 want = self.slope * (over + half) * (over + half) / (2.0 * self.knee);
             }
         }
+        if want > self.range { want = self.range; }
         let mut rc = self.rel;
         if m == 1 || self.auto_rel {
             self.slow += ((if self.red > 3.0 { 1.0 } else { 0.0 }) - self.slow) * self.slow_c;
@@ -1234,19 +1256,34 @@ pub struct Reverb {
     ap: [Vec<Line>; 2],
     /// Pré-délai (vide = aucun)
     pre: Vec<f64>,
+    /// Pré-délai qui glisse (seulement après un réglage tourné en lecture) : ligne, écriture, retard entendu, retard visé
+    ring: Vec<f64>, rw: usize, rd: f64, rt: f64, sr_pre: f64,
     pi: usize,
 }
 
 impl Reverb {
     /// Valeurs de volume prises tout de suite, sans glisser
-    pub fn settle(&mut self) { self.glide.land(&mut self.wet, &mut self.out); }
+    pub fn settle(&mut self) { self.glide.land(&mut self.wet, &mut self.out); self.rd = self.rt; }
     /// Plugin : nouveaux réglages, la queue de reverb continue
     pub fn retune(&mut self, p: &ReverbParams, sr: f64) {
         let n = Self::new(p, sr);
         self.duck.amt = n.duck.amt;   // l'enveloppe du ducking continue
         self.kl = n.kl;
         self.kh = n.kh;
-        if n.pre.len() != self.pre.len() { self.pre = n.pre; self.pi = 0; }
+        let cur = if self.ring.is_empty() { self.pre.len() } else { self.rt as usize };
+        if n.pre.len() != cur {
+            // pré-délai tourné en lecture : on passe sur une longue ligne dont la lecture glisse vers le nouveau temps
+            // (avant : la ligne était vidée à chaque cran = un trou, donc un clic)
+            if self.ring.is_empty() {
+                let (old, size) = (self.pre.len(), (0.5 * sr) as usize + 8);
+                self.ring = vec![0.0; size];
+                self.rw = old % size;
+                for k in 0..old { self.ring[(self.rw + size - 1 - k) % size] = self.pre[(self.pi + old - 1 - k) % old]; }
+                self.rd = old as f64;
+                self.pre = Vec::new(); self.pi = 0;
+            }
+            self.rt = n.pre.len() as f64;
+        }
         self.glide.aim(n.wet, n.out);
         self.fb = n.fb;
         self.damp = n.damp;
@@ -1277,6 +1314,7 @@ impl Reverb {
             comb: [lines(&COMB, 0), lines(&COMB, 23)],
             ap: [lines(&AP, 0), lines(&AP, 23)],
             pre: vec![0.0; pre],
+            ring: Vec::new(), rw: 0, rd: 0.0, rt: 0.0, sr_pre: sr,
             pi: 0,
         }
     }
@@ -1290,7 +1328,16 @@ impl Reverb {
         let mut input = (xl + xr) * 0.015;
         let dg = self.duck.gain((xl + xr) * 0.5);
         if self.kl != 0.0 { self.zl = input + (self.zl - input) * self.kl; input -= self.zl; }
-        if self.kh != 0.0 { self.zh = input + (self.zh - input) * self.kh; input = self.zh; }
+        if self.kh != 0.0 { self.zh = input + (self.zh - input) * self.kh; input = self.zh; } else { self.zh = input; }
+        if !self.ring.is_empty() {
+            let size = self.ring.len();
+            self.ring[self.rw] = input;
+            if self.rd != self.rt { self.rd += (self.rt - self.rd) / (0.05 * self.sr_pre); if (self.rt - self.rd).abs() < 1e-3 { self.rd = self.rt; } }
+            let pos = (self.rw as f64 - self.rd + size as f64) % size as f64;
+            let i0 = pos.floor() as usize; let f = pos - i0 as f64;
+            input = self.ring[i0 % size] + (self.ring[(i0 + 1) % size] - self.ring[i0 % size]) * f;
+            self.rw = (self.rw + 1) % size;
+        }
         if !self.pre.is_empty() {
             input = std::mem::replace(&mut self.pre[self.pi], input);
             self.pi = (self.pi + 1) % self.pre.len();
@@ -1567,6 +1614,10 @@ pub struct Chain {
     tempo_i: usize,
     sr: f64,
     comp_p: CompParams,
+    /// Réglages de la reverb et de l'écho en cours (pour les recalculer sans les vider quand on tourne un bouton)
+    reverb_p: ReverbParams,
+    delay_p: DelayParams,
+    bpm0: f64,
     /// Bandes de l'EQ libre et filtre de la chaîne pour chacune (None = bande ignorée)
     eq_bands: Vec<(EqBand, Option<(usize, usize)>)>,
     /// Filtre coupe-bas / coupe-haut : (coupe-bas ?, Q en dB) pour chaque cellule de `cut`
@@ -1595,6 +1646,8 @@ fn auto_range(fx: &str, key: &str) -> Option<(f64, f64, bool)> {
         ("comp", "release") => (10.0, 1200.0, true),
         ("comp", "knee") => (0.0, 24.0, false),
         ("comp", "makeup") => (-12.0, 24.0, false),
+        ("comp", "scHp") => (20.0, 500.0, true),
+        ("comp", "range") => (0.0, 40.0, false),
         ("delay", "wet") | ("delay", "dry") | ("reverb", "wet") => (0.0, 100.0, false),
         ("delay", "feedback") => (0.0, 85.0, false),
         ("util", "gain") => (-24.0, 24.0, false),
@@ -1980,7 +2033,7 @@ impl Chain {
         let souffle = has("souffle").then(|| { let p = crate::analog::SouffleParams::from(&effect_params.souffle.clone().unwrap_or_default()); (crate::analog::Souffle::new(&p, sr), p) });
         let comp_p = effect_params.comp.clone().unwrap_or_default();
         Self { cut, filters, dyn_eq, sat, gate, crush, util, width, modfx, deess, deess2, mband, msat, comp, master, limit, delay, reverb, pitch, fet76, pre73, opto2a, eqp1, busg, tape, l670, dtr, stripe, eq550, comp25, bus33, massif, horizon, plate, techo, hall80, h910, dim, prev76, eclat, souffle, order: Stage::DEFAULT.to_vec(),
-            auto: Vec::new(), auto_from: 0.0, pos: 0, tempo: Vec::new(), tempo_i: 0, sr, comp_p, eq_bands, cut_kinds, names: effects.to_vec(), deess_freq: de.freq.unwrap_or(5500.0) }
+            auto: Vec::new(), auto_from: 0.0, pos: 0, tempo: Vec::new(), tempo_i: 0, sr, comp_p, reverb_p: effect_params.reverb.clone().unwrap_or_default(), delay_p: effect_params.delay.clone().unwrap_or_default(), bpm0: bpm, eq_bands, cut_kinds, names: effects.to_vec(), deess_freq: de.freq.unwrap_or(5500.0) }
     }
     /// Tempo qui change en cours de morceau : l'écho calé sur le rythme (1/4, 1/8…) suit le tempo de l'endroit joué.
     /// `from` = instant du premier échantillon traité (le même que pour `with_auto`).
@@ -2045,13 +2098,31 @@ impl Chain {
             ("comp", k) => {
                 let p = &mut self.comp_p;
                 match k { "threshold" => p.threshold = Some(v), "ratio" => p.ratio = Some(v), "mix" => p.mix = Some(v), "attack" => p.attack = Some(v),
-                    "release" => p.release = Some(v), "knee" => p.knee = Some(v), "makeup" => p.makeup = Some(v), _ => {} }
+                    "release" => p.release = Some(v), "knee" => p.knee = Some(v), "makeup" => p.makeup = Some(v), "scHp" => p.sc_hp = Some(v), "range" => p.range = Some(v), _ => {} }
                 comp_changed = true;
             }
             ("delay", k) => if let Some(d) = &mut self.delay {
-                match k { "wet" => d.wet = (v / 100.0).clamp(0.0, 1.0), "dry" => d.dry = v / 100.0, "feedback" => d.fb = (v / 100.0).clamp(0.0, 0.9), _ => {} }
+                let p = &mut self.delay_p;
+                match k { "wet" => { p.wet = Some(v); d.wet = (v / 100.0).clamp(0.0, 1.0) } "dry" => { p.dry = Some(v); d.dry = v / 100.0 } "feedback" => { p.feedback = Some(v); d.fb = (v / 100.0).clamp(0.0, 0.9) }
+                    // filtres et ducking de l'écho : recalculés sans vider les répétitions en cours
+                    "duck" | "hpf" | "lpf" => {
+                        match k { "duck" => p.duck = Some(v), "hpf" => p.hpf = Some(v), _ => p.lpf = Some(v) }
+                        let bpm = if self.tempo.len() >= 2 { self.tempo[self.tempo_i].1 } else { self.bpm0 };
+                        d.retune(p, self.sr, bpm); d.settle();
+                    }
+                    _ => {} }
             },
-            ("reverb", "wet") => if let Some(r) = &mut self.reverb { r.wet = (v / 100.0).clamp(0.0, 1.0); },
+            ("reverb", k) => if let Some(r) = &mut self.reverb {
+                let p = &mut self.reverb_p;
+                match k {
+                    "wet" => { p.wet = Some(v); r.wet = (v / 100.0).clamp(0.0, 1.0); }
+                    // taille, déclin, pré-délai, filtres, brillance, largeur : recalculés sans couper la queue en cours
+                    "size" | "decay" | "pre" | "duck" | "low" | "high" | "bright" | "width" => {
+                        match k { "size" => p.size = Some(v), "decay" => p.decay = Some(v), "pre" => p.pre = Some(v), "duck" => p.duck = Some(v), "low" => p.low = Some(v), "high" => p.high = Some(v), "bright" => p.bright = Some(v), _ => p.width = Some(v) }
+                        r.retune(p, self.sr);   // pas de settle : le pré-délai et la quantité glissent
+                    }
+                    _ => {} }
+            },
             ("util", "gain") => if let Some(u) = &mut self.util { let sign = if u.g < 0.0 { -1.0 } else { 1.0 }; u.g = 10f64.powf(v / 20.0) * sign; },
             ("width", "width") => if let Some(w) = &mut self.width { w.width = v / 100.0; },
             ("deess", "thr") => if let Some(d) = &mut self.deess2 { d.thr = v; },
@@ -2128,6 +2199,14 @@ impl Chain {
         }
         let _ = cut_changed;
         comp_changed
+    }
+    /// Réglage tourné à la main pendant la lecture : comme `set_live`, et le compresseur est recalculé en gardant son état
+    /// (son mélange et son rattrapage glissent, ils ne sautent pas)
+    pub fn live(&mut self, fx: &str, key: &str, v: f64) {
+        if self.set_live(fx, key, v) {
+            let p = self.comp_p.clone();
+            if let Some(c) = &mut self.comp { c.retune(&p, self.sr); }
+        }
     }
     pub fn with_order(mut self, custom: &[String]) -> Self {
         self.order = Stage::order(custom);
@@ -2665,7 +2744,7 @@ impl Master {
             filters.push([b, b]);
         }
         let glue = (p.glue > 0.0).then(|| {
-            Compressor::new(&CompParams { threshold: Some(-12.0 - p.glue * 0.12), ratio: Some(1.5 + p.glue * 0.015), attack: Some(30.0), release: Some(150.0), knee: None, makeup: None, mix: None, mode: None, auto_rel: None }, sr)
+            Compressor::new(&CompParams { threshold: Some(-12.0 - p.glue * 0.12), ratio: Some(1.5 + p.glue * 0.015), attack: Some(30.0), release: Some(150.0), knee: None, makeup: None, mix: None, mode: None, auto_rel: None, ..Default::default() }, sr)
         });
         let warm = (p.warm > 0.0).then(|| {
             let k = 1.0 + p.warm * 0.03;
@@ -2752,7 +2831,14 @@ pub fn process_send(send: &Send, left: &mut [f32], right: &mut [f32], sr: f64, b
 /// Avec doublons : la liste (dans l'ordre affiché, voir chainOf dans studio.js) est coupée en tranches sans doublon,
 /// jouées l'une après l'autre ; chaque tranche ne voit que ses exemplaires, sous leur nom de type.
 /// Les plugins externes (« vst#… ») sont des tranches à part : `ext[i]` joue à la place de la tranche i (vide).
-pub struct FxChain { parts: Vec<(Chain, Vec<String>)>, ext: Vec<Option<crate::ext::ExtSlot>> }
+pub struct FxChain { parts: Vec<(Chain, Vec<String>)>, ext: Vec<Option<crate::ext::ExtSlot>>, ramps: Vec<Ramp>, ramp_len: usize }
+
+/// Un réglage tourné pendant la lecture : la valeur entendue glisse vers la valeur du bouton (≈ 40 ms, par pas de
+/// 8 échantillons) au lieu de sauter d'un coup au début du bloc — un saut = un clic, une main qui tourne = un crépitement.
+/// Sans réglage en cours de glissement, le son reste identique à l'échantillon près.
+struct Ramp { part: usize, ty: String, fx: String, key: String, cur: f64, to: f64, left: usize }
+/// Pas du glissement (échantillons)
+const RAMP_STEP: usize = 8;
 
 impl FxChain {
     /// L'ordre de jeu : l'ordre choisi (`fx_order`), puis les autres à leur place habituelle (par type), puis le reste
@@ -2767,7 +2853,7 @@ impl FxChain {
     }
     pub fn new(effects: &[String], params: &EffectParams, fx_order: &[String], sr: f64, bpm: f64, ceiling_db: f64) -> Self {
         let dup = effects.iter().any(|e| e.contains('#'));
-        if !dup { return Self { parts: vec![(Chain::new(effects, params, sr, bpm, ceiling_db).with_order(fx_order), effects.to_vec())], ext: vec![None] }; }
+        if !dup { return Self { parts: vec![(Chain::new(effects, params, sr, bpm, ceiling_db).with_order(fx_order), effects.to_vec())], ext: vec![None], ramps: Vec::new(), ramp_len: (0.04 * sr) as usize }; }
         let mut groups: Vec<Vec<String>> = vec![Vec::new()];
         for id in Self::ordered(effects, fx_order) {
             let ty = crate::model::fx_type(&id);
@@ -2789,7 +2875,7 @@ impl FxChain {
             let types: Vec<String> = ids.iter().map(|i| crate::model::fx_type(i).to_owned()).collect();
             (Chain::new(&types, &ep, sr, bpm, ceiling_db).with_order(&types), ids)
         }).collect();
-        Self { parts, ext }
+        Self { parts, ext, ramps: Vec::new(), ramp_len: (0.04 * sr) as usize }
     }
     pub fn for_track(track: &Track, sr: f64, bpm: f64) -> Self {
         Self::new(&track.effects, &track.effect_params, &track.fx_order, sr, bpm, -0.3)
@@ -2798,7 +2884,7 @@ impl FxChain {
     pub fn with_auto(self, automation: &Automation, from: f64) -> Self {
         if self.parts.len() == 1 && !self.parts[0].1.iter().any(|i| i.contains('#')) {
             let (c, ids) = self.parts.into_iter().next().unwrap();
-            return Self { parts: vec![(c.with_auto(automation, from), ids)], ext: self.ext };
+            return Self { parts: vec![(c.with_auto(automation, from), ids)], ext: self.ext, ramps: self.ramps, ramp_len: self.ramp_len };
         }
         let parts: Vec<(Chain, Vec<String>)> = self.parts.into_iter().map(|(c, ids)| {
             let mut a = Automation { volume: None, other: Default::default() };
@@ -2817,18 +2903,34 @@ impl FxChain {
             let curves: Vec<(u32, crate::model::Curve)> = automation.other.iter().filter_map(|(k, c)| k.strip_prefix(&pre).and_then(|n| n.parse::<u32>().ok()).map(|n| (n, c.clone()))).collect();
             if !curves.is_empty() { slot.set_auto(curves, from); }
         }
-        Self { parts, ext }
+        Self { parts, ext, ramps: self.ramps, ramp_len: self.ramp_len }
     }
     pub fn with_tempo(self, segs: Vec<(f64, f64)>, from: f64) -> Self {
-        Self { parts: self.parts.into_iter().map(|(c, ids)| (c.with_tempo(segs.clone(), from), ids)).collect(), ext: self.ext }
+        Self { parts: self.parts.into_iter().map(|(c, ids)| (c.with_tempo(segs.clone(), from), ids)).collect(), ext: self.ext, ramps: self.ramps, ramp_len: self.ramp_len }
     }
     pub fn seek(&mut self, t: f64) { for (c, _) in &mut self.parts { c.seek(t); } for e in self.ext.iter_mut().flatten() { e.seek(t); } }
-    /// Réglage changé en direct : `fx` = nom d'exemplaire (« comp#2 ») ou de type
-    pub fn set_live(&mut self, fx: &str, key: &str, v: f64) -> bool {
+    /// Réglage changé en direct : `fx` = nom d'exemplaire (« comp#2 ») ou de type. La valeur entendue glisse vers `v`.
+    pub fn set_live(&mut self, fx: &str, key: &str, v: f64) -> bool { self.set_live_from(fx, key, v, None) }
+    /// Pareil, en sachant d'où part le bouton (`from`) : le tout premier geste glisse aussi.
+    /// Sans `from`, le premier réglage d'un bouton est pris tel quel, les suivants glissent depuis la valeur entendue.
+    pub fn set_live_from(&mut self, fx: &str, key: &str, v: f64, from: Option<f64>) -> bool {
+        if !v.is_finite() { return false; }
         let ty = crate::model::fx_type(fx);
-        let mut r = false;
-        for (c, ids) in &mut self.parts { if ids.iter().any(|i| i == fx) { r |= c.set_live(ty, key, v); } }
-        r
+        let mut hit = false;
+        for (i, (c, ids)) in self.parts.iter_mut().enumerate() {
+            if !ids.iter().any(|id| id == fx) { continue; }
+            hit = true;
+            if let Some(r) = self.ramps.iter_mut().find(|r| r.part == i && r.fx == fx && r.key == key) {
+                r.to = v;
+                r.left = if r.cur == v { 0 } else { self.ramp_len.max(RAMP_STEP) };
+                continue;
+            }
+            match from.filter(|f| f.is_finite() && *f != v) {
+                Some(f) => self.ramps.push(Ramp { part: i, ty: ty.to_owned(), fx: fx.to_owned(), key: key.to_owned(), cur: f, to: v, left: self.ramp_len.max(RAMP_STEP) }),
+                None => { c.live(ty, key, v); self.ramps.push(Ramp { part: i, ty: ty.to_owned(), fx: fx.to_owned(), key: key.to_owned(), cur: v, to: v, left: 0 }); }
+            }
+        }
+        hit
     }
     pub fn is_empty(&self) -> bool { self.parts.iter().all(|(c, _)| c.is_empty()) && self.ext.iter().all(|e| e.is_none()) }
     pub fn makes_stereo(&self) -> bool { self.parts.iter().any(|(c, _)| c.makes_stereo()) || self.ext.iter().any(|e| e.is_some()) }
@@ -2838,7 +2940,24 @@ impl FxChain {
         for (i, (c, _)) in self.parts.iter_mut().enumerate() {
             // plugin externe : toujours en stéréo (gauche recopiée à droite pour une piste mono)
             if let Some(Some(e)) = self.ext.get_mut(i) { e.process(left, right, mono); mono = false; continue; }
-            c.process(left, right, mono);
+            if self.ramps.iter().any(|r| r.part == i && r.left > 0) {
+                // réglages en train de glisser : la tranche avance par petits pas, chaque pas avec sa valeur
+                let n = left.len();
+                let two = right.len() >= n;
+                let mut o = 0;
+                while o < n {
+                    let k = (n - o).min(RAMP_STEP);
+                    for r in self.ramps.iter_mut().filter(|r| r.part == i && r.left > 0) {
+                        if r.left <= k { r.cur = r.to; r.left = 0; } else { r.cur += (r.to - r.cur) * k as f64 / r.left as f64; r.left -= k; }
+                        c.live(&r.ty, &r.key, r.cur);
+                    }
+                    // (piste mono : le canal droit peut être absent)
+                    if two { c.process(&mut left[o..o + k], &mut right[o..o + k], mono); } else { c.process(&mut left[o..o + k], &mut right[..0], mono); }
+                    o += k;
+                }
+            } else {
+                c.process(left, right, mono);
+            }
             // une tranche qui élargit en stéréo (reverb, écho ping-pong…) a rempli `right` : la suite est stéréo
             if mono && c.outputs_stereo() { mono = false; }
         }
@@ -3004,7 +3123,7 @@ mod tests_pitch_pingpong {
         let sr = 48_000.0;
         let ca = CompParams { threshold: Some(-10.0), ..Default::default() };
         let cb = CompParams { mode: Some(2.0), threshold: Some(-30.0), ratio: Some(8.0), mix: Some(70.0), attack: Some(1.0), release: Some(300.0),
-            auto_rel: Some(0.0), knee: Some(3.0), makeup: Some(4.0) };
+            auto_rel: Some(0.0), knee: Some(3.0), makeup: Some(4.0), ..Default::default() };
         let (mut c1, mut c2) = (Compressor::new(&ca, sr), Compressor::new(&cb, sr));
         c1.retune(&cb, sr);
         c1.settle();

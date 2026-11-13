@@ -14,7 +14,7 @@ export default async (c) => {
   check('menu : Compresseur cliqué', ok);
   check('2e compresseur ajouté (comp#2)', JSON.stringify(st.fx) === '["comp","comp#2"]', JSON.stringify(st.fx));
   check('affiché « Compresseur 2 »', st.rows.includes('Compresseur 2'), st.rows.join(','));
-  check('sa fenêtre s\'ouvre, numérotée', st.win.some(w => w.startsWith('comp|comp#2|') && /2$/.test(w)), st.win.join(' / '));
+  check('sa fenêtre s\'ouvre, numérotée', st.win.some(w => w.startsWith('comp|comp#2|') && /Compresseur 2( —|$)/.test(w)), st.win.join(' / '));
   // réglage dans la fenêtre du 2e (comme un bouton tourné) : seul comp#2 change
   await ev(`(()=>{ const p=[...document.querySelectorAll('.fx-panel.plug-win')].find(p=>p._plugT && p._plugT.__fxId==='comp#2'); const t=p._plugT; t.effectParams.comp = {...(t.effectParams.comp||{}), threshold: -35}; })()`);
   const p2 = JSON.parse(await J(ev, `return JSON.stringify(state.project.tracks[0].effectParams)`));

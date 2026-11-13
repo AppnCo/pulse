@@ -24,8 +24,8 @@ export default async (c) => {
   await ev(`document.querySelector('.tune-panel .tb-power').click()`); await sleep(1200);
   const kb = await ev(`(()=>{ const r=document.querySelector('.tp-k[data-k="human"] .tp-knob').getBoundingClientRect(); return {x:r.left+r.width/2,y:r.top+r.height/2}; })()`);
   await c.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: kb.x, y: kb.y, button: 'left', clickCount: 1 });
-  for (let i = 1; i <= 6; i++) await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: kb.x, y: kb.y - 10 * i, button: 'left' });
-  await c.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: kb.x, y: kb.y - 60, button: 'left', clickCount: 1 });
+  for (let i = 1; i <= 12; i++) await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: kb.x, y: kb.y - 10 * i, button: 'left' });   // sensibilité douce (11/11)
+  await c.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: kb.x, y: kb.y - 120, button: 'left', clickCount: 1 });
   await sleep(1500);
   check('PulseTune : Humain tourné → enregistré sur la piste', await ev(`(state.project.tracks[0].autotune||{}).human`) >= 0.25, JSON.stringify(await ev(`state.project.tracks[0].autotune`)));
   await ev(`document.querySelector('.tp-voice [data-v="low"]').click()`); await sleep(1200);

@@ -237,9 +237,20 @@ fn native_mix(player: State<Player>, json: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Réglages d'effets tournés pendant la lecture : (groupe ?, indice, effet, réglage, valeur), appliqués en direct
+/// Réglages d'effets tournés pendant la lecture : (groupe ?, indice, effet, réglage, valeur, valeur de départ), appliqués en direct.
+/// La valeur de départ est facultative : une page plus ancienne (5 valeurs) reste comprise — l'appli et la page en ligne
+/// ne se mettent pas à jour au même moment, un format strict faisait retomber sur les reconstructions (craquements).
 #[tauri::command]
-fn native_fx_live(player: State<Player>, items: Vec<(bool, usize, String, String, f64)>) { player.fx_live(items); }
+fn native_fx_live(player: State<Player>, items: Vec<serde_json::Value>) -> Result<(), String> {
+    let mut out = Vec::with_capacity(items.len());
+    for it in &items {
+        let a = it.as_array().filter(|a| a.len() >= 5).ok_or("réglage en direct : format inconnu")?;
+        let (Some(bus), Some(idx), Some(fx), Some(key), Some(v)) = (a[0].as_bool(), a[1].as_u64(), a[2].as_str(), a[3].as_str(), a[4].as_f64()) else { return Err("réglage en direct : format inconnu".into()) };
+        out.push((bus, idx as usize, fx.to_owned(), key.to_owned(), v, a.get(5).and_then(|x| x.as_f64())));
+    }
+    player.fx_live(out);
+    Ok(())
+}
 
 /// Boucle posée, changée ou enlevée pendant la lecture (le mixeur la prend au bloc suivant)
 #[tauri::command]

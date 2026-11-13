@@ -16,7 +16,8 @@ export PATH=$HOME/.cargo/bin:$HOME/Library/Python/3.9/bin:$PATH CARGO_TARGET_DIR
 ./make-web.sh >/dev/null
 cp tests/native/selftest.html web-dist/selftest.html; cp tests/native/selftest-ext.html web-dist/selftest-ext.html
 cp src-tauri/tauri.conf.json /tmp/tauri.conf.keep
-trap 'cp /tmp/tauri.conf.keep src-tauri/tauri.conf.json; ./make-web.sh >/dev/null' EXIT
+# (un seul « trap EXIT » à la fois : celui-ci remplace le précédent, il doit donc aussi remettre le son — sinon le Mac restait muet)
+trap 'cp /tmp/tauri.conf.keep src-tauri/tauri.conf.json; ./make-web.sh >/dev/null; osascript -e "set volume output muted $WAS_MUTED" 2>/dev/null || true' EXIT
 python3 - <<'P'
 import json
 p='src-tauri/tauri.conf.json'; j=json.load(open(p)); j['app']['windows'][0]['url']=__import__('os').environ.get('SELFTEST','selftest.html'); json.dump(j,open(p,'w'),indent=2)

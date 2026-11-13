@@ -3365,7 +3365,8 @@ function openAddEffectMenu(anchor, target, x, replaceId = null) {
     const extList = window.PulseExt && PulseExt.available() ? PulseExt.visible() : [];
     // liste des externes pas encore lue (tout début de séance) : le menu se complète tout seul dès qu'elle arrive
     if (window.PulseExt && PulseExt.available() && PulseExt.ready && !PulseExt.ready()) {
-        PulseExt.scan().then(() => { if (menu.isConnected && PulseExt.visible().length) { menu.remove(); openAddEffectMenu(anchor, target, x, replaceId); } }).catch(() => {});
+        // (on ne rouvre le menu que si la liste est VRAIMENT prête : sinon scan → menu → scan… sans fin, page figée — vu au tour visuel du 13/11)
+        PulseExt.scan().then(() => { if (menu.isConnected && PulseExt.ready() && PulseExt.visible().length) { menu.remove(); openAddEffectMenu(anchor, target, x, replaceId); } }).catch(() => {});
     }
     const extCats = [];
     // une marque = une seule catégorie, même écrite autrement selon le format (« antares » / « Antares », « bluecataudio » / « Blue Cat Audio »)
@@ -6818,6 +6819,7 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false) {
         <div class="fx-panel-header">
             <button class="tb-power" data-tooltip="Allumer ou éteindre PulseTune">⏻</button>
             <span class="tp-brand"><i>Voix et hauteur</i><b>Pulse<span>Tune</span></b>${trackMode ? '' : `<em>${esc(clip.name || 'Clip')}</em>`}</span>
+            <div class="tp-seg tp-view" data-tooltip="Réglages : les boutons de correction · Graphique : ce que la correction a fait sur ta dernière prise"><button data-view="auto">Réglages</button><button data-view="graph">Graphique</button></div>
             <button class="fx-panel-close">×</button>
         </div>
         <div class="tp-bar">
@@ -6833,6 +6835,7 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false) {
             <div class="tp-side tp-rt">ÉCART<b class="tp-gap">—</b></div>
             <div class="tp-target"><b>—</b><span>note juste</span></div>
         </div>
+        <div class="tp-trace" data-tooltip="Ce que la correction a fait sur la dernière prise : en gris ta voix, en violet la voix corrigée, les bandes = les notes permises"><canvas></canvas><span class="tp-trace-leg"><i class="g"></i>ta voix<i class="v"></i>corrigée</span><span class="tp-trace-empty">Le tracé de la correction s'affiche ici après la première prise corrigée</span><span class="tp-trace-help">Tire une note vers le haut ou le bas · double-clic sur une note blanche = automatique</span></div>
         <div class="tp-knobs">${KNOBS.map(k => `<div class="tp-k" data-k="${k.key}"><span class="tp-lbl">${k.label}</span><div class="tp-knob fx-knob" tabindex="0" data-tooltip="Glisser vers le haut ou le bas · double-clic = ${k.def} %"></div><b class="tp-val"></b><em>${k.desc}</em></div>`).join('')}
             <input type="range" class="tune-strength" min="0" max="100" value="${K.strength}" hidden></div>
         <div class="tb-keys-wrap">
@@ -6844,9 +6847,12 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false) {
         </div>
         <div class="fx-panel-footer tb-foot">
             ${trackMode ? '<label class="tune-all" data-tooltip="Copie ce réglage sur toutes les pistes qui ont PulseTune allumé"><input type="checkbox" class="tune-all-box"> Même réglage partout</label>' : '<span></span>'}
-            <div class="tune-quick"><button data-q="all">Toutes les notes</button></div>
+            <div class="tune-quick"><button class="tune-help-btn" data-tooltip="Aide : jouer et choisir les notes au clavier">?</button><button data-q="all">Toutes les notes</button></div>
         </div>`;
     document.body.appendChild(panel);
+    // La consigne du clavier ne s'affiche que sur demande (petit bouton « ? »)
+    { const hb = panel.querySelector('.tune-help-btn'), hint = panel.querySelector('.tune-hint');
+      if (hb && hint) { hint.hidden = true; hb.addEventListener('click', () => { hint.hidden = !hint.hidden; hb.classList.toggle('on', !hint.hidden); }); } }
     panel.style.left = Math.max(8, Math.min(window.innerWidth - panel.offsetWidth - 8, x)) + 'px';
     panel.style.top = Math.max(8, Math.min(window.innerHeight - panel.offsetHeight - 8, y)) + 'px';
     if (trackMode) makePlugWindow(panel, trk, 'tune', trackIdx);
@@ -6922,7 +6928,7 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false) {
     panel.querySelectorAll('.tp-k').forEach(box => {
         const kd = KNOBS.find(k => k.key === box.dataset.k), knob = box.querySelector('.tp-knob'), val = box.querySelector('.tp-val');
         const def = { key: kd.key, label: kd.label, unit: '%', min: 0, max: 100, def: kd.def, step: 1 };
-        const draw = () => { knob.innerHTML = fxKnobSvg(def, K[kd.key], true, 'P'); val.textContent = kd.fmt(K[kd.key]); if (kd.key === 'strength') panel.querySelector('.tune-strength').value = K.strength; };
+        const draw = () => { knob.innerHTML = tuneDialSvg(K[kd.key], kd.key === 'strength'); val.textContent = kd.fmt(K[kd.key]); if (kd.key === 'strength') panel.querySelector('.tune-strength').value = K.strength; };
         knob.addEventListener('mousedown', (e) => {
             if (e.button !== 0) return; e.preventDefault();
             const y0 = e.clientY, v0 = K[kd.key];
@@ -6953,6 +6959,64 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false) {
         return best > 0.85 && bestL ? sr / bestL : 0;
     };
     const NN = PulseTune.NOTE_NAMES;
+    // Tracé de la dernière correction (piste : la prise corrigée la plus récente)
+    const trEl = panel.querySelector('.tp-trace'), trCv = trEl.querySelector('canvas');
+    const traceClip = () => trackMode ? [...((state.project.tracks[trackIdx] || {}).clips || [])].reverse().find(c => TUNE_TRACES.has(c.id)) : (clip && TUNE_TRACES.has(clip.id) ? clip : null);
+    const drawTrace = () => {
+        if (!panel.isConnected) { document.removeEventListener('pulse-tune-done', drawTrace); return; }
+        const c = traceClip(); let ok = false;
+        try { ok = drawTuneTrace(trCv, c ? TUNE_TRACES.get(c.id) : null, mask, panel.classList.contains('tp-graph'), trDrag); } catch (e) { console.warn(e); }
+        trGeo = ok || null;
+        trEl.classList.toggle('has', !!ok);
+    };
+    // Graphique : tirer un bloc = poser la note à la main (par demi-ton) ; double-clic = revenir à la correction automatique
+    let trGeo = null, trDrag = null;
+    const segAt = (e) => {
+        const c = traceClip(), tr = c && TUNE_TRACES.get(c.id); if (!tr || !trGeo || !panel.classList.contains('tp-graph')) return null;
+        const r = trCv.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top, G = trGeo;
+        const fi = G.i0 + x / G.W * (G.i1 - G.i0), m = G.lo + (G.H - y) / G.H * (G.hi - G.lo);
+        const k = (tr.notes || []).findIndex(sg => sg.i1 - sg.i0 >= 8 && fi >= sg.i0 - 1 && fi <= sg.i1 + 1 && Math.abs(m - sg.note) < 0.75);
+        return k < 0 ? null : { c, tr, k, sg: tr.notes[k] };
+    };
+    const editsOf = (c) => ((c.tune && c.tune.edits) || []).map(e => ({ ...e }));
+    const retune = async (c, edits) => { pushUndo(); await applyTune(c, { ...tuneOpts(trackMode ? trk.autotune : settings()), edits, noUndo: true }); };
+    trCv.addEventListener('mousemove', (e) => { if (!trDrag) trCv.style.cursor = segAt(e) ? 'ns-resize' : 'default'; });
+    trCv.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return; const hit = segAt(e); if (!hit) return;
+        e.preventDefault();
+        const y0 = e.clientY, n0 = hit.sg.note, row = trGeo.rowH; let rel = holdKeyNote(((Math.round(n0) % 12) + 12) % 12, Math.floor(n0 / 12) - 5);
+        trDrag = { k: hit.k, note: n0 };
+        const mv = (ev) => {
+            const n = Math.round(n0 + (y0 - ev.clientY) / Math.max(6, row));
+            if (n === trDrag.note) return;
+            trDrag.note = n; rel && rel(); rel = holdKeyNote(((n % 12) + 12) % 12, Math.floor(n / 12) - 5); drawTrace();
+        };
+        const up = async () => {
+            document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); rel && rel();
+            const n = trDrag.note; trDrag = null;
+            if (n === n0) { drawTrace(); return; }
+            const t0 = hit.tr.t0 + hit.sg.i0 * hit.tr.hop, t1 = hit.tr.t0 + (hit.sg.i1 + 1) * hit.tr.hop;
+            const edits = editsOf(hit.c).filter(x => x.t1 <= t0 + 0.01 || x.t0 >= t1 - 0.01);
+            edits.push({ t0, t1, note: n });
+            await retune(hit.c, edits);
+        };
+        document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
+    });
+    trCv.addEventListener('dblclick', async (e) => {
+        const hit = segAt(e); if (!hit || !hit.sg.forced) return;
+        const t0 = hit.tr.t0 + hit.sg.i0 * hit.tr.hop, t1 = hit.tr.t0 + (hit.sg.i1 + 1) * hit.tr.hop;
+        await retune(hit.c, editsOf(hit.c).filter(x => x.t1 <= t0 + 0.01 || x.t0 >= t1 - 0.01));
+    });
+    document.addEventListener('pulse-tune-done', drawTrace); requestAnimationFrame(drawTrace);
+    // Deux vues, comme deux pages du même plugin : Réglages (cadrans) et Graphique (le tracé en grand)
+    const setView = (v, keep = true) => {
+        panel.classList.toggle('tp-graph', v === 'graph');
+        panel.querySelectorAll('.tp-view button').forEach(b => b.classList.toggle('on', b.dataset.view === v));
+        if (keep) { try { localStorage.setItem('pulse_tune_view', v); } catch {} }
+        requestAnimationFrame(drawTrace);
+    };
+    panel.querySelectorAll('.tp-view button').forEach(b => b.addEventListener('click', () => setView(b.dataset.view)));
+    { let v = 'auto'; try { v = localStorage.getItem('pulse_tune_view') === 'graph' ? 'graph' : 'auto'; } catch {} setView(v, false); }
     const live = (ts) => {
         if (!panel.isConnected) return;
         if (ts - lastT > 60) {
@@ -6995,9 +7059,8 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false) {
                 if (!mask) mask = new Array(12).fill(true);
                 mask[pc] = !mask[pc];
                 source = 'clavier';
-                playKeyNote(pc);
                 paint(); changed();
-                return;
+                // la note s'entend, mais comme un clic normal : elle s'arrête dès qu'on lâche (avant, elle sonnait jusqu'au bout)
             }
             const release = holdKeyNote(pc);
             k.classList.add('pressed');
@@ -7700,6 +7763,10 @@ async function applyTune(clip, opts) {
         for (let ch = 0; ch < src.numberOfChannels; ch++) slices.push(src.getChannelData(ch).subarray(a, b));
         flash('🎤 Auto-Tune en cours…');
         let lastStep = 0;
+        // Notes posées à la main dans le graphique : gardées d'une correction à l'autre (sauf si on en donne de nouvelles)
+        const edits = opts.edits !== undefined ? opts.edits : ((clip.tune && clip.tune.edits) || []);
+        const t0s = a / sr;
+        opts = { ...opts, edits: edits.map(e => ({ t0: e.t0 - t0s, t1: e.t1 - t0s, note: e.note })) };
         const res = await PulseTune.process(slices, sr, opts, (p) => {
             const step = Math.floor(p * 4);
             if (step > lastStep) { lastStep = step; flash(`🎤 Auto-Tune en cours… ${Math.min(99, Math.round(p * 100))} %`); }
@@ -7730,7 +7797,11 @@ async function applyTune(clip, opts) {
         clip.tune = opts.notes
             ? { src: srcId, notes: opts.notes, source: opts.source || 'clavier', tonic: opts.tonic, minor: opts.minor, strength: opts.strength }
             : { src: srcId, root: res.root, auto: opts.root === 'auto', strength: opts.strength };
+        if (edits.length) clip.tune.edits = edits;
+        clip.tune.sig = tuneSig(opts);
         clip.peaks = makePeaks(out);
+        // Tracé de la correction (voix chantée / voix corrigée) pour la fenêtre PulseTune : gardé en mémoire, pas dans le projet
+        if (res.f0) { TUNE_TRACES.set(newId, { f0: res.f0, ratio: res.ratio, notes: res.notes || [], hop: res.hop || 0.005, t0: t0s, avg: res.avgCents }); if (TUNE_TRACES.size > 24) TUNE_TRACES.delete(TUNE_TRACES.keys().next().value); document.dispatchEvent(new CustomEvent('pulse-tune-done', { detail: { id: newId } })); }
         renderTimelineTracks(); saveProject(); refreshPlaybackSoon();
         const key = opts.notes
             ? (opts.notes.every(Boolean) ? 'toutes les notes' : state.project.key?.label ? state.project.key.label : 'réglage manuel')
@@ -7744,6 +7815,74 @@ async function applyTune(clip, opts) {
     }
 }
 
+// Gros cadran de PulseTune : anneau lumineux qui se remplit, valeur au centre (dessin maison)
+let tuneDialId = 0;
+function tuneDialSvg(v, main) {
+    const S = main ? 112 : 96, c = S / 2, R = c - 9, id = 'td' + (++tuneDialId), f = Math.max(0, Math.min(1, v / 100));
+    const pt = (a, r) => [c + r * Math.sin(a * Math.PI / 180), c - r * Math.cos(a * Math.PI / 180)];
+    const arc = (a0, a1, r) => { const [x0, y0] = pt(a0, r), [x1, y1] = pt(a1, r); return `M${x0.toFixed(2)} ${y0.toFixed(2)}A${r} ${r} 0 ${a1 - a0 > 180 ? 1 : 0} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`; };
+    const a = -135 + 270 * f, [dx, dy] = pt(a, R);
+    let ticks = ''; for (let i = 0; i <= 10; i++) { const t = -135 + 27 * i, [x0, y0] = pt(t, R + 5), [x1, y1] = pt(t, R + (i % 5 ? 7 : 8.5)); ticks += `<line x1="${x0.toFixed(1)}" y1="${y0.toFixed(1)}" x2="${x1.toFixed(1)}" y2="${y1.toFixed(1)}" stroke="${i / 10 <= f + 1e-6 ? '#C084FC' : '#4a3d63'}" stroke-width="1.2" stroke-linecap="round"/>`; }
+    return `<svg width="${S}" height="${S}" viewBox="0 0 ${S} ${S}"><defs>
+        <linearGradient id="${id}a" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#7C3AED"/><stop offset="1" stop-color="#E9B8FF"/></linearGradient>
+        <radialGradient id="${id}b" cx="50%" cy="32%" r="75%"><stop offset="0" stop-color="#3a2a58"/><stop offset=".55" stop-color="#1c1330"/><stop offset="1" stop-color="#0e0919"/></radialGradient></defs>
+        ${ticks}
+        <path d="${arc(-135, 135, R)}" fill="none" stroke="#241a36" stroke-width="7" stroke-linecap="round"/>
+        ${f > 0.004 ? `<path d="${arc(-135, a, R)}" fill="none" stroke="url(#${id}a)" stroke-width="7" stroke-linecap="round" style="filter:drop-shadow(0 0 6px rgba(168,85,247,.85))"/>` : ''}
+        <circle cx="${c}" cy="${c}" r="${R - 9}" fill="url(#${id}b)" stroke="#4a3870" stroke-width="1"/>
+        <circle cx="${c}" cy="${c}" r="${R - 9}" fill="none" stroke="#ffffff" stroke-opacity=".06" stroke-width="1" transform="translate(0 -1)"/>
+        <circle cx="${dx.toFixed(2)}" cy="${dy.toFixed(2)}" r="4.6" fill="#fff" style="filter:drop-shadow(0 0 5px #C084FC)"/>
+        <text x="${c}" y="${c + (main ? 9 : 8)}" text-anchor="middle" fill="#fff" font-size="${main ? 27 : 23}" font-weight="700" font-family="-apple-system, system-ui, sans-serif" style="font-variant-numeric:tabular-nums">${Math.round(v)}</text>
+        <text x="${c}" y="${c + (main ? 24 : 21)}" text-anchor="middle" fill="#9A8CB8" font-size="9" font-weight="600" font-family="-apple-system, system-ui, sans-serif">%</text></svg>`;
+}
+// Tracé de la dernière correction de chaque clip : en gris la voix chantée, en violet la voix corrigée, les notes permises en bandes
+const TUNE_TRACES = new Map();
+function drawTuneTrace(cv, tr, mask, blocks = false, drag = null) {
+    const dpr = window.devicePixelRatio || 1, W = cv.clientWidth || 580, H = cv.clientHeight || 96;
+    if (cv.width !== Math.round(W * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+    const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+    if (!tr) return false;
+    const { f0, ratio } = tr, N = f0.length, mid = (hz) => 69 + 12 * Math.log2(hz / 440);
+    // partie chantée seulement (on saute les silences du début et de la fin), hauteur cadrée sur ce qui est chanté
+    let i0 = 0, i1 = N - 1; while (i0 < N && !(f0[i0] > 0)) i0++; while (i1 > i0 && !(f0[i1] > 0)) i1--;
+    if (i1 <= i0) return false;
+    const vals = []; for (let i = i0; i <= i1; i += 2) if (f0[i] > 0) vals.push(mid(f0[i]));
+    vals.sort((a, b) => a - b);
+    let lo = Math.floor(vals[Math.floor(vals.length * 0.02)] - 1.5), hi = Math.ceil(vals[Math.floor(vals.length * 0.98)] + 1.5);
+    for (const s of (tr.notes || [])) { lo = Math.min(lo, s.note - 2); hi = Math.max(hi, s.note + 2); }
+    if (drag) { lo = Math.min(lo, drag.note - 2); hi = Math.max(hi, drag.note + 2); }
+    if (hi - lo < 7) { const c = (hi + lo) / 2; lo = Math.floor(c - 3.5); hi = lo + 7; }
+    const X = (i) => (i - i0) / (i1 - i0) * W, Y = (m) => H - (m - lo) / (hi - lo) * H, rowH = H / (hi - lo);
+    for (let n = lo; n <= hi; n++) {
+        const ok = !mask || mask[((n % 12) + 12) % 12];
+        g.fillStyle = ok ? 'rgba(168,85,247,.10)' : 'rgba(255,255,255,.015)';
+        g.fillRect(0, Y(n) - rowH / 2 + 0.5, W, rowH - 1);
+        if (ok && rowH >= 9) { g.fillStyle = 'rgba(200,180,240,.55)'; g.font = '600 8.5px -apple-system, system-ui, sans-serif'; g.fillText(PulseTune.NOTE_NAMES[((n % 12) + 12) % 12], 4, Y(n) + 3); }
+    }
+    const line = (get, color, width, glow) => {
+        g.beginPath(); let pen = false, lastPx = -9;
+        for (let i = i0; i <= i1; i++) {
+            if (!(f0[i] > 0)) { pen = false; continue; }
+            const x = X(i); if (pen && x - lastPx < 0.5) continue; lastPx = x;
+            const y = Math.max(1, Math.min(H - 1, Y(get(i)))); if (pen) g.lineTo(x, y); else g.moveTo(x, y); pen = true;
+        }
+        g.strokeStyle = color; g.lineWidth = width; g.lineJoin = 'round'; g.shadowColor = glow || 'transparent'; g.shadowBlur = glow ? 6 : 0; g.stroke(); g.shadowBlur = 0;
+    };
+    // Vue Graphique : un bloc par note tenue, à tirer vers le haut ou le bas (blanc = posée à la main)
+    if (blocks) for (const [k, sg] of (tr.notes || []).entries()) {
+        if (sg.i1 - sg.i0 < 8) continue;
+        const moving = drag && drag.k === k, note = moving ? drag.note : sg.note;
+        const x = X(sg.i0), w = Math.max(4, X(sg.i1) - x), h = Math.min(18, Math.max(6, rowH * 0.78)), y = Y(note) - h / 2;
+        g.beginPath(); if (g.roundRect) g.roundRect(x, y, w, h, Math.min(5, h / 2)); else g.rect(x, y, w, h);
+        g.fillStyle = moving ? 'rgba(233,184,255,.55)' : sg.forced ? 'rgba(192,132,252,.5)' : 'rgba(124,58,237,.34)'; g.fill();
+        g.strokeStyle = moving || sg.forced ? '#fff' : 'rgba(192,132,252,.9)'; g.lineWidth = moving || sg.forced ? 1.4 : 1; g.stroke();
+        if (w > 22 && h >= 9) { g.fillStyle = '#fff'; g.font = '700 9px -apple-system, system-ui, sans-serif'; g.fillText(PulseTune.NOTE_NAMES[((Math.round(note) % 12) + 12) % 12], x + 5, y + h / 2 + 3); }
+    }
+    line((i) => mid(f0[i]), 'rgba(255,255,255,.38)', 1.1);
+    line((i) => mid(f0[i] * ratio[i]), '#C084FC', 1.8, 'rgba(168,85,247,.8)');
+    return { i0, i1, lo, hi, W, H, rowH };
+}
+const tuneSig = (o) => [o.strength, o.human || 0, o.flex || 0, o.vibrato || 0, o.voice || 'mid'].join('|');
 // Auto-Tune de piste : corrige toutes les prises de la piste, l'une après l'autre
 function tuneOpts(a) {
     // PulseTune : Humain, Souplesse, Vibrato naturel et type de voix suivent jusqu'au moteur (tune.js)
@@ -7756,7 +7895,8 @@ async function tuneWholeTrack(trackIdx, onlyClips = null, noUndo = false) {
     const clips = (onlyClips || t.clips || []).filter(c => !c.midi && !c.recording);
     let n = 0;
     for (const c of clips) {
-        if (c.tune && !onlyClips && JSON.stringify(c.tune.notes || null) === JSON.stringify(t.autotune.notes || null) && (c.tune.strength === t.autotune.strength)) continue;
+        // déjà corrigé avec exactement ces réglages (Humain, Souplesse, Vibrato et type de voix compris) : on ne refait pas
+        if (c.tune && !onlyClips && JSON.stringify(c.tune.notes || null) === JSON.stringify(t.autotune.notes || null) && (c.tune.strength === t.autotune.strength) && (!c.tune.sig || c.tune.sig === tuneSig(tuneOpts(t.autotune)))) continue;
         await applyTune(c, { ...tuneOpts(t.autotune), noUndo });
         n++;
     }
@@ -8261,11 +8401,66 @@ function bindFxEq(panel, t, fxName = 'reverb') {
     if (!host) return;
     let sel = -1, undone = false;
     const bands = () => (((t.effectParams || {})[fxName] || {}).eq || []).map(b => ({ ...b }));
+    const detail = panel.querySelector('.rv-eq-detail');
+    // Les mêmes réglages que le grand EQ, sous la courbe : forme du point, fréquence / gain / Q à taper, pente, pause, retirer
+    const drawDetail = () => {
+        if (!detail) return;
+        const arr = bands(), b = arr[sel];
+        if (!b) { detail.hidden = true; detail.innerHTML = ''; return; }
+        if (detail.contains(document.activeElement)) return;   // on ne redessine pas sous les doigts pendant qu'on tape
+        detail.hidden = false;
+        const flat = EQ_FLAT(b.type), cut = b.type === 'hpf' || b.type === 'lpf', shelf = b.type === 'lowshelf' || b.type === 'highshelf';
+        detail.innerHTML = `
+            <div class="eq-types">${Object.keys(EQ_TYPES).map(k => `<span data-type="${k}" class="${b.type === k ? 'on' : ''}" data-tooltip="${EQ_TYPES[k]}">${eqIcon(k)}</span>`).join('')}</div>
+            <div class="eq-vals">
+                <label><small>Fréq.</small><input class="eq-num eq-f" type="text" value="${Math.round(b.freq)}"><small>Hz</small></label>
+                ${cut ? `<label><small>Pente</small><select class="eq-num eq-slope">${[12, 24, 36, 48].map(v => `<option value="${v}" ${(b.slope || 12) === v ? 'selected' : ''}>${v} dB/oct</option>`).join('')}</select><small>&nbsp;</small></label>`
+                      : `<label><small>Gain</small><input class="eq-num eq-g" type="text" value="${(b.gain || 0).toFixed(1)}" ${flat ? 'disabled' : ''}><small>dB</small></label>`}
+                <label><small>${cut ? 'Résonance' : 'Q'}</small><input class="eq-num eq-q" type="text" value="${(b.q || 1).toFixed(2)}" ${shelf || b.type === 'tilt' ? 'disabled' : ''}><small>&nbsp;</small></label>
+            </div>
+            <span class="eq-ic">
+                <button class="eq-onoff ${b.on === false ? '' : 'on'}" data-tooltip="Met ce point en pause sans le supprimer">⏻</button>
+                <button class="eq-del" data-tooltip="Retirer ce point">✕</button>
+            </span>`;
+    };
     const draw = () => {
         const arr = bands(); if (sel >= arr.length) sel = arr.length - 1;
         host.innerHTML = reverbEqSvg(arr, sel);
-        readOut();
+        readOut(); drawDetail();
     };
+    const setType = (x, k) => {
+        const was = x.type; x.type = k;
+        if (k === 'hpf' || k === 'lpf') { x.gain = 0; x.q = 0.7071; x.slope = x.slope || 24; } else delete x.slope;
+        if (k === 'lowshelf' || k === 'highshelf') x.q = 0.7;
+        else if (k === 'notch') { x.gain = 0; x.q = Math.max(2, x.q || 4); }
+        else if (EQ_FLAT(was) && !EQ_FLAT(k)) x.q = 1;
+    };
+    if (detail) {
+        detail.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') e.target.blur(); });
+        detail.addEventListener('mousedown', (e) => e.stopPropagation());
+        detail.addEventListener('input', (e) => e.stopPropagation());
+        detail.addEventListener('change', (e) => {
+            e.stopPropagation();   // la fenêtre écoute aussi « change » (boutons, préréglages) : ces champs ne la regardent pas
+            const el = e.target, arr = bands(), b = arr[sel]; if (!b) return;
+            if (el.classList.contains('eq-slope')) b.slope = parseInt(el.value) || 12;
+            else {
+                const v = parseFloat(String(el.value).replace(',', '.').replace(/[^0-9.+-]/g, '')) * (/k/i.test(el.value) && el.classList.contains('eq-f') ? 1000 : 1);
+                if (!Number.isFinite(v)) { flash('Écris un nombre'); el.blur(); draw(); return; }
+                if (el.classList.contains('eq-f')) b.freq = Math.round(Math.max(20, Math.min(20000, v)));
+                else if (el.classList.contains('eq-g')) b.gain = Math.round(Math.max(-RVEQ.DB, Math.min(RVEQ.DB, v)) * 10) / 10;
+                else if (el.classList.contains('eq-q')) b.q = Math.round(Math.max(0.1, Math.min(18, v)) * 1000) / 1000;
+            }
+            el.blur(); save(arr);
+        });
+        detail.addEventListener('click', (e) => {
+            const arr = bands(), b = arr[sel]; if (!b) return;
+            const tb = e.target.closest('[data-type]');
+            if (tb) { if (b.type !== tb.dataset.type) { setType(b, tb.dataset.type); save(arr); } return; }
+            const btn = e.target.closest('button'); if (!btn) return;
+            if (btn.classList.contains('eq-del')) { arr.splice(sel, 1); sel = -1; save(arr); }
+            else if (btn.classList.contains('eq-onoff')) { if (b.on === false) delete b.on; else b.on = false; save(arr); }
+        });
+    }
     const readOut = () => {
         const arr = bands(), b = arr[sel];
         read.textContent = b ? `${sel + 1} · ${EQ_TYPES[b.type] || b.type} · ${rvFmtF(b.freq)}${EQ_FLAT(b.type) ? '' : ` · ${(b.gain > 0 ? '+' : '') + (b.gain || 0).toFixed(1).replace('.', ',')} dB`}${b.type === 'hpf' || b.type === 'lpf' ? ` · ${b.slope || 12} dB/oct` : ` · Q ${(b.q || 1).toFixed(2).replace('.', ',')}`}${b.on === false ? ' · éteint' : ''}`
@@ -8301,7 +8496,7 @@ function bindFxEq(panel, t, fxName = 'reverb') {
             if (!EQ_FLAT(b.type)) b.gain = Math.round(Math.max(-RVEQ.DB, Math.min(RVEQ.DB, (b0.gain || 0) + rvYd(y) - rvYd(y0))) * 10) / 10;
             save(arr);
         };
-        const up = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); undone = false; if (!moved) readOut(); };
+        const up = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); undone = false; if (!moved) { readOut(); drawDetail(); } };
         document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
     });
     host.addEventListener('dblclick', (e) => {
@@ -8329,12 +8524,8 @@ function bindFxEq(panel, t, fxName = 'reverb') {
         menu.style.cssText = `position:fixed;left:${Math.min(e.clientX, window.innerWidth - 200)}px;top:${Math.min(e.clientY, window.innerHeight - 300)}px;z-index:400;min-width:180px`;
         const b = bands()[i];
         const item = (label, run) => { const it = document.createElement('div'); it.className = 'ctx-item'; it.textContent = label; it.addEventListener('mousedown', (ev) => { ev.stopPropagation(); closeAllMenus(); const arr = bands(); run(arr[i]); save(arr); }); menu.appendChild(it); };
-        ['bell', 'lowshelf', 'highshelf', 'hpf', 'lpf', 'notch'].forEach(k => item((b.type === k ? '✓ ' : '   ') + EQ_TYPES[k], (x) => {
-            x.type = k;
-            if (k === 'hpf' || k === 'lpf') { x.gain = 0; x.q = 0.7071; x.slope = x.slope || 24; } else delete x.slope;
-            if (k === 'lowshelf' || k === 'highshelf') x.q = 0.7;
-        }));
-        if (b.type === 'hpf' || b.type === 'lpf') { const sep = document.createElement('div'); sep.className = 'ctx-sep'; menu.appendChild(sep); [12, 24, 48].forEach(sl => item(((b.slope || 12) === sl ? '✓ ' : '   ') + `Pente ${sl} dB/oct`, (x) => { x.slope = sl; })); }
+        Object.keys(EQ_TYPES).forEach(k => item((b.type === k ? '✓ ' : '   ') + EQ_TYPES[k], (x) => setType(x, k)));
+        if (b.type === 'hpf' || b.type === 'lpf') { const sep = document.createElement('div'); sep.className = 'ctx-sep'; menu.appendChild(sep); [12, 24, 36, 48].forEach(sl => item(((b.slope || 12) === sl ? '✓ ' : '   ') + `Pente ${sl} dB/oct`, (x) => { x.slope = sl; })); }
         const sep2 = document.createElement('div'); sep2.className = 'ctx-sep'; menu.appendChild(sep2);
         item(b.on === false ? 'Rallumer ce point' : 'Éteindre ce point', (x) => { if (x.on === false) delete x.on; else x.on = false; });
         const del = document.createElement('div'); del.className = 'ctx-item'; del.textContent = 'Retirer ce point';
@@ -8343,7 +8534,22 @@ function bindFxEq(panel, t, fxName = 'reverb') {
         document.body.appendChild(menu);
         setTimeout(() => document.addEventListener('mousedown', closeAllMenus, { once: true }), 10);
     });
-    panel.querySelector('.rv-eq-clear').addEventListener('click', () => { sel = -1; save([]); });
+    panel.querySelector('.rv-eq-wipe').addEventListener('click', () => { sel = -1; save([]); });
+    panel.querySelector('.rv-eq-add').addEventListener('click', () => {
+        const arr = bands();
+        if (arr.length >= RVEQ.MAX) { flash(`${RVEQ.MAX} points au plus dans l'EQ ${fxName === 'delay' ? 'de l\'écho' : 'de la reverb'}`); return; }
+        arr.push({ type: 'bell', freq: 1000, gain: 0, q: 1 }); sel = arr.length - 1; save(arr);
+    });
+    const bigBtn = panel.querySelector('.rv-eq-big');
+    bigBtn.addEventListener('click', () => { const on = panel.classList.toggle('rveq-wide'); bigBtn.classList.toggle('on', on); bigBtn.textContent = on ? 'Réduire' : 'Agrandir'; });
+    // Suppr / Retour arrière : retire le point choisi quand la souris est sur l'EQ
+    let over = false; host.addEventListener('mouseenter', () => { over = true; }); host.addEventListener('mouseleave', () => { over = false; });
+    const keys = (e) => {
+        if (!panel.isConnected) { document.removeEventListener('keydown', keys, true); return; }
+        if (!over || sel < 0 || (e.key !== 'Delete' && e.key !== 'Backspace') || /^(INPUT|TEXTAREA|SELECT)$/.test((e.target || {}).tagName || '')) return;
+        e.preventDefault(); e.stopPropagation(); const arr = bands(); arr.splice(sel, 1); sel = -1; save(arr);
+    };
+    document.addEventListener('keydown', keys, true);
     draw();
 }
 
@@ -8994,7 +9200,7 @@ function fxFmt(d, v, isAuto) {
 }
 // Chiffre court pour la graduation autour d'un bouton (« 8k », « 1/8 »…)
 function fxShort(d, v) {
-    if (d.fmt) return d.fmt(v);
+    if (d.fmt && !d.plainTicks) return d.fmt(v);
     if (/Hz/.test(d.unit) && v >= 1000) return `${+(v / 1000).toFixed(1)}k`;
     return `${+(+v).toFixed(Math.abs(v) < 10 && v % 1 ? 1 : 0)}`;
 }
@@ -9201,6 +9407,19 @@ function makePlugWindow(panel, t, fxName, trackIdx) {
           place(); requestAnimationFrame(place); } }
     panel._plugT = t; panel.dataset.fx = fxName;
     if (t && t.__fxId) { const ti = panel.querySelector('.fx-title'); if (ti && !ti.querySelector('.fx-inst')) ti.insertAdjacentHTML('beforeend', ` <b class="fx-inst">${fxInstNum(t.__fxId)}</b>`); }
+    // Même en-tête partout : la famille de l'effet en petit au-dessus du nom, et le nom de la piste à côté
+    { const ti = panel.querySelector('.fx-panel-header .fx-title'), base = String(fxName).split('#')[0];
+      if (ti && !ti.querySelector('.fx-nm')) {
+          const had = ti.querySelector('.fx-cat');
+          const cat = had ? null : ((ADD_FX_CATEGORIES_ANA.find(c => c[1].includes(base)) || ADD_FX_CATEGORIES.find(c => c[1].includes(base)) || [])[0]);
+          if (had || cat) {
+              const nm = document.createElement('span'); nm.className = 'fx-nm';
+              [...ti.childNodes].forEach(n => { if (n !== had) nm.appendChild(n); });
+              if (had && t && t.name && !nm.querySelector('i')) nm.insertAdjacentHTML('beforeend', ` <i class="fx-trk">— ${esc(t.name)}</i>`);
+              if (!had) { const c = document.createElement('i'); c.className = 'fx-cat'; c.textContent = cat; ti.appendChild(c); }
+              ti.appendChild(nm); ti.classList.add('has-cat');
+          }
+      } }
     if (!panel._autoShow) {
         const pk = (k) => panel.querySelector(`.pk[data-key="${k}"]`);
         panel._autoShow = (k, v) => { const e = pk(k); if (e && e._pkShow) e._pkShow(v); };
@@ -9859,13 +10078,29 @@ function openMbandPanel(trackIdx, anchorEl) {
             g += `<line x1="${bx0}" x2="${bx1}" y1="${by}" y2="${by}" stroke="${c}" stroke-width="4" stroke-linecap="round" style="filter:drop-shadow(0 0 5px ${c})"/>
                 <g class="mb-tri" data-k="lo"><rect x="${bx0 - 14}" y="${by - 18}" width="28" height="32" fill="transparent"/><path d="M${bx0 - 11} ${by + 8} L${bx0 + 3} ${by - 12} L${bx0 + 3} ${by + 8} Z" fill="#e9e2f5"/></g>
                 <g class="mb-tri" data-k="hi"><rect x="${bx1 - 14}" y="${by - 18}" width="28" height="32" fill="transparent"/><path d="M${bx1 + 11} ${by + 8} L${bx1 - 3} ${by - 12} L${bx1 - 3} ${by + 8} Z" fill="#e9e2f5"/></g>`; }
-        if (!bands.length) g += `<text x="${PL / 2}" y="${Y0 - 20}" class="lim-txt big" text-anchor="middle">Double-clic là où tu veux travailler pour créer une bande (le reste du son n'est pas touché)</text>`;
+        if (!bands.length) g += `<text x="${PL / 2}" y="${Y0 - 20}" class="lim-txt big" text-anchor="middle">Double-clic là où tu veux travailler pour créer une bande, ou choisis un point de départ en bas</text>`;
         svg.innerHTML = g;
         panel.querySelector('.mb-n').textContent = bands.length + ' / ' + MAXB;
     };
     let knobs = {};
     const buildFp = () => {
-        const b = BS()[sel]; fp.innerHTML = ''; fp.style.display = b ? '' : 'none'; knobs = {}; if (!b) return;
+        const b = BS()[sel]; fp.innerHTML = ''; fp.style.display = (b || !BS().length) ? '' : 'none'; knobs = {}; fp.style.borderColor = '';
+        if (!b) {
+            if (BS().length) return;
+            // Fenêtre vide : des points de départ à la place du grand vide (une bande déjà placée et réglée, à retoucher ensuite)
+            const mk = (lo, hi, thr, range, att, rel) => ({ lo, hi, thr, range, att, rel, out: 0 });
+            const STARTS = [
+                ['Calmer les « s »', 'une bande sur les sifflantes (5 à 10 kHz)', [mk(5000, 10000, -34, -6, 2, 80)]],
+                ['Médiums durs', 'adoucit la zone qui agresse quand la voix force (2 à 5 kHz)', [mk(2000, 5000, -30, -4, 8, 120)]],
+                ['Serrer les graves', 'tient le bas quand il déborde (60 à 200 Hz)', [mk(60, 200, -28, -6, 20, 160)]],
+                ['3 bandes', 'grave, médium, aigu : à régler une par une', [mk(20, 200, -28, -4, 20, 160), mk(200, 4000, -28, -3, 10, 120), mk(4000, 20000, -32, -4, 3, 90)]]
+            ];
+            const c0 = document.createElement('div'); c0.className = 'lim-col mb-starts';
+            c0.innerHTML = `<span class="lim-t">Points de départ</span><div class="ms-stys mb-start-row">${STARTS.map(([n, tip], i) => `<button class="ms-sty mb-start" data-i="${i}" data-tooltip="${esc(tip)}">${n}</button>`).join('')}</div>`;
+            fp.appendChild(c0);
+            c0.querySelectorAll('.mb-start').forEach(bt => bt.addEventListener('click', () => { step(() => { P().bands = STARTS[+bt.dataset.i][2].map(x => ({ ...x })); sel = 0; }); buildFp(); draw(); }));
+            return;
+        }
         const c = MB_COLORS[sel]; fp.style.borderColor = c + '77';
         const c0 = document.createElement('div'); c0.className = 'lim-col mb-c0';
         c0.innerHTML = `<span class="lim-t" style="color:${c}">● ${mbName(b)}</span>
@@ -10592,13 +10827,13 @@ function openModPanel(trackIdx, fx, anchorEl) {
         const mix = defs.some(x => x.key === 'mix') ? V('mix') / 100 : 1, fb = defs.some(x => x.key === 'feedback') ? V('feedback') / 100 : 0;
         const col = on ? '#C084FC' : '#6f6390';
         // 1) l'oscillation : 3 secondes qui défilent, le point = maintenant
-        const LX = 40, LY = 70, LW = 820, LH = 110;
+        const LX = 40, LY = 46, LW = 820, LH = 110;
         let g = `<rect x="${LX}" y="${LY - 20}" width="${LW}" height="${LH + 40}" rx="14" class="sat-box"/><text x="${LX + 12}" y="${LY - 2}" class="lim-txt">oscillation · ${syn ? '♪ ' + modDivName(beats) + ' à ' + Math.round(bpm) + ' BPM · ' : ''}${String(rate).replace('.', ',')} Hz (${rate >= 1 ? String(Math.round(rate * 10) / 10).replace('.', ',') + ' fois par seconde' : 'une fois toutes les ' + String(Math.round(10 / rate) / 10).replace('.', ',') + ' s'})</text>`;
         let w = ''; for (let i = 0; i <= 300; i++) { const tt = now - 3 + 3 * i / 300, y = LY + LH / 2 + 8 - Math.sin(2 * Math.PI * rate * tt) * depth * (LH / 2 - 6); w += (i ? 'L' : 'M') + (LX + 10 + (LW - 40) * i / 300).toFixed(1) + ' ' + y.toFixed(1); }
         const yNow = LY + LH / 2 + 8 - Math.sin(ph) * depth * (LH / 2 - 6);
         g += `<path d="${w}" stroke="${col}" stroke-width="2.5" fill="none" style="filter:drop-shadow(0 0 6px ${col})"/><circle cx="${LX + LW - 30}" cy="${yNow.toFixed(1)}" r="7" fill="#fff" style="filter:drop-shadow(0 0 8px ${col})"/>`;
         // 2) ce que l'effet fait au son
-        const SX = 40, SY = 215, SW = 820, SH = 150, m = Math.sin(ph) * (on ? 1 : 0);
+        const SX = 40, SY = 188, SW = 820, SH = 150, m = Math.sin(ph) * (on ? 1 : 0);
         g += `<rect x="${SX}" y="${SY}" width="${SW}" height="${SH}" rx="14" class="sat-box"/>`;
         if (fx === 'tremolo') {
             let a = '', b = ''; for (let i = 0; i <= 400; i++) { const tt = now - 2 + 2 * i / 400, env = 1 - depth * (0.5 + 0.5 * Math.sin(2 * Math.PI * rate * tt)) * (on ? 1 : 0), x = SX + 10 + (SW - 20) * i / 400, y = Math.sin(i * 0.9) * env * (SH / 2 - 30) - 8;
@@ -10636,7 +10871,7 @@ function openModPanel(trackIdx, fx, anchorEl) {
             if (d.key === 'rate') {
                 // Vitesse : en Hz (bouton) ou en notes calées sur le tempo du projet (un clic pour passer de l'un à l'autre)
                 const syn = P().sync > 0, col = document.createElement('div'); col.className = 'lim-col mod-rate-col';
-                col.innerHTML = `<div class="ms-stys mod-sync-sw"><button class="ms-sty mod-sync${syn ? '' : ' on'}" data-s="0" data-tooltip="Vitesse libre, en hertz">Hz</button><button class="ms-sty mod-sync${syn ? ' on' : ''}" data-s="1" data-tooltip="Vitesse calée sur le tempo du projet">♪ Note</button></div>`;
+                col.innerHTML = `<div class="ms-stys mod-sync-sw"><button class="ms-sty mod-sync${syn ? '' : ' on'}" data-s="0" data-tooltip="Vitesse libre, en hertz">Hz</button><button class="ms-sty mod-sync${syn ? ' on' : ''}" data-s="1" data-tooltip="Vitesse calée sur le tempo du projet">${pIcon('note')} Note</button></div>`;
                 fp.appendChild(col);
                 col.querySelectorAll('.mod-sync').forEach(b => b.addEventListener('click', () => { const s = +b.dataset.s; if (s === (P().sync > 0 ? 1 : 0)) return;
                     step(() => { const bpm = state.project.bpm > 0 ? state.project.bpm : 90;
@@ -10918,7 +11153,11 @@ const FX_PANEL_DEFS = {
         // Rattrapage : sans réglage, Pulse remonte le volume tout seul (« Auto »), comme avant
         { key: 'makeup',    label: 'Rattrapage', unit: ' dB', min: -12, max: 24, def: 0, step: 0.5, adv: true,
           auto: (p) => Math.round(-p.threshold * (1 - 1 / Math.max(1, p.ratio)) * 0.35 * 2) / 2,
-          tip: 'Volume rendu après compression. Alt-clic : revenir en automatique' }
+          tip: 'Volume rendu après compression. Alt-clic : revenir en automatique' },
+        { key: 'scHp',      label: 'Détecteur', unit: ' Hz', min: 20, max: 500, def: 20, step: 5, adv: true, log: true, plainTicks: true, fmt: (v) => v <= 21 ? 'Éteint' : Math.round(v) + ' Hz',
+          tip: 'Coupe-bas du détecteur : les graves (basse, 808, plosives) ne déclenchent plus la compression. Le son, lui, n\'est pas filtré. 20 Hz = éteint' },
+        { key: 'range',     label: 'Plage',     unit: ' dB', min: 0, max: 40, def: 40, step: 0.5, adv: true, plainTicks: true, fmt: (v) => v >= 40 ? 'Sans limite' : String(+(+v).toFixed(1)).replace('.', ',') + ' dB',
+          tip: 'Réduction maximale : le compresseur ne retire jamais plus que ça. 40 dB = sans limite' }
     ],
     reverb: [
         { key: 'wet',   label: 'Quantité',    unit: '%',  min: 0,   max: 100, def: 18, step: 1 },
@@ -11247,7 +11486,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
         <div class="fx-face">
         ${fxName === 'comp' ? '<div class="fx-viz"></div>' : ''}
         ${fxName === 'delay' || fxName === 'reverb' ? `<div class="scr-col"><div class="rv-eq-head"><b>${fxName === 'delay' ? 'Répétitions' : 'Queue de la reverb'}</b></div><div class="fx-viz fx-viz-wide"></div></div>` : ''}
-        ${fxName === 'reverb' || fxName === 'delay' ? `<div class="rv-eq"><div class="rv-eq-head"><b>${fxName === 'delay' ? 'EQ de l\'écho' : 'EQ de la reverb'}</b><span class="rv-eq-read"></span><button class="rv-eq-clear" data-tooltip="${fxName === 'delay' ? 'Retirer tous les points de l\'EQ de l\'écho' : 'Retirer tous les points de l\'EQ de la reverb'}">Effacer</button></div><div class="rv-eq-host"></div></div>` : ''}
+        ${fxName === 'reverb' || fxName === 'delay' ? `<div class="rv-eq"><div class="rv-eq-head"><b>${fxName === 'delay' ? 'EQ de l\'écho' : 'EQ de la reverb'}</b><span class="rv-eq-read"></span><button class="rv-eq-btn rv-eq-add" data-tooltip="Pose un point au milieu (ou double-clic sur la courbe)">+ Point</button><button class="rv-eq-btn rv-eq-big" data-tooltip="Agrandir l'EQ sur toute la largeur (re-clic : taille normale)">Agrandir</button><button class="rv-eq-clear rv-eq-wipe" data-tooltip="${fxName === 'delay' ? 'Retirer tous les points de l\'EQ de l\'écho' : 'Retirer tous les points de l\'EQ de la reverb'}">Effacer</button></div><div class="rv-eq-host"></div><div class="rv-eq-detail" hidden></div></div>` : ''}
         <div class="fx-main">
         <div class="fx-panel-body fx-knobs">
             ${defs.map(d => {

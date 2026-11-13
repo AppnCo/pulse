@@ -699,6 +699,34 @@ mod tests {
         assert!((g(&mk(0.0, 6.0), 0.5) + 4.48).abs() < 0.05, "rattrapage +6 dB : {}", g(&mk(0.0, 6.0), 0.5));
     }
 
+    /// Compresseur : coupe-bas du détecteur (les graves ne déclenchent plus) et plage (réduction maximale).
+    /// Mêmes chiffres que tests/scenarios/comp-detecteur.mjs (Chrome, export WAV).
+    #[test]
+    fn compresseur_detecteur_et_plage() {
+        let sr = SR as f64;
+        let run = |extra: Option<&str>| -> Vec<f32> {
+            let mut buf: Vec<f32> = (0..2 * SR as usize).map(|i| { let t = i as f64 / sr; (0.5 * (2.0 * std::f64::consts::PI * 60.0 * t).sin() + 0.1 * (2.0 * std::f64::consts::PI * 3000.0 * t).sin()) as f32 }).collect();
+            if let Some(e) = extra {
+                let t: Track = serde_json::from_str(&format!(r#"{{"effects":["comp"],"effectParams":{{"comp":{{"threshold":-20,"ratio":4,"attack":10,"release":50,"knee":0,"makeup":0{e}}}}}}}"#)).unwrap();
+                crate::fx::Chain::for_track(&t, sr, 90.0).process(&mut buf, &mut [], true);
+            }
+            buf
+        };
+        let amp = |x: &[f32]| {
+            let (mut re, mut im) = (0.0, 0.0);
+            for i in SR as usize..(SR as f64 * 1.8) as usize { let a = 2.0 * std::f64::consts::PI * 3000.0 * i as f64 / sr; re += x[i] as f64 * a.cos(); im += x[i] as f64 * a.sin(); }
+            (re * re + im * im).sqrt()
+        };
+        let r = amp(&run(None));
+        let db = |e: &str| 20.0 * (amp(&run(Some(e))) / r).log10();
+        let (base, sc, rg, off) = (db(""), db(r#","scHp":300"#), db(r#","range":6"#), db(r#","scHp":20,"range":40"#));
+        println!("detecteur: base {base:.2} | scHp 300 {sc:.2} | plage 6 {rg:.2} | éteints {off:.2}");
+        assert!((off - base).abs() < 1e-9, "20 Hz / 40 dB = comme avant");
+        assert!(base < -9.0, "la basse à 60 Hz fait compresser : {base}");
+        assert!(sc > -1.5, "détecteur coupé à 300 Hz : la basse ne déclenche presque plus : {sc}");
+        assert!((rg + 6.0).abs() < 0.3, "plage 6 dB : jamais plus de 6 dB retirés : {rg}");
+    }
+
     /// Caractères du compresseur (Propre, Opto, FET, Bus) : compression et harmoniques ajoutées,
     /// mêmes chiffres que tests/scenarios/comp-genou.mjs (Chrome, export WAV).
     #[test]
@@ -1431,6 +1459,9 @@ mod tests {
             ("stripe", r#"{"hpf":80,"lf":4,"lfF":100,"lmf":-3,"lmfF":400,"lmfQ":1.5,"hmf":5,"hmfF":3000,"hf":3,"hfF":10000,"cthr":-24,"cratio":4,"crel":0.3}"#, [0.031504, 0.031382, 0.011917]),
             ("stripe", r#"{"variant":1,"lpf":12,"hmf":8,"hmfF":2000,"hmfQ":2,"hfBell":1,"hf":-4,"hfF":6000,"gthr":-40,"grange":20,"cthr":-20,"cratio":20,"cfast":1,"dynPre":1,"output":4}"#, [0.070925, 0.070925, 0.010359]),
             ("eq550", r#"{"lf":4,"lfF":1,"mf":6,"mfF":3,"hf":4,"hfF":3}"#, [0.131791, 0.131791, 0.053026]),
+            ("stripe", r#"{"variant":2,"hpf":60,"lf":6,"lfF":90,"lmf":-4,"lmfF":350,"hmf":6,"hmfF":3500,"hf":5,"hfF":9000,"cthr":-22,"cratio":3,"crel":0.4}"#, [0.049162, 0.047322, 0.028563]),
+            ("stripe", r#"{"variant":3,"lf":3,"lfBell":1,"lfF":120,"hmf":4,"hmfF":5000,"hmfQ":2,"hf":6,"hfF":12000,"cthr":-18,"cratio":6,"cfast":1,"gthr":-30,"grange":15,"gexp":1}"#, [0.050024, 0.050003, 0.021313]),
+            ("stripe", r#"{"variant":4,"lf":4,"lfF":80,"lmf":3,"lmfF":800,"hf":-3,"hfF":7000,"cthr":-20,"cratio":4,"crel":0.5,"output":6}"#, [0.115933, 0.115442, 0.022257]),
             ("eq550", r#"{"lf":-6,"lfF":2,"lfPeak":1,"mf":-4,"mfF":1,"hf":8,"hfF":5,"hfPeak":1,"band":1,"output":-3}"#, [0.054618, 0.054618, 0.034231]),
             ("comp25", r#"{"thr":-18,"ratio":3,"attack":3,"release":3,"knee":1,"thrust":1,"makeup":6}"#, [0.114105, 0.114101, 0.033354]),
             ("comp25", r#"{"thr":-14,"ratio":5,"attack":1,"release":6,"relVar":0.8,"knee":0,"thrust":2,"feedback":1,"makeup":8,"mix":70}"#, [0.141093, 0.141094, 0.042066]),

@@ -10,7 +10,8 @@ export default async (c) => {
   const ctr = async (k) => JSON.parse(await ev(`JSON.stringify((()=>{const e=document.querySelector('.pit-dial[data-k="${k}"]').getBoundingClientRect(); return {x:e.left+e.width/2,y:e.top+e.height/2}})())`));
   const d = await ctr('semi');
   const m = (type, y) => send('Input.dispatchMouseEvent', { type, x: d.x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1 });
-  await m('mousePressed', d.y); for (let i = 1; i <= 6; i++) await m('mouseMoved', d.y - i * 10); await m('mouseReleased', d.y - 60); await sleep(150);
+  await m('mousePressed', d.y); for (let i = 1; i <= 12; i++) await m('mouseMoved', d.y - i * 10); await m('mouseReleased', d.y - 120);   // sensibilité douce (11/11) : 24 px par demi-ton
+  await sleep(150);
   ok(await semi() === 5, 'cadran glissé vers le haut : +5 (' + await semi() + ')');
   await ev(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'z',code:'KeyZ',metaKey:true,bubbles:true}))`); await sleep(200);
   ok(await semi() === 0, '⌘Z : retour à 0 en une fois');
@@ -19,14 +20,14 @@ export default async (c) => {
   ok(await semi() === -12, 'saut Octave −');
   const f = await ctr('formant');
   const fm = (type, y) => send('Input.dispatchMouseEvent', { type, x: f.x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1 });
-  await fm('mousePressed', f.y); for (let i = 1; i <= 6; i++) await fm('mouseMoved', f.y + i * 6); await fm('mouseReleased', f.y + 36); await sleep(150);
+  await fm('mousePressed', f.y); for (let i = 1; i <= 12; i++) await fm('mouseMoved', f.y + i * 6); await fm('mouseReleased', f.y + 72); await sleep(150);
   const fo = await J(ev, `return state.project.tracks[0].effectParams.pitch.formant`);
   ok(fo === -3, 'cadran Formant glissé vers le bas : −3 (' + fo + ')');
   ok(await semi() === -12, 'le Formant ne touche pas la hauteur');
   await ev(`document.querySelector('.pit-panel .pit-jump[data-v="7"]').click()`); await sleep(100);
   ok(await semi() === 7, 'saut Quinte +');
   await shot('/private/tmp/claude-501/qa/pitch-1.jpg');
-  await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: d.x, y: d.y, deltaX: 0, deltaY: -100 }); await sleep(150);
+  await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: d.x, y: d.y, deltaX: 0, deltaY: -50 }); await sleep(150);   // molette proportionnelle (11/11) : 50 px = 1 cran
   ok(await semi() === 8, 'molette : +1');
   await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: d.x, y: d.y, button: 'left', buttons: 1, clickCount: 2 }); await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: d.x, y: d.y, button: 'left', clickCount: 2 }); await sleep(150);
   ok(await semi() === 0, 'double-clic : voix d\'origine');

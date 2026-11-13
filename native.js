@@ -99,7 +99,17 @@ window.PulseNative = (function () {
     // volumes, pan, mute / solo… changés pendant la lecture : le moteur les prend en direct, sans relancer
     const mix = (project) => isAvailable() ? core().invoke('native_mix', { json: JSON.stringify(project) }) : Promise.resolve();
     // réglages d'effets tournés pendant la lecture : [groupe ?, indice, effet, réglage, valeur] — appliqués en direct, sans reconstruire
-    const fxLive = (items) => isAvailable() ? core().invoke('native_fx_live', { items }) : Promise.resolve();
+    // (6e valeur = d'où part le bouton, pour glisser.) Une appli plus ancienne refuse les 6 valeurs : on renvoie les 5 premières
+    // et on le retient (`liveFull` = false) — la page et l'appli ne se mettent pas à jour au même moment
+    let liveFull = null;
+    const fxLive = (items) => {
+        if (!isAvailable()) return Promise.resolve();
+        if (liveFull === false) return core().invoke('native_fx_live', { items: items.map(i => i.slice(0, 5)) });
+        return core().invoke('native_fx_live', { items }).then((r) => { liveFull = true; return r; }, (e) => {
+            if (liveFull === true) throw e;
+            return core().invoke('native_fx_live', { items: items.map(i => i.slice(0, 5)) }).then((r) => { liveFull = false; return r; });
+        });
+    };
     // Boucle posée / changée / enlevée pendant la lecture
     const loop = (l) => isAvailable() ? core().invoke('native_loop', { lp: l ? [l.a, l.b] : null }) : Promise.resolve();
     // Position dans le morceau, niveaux pour les vumètres, boucle tenue par le moteur
@@ -127,7 +137,7 @@ window.PulseNative = (function () {
     };
     // le canal est testé dès le chargement (quelques ms), avant la première lecture
     if (isAvailable()) setTimeout(() => { rawWorks().catch(() => {}); }, 0);
-    return { get available() { return isAvailable(); }, get chunked() { return rawOk === false; }, render, play, swap, scope, stop, mix, fxLive, loop, live, info, isEnabled, setEnabled, monitor, sendBytes, readBytes, onError: null };
+    return { get available() { return isAvailable(); }, get chunked() { return rawOk === false; }, render, play, swap, scope, stop, mix, fxLive, get liveFull() { return liveFull; }, loop, live, info, isEnabled, setEnabled, monitor, sendBytes, readBytes, onError: null };
 })();
 
 // Claviers MIDI dans l'appli : la fenêtre n'a pas « Web MIDI », on lui prête la même interface avec CoreMIDI (Rust).

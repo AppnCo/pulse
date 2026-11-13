@@ -5,7 +5,7 @@
 // DSP pur (Float32Array), sans dépendance : tourne dans le navigateur comme dans Node (tests).
 
 (function(root) {
-    const HOP_SEC = 0.01;          // une mesure de note toutes les 10 ms
+    const HOP_SEC = 0.005;         // une mesure de note toutes les 5 ms
     const F_MIN = 70, F_MAX = 800; // étendue d'une voix (Hz)
     // Type de voix : où chercher la note (évite de confondre une voix grave avec son octave, etc.)
     const VOICE_RANGE = { high: [150, 1100], mid: [70, 800], low: [50, 450] };
@@ -14,7 +14,9 @@
 
     const tick = () => new Promise(r => setTimeout(r, 0));
 
-    // --- 1. Suivi de la note : f0[i] en Hz toutes les 10 ms (0 = pas de note : souffle, consonne, silence)
+    // --- 1. Suivi de la note : f0[i] en Hz toutes les 5 ms (0 = pas de note : souffle, consonne, silence)
+    // À chaque instant on garde PLUSIEURS notes possibles (creux de la fonction YIN), puis on choisit le chemin
+    // le plus régulier sur toute la prise (Viterbi) : plus de saut d'octave ni de trou d'une trame au milieu d'une note.
     async function trackPitch(x, sr, onProgress, voice) {
         const [fMin, fMax] = VOICE_RANGE[voice] || [F_MIN, F_MAX];
         // Copie allégée (~16 kHz) : la détection n'a pas besoin des aigus
@@ -28,20 +30,24 @@
             y[i] = s / D;
         }
         const W = Math.round(0.03 * sr2);
-        const tauMin = Math.floor(sr2 / fMax), tauMax = Math.ceil(sr2 / fMin);
-        const hop = Math.round(HOP_SEC * sr2);
-        const frames = Math.max(0, Math.floor((n2 - W - tauMax) / hop));
-        const f0 = new Float32Array(Math.ceil(x.length / (HOP_SEC * sr)) + 1);
+        const tauMin = Math.max(2, Math.floor(sr2 / fMax)), tauMax = Math.ceil(sr2 / fMin);
+        const nF = Math.ceil(x.length / (HOP_SEC * sr)) + 1;
+        const f0 = new Float32Array(nF);
         const d = new Float32Array(tauMax + 2);
+        const K = 6;                                   // notes possibles gardées par trame
+        const candF = new Float32Array(nF * K), candC = new Float32Array(nF * K), candN = new Uint8Array(nF);
+        const half = (W + tauMax + 1) >> 1;
+        const lg = Math.log2;
 
-        for (let f = 0; f < frames; f++) {
-            const a = f * hop;
+        for (let f = 0; f < nF; f++) {
+            const a = Math.round(f * HOP_SEC * sr2) - half;   // fenêtre centrée sur l'instant f
+            if (a < 0 || a + W + tauMax + 1 >= n2) continue;
             let energy = 0;
             for (let j = 0; j < W; j++) energy += y[a + j] * y[a + j];
             if (energy / W < 1e-6) continue; // silence
 
             // Fonction de différence normalisée (YIN)
-            let run = 0, best = -1;
+            let run = 0;
             d[0] = 1;
             for (let tau = 1; tau <= tauMax + 1; tau++) {
                 let sum = 0;
@@ -49,41 +55,53 @@
                 run += sum;
                 d[tau] = run > 0 ? sum * tau / run : 1;
             }
-            for (let tau = tauMin; tau <= tauMax; tau++) {
-                if (d[tau] < 0.15) {
-                    while (tau + 1 <= tauMax && d[tau + 1] < d[tau]) tau++;
-                    best = tau;
-                    break;
-                }
+            // Tous les creux crédibles
+            let nc = 0;
+            for (let tau = Math.max(2, tauMin); tau <= tauMax; tau++) {
+                if (d[tau] >= 0.5 || d[tau] > d[tau - 1] || d[tau] >= d[tau + 1]) continue;
+                const p = d[tau - 1], q = d[tau], r = d[tau + 1], den = p - 2 * q + r;
+                const shift = den !== 0 ? Math.max(-1, Math.min(1, 0.5 * (p - r) / den)) : 0;
+                const hz = sr2 / (tau + shift);
+                // À qualité égale on préfère la période courte (sinon on tombe une octave trop bas)
+                const cost = q + 0.03 * lg(tau / tauMin);
+                let slot = nc < K ? nc++ : -1;
+                if (slot < 0) { let w = 0; for (let k = 1; k < K; k++) if (candC[f * K + k] > candC[f * K + w]) w = k; if (candC[f * K + w] > cost) slot = w; }
+                if (slot >= 0) { candF[f * K + slot] = hz; candC[f * K + slot] = cost; }
             }
-            if (best < 0) {
-                // Pas de creux franc : on prend le meilleur s'il reste crédible
-                let m = tauMin;
-                for (let tau = tauMin; tau <= tauMax; tau++) if (d[tau] < d[m]) m = tau;
-                if (d[m] < 0.3) best = m;
-            }
-            if (best > 0) {
-                // Affinage parabolique
-                const p = d[best - 1], q = d[best], r = d[best + 1];
-                const den = p - 2 * q + r;
-                const shift = den !== 0 ? 0.5 * (p - r) / den : 0;
-                const centerSec = (a + W / 2) / sr2;
-                const idx = Math.round(centerSec / HOP_SEC);
-                if (idx < f0.length) f0[idx] = sr2 / (best + Math.max(-1, Math.min(1, shift)));
-            }
-            if (f % 150 === 0) { if (onProgress) onProgress(0.7 * f / frames); await tick(); }
+            candN[f] = nc;
+            if (f % 300 === 0) { if (onProgress) onProgress(0.7 * f / nF); await tick(); }
         }
 
-        // Filtre médian (5 points) : supprime les sauts d'octave isolés
-        const out = new Float32Array(f0.length);
-        const win = [];
-        for (let i = 0; i < f0.length; i++) {
-            win.length = 0;
-            for (let k = -2; k <= 2; k++) { const v = f0[i + k]; if (v > 0) win.push(v); }
-            if (f0[i] > 0 && win.length >= 3) { win.sort((p, q) => p - q); out[i] = win[win.length >> 1]; }
-            else out[i] = win.length >= 4 ? win.sort((p, q) => p - q)[win.length >> 1] : f0[i];
+        // Chemin le plus régulier : état K = « pas de note »
+        const UNV = 0.22, SWITCH = 0.14, JUMP = 0.7;
+        const S = K + 1, INF = 1e9;
+        let prev = new Float64Array(S).fill(INF), cur = new Float64Array(S);
+        prev[K] = 0;
+        const back = new Uint8Array(nF * S);
+        for (let f = 0; f < nF; f++) {
+            const nc = candN[f];
+            for (let s = 0; s < S; s++) {
+                if (s < K && s >= nc) { cur[s] = INF; continue; }
+                const em = s === K ? UNV : candC[f * K + s];
+                let best = INF, arg = K;
+                const np = f ? candN[f - 1] : 0;
+                for (let q = 0; q < S; q++) {
+                    if (q < K && q >= np) continue;
+                    let tr;
+                    if (s === K) tr = q === K ? 0 : SWITCH;
+                    else if (q === K) tr = SWITCH;
+                    else tr = Math.min(1, JUMP * Math.abs(lg(candF[f * K + s] / candF[(f - 1) * K + q])));
+                    const c = prev[q] + tr;
+                    if (c < best) { best = c; arg = q; }
+                }
+                cur[s] = best + em; back[f * S + s] = arg;
+            }
+            const t = prev; prev = cur; cur = t;
         }
-        return out;
+        let s = 0;
+        for (let q = 1; q < S; q++) if (prev[q] < prev[s]) s = q;
+        for (let f = nF - 1; f >= 0; f--) { f0[f] = s === K ? 0 : candF[f * K + s]; s = back[f * S + s]; }
+        return f0;
     }
 
     const hzToMidi = (hz) => 69 + 12 * Math.log2(hz / 440);
@@ -248,80 +266,147 @@
         const alphaOf = (t) => t <= 0.0005 ? 1 : 1 - Math.exp(-HOP_SEC / t);
         const alpha = alphaOf(tau);
         root = toMask(root);
+        const N = f0.length, midi = new Float32Array(N), trend = new Float32Array(N), steady = new Float32Array(N);
+        for (let i = 0; i < N; i++) midi[i] = f0[i] > 0 ? hzToMidi(f0[i]) : 0;
         // Tendance de la note (moyenne sur ~150 ms) : ce qui dépasse autour, c'est le vibrato
-        const midi = new Float32Array(f0.length), trend = new Float32Array(f0.length);
-        for (let i = 0; i < f0.length; i++) midi[i] = f0[i] > 0 ? hzToMidi(f0[i]) : 0;
-        if (vib > 0) for (let i = 0; i < f0.length; i++) {
+        const TR = Math.round(0.075 / HOP_SEC), ST = Math.round(0.03 / HOP_SEC);
+        const tmp = [];
+        for (let i = 0; i < N; i++) {
             if (f0[i] <= 0) continue;
-            let s = 0, k = 0; for (let j = i - 7; j <= i + 7; j++) if (j >= 0 && j < f0.length && f0[j] > 0) { s += midi[j]; k++; }
-            trend[i] = s / k;
+            if (vib > 0) { let s = 0, k = 0; for (let j = i - TR; j <= i + TR; j++) if (j >= 0 && j < N && f0[j] > 0) { s += midi[j]; k++; } trend[i] = s / k; }
+            // Hauteur « posée » (médiane sur 60 ms) : c'est elle qui choisit la note, pas un écart d'un instant
+            tmp.length = 0;
+            for (let j = i - ST; j <= i + ST; j++) if (j >= 0 && j < N && f0[j] > 0) tmp.push(midi[j]);
+            tmp.sort((p, q) => p - q); steady[i] = tmp[tmp.length >> 1];
         }
-        let cur = 0, sumAbs = 0, voiced = 0, lastTarget = null, held = 0;
-        for (let i = 0; i < f0.length; i++) {
-            if (f0[i] <= 0) { ratio[i] = 1; held = 0; continue; }
-            const m = midi[i], base = vib > 0 ? trend[i] : m;
+        const GAP = Math.round(0.06 / HOP_SEC);   // au-delà de 60 ms sans note, c'est une nouvelle note : la correction repart de zéro
+        // Notes posées à la main dans le graphique : [{ t0, t1 (secondes), note (demi-tons MIDI) }] — elles passent avant la gamme
+        const force = new Float32Array(N).fill(NaN);
+        for (const e of (more.edits || [])) {
+            if (!e || !Number.isFinite(e.note)) continue;
+            const a = Math.max(0, Math.round(e.t0 / HOP_SEC)), b = Math.min(N, Math.round(e.t1 / HOP_SEC));
+            for (let i = a; i < b; i++) force[i] = e.note;
+        }
+        // Les notes trouvées (un bloc par note tenue) : pour le graphique
+        const notes = []; let seg = null;
+        const closeSeg = () => { if (seg) { notes.push(seg); seg = null; } };
+        let cur = 0, sumAbs = 0, voiced = 0, lastTarget = null, held = 0, gap = GAP + 1;
+        for (let i = 0; i < N; i++) {
+            if (f0[i] <= 0) { ratio[i] = 1; gap++; if (gap > GAP) { held = 0; lastTarget = null; closeSeg(); } continue; }
+            if (gap > GAP) cur = 0;
+            gap = 0;
+            const m = midi[i], base = vib > 0 ? trend[i] : m, pick = vib > 0 ? trend[i] : steady[i];
             // Hystérésis : on ne change de note cible que si on s'en éloigne franchement (évite le gargouillis)
-            let target = snapMidi(base, root);
-            if (lastTarget !== null && target !== lastTarget && Math.abs(base - lastTarget) < 0.62 && snapMidi(lastTarget, root) === lastTarget) target = lastTarget;
+            let target = snapMidi(pick, root);
+            if (lastTarget !== null && target !== lastTarget && Math.abs(pick - lastTarget) < 0.62 && snapMidi(lastTarget, root) === lastTarget) target = lastTarget;
+            const forced = force[i] === force[i];
+            if (forced) target = force[i];
             held = target === lastTarget ? held + 1 : 0;
             lastTarget = target;
+            if (seg && seg.note === target && seg.forced === forced) seg.i1 = i; else { closeSeg(); seg = { i0: i, i1: i, note: target, forced }; }
             // Vibrato : la note visée suit le vibrato de la voix (0 = corrigé à plat comme avant, 1 = gardé entier)
             let want = target + vib * (m - base) - m;          // demi-tons
             // Souplesse : loin de la note (plus d'un demi-ton près), on laisse la voix libre
-            if (flex > 0) { const d = Math.abs(target - base), win = 0.5 * (1 - flex) + 0.02; if (d > win) want *= Math.max(0, 1 - (d - win) / 0.15); }
+            if (flex > 0 && !forced) { const d = Math.abs(target - base), win = 0.5 * (1 - flex) + 0.02; if (d > win) want *= Math.max(0, 1 - (d - win) / 0.15); }
             // Humain : plus la note dure, plus la correction ralentit (jusqu'à +0,35 s de glissement)
             const a = human > 0 ? alphaOf(tau + human * 0.35 * Math.min(1, held * HOP_SEC / 0.4)) : alpha;
             cur += (want - cur) * a;
             ratio[i] = Math.pow(2, cur / 12);
             sumAbs += Math.abs(cur); voiced++;
         }
-        return { ratio, voicedPct: f0.length ? voiced / f0.length : 0, avgCents: voiced ? 100 * sumAbs / voiced : 0 };
+        closeSeg();
+        return { ratio, notes, voicedPct: N ? voiced / N : 0, avgCents: voiced ? 100 * sumAbs / voiced : 0 };
     }
 
     // --- 3. Recalage période par période (TD-PSOLA)
-    function psola(x, sr, f0, ratio) {
+    // Repères : un par période de la voix. On les pose en comparant chaque période à la précédente (corrélation),
+    // pas sur « le pic le plus haut » : deux pics voisins de même hauteur faisaient sauter le repère → voix rauque.
+    // Les repères se calculent une fois (sur le mono) et servent aux deux canaux : la stéréo reste en phase.
+    function pitchMarks(x, sr, f0) {
+        const n = x.length, hopS = HOP_SEC * sr, U = Math.round(0.005 * sr);
+        const nF = f0.length;
+        const f0At = (pos) => {
+            const t = pos / hopS, i = Math.max(0, Math.min(nF - 1, Math.floor(t))), j = Math.min(nF - 1, i + 1), u = t - i;
+            const a = f0[i], b = f0[j];
+            if (a > 0 && b > 0) return a * Math.pow(b / a, Math.max(0, Math.min(1, u)));
+            return u < 0.5 ? a : b;
+        };
+        const marks = [], voiced = [];
+        const seg = [];
+        const corrAt = (m, c, h) => {       // ressemblance entre la période autour de m et celle autour de c
+            let ab = 0, aa = 0, bb = 0;
+            for (let k = -h; k <= h; k++) { const u = x[m + k] || 0, v = x[c + k] || 0; ab += u * v; aa += u * u; bb += v * v; }
+            return aa > 0 && bb > 0 ? ab / Math.sqrt(aa * bb) : 0;
+        };
+        const step = (m, dir) => {          // repère suivant (dir = 1) ou précédent (dir = -1)
+            const f = f0At(m); if (!(f > 0)) return -1;
+            let T = sr / f;
+            const f2 = f0At(m + dir * T); if (f2 > 0) T = 0.5 * (T + sr / f2);
+            const h = Math.max(4, Math.round(T / 2)), lo = Math.round(0.8 * T), hi = Math.round(1.2 * T);
+            let best = Math.round(T), bc = -2;
+            for (let L = lo; L <= hi; L++) {
+                const c = m + dir * L; if (c - h < 0 || c + h >= n) continue;
+                const v = corrAt(m, c, h) - 0.25 * Math.abs(L - T) / T;   // à ressemblance égale, on reste près de la période mesurée
+                if (v > bc) { bc = v; best = L; }
+            }
+            return m + dir * (bc > 0.3 ? best : Math.round(T));
+        };
+        let pos = 0;
+        while (pos < n) {
+            if (!(f0At(pos) > 0)) { marks.push(pos); voiced.push(false); pos += U; continue; }
+            // Passage chanté : de pos jusqu'à la fin de la note
+            let end = pos;
+            while (end < n && f0At(end) > 0) end += Math.max(1, Math.round(hopS / 2));
+            end = Math.min(n, end);
+            // Départ : le plus grand pic de la partie la plus forte du passage
+            let pk = pos, pv = 0, sgn = 1;
+            for (let k = pos; k < end; k++) { const v = Math.abs(x[k]); if (v > pv) { pv = v; pk = k; sgn = x[k] < 0 ? -1 : 1; } }
+            seg.length = 0; seg.push(pk);
+            for (let m = pk; ;) { const c = step(m, 1); if (c < 0 || c >= end || c <= m) break; seg.push(c); m = c; }
+            for (let m = pk; ;) { const c = step(m, -1); if (c < 0 || c < pos || c >= m) break; seg.unshift(c); m = c; }
+            // Raccord avec ce qui précède : pas de repère collé au précédent
+            const last = marks.length ? marks[marks.length - 1] : -1e9;
+            for (const m of seg) if (m - last >= 8 && (!marks.length || m > marks[marks.length - 1])) { marks.push(m); voiced.push(true); }
+            const T = sr / (f0At(seg[seg.length - 1]) || 200);
+            pos = Math.max(pos + 1, Math.round(seg[seg.length - 1] + T));
+        }
+        return { marks, voiced };
+    }
+
+    function psola(x, sr, f0, ratio, pm) {
         const n = x.length;
         const y = new Float32Array(n);
         const hopS = HOP_SEC * sr;
-        const UNVOICED_T = Math.round(0.005 * sr);
-        const f0At = (pos) => { const i = Math.min(f0.length - 1, Math.max(0, Math.round(pos / hopS))); return f0[i]; };
-        const ratioAt = (pos) => { const i = Math.min(ratio.length - 1, Math.max(0, Math.round(pos / hopS))); return ratio[i]; };
-
-        // Repères d'analyse : un par période, calé sur le pic local de l'onde
-        const marks = [], periods = [], isVoiced = [];
-        let pos = 0;
-        while (pos < n) {
-            const f = f0At(pos);
-            if (f > 0) {
-                const T = Math.max(8, Math.round(sr / f));
-                const from = Math.max(0, Math.round(pos - 0.3 * T)), to = Math.min(n - 1, Math.round(pos + 0.3 * T));
-                let peak = from;
-                for (let k = from; k <= to; k++) if (x[k] > x[peak]) peak = k;
-                if (marks.length && peak <= marks[marks.length - 1]) peak = Math.round(pos);
-                marks.push(peak); periods.push(T); isVoiced.push(true);
-                pos = peak + T;
-            } else {
-                marks.push(Math.round(pos)); periods.push(UNVOICED_T); isVoiced.push(false);
-                pos += UNVOICED_T;
-            }
-        }
-        if (!marks.length) return x.slice();
-
+        const { marks, voiced } = pm || pitchMarks(x, sr, f0);
+        const M = marks.length;
+        if (!M) return x.slice();
+        const ratioAt = (pos) => {        // correction lissée entre deux mesures (pas d'escalier toutes les 5 ms)
+            const t = pos / hopS, i = Math.max(0, Math.min(ratio.length - 1, Math.floor(t))), j = Math.min(ratio.length - 1, i + 1);
+            return ratio[i] + (ratio[j] - ratio[i]) * Math.max(0, Math.min(1, t - i));
+        };
+        const U = Math.round(0.005 * sr);
+        const left = (a) => a > 0 ? marks[a] - marks[a - 1] : U, right = (a) => a + 1 < M ? marks[a + 1] - marks[a] : U;
         // Synthèse : on rejoue les périodes au nouvel écartement
-        let ts = 0, a = 0;
-        while (ts < n) {
-            while (a + 1 < marks.length && Math.abs(marks[a + 1] - ts) <= Math.abs(marks[a] - ts)) a++;
-            const T = periods[a];
-            const r = isVoiced[a] ? Math.max(0.5, Math.min(2, ratioAt(ts))) : 1;
-            const m = marks[a];
-            const center = Math.round(ts);
-            const g = 1 / r; // plus de recouvrement quand on monte → on compense le volume
-            for (let k = -T; k <= T; k++) {
+        let ts = marks[0], a = 0;
+        // avant le premier repère : copie
+        for (let i = 0; i < Math.min(n, marks[0]); i++) y[i] = x[i];
+        let first = true;
+        while (ts < n && a < M) {
+            while (a + 1 < M && Math.abs(marks[a + 1] - ts) < Math.abs(marks[a] - ts)) a++;
+            let r = 1, center = Math.round(ts);
+            if (voiced[a]) r = Math.max(0.5, Math.min(2, ratioAt(ts)));
+            else { center = marks[a]; }     // souffle, consonne : remis exactement à sa place, sans y toucher
+            const m = marks[a], Tl = left(a), Tr = right(a);
+            const g = r > 1 ? 1 / r : 1;    // plus de recouvrement quand on monte → on compense le volume
+            const k0 = first ? 0 : -Tl; first = false;
+            for (let k = k0; k < Tr; k++) {
                 const si = m + k, di = center + k;
                 if (si < 0 || si >= n || di < 0 || di >= n) continue;
-                y[di] += x[si] * (0.5 + 0.5 * Math.cos(Math.PI * k / T)) * g;
+                const w = k < 0 ? 0.5 + 0.5 * Math.cos(Math.PI * k / Tl) : 0.5 + 0.5 * Math.cos(Math.PI * k / Tr);
+                y[di] += x[si] * w * g;
             }
-            ts += T / r;
+            if (voiced[a]) ts += Tr / r;
+            else { ts = a + 1 < M ? marks[a + 1] : n; }
         }
         return y;
     }
@@ -338,15 +423,16 @@
         const f0 = await trackPitch(mono, sr, onProgress, opts.voice);
         // opts.notes (12 cases, choisies au clavier ou lues sur l'instru) passe avant tout
         const root = opts.notes ? null : (opts.root === 'auto' || opts.root === undefined ? detectKey(f0) : opts.root);
-        const { ratio, voicedPct, avgCents } = correctionCurve(f0, opts.notes || root, opts.strength ?? 1, { human: opts.human, flex: opts.flex, vibrato: opts.vibrato });
+        const { ratio, notes, voicedPct, avgCents } = correctionCurve(f0, opts.notes || root, opts.strength ?? 1, { human: opts.human, flex: opts.flex, vibrato: opts.vibrato, edits: opts.edits });
+        const pm = pitchMarks(mono, sr, f0);
         const out = [];
         for (let c = 0; c < channels.length; c++) {
-            out.push(psola(channels[c], sr, f0, ratio));
+            out.push(psola(channels[c], sr, f0, ratio, pm));
             if (onProgress) onProgress(0.7 + 0.3 * (c + 1) / channels.length);
             await tick();
         }
-        return { channels: out, root, voicedPct, avgCents };
+        return { channels: out, root, voicedPct, avgCents, f0, ratio, notes, hop: HOP_SEC };
     }
 
-    root.PulseTune = { process, trackPitch, detectKey, detectKeyFromMusic, chroma, toMask, scaleName, correctionCurve, psola, keyLabel, NOTE_NAMES };
+    root.PulseTune = { process, trackPitch, detectKey, detectKeyFromMusic, chroma, toMask, scaleName, correctionCurve, psola, pitchMarks, keyLabel, NOTE_NAMES };
 })(typeof window !== 'undefined' ? window : globalThis);
