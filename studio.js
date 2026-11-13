@@ -6699,7 +6699,8 @@ async function detectProjectKey(exceptTrackIdx) {
 
 // « A mineur (Am) » : notes en lettres (notation anglaise), comme sur les autres Auto-Tune
 function scaleLabel(tonic, minor) {
-    return `${PulseTune.NOTE_NAMES[tonic]} ${minor ? 'mineur' : 'majeur'} (${PulseTune.NOTE_NAMES[tonic]}${minor ? 'm' : ''})`;
+    const n = PulseTune.keyName(tonic, minor);
+    return `${n} ${minor ? 'mineur' : 'majeur'} (${n}${minor ? 'm' : ''})`;
 }
 // Les 7 notes d'une gamme majeure ou mineure
 const scaleMask = (tonic, minor) => PulseTune.toMask(minor ? (tonic + 3) % 12 : tonic);

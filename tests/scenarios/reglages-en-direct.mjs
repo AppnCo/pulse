@@ -45,7 +45,7 @@ export default async (c) => {
         aA.getFloatTimeDomainData(xa); aD.getFloatTimeDomainData(xd);
         const before = rms(xd) / Math.max(1e-9, rms(xa));
         B.port.postMessage({ live: { [key]: v1 } });
-        await new Promise(r => setTimeout(r, ['techo', 'hall80', 'plate', 'slapback', 'doubler'].includes(kind) ? 4500 : 1800));
+        await new Promise(r => setTimeout(r, ['techo', 'hall80', 'plate', 'slapback', 'doubler', 'h910'].includes(kind) ? 4500 : 1800));
         aA.getFloatTimeDomainData(xa); aD.getFloatTimeDomainData(xd);
         let after = rms(xd) / Math.max(1e-9, rms(xa));
         // Réglages de vitesse / hauteur : l'oscillation garde sa phase en direct (normal) → on compare le spectre moyen, pas la forme d'onde

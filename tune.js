@@ -126,8 +126,12 @@
         return bestRoot;
     }
 
+    // Nom d'une tonalité, écrit comme sur une partition : Eb majeur (pas D#), Bb mineur (pas A#), mais C# mineur
+    const KEY_MAJ = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'];
+    const KEY_MIN = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'G#', 'A', 'Bb', 'B'];
+    function keyName(tonic, minor) { return (minor ? KEY_MIN : KEY_MAJ)[((tonic % 12) + 12) % 12]; }
     function keyLabel(root) {
-        return `${NOTE_NAMES[root]} majeur / ${NOTE_NAMES[(root + 9) % 12]} mineur`;
+        return `${keyName(root, false)} majeur / ${keyName((root + 9) % 12, true)} mineur`;
     }
 
     // Notes autorisées : tableau de 12 cases (Do, Do#, … Si), vrai = la voix a le droit de s'y poser.
@@ -248,11 +252,16 @@
         const majorRoot = best.minor ? (best.tonic + 3) % 12 : best.tonic;
         // Confiance : écart avec la meilleure gamme qui n'utilise pas les mêmes notes
         const other = scores.find(k => (k.minor ? (k.tonic + 3) % 12 : k.tonic) !== majorRoot);
-        const confidence = Math.max(0, Math.min(1, (best.s - (other ? other.s : 0)) * 4)) * (best.s > 0.4 ? 1 : 0.4);
+        // Du bruit (souffle, batterie, vent) remplit les 12 notes presque pareil : sans relief, aucune gamme n'est crédible
+        let cm = 0, cs = 0;
+        for (let i = 0; i < 12; i++) cm += ch[i] / 12;
+        for (let i = 0; i < 12; i++) cs += (ch[i] - cm) * (ch[i] - cm) / 12;
+        const relief = Math.max(0, Math.min(1, ((cm ? Math.sqrt(cs) / cm : 0) - 0.15) / 0.15));
+        const confidence = Math.max(0, Math.min(1, (best.s - (other ? other.s : 0)) * 4)) * (best.s > 0.4 ? 1 : 0.4) * relief;
         return { tonic: best.tonic, minor: best.minor, notes: toMask(majorRoot), confidence };
     }
 
-    function scaleName(tonic, minor) { return `${NOTE_NAMES[tonic]} ${minor ? 'mineur' : 'majeur'}`; }
+    function scaleName(tonic, minor) { return `${keyName(tonic, minor)} ${minor ? 'mineur' : 'majeur'}`; }
 
     // --- 2. Correction voulue à chaque instant, en rapport de fréquence (1 = on ne touche pas)
     // strength : 0 = très naturel (la correction glisse doucement) … 1 = effet robot (saut immédiat)
@@ -434,5 +443,5 @@
         return { channels: out, root, voicedPct, avgCents, f0, ratio, notes, hop: HOP_SEC };
     }
 
-    root.PulseTune = { process, trackPitch, detectKey, detectKeyFromMusic, chroma, toMask, scaleName, correctionCurve, psola, pitchMarks, keyLabel, NOTE_NAMES };
+    root.PulseTune = { process, trackPitch, detectKey, detectKeyFromMusic, chroma, toMask, scaleName, correctionCurve, psola, pitchMarks, keyLabel, keyName, NOTE_NAMES };
 })(typeof window !== 'undefined' ? window : globalThis);
