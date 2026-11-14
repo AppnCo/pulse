@@ -323,6 +323,7 @@ Object.assign(exact, { 'Courbe': 'Curve', 'Copier la courbe affichée': 'Copy th
   'Comme le réglage de Logic : quand tu déplaces une région, les points d\'automation de sa piste sous cette région partent avec elle (aussi vers une autre piste). Éteint : les courbes restent où elles sont.': 'Like the Logic setting: when you move a region, the automation points of its track under that region go with it (also to another track). Off: the curves stay where they are.',
   // EQ pro (24/10)
   'Plateau grave': 'Low shelf', 'Plateau aigu': 'High shelf', 'Encoche': 'Notch', 'Pente': 'Slope', 'Résonance': 'Resonance', 'Fréq.': 'Freq.',
+  '→ Sortie': '→ Output',
   'Analyseur': 'Analyzer', 'Auto gain': 'Auto gain', 'Sortie': 'Output', '+ Point': '+ Point',
   'Pose un point au milieu (ou double-clic sur la courbe)': 'Adds a point in the middle (or double-click the curve)',
   'Le son de la piste derrière la courbe, pendant la lecture': 'The track\'s sound behind the curve, during playback',

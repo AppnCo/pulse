@@ -6174,6 +6174,9 @@ function updateAllVuMeters() {
         if (el) el.style.setProperty('--lvl', (level * 100).toFixed(1) + '%');
         const rail = el?.parentElement;
         if (rail) rail.style.setProperty('--peak', ((_vuPeaks['master']?.peak || 0) * 100).toFixed(1) + '%');
+        // la tranche Master de la table de mixage a le même vumètre que les autres tranches
+        const mrail = document.getElementById('mixMasterVu');
+        if (mrail && mrail.offsetParent) { mrail.style.setProperty('--lvl', (level * 100).toFixed(1) + '%'); mrail.style.setProperty('--peak', ((_vuPeaks['master']?.peak || 0) * 100).toFixed(1) + '%'); }
     }
     // Indicateur de niveau pendant l'enregistrement
     if (state.recording && state._livingClip) {
@@ -17438,7 +17441,7 @@ function addFaderScales(root) {
     if (typeof orig !== 'function') return;
     window[name] = function () {
         const r = orig.apply(this, arguments);
-        try { addFaderScales(name === 'renderMixer' ? document.getElementById('mixerStrips') : document.getElementById('inspector')); } catch (e) { console.warn('graduation fader', e); }
+        try { addFaderScales(name === 'renderMixer' ? document.getElementById('mixerStrips') : document.getElementById('inspector')); if (name === 'renderMixer') addFaderScales(document.querySelector('.mixer-master')); } catch (e) { console.warn('graduation fader', e); }
         return r;
     };
 });

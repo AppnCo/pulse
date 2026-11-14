@@ -3974,7 +3974,9 @@ body[data-left-tool="fade"] .timeline-tracks .clip { cursor: ew-resize; }
 /* faders alignés en bas : la sortie ne prend plus la moitié de l'espace libre */
 .mixer-strips .strip > .strip-output, .strip-master > .strip-output { margin-top: 0; }
 .strip-master .strip-fader-wrap { flex: 0 0 auto; }
-.strip-master .strip-fader-wrap { margin-bottom: 22px; }
+/* Master : même pied que les autres tranches (vumètre, graduation, ligne de sortie) */
+.strip-master .strip-fader-wrap { margin-bottom: 0; }
+.strip-master { width: 84px; }
 .fx-panel .fx-panel-footer { padding-right: 20px; }   /* la poignée d'agrandissement (coin bas droit) ne mord plus sur « Réinitialiser » */
 
 /* Écran de chargement à l'ouverture de l'appli (plugins externes), comme Logic */
