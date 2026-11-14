@@ -256,7 +256,17 @@ fn native_fx_live(player: State<Player>, items: Vec<serde_json::Value>) -> Resul
 /// « eq-swap » = forme de l'EQ changée en marche ; « switches » = pente du Filtre, caractère / relâchement auto du Compresseur,
 /// temps de l'Écho, inversion / mono de l'Utilitaire pris sans reconstruire.
 #[tauri::command]
-fn native_caps() -> Vec<&'static str> { vec!["eq-swap", "switches"] }
+fn native_caps() -> Vec<&'static str> { vec!["eq-swap", "switches", "chain-swap"] }
+
+/// Plugins ajoutés / retirés / déplacés pendant la lecture : `json` = projet à jour, `owners` = [[groupe ?, indice], …] dont la chaîne change.
+/// Le mixeur refait leur chaîne en fondu ; s'il ne peut pas (retard des effets changé, plugin externe…), `native_live` le compte
+/// dans `refused` et la page reconstruit.
+#[tauri::command]
+fn native_chain_swap(player: State<Player>, json: String, owners: Vec<(bool, usize)>) -> Result<(), String> {
+    let project: pulse_engine::model::Project = serde_json::from_str(&json).map_err(|e| format!("projet illisible : {e}"))?;
+    player.chain_swap(project, owners);
+    Ok(())
+}
 
 /// EQ libre refait pendant la lecture (point ajouté / retiré, type, pente, point dynamique) : le moteur échange l'EQ en fondu,
 /// sans reconstruire le projet. `eq` = { bands: [...], out }. Une appli plus ancienne n'a pas cette commande : la page reconstruit.
@@ -275,11 +285,11 @@ fn native_loop(player: State<Player>, lp: Option<(f64, f64)>) {
 
 /// Position dans le morceau + niveaux de ce qu'on entend (vumètres) + boucle tenue par le moteur
 #[derive(serde::Serialize)]
-struct Live { position: f64, playing: bool, looping: bool, levels: Option<pulse_engine::player::Levels> }
+struct Live { position: f64, playing: bool, looping: bool, levels: Option<pulse_engine::player::Levels>, refused: u64 }
 
 #[tauri::command]
 fn native_live(player: State<Player>) -> Live {
-    Live { position: player.position(), playing: player.is_playing(), looping: player.loop_ok(), levels: player.levels() }
+    Live { position: player.position(), playing: player.is_playing(), looping: player.loop_ok(), levels: player.levels(), refused: player.refused() }
 }
 
 /// Spectre d'une fenêtre de plugin : piste (bus=false, indice) ou groupe (bus=true, indice) ; None = plus de spectre
@@ -1100,7 +1110,7 @@ fn main() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![native_render, native_eq_swap, native_caps, ext_cmd::ext_scan, ext_cmd::ext_verdicts, ext_cmd::ext_set_param, ext_cmd::ext_render_notes, ext_cmd::ext_create, ext_cmd::ext_state, ext_cmd::ext_editor, ext_cmd::ext_remove, ext_cmd::ext_loaded, ext_cmd::ext_latencies, ext_cmd::ext_params, ext_cmd::ext_edits, native_info, native_play, native_play_staged, stage_put, save_file_staged, save_download_staged, read_file_part, project_file_size, web_update, migration_state, migration_put, migration_read, migration_done, native_play_project, native_mix, native_fx_live, native_swap, native_loop, native_live, native_scope, native_stop, diag_write, monitor_start, monitor_stop, monitor_gain, monitor_track, monitor_info, midi_ports, midi_start, pick_folder, create_project_folder, project_folder_ok, save_file, reveal_project_folder, take_pending_open, read_pulse_file, import_url, read_import_file, save_download, test_log, test_exit])
+        .invoke_handler(tauri::generate_handler![native_render, native_eq_swap, native_caps, native_chain_swap, ext_cmd::ext_scan, ext_cmd::ext_verdicts, ext_cmd::ext_set_param, ext_cmd::ext_render_notes, ext_cmd::ext_create, ext_cmd::ext_state, ext_cmd::ext_editor, ext_cmd::ext_remove, ext_cmd::ext_loaded, ext_cmd::ext_latencies, ext_cmd::ext_params, ext_cmd::ext_edits, native_info, native_play, native_play_staged, stage_put, save_file_staged, save_download_staged, read_file_part, project_file_size, web_update, migration_state, migration_put, migration_read, migration_done, native_play_project, native_mix, native_fx_live, native_swap, native_loop, native_live, native_scope, native_stop, diag_write, monitor_start, monitor_stop, monitor_gain, monitor_track, monitor_info, midi_ports, midi_start, pick_folder, create_project_folder, project_folder_ok, save_file, reveal_project_folder, take_pending_open, read_pulse_file, import_url, read_import_file, save_download, test_log, test_exit])
         .build(context)
         .expect("Pulse n'a pas pu démarrer la fenêtre")
         .run(|app, event| {

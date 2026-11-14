@@ -2754,6 +2754,25 @@ window.PulseAudio = (function() {
         if (items.length) nativeBackend.fxLive(items).catch(() => nativeRefreshSoon());
         return true;
     }
+    // Plugins ajoutés / retirés / déplacés pendant la lecture (appli du 14/11, capacité « chain-swap ») : le moteur refait la chaîne
+    // des pistes / groupes nommés en fondu de 30 ms, sans reconstruire. S'il refuse (retard des effets changé…), `refused` augmente
+    // dans l'état en direct et on reconstruit (nativeLiveStart).
+    // `old` : { clé du propriétaire : [anciens plugins, anciens réglages] } — un échange qui change le retard des effets
+    // (machine analogique, Pitch) ou touche un plugin externe reconstruit tout de suite, sans passer par le moteur
+    function liveChainSwap(ownerKeys, old = {}) {
+        if (!nativeOn || !nativeProject || !nativeBackend || !nativeBackend.chainSwap || !(nativeBackend.caps || []).includes('chain-swap')) return false;
+        const owners = [], sr = 48000;
+        for (const k of ownerKeys) {
+            let o;
+            if (/^t\d+$/.test(k)) { owners.push([false, +k.slice(1)]); o = (nativeProject.tracks || [])[+k.slice(1)]; }
+            else { const i = (nativeProject.buses || []).findIndex(b => 'b' + b.id === k); if (i < 0) return false; owners.push([true, i]); o = nativeProject.buses[i]; }
+            const [pe, pp] = old[k] || [[], {}];
+            if (!o || [...(o.effects || []), ...pe].some(e => fxType(e) === 'vst')) return false;
+            if (Math.abs(fxLatency(o.effects, o.effectParams, o.automation, sr) - fxLatency(pe, pp, o.automation, sr)) > 1e-9) return false;
+        }
+        nativeBackend.chainSwap(withMetro(nativeProject), owners).catch(() => nativeRefreshSoon());
+        return true;
+    }
     function liveFxSet(ownerKey, id, changed, prev = {}) {
         if (nativeOn) return nativeFxLive(ownerKey, id, changed, prev);
         const kind = String(id).split('#')[0];
@@ -3813,6 +3832,7 @@ window.PulseAudio = (function() {
     // métronome allumé / éteint / mesure changée pendant une lecture native : le moteur le prend en direct
     function metroChanged() { if (nativeOn) nativeMixSoon(); }
     // Ce que le moteur natif renvoie pendant la lecture : position, niveaux (vumètres), boucle tenue par lui
+    let nativeRefused = null;
     let nativeLive = null, nativeLiveTimer = null, nativeLoopOk = false, nativeLoopSent = undefined;
     function nativeLiveStart() {
         clearInterval(nativeLiveTimer);
@@ -3828,6 +3848,8 @@ window.PulseAudio = (function() {
                 if (!nativeOn || !v) return;
                 const now = performance.now();
                 nativeLive = { ...v, at: now };
+                // un échange de plugins que le moteur n'a pas pu faire : on reconstruit (comme avant le 14/11)
+                if (Number.isFinite(v.refused)) { if (nativeRefused !== null && v.refused > nativeRefused) nativeRefreshSoon(); nativeRefused = v.refused; }
                 nativeLoopOk = !!v.looping;
                 // on recale le curseur sur le moteur s'il s'en écarte (tour de boucle, petite dérive d'horloge)
                 if (v.playing) {
@@ -5143,7 +5165,7 @@ window.PulseAudio = (function() {
         debugLive: () => [...liveNodes].map(([i, n]) => ({ i, name: n.tname, audible: !!n.audible, vol: n.vol, fx: n.tfx, clips: n.tclips })),
         clipSig, liveFxSet,
         debugLiveBuses: () => [...liveBusNodes].map(([id, g]) => ({ id, gain: g.gain.value })),
-        setLiveFail, getTrackAnalyser, getTrackMeters, trackChannelCount, getMasterAnalyser, getTrackSpectrum, getBusSpectrum, getCompReduction, getCompInput, setMasterVolume,
+        setLiveFail, liveChainSwap, getTrackAnalyser, getTrackMeters, trackChannelCount, getMasterAnalyser, getTrackSpectrum, getBusSpectrum, getCompReduction, getCompInput, setMasterVolume,
         setMetronome, setMetronomeBpm, setCountIn, isCountInEnabled,
         startMetronome, stopMetronome, playCountIn, stopCountIn, isCountingIn,
         exportWav, exportTrackWav, renderFreeze, audioBufferToWav, computeNormalizeGain, setLoop, loopScheduled, getRecWraps, getRecLinearPosition,

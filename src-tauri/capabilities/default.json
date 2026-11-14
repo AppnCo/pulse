@@ -28,6 +28,7 @@
     "allow-native-fx-live",
     "allow-native-eq-swap",
     "allow-native-caps",
+    "allow-native-chain-swap",
     "allow-native-swap",
     "allow-native-loop",
     "allow-native-live",

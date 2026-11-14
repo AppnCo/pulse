@@ -308,6 +308,29 @@ struct TrackRt {
     curve: Option<Curve>,
     pan_curve: Option<Curve>,
     pan0: f64,
+    /// Retard des effets de la piste (s) : un échange de plugins en marche doit le garder (sinon tout le calage bouge)
+    lat: f64,
+    /// Ancienne chaîne d'effets qui s'efface après un plugin ajouté / retiré en marche
+    fade: Option<ChainFade>,
+}
+
+/// Chaîne d'effets qui s'efface (fondu de 30 ms) pendant qu'une nouvelle prend sa place
+struct ChainFade { chain: crate::fx::FxChain, left: usize, total: usize }
+impl ChainFade {
+    fn new(chain: crate::fx::FxChain, sr: f64) -> Self { let total = ((0.03 * sr) as usize).max(1); Self { chain, left: total, total } }
+    /// `l` / `r` : sortie de la nouvelle chaîne ; `il` / `ir` : ce qui y est entré. L'ancienne chaîne traite la même entrée, puis fondu.
+    /// Renvoie false quand le fondu est fini.
+    fn mix(&mut self, l: &mut [f32], r: &mut [f32], mut il: Vec<f32>, mut ir: Vec<f32>, mono: bool) -> bool {
+        self.chain.process(&mut il, &mut ir, mono);
+        for m in 0..l.len() {
+            let w = (self.left.saturating_sub(m)) as f32 / self.total as f32;
+            if w <= 0.0 { break; }
+            l[m] = l[m] * (1.0 - w) + il[m] * w;
+            if !r.is_empty() && !ir.is_empty() { r[m] = r[m] * (1.0 - w) + ir[m] * w; }
+        }
+        self.left = self.left.saturating_sub(l.len());
+        self.left > 0
+    }
 }
 
 struct BusRt {
@@ -329,6 +352,8 @@ struct BusRt {
     sends: Vec<SendTap>,
     sends_s: Vec<f32>,
     aux_s: Vec<f32>,
+    lat: f64,
+    fade: Option<ChainFade>,
 }
 
 /// Mixeur bloc par bloc : même calcul que `render`, mais le morceau peut être joué au fil de l'eau
@@ -508,6 +533,7 @@ impl Renderer {
                 clips: rt_clips, force_mono, stereo_in, mono_in, stereo, chain, vol: taps.vol, route_gain: taps.route_gain, dest: taps.dest,
                 sends_s: taps.sends.iter().map(|x| x.1).collect(), aux_s: taps.aux.iter().map(|x| x.0).collect(),
                 sends: taps.sends, aux: taps.aux, curve: taps.curve, pan_curve: taps.pan_curve, pan0: taps.pan0,
+                lat: fx_latency(&track.effects, &track.effect_params, Some(&track.automation), sr), fade: None,
             });
         }
 
@@ -549,6 +575,7 @@ impl Renderer {
                     })
                     .collect(),
                 sends_s: Vec::new(), aux_s: Vec::new(),
+                lat: fx_latency(&bus.effects, &bus.effect_params, Some(&bus.automation), sr), fade: None,
             }
         }).map(|mut b: BusRt| { b.sends_s = b.sends.iter().map(|x| x.1).collect(); b.aux_s = b.aux.iter().map(|x| x.0).collect(); b }).collect();
         let sends = project.sends.iter().map(|sd| (!sd.muted).then(|| crate::fx::SendFx::new(sd, sr, project.bpm))).collect();
@@ -622,8 +649,8 @@ impl Renderer {
         let t = t.max(self.from);
         self.pos = ((t - self.from) * self.sr).round() as usize;
         let t = self.time();
-        for tr in &mut self.tracks { tr.chain.seek(t); }
-        for b in &mut self.buses { b.chain.seek(t); }
+        for tr in &mut self.tracks { tr.chain.seek(t); tr.fade = None; }
+        for b in &mut self.buses { b.chain.seek(t); b.fade = None; }
     }
     /// Pose (ou enlève) la boucle. Refusée (false) si elle commence avant le début du mixeur : il faut alors relancer.
     /// Si la lecture est déjà après la fin de la boucle, on repart tout de suite de son début.
@@ -679,6 +706,36 @@ impl Renderer {
     /// Change en direct volumes, pan, mute / solo, doses d'envoi, volumes et pan des groupes, fader Master — sans relancer :
     /// les effets gardent leur état (une queue de reverb continue). La structure (régions, effets, sorties) doit rester la même :
     /// une piste ou un groupe dont la sortie a changé garde l'ancienne (il faut relancer la lecture pour ça).
+    /// Plugins ajoutés / retirés / déplacés sur des pistes (false, indice) ou groupes (true, indice) pendant la lecture :
+    /// leur chaîne d'effets est refaite et l'ancienne s'efface en 30 ms, sans reconstruire le mixeur (les autres pistes,
+    /// les queues de reverb, la position ne bougent pas). Renvoie false si un échange n'a pas pu se faire (retard des effets
+    /// changé, plugin externe, piste qui passe de mono à stéréo, groupe sans effets jusque-là) : il faut alors reconstruire.
+    pub fn chain_swap(&mut self, project: &Project, media: &Media, owners: &[(bool, usize)]) -> bool {
+        let project = &prepared(project, media, self.base.sample_rate as f64, self.base.only_track.is_some());
+        let (sr, now) = (self.sr, self.time());
+        let ext = |fx: &[String]| fx.iter().any(|e| crate::model::fx_type(e) == "vst");
+        let mut ok = true;
+        for &(bus, idx) in owners {
+            if bus {
+                let (Some(b), Some(def)) = (self.buses.iter_mut().find(|b| b.i == idx), project.buses.get(idx)) else { ok = false; continue };
+                let lat = fx_latency(&def.effects, &def.effect_params, Some(&def.automation), sr);
+                if ext(&def.effects) || b.chain.has_ext() || (lat - b.lat).abs() > 1e-9 { ok = false; continue; }
+                let chain = crate::fx::FxChain::new(&def.effects, &def.effect_params, &def.fx_order, sr, project.bpm, project.ceiling())
+                    .with_auto(&def.automation, now).with_tempo(project.tempo_segments(), now);
+                let old = std::mem::replace(&mut b.chain, chain);
+                b.fade = Some(ChainFade::new(old, sr));
+            } else {
+                let (Some(tr), Some(def)) = (self.tracks.iter_mut().find(|t| t.idx == idx), project.tracks.get(idx)) else { ok = false; continue };
+                let lat = fx_latency(&def.effects, &def.effect_params, Some(&def.automation), sr);
+                if ext(&def.effects) || tr.chain.has_ext() || (lat - tr.lat).abs() > 1e-9 { ok = false; continue; }
+                let chain = crate::fx::FxChain::for_track(def, sr, project.bpm).with_auto(&def.automation, now).with_tempo(project.tempo_segments(), now);
+                if (tr.stereo_in || chain.outputs_stereo()) != tr.stereo { ok = false; continue; }
+                let old = std::mem::replace(&mut tr.chain, chain);
+                tr.fade = Some(ChainFade::new(old, sr));
+            }
+        }
+        ok
+    }
     pub fn mix_from(&mut self, project: &Project, media: &Media) {
         let project = &prepared(project, media, self.base.sample_rate as f64, self.base.only_track.is_some());
         let opts = with_fader(project, &self.base);
@@ -829,7 +886,11 @@ impl Renderer {
             let i = b.i;
             let (mut bl, mut br) = std::mem::take(&mut bus_in[i]);
             done[i] = true;
+            let input = b.fade.is_some().then(|| (bl.clone(), br.clone()));
             b.chain.process(&mut bl, &mut br, false);
+            if let (Some(fd), Some((il, ir))) = (b.fade.as_mut(), input) {
+                if !fd.mix(&mut bl, &mut br, il, ir, false) { b.fade = None; }
+            }
             if let Some(g) = b.chain.comp_gr() { self.grs.push((true, i, g)); }
             if let Some(v) = b.chain.comp_in() { self.cins.push((true, i, v)); }
             for (k, g) in b.chain.analog_gr() { self.agrs.push((true, i, k, g)); }
@@ -976,8 +1037,13 @@ fn track_front(tr: &mut TrackRt, media: &Media, n: usize, sr: f64, from: f64, b0
             }
         }
         // 2. Effets de la piste
+        let input = tr.fade.is_some().then(|| (tl.clone(), trr.clone()));
         if !tr.chain.is_empty() {
             tr.chain.process(&mut tl, &mut trr, tr.mono_in);
+        }
+        // plugin ajouté / retiré en marche : l'ancienne chaîne s'efface
+        if let (Some(fd), Some((il, ir))) = (tr.fade.as_mut(), input) {
+            if !fd.mix(&mut tl, &mut trr, il, ir, tr.mono_in) { tr.fade = None; }
         }
     (tl, trr)
 }

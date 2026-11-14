@@ -49,6 +49,10 @@ struct Shared {
     scope: Option<(bool, usize)>,
     /// Réglages d'effets changés en direct : (groupe ?, indice, effet, réglage, valeur, valeur de départ si connue), pris au bloc suivant, en glissant
     fx_live: Vec<(bool, usize, String, String, f64, Option<f64>)>,
+    /// Plugins ajoutés / retirés pendant la lecture : projet à jour + pistes / groupes dont la chaîne change
+    chain_swap: Vec<(crate::model::Project, Vec<(bool, usize)>)>,
+    /// Échanges de chaîne que le mixeur n'a pas pu faire (la page reconstruit alors)
+    refused: u64,
 }
 
 /// Taille d'un bloc mixé (échantillons)
@@ -161,6 +165,10 @@ impl Player {
     pub fn set_mix(&self, project: crate::model::Project) { *self.mix.lock().unwrap() = Some(project); }
     /// Réglages d'effets tournés pendant la lecture : appliqués en direct au bloc suivant (sans reconstruire, sans craquement)
     pub fn fx_live(&self, items: Vec<(bool, usize, String, String, f64, Option<f64>)>) { self.shared.lock().unwrap().fx_live.extend(items); }
+    /// Plugins ajoutés / retirés / déplacés pendant la lecture : la chaîne des pistes / groupes nommés est refaite en fondu de 30 ms
+    pub fn chain_swap(&self, project: crate::model::Project, owners: Vec<(bool, usize)>) { self.shared.lock().unwrap().chain_swap.push((project, owners)); }
+    /// Nombre d'échanges de chaîne refusés depuis le début de la lecture
+    pub fn refused(&self) -> u64 { self.shared.lock().map(|g| g.refused).unwrap_or(0) }
     /// Remplace le mixeur pendant la lecture (projet changé : effet, réglage de plugin, région…) : même position, même boucle,
     /// fondu enchaîné de 20 ms, sans arrêt ni clac. `renderer` doit partir du début du morceau (il est calé sur la lecture en cours).
     /// Renvoie false si rien ne joue (il faut alors lancer la lecture normalement).
@@ -296,6 +304,8 @@ fn spawn_feeder(mut renderer: Box<Renderer>, mut media: Arc<Media>, ring: Arc<Ri
             if let Some(p) = next { renderer.mix_from(&p, &media); }
             let live = shared.lock().map(|mut g| std::mem::take(&mut g.fx_live)).unwrap_or_default();
             for (bus, idx, fx, key, v, from) in &live { renderer.fx_live_from(*bus, *idx, fx, key, *v, *from); }
+            let cs = shared.lock().map(|mut g| std::mem::take(&mut g.chain_swap)).unwrap_or_default();
+            for (p, owners) in &cs { if !renderer.chain_swap(p, &media, owners) { if let Ok(mut g) = shared.lock() { g.refused += 1; } } }
             let sw = shared.lock().ok().and_then(|mut g| g.swap.take());
             if let Some((nr, nm)) = sw {
                 let old = std::mem::replace(&mut renderer, nr);

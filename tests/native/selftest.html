@@ -87,6 +87,15 @@ const f=document.getElementById('f'); const sleep=ms=>new Promise(r=>setTimeout(
       tr0.effectParams.comp={threshold:-30,ratio:4,mode:2}; w.refreshPlaybackSoon(); await sleep(300);
       w.PulseAudio.play=op; const u2=(await inv('native_info')).underruns;
       log('interrupteurs en marche: reconstructions='+rb2+' capacités='+w.PulseNative.caps.join('+')+' trous='+(u2-u1));
+      // plugin ajouté puis retiré pendant la lecture : le moteur refait la chaîne de la piste, la page ne reconstruit rien
+      { let rb3=0; w.PulseAudio.play=function(){ rb3++; return op.apply(this,arguments); }; const r0=(await inv('native_live')).refused;
+        tr0.effects=tr0.effects.concat(['sat']); tr0.effectParams.sat={drive:40}; w.refreshPlaybackSoon(); await sleep(400);
+        tr0.effects=tr0.effects.filter(e=>e!=='sat'); w.refreshPlaybackSoon(); await sleep(400);
+        // une machine analogique retarde le son : la page reconstruit (normal)
+        tr0.effects=tr0.effects.concat(['fet76']); w.refreshPlaybackSoon(); await sleep(600);
+        w.PulseAudio.play=op; const lvx=await inv('native_live'); const u3=(await inv('native_info')).underruns;
+        log('plugin ajouté en marche: reconstructions='+rb3+' refus='+(lvx.refused-r0)+' trous='+(u3-u1)+' joue='+lvx.playing);
+        tr0.effects=tr0.effects.filter(e=>e!=='fet76'); }
       tr0.effects=tr0.effects.filter(e=>e!=='filter'&&e!=='comp'); } catch(e) { log('eq en marche ERREUR '+(e&&e.message||e)); }
     tr0.effects=tr0.effects.filter(e=>e!=='reverb'&&e!=='comp'&&e!=='gate'&&e!=='deess'&&e!=='mband'&&e!=='limit');
     ST.looping=false; ST.project.tracks[0].volume=100; }

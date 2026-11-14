@@ -8241,15 +8241,30 @@ function liveSnapOf(p) {
     p.tracks.forEach((t, i) => own('t' + i, t));
     (p.buses || []).forEach(b => own('b' + b.id, b));
     const rest = JSON.stringify(p, (k, v) => (k === 'peaks' || k === 'effectParams' || k === 'eqBands' || k === 'proKeep' || k === 'lyrics' || k === 'lyricsMap') ? undefined : v);
-    return { rest, fx };
+    // même chose sans la liste des plugins des pistes / groupes : si seule elle change, le moteur de l'appli refait juste ces chaînes
+    const owners = new Set([...p.tracks, ...(p.buses || [])]);
+    const chains = {};
+    p.tracks.forEach((t, i) => { chains['t' + i] = JSON.stringify([t.effects || [], t.fxOrder || [], !!t.frozen]); });
+    (p.buses || []).forEach(b => { chains['b' + b.id] = JSON.stringify([b.effects || [], b.fxOrder || []]); });
+    const restNoFx = JSON.stringify(p, function (k, v) { return (k === 'peaks' || k === 'effectParams' || k === 'eqBands' || k === 'proKeep' || k === 'lyrics' || k === 'lyricsMap' || ((k === 'effects' || k === 'fxOrder') && owners.has(this))) ? undefined : v; });
+    return { rest, fx, restNoFx, chains };
 }
-function liveSnapTake(p) { try { const s = liveSnapOf(p || state.project); _liveSnap.rest = s.rest; _liveSnap.fx = s.fx; } catch (e) { _liveSnap.rest = null; } }
+function liveSnapTake(p) { try { const s = liveSnapOf(p || state.project); _liveSnap.rest = s.rest; _liveSnap.fx = s.fx; _liveSnap.restNoFx = s.restNoFx; _liveSnap.chains = s.chains; } catch (e) { _liveSnap.rest = null; } }
 function tryLiveFx() {
     if (!_liveSnap.rest || !PulseAudio.liveFxSet) return false;
     const now = liveSnapOf(state.project);
-    if (now.rest !== _liveSnap.rest) return false;
+    // plugin ajouté / retiré / déplacé : seule la liste des plugins de pistes / groupes a changé → le moteur refait ces chaînes en fondu
+    let swapped = [];
+    if (now.rest !== _liveSnap.rest) {
+        if (now.restNoFx !== _liveSnap.restNoFx || !PulseAudio.liveChainSwap) return false;
+        swapped = Object.keys(now.chains).filter(k => now.chains[k] !== (_liveSnap.chains || {})[k]);
+        if (!swapped.length || swapped.some(k => JSON.parse(now.chains[k])[2] || JSON.parse((_liveSnap.chains || {})[k] || '[[],[],true]')[2])) return false;
+        if (!PulseAudio.liveChainSwap(swapped, Object.fromEntries(swapped.map(k => [k, [JSON.parse((_liveSnap.chains || {})[k] || '[[]]')[0], (_liveSnap.fx || {})[k] || {}]])))) return false;
+        _liveSnap.rest = now.rest; _liveSnap.restNoFx = now.restNoFx; _liveSnap.chains = now.chains;
+    }
     const sends = [];
     for (const key of Object.keys(now.fx)) {
+        if (swapped.includes(key)) continue;   // ses réglages partent avec sa nouvelle chaîne
         const a = _liveSnap.fx[key] || {}, b = now.fx[key];
         for (const id of new Set([...Object.keys(a), ...Object.keys(b)])) {
             if (JSON.stringify(a[id]) === JSON.stringify(b[id])) continue;
@@ -8261,7 +8276,7 @@ function tryLiveFx() {
             sends.push([key, id, changed, pa]);
         }
     }
-    if (!sends.length) return true;
+    if (!sends.length) { _liveSnap.fx = now.fx; return true; }
     // tout ou rien : si un seul réglage ne peut pas partir en direct, on reconstruit
     if (!sends.every(([key, id, ch, prev]) => PulseAudio.liveFxSet(key, id, ch, prev))) return false;
     _liveSnap.fx = now.fx;

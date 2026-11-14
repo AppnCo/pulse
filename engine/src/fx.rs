@@ -2998,6 +2998,8 @@ impl FxChain {
         Self { parts: self.parts.into_iter().map(|(c, ids)| (c.with_tempo(segs.clone(), from), ids)).collect(), ext: self.ext, ramps: self.ramps, ramp_len: self.ramp_len }
     }
     pub fn seek(&mut self, t: f64) { for (c, _) in &mut self.parts { c.seek(t); } for e in self.ext.iter_mut().flatten() { e.seek(t); } }
+    /// La chaîne contient-elle un plugin externe ?
+    pub fn has_ext(&self) -> bool { self.ext.iter().any(|e| e.is_some()) }
     /// Réglage changé en direct : `fx` = nom d'exemplaire (« comp#2 ») ou de type. La valeur entendue glisse vers `v`.
     pub fn set_live(&mut self, fx: &str, key: &str, v: f64) -> bool { self.set_live_from(fx, key, v, None) }
     /// Pareil, en sachant d'où part le bouton (`from`) : le tout premier geste glisse aussi.

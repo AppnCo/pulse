@@ -106,6 +106,8 @@ window.PulseNative = (function () {
         if (!isAvailable() || eqSwapOk === false) return Promise.reject(new Error('eq_swap indisponible'));
         return core().invoke('native_eq_swap', { bus, idx, fx, eq }).then((r) => { eqSwapOk = true; return r; }, (e) => { if (eqSwapOk !== true) eqSwapOk = false; throw e; });
     };
+    // plugins ajoutés / retirés pendant la lecture : la chaîne de ces pistes / groupes est refaite en fondu par le moteur
+    const chainSwap = (project, owners) => isAvailable() ? core().invoke('native_chain_swap', { json: JSON.stringify(project), owners }) : Promise.reject(new Error('indisponible'));
     const stop = () => isAvailable() ? core().invoke('native_stop') : Promise.resolve();
     // volumes, pan, mute / solo… changés pendant la lecture : le moteur les prend en direct, sans relancer
     const mix = (project) => isAvailable() ? core().invoke('native_mix', { json: JSON.stringify(project) }) : Promise.resolve();
@@ -150,7 +152,7 @@ window.PulseNative = (function () {
     // le canal est testé dès le chargement (quelques ms), avant la première lecture
     if (isAvailable()) setTimeout(() => { rawWorks().catch(() => {}); }, 0);
     if (isAvailable()) setTimeout(askCaps, 0);
-    return { get available() { return isAvailable(); }, get chunked() { return rawOk === false; }, render, play, swap, scope, stop, mix, fxLive, eqSwap, get caps() { askCaps(); return caps; }, get eqSwapOk() { return eqSwapOk; }, get liveFull() { return liveFull; }, loop, live, info, isEnabled, setEnabled, monitor, sendBytes, readBytes, onError: null };
+    return { get available() { return isAvailable(); }, get chunked() { return rawOk === false; }, render, play, swap, scope, stop, mix, fxLive, eqSwap, chainSwap, get caps() { askCaps(); return caps; }, get eqSwapOk() { return eqSwapOk; }, get liveFull() { return liveFull; }, loop, live, info, isEnabled, setEnabled, monitor, sendBytes, readBytes, onError: null };
 })();
 
 // Claviers MIDI dans l'appli : la fenêtre n'a pas « Web MIDI », on lui prête la même interface avec CoreMIDI (Rust).
