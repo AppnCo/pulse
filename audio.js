@@ -2685,6 +2685,12 @@ window.PulseAudio = (function() {
     // avant, chaque cran de bouton reconstruisait tout pendant la lecture : craquements, effets remis à zéro
     // Réglages que seul le moteur natif sait suivre en direct (valeur de départ de chacun) : reverb et écho recalculés sans se vider
     const NATIVE_LIVE_EXTRA = { reverb: { size: 1.8, decay: 2.5, pre: 0, duck: 0, low: 20, high: 20000, bright: 50, width: 100 }, delay: { duck: 0, hpf: 20, lpf: 4000 } };
+    // un réglage envoyé en direct que l'appli a refusé (appli plus ancienne) : la page reconstruit
+    let liveFail = null;
+    function setLiveFail(fn) { liveFail = fn; }
+    // Interrupteurs que l'appli du 14/11 prend en direct (capacité « switches ») : pente du Filtre, caractère et relâchement auto
+    // du Compresseur, temps de l'Écho, inversion / mono de l'Utilitaire. Valeur = réglage de départ quand il n'a jamais été touché.
+    const NATIVE_LIVE_SWITCH = { comp: { mode: 0, autoRel: 0 }, delay: { beats: 0.5 }, util: { invert: 0, mono: 0 }, filter: { slope: 12 } };
     function nativeFxLive(ownerKey, id, changed, prev) {
         if (!(nativeBackend && nativeBackend.fxLive) || !nativeProject) return false;
         let bus = false, idx = -1;
@@ -2702,11 +2708,22 @@ window.PulseAudio = (function() {
         if (kind === 'eq') {
             if (Object.keys(changed || {}).some(k => k !== 'bands')) return false;
             const A = prev.bands, B = changed.bands;
-            if (!Array.isArray(A) || !Array.isArray(B) || A.length !== B.length || B.length > 24) return false;
+            if (!Array.isArray(A) || !Array.isArray(B) || B.length > 24) return false;
+            // La forme de l'EQ change (point ajouté / retiré, type, pente, point allumé / éteint, point dynamique) :
+            // le moteur échange l'EQ en fondu, sans reconstruire le projet (appli du 14/11 ou plus récente ; sinon on reconstruit).
+            // Un EQ automatisé reconstruit : ses courbes repèrent les points par leur place dans la liste.
+            const swap = () => {
+                if (oldEngine || !nativeBackend.eqSwap || nativeBackend.eqSwapOk === false) return false;
+                const owner = bus ? (nativeProject.buses || [])[idx] : (nativeProject.tracks || [])[idx];
+                if (!owner || Object.keys(owner.automation || {}).some(k => k.startsWith('fx:' + id + ':'))) return false;
+                nativeBackend.eqSwap(bus, idx, id, { bands: B, out: Number.isFinite(prev.out) ? prev.out : null }).catch(() => { if (liveFail) liveFail(); });
+                return true;
+            };
+            if (A.length !== B.length) return swap();
             for (let i = 0; i < B.length; i++) {
                 const a = A[i] || {}, b = B[i] || {};
-                for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) if (JSON.stringify(a[k]) !== JSON.stringify(b[k]) && !['freq', 'gain', 'q'].includes(k)) return false;
-                if (eqIsDynamic(b) || eqIsDynamic(a) || b.on === false || !(b.freq > 0) || !(a.freq > 0)) { if (JSON.stringify(a) !== JSON.stringify(b)) return false; continue; }
+                for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) if (JSON.stringify(a[k]) !== JSON.stringify(b[k]) && !['freq', 'gain', 'q'].includes(k)) return swap();
+                if (eqIsDynamic(b) || eqIsDynamic(a) || b.on === false || !(b.freq > 0) || !(a.freq > 0)) { if (JSON.stringify(a) !== JSON.stringify(b)) return swap(); continue; }
                 for (const k of ['freq', 'gain', 'q']) if (a[k] !== b[k]) { const v = k === 'freq' ? Math.max(20, Math.min(20000, b.freq)) : (b[k] ?? (k === 'q' ? 1 : 0)); if (!Number.isFinite(v)) return false; items.push([bus, idx, id, 'b' + i + '-' + k, v, fin(a[k] ?? (k === 'q' ? 1 : 0))]); }
             }
         } else if ((kind === 'mband' || kind === 'msat') && changed && 'bands' in changed) {
@@ -2726,7 +2743,7 @@ window.PulseAudio = (function() {
             }
         } else {
             const keys = Object.keys(changed || {});
-            const extra = oldEngine ? {} : (NATIVE_LIVE_EXTRA[kind] || {});
+            const extra = oldEngine ? {} : { ...(NATIVE_LIVE_EXTRA[kind] || {}), ...((nativeBackend.caps || []).includes('switches') ? NATIVE_LIVE_SWITCH[kind] : {}) };
             if (!keys.length || !keys.every(k => (autoRanges['fx:' + kind + ':' + k] || k in extra) && Number.isFinite(changed[k]))) return false;
             if (kind === 'sat' && 'drive' in changed && !(changed.drive > 0)) return false;
             if (kind === 'deess' && (('thr' in changed && prev.thr === undefined) || ('amount' in changed && !(changed.amount > 0)))) return false;
@@ -4063,6 +4080,7 @@ window.PulseAudio = (function() {
             stopAll();
             clearLiveNodes();
             nativeProject = project; nativeFrom = fromTime;
+            void nativeBackend.caps;   // la lecture démarre : on sait dès maintenant ce que l'appli prend en direct
             nativeOn = true; isPlaying = true;
             try {
                 nativeLoopSent = loopCfg ? loopCfg.a + ',' + loopCfg.b : null;
@@ -5125,7 +5143,7 @@ window.PulseAudio = (function() {
         debugLive: () => [...liveNodes].map(([i, n]) => ({ i, name: n.tname, audible: !!n.audible, vol: n.vol, fx: n.tfx, clips: n.tclips })),
         clipSig, liveFxSet,
         debugLiveBuses: () => [...liveBusNodes].map(([id, g]) => ({ id, gain: g.gain.value })),
-        getTrackAnalyser, getTrackMeters, trackChannelCount, getMasterAnalyser, getTrackSpectrum, getBusSpectrum, getCompReduction, getCompInput, setMasterVolume,
+        setLiveFail, getTrackAnalyser, getTrackMeters, trackChannelCount, getMasterAnalyser, getTrackSpectrum, getBusSpectrum, getCompReduction, getCompInput, setMasterVolume,
         setMetronome, setMetronomeBpm, setCountIn, isCountInEnabled,
         startMetronome, stopMetronome, playCountIn, stopCountIn, isCountingIn,
         exportWav, exportTrackWav, renderFreeze, audioBufferToWav, computeNormalizeGain, setLoop, loopScheduled, getRecWraps, getRecLinearPosition,

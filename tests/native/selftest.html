@@ -69,6 +69,25 @@ const f=document.getElementById('f'); const sleep=ms=>new Promise(r=>setTimeout(
     w.refreshPlaybackSoon();
     const seen={}; for(let k=0;k<20;k++){ await sleep(60); for(const [n,f] of [['gate','getGateMeter'],['deess','getDeessMeter'],['mband','getMbandMeter'],['limit','getLimiterMeter']]){ const m=w.PulseAudio[f]('t0'); if(m) seen[n]=m; } }
     log('afficheurs natifs: gate='+(seen.gate?seen.gate.e.toFixed(3)+'/'+seen.gate.g.toFixed(2):'aucun')+' deess='+(seen.deess?seen.deess.v.toFixed(3):'aucun')+' mband='+(seen.mband?seen.mband.e.length:'aucun')+' limit='+(seen.limit?seen.limit.i.toFixed(3)+'/'+seen.limit.gr.toFixed(2):'aucun'));
+    // EQ dont la forme change pendant la lecture (point ajouté) : le moteur échange l'EQ en fondu, la page ne reconstruit rien
+    try { tr0.effects=tr0.effects.filter(e=>e!=='gate'&&e!=='limit').concat(['eq']); tr0.effectParams.eq={bands:[{type:'bell',freq:1000,gain:0,q:1}]}; w.refreshPlaybackSoon(); await sleep(900);
+      let rebuilds=0; const op=w.PulseAudio.play; w.PulseAudio.play=function(){ rebuilds++; return op.apply(this,arguments); };
+      const peak=async()=>{ let m=0; for(let k=0;k<24;k++){ await sleep(50); const lv=await inv('native_live'); const t=lv&&lv.levels&&lv.levels.tracks&&lv.levels.tracks.find(x=>x[0]===0); if(t) m=Math.max(m,t[1],t[2]); } return m; };
+      const before=await peak(); const u0=(await inv('native_info')).underruns;
+      tr0.effectParams.eq={bands:[{type:'bell',freq:1000,gain:0,q:1},{type:'lpf',freq:30,gain:0,q:0.707,slope:48}]}; w.refreshPlaybackSoon(); await sleep(400);
+      const cut=await peak();
+      tr0.effectParams.eq={bands:[{type:'bell',freq:1000,gain:0,q:1}]}; w.refreshPlaybackSoon(); await sleep(400);
+      const back=await peak(); const u1=(await inv('native_info')).underruns;
+      w.PulseAudio.play=op;
+      log('eq en marche: reconstructions='+rebuilds+' accepte='+w.PulseNative.eqSwapOk+' trous='+(u1-u0)+' niveau='+before.toFixed(4)+' coupe='+cut.toFixed(5)+' retour='+back.toFixed(4)+' vol='+tr0.volume);
+      // interrupteurs : pente du Filtre et caractère du Compresseur changés en marche, sans reconstruire
+      tr0.effects=tr0.effects.filter(e=>e!=='eq').concat(['filter','comp']); Object.assign(tr0.effectParams,{filter:{hpf:200,lpf:20000,slope:12},comp:{threshold:-30,ratio:4,mode:0}}); w.refreshPlaybackSoon(); await sleep(900);
+      let rb2=0; w.PulseAudio.play=function(){ rb2++; return op.apply(this,arguments); };
+      tr0.effectParams.filter={hpf:200,lpf:20000,slope:24}; w.refreshPlaybackSoon(); await sleep(300);
+      tr0.effectParams.comp={threshold:-30,ratio:4,mode:2}; w.refreshPlaybackSoon(); await sleep(300);
+      w.PulseAudio.play=op; const u2=(await inv('native_info')).underruns;
+      log('interrupteurs en marche: reconstructions='+rb2+' capacités='+w.PulseNative.caps.join('+')+' trous='+(u2-u1));
+      tr0.effects=tr0.effects.filter(e=>e!=='filter'&&e!=='comp'); } catch(e) { log('eq en marche ERREUR '+(e&&e.message||e)); }
     tr0.effects=tr0.effects.filter(e=>e!=='reverb'&&e!=='comp'&&e!=='gate'&&e!=='deess'&&e!=='mband'&&e!=='limit');
     ST.looping=false; ST.project.tracks[0].volume=100; }
   await w.togglePlay(); await sleep(300);

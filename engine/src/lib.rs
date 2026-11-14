@@ -66,6 +66,83 @@ mod tests {
         assert!((db - 12.0).abs() < 1.5, "avant {avant} après {apres} ({db:.1} dB)");
     }
     #[test]
+    fn eq_change_de_forme_en_marche() {
+        // sinus 200 Hz + 3 kHz ; EQ : coupe-bas 80 Hz + cloche 3 kHz +6. Pendant la lecture on ajoute un point, on change un type, on retire un point.
+        let sig: Vec<f32> = (0..SR as usize * 4).map(|i| { let t = i as f32 / SR as f32; ((t * 2.0 * std::f32::consts::PI * 200.0).sin() + (t * 2.0 * std::f32::consts::PI * 3000.0).sin()) * 0.1 }).collect();
+        let media = Media::from([("a".to_owned(), Source::new(SR, vec![sig]))]);
+        let proj = |bands: &str| -> Project { serde_json::from_str(&format!(r#"{{"bpm":120,"tracks":[{{"volume":100,"clips":[{{"id":"a","start":0,"duration":4}}],"effects":["eq"],"effectParams":{{"eq":{{"bands":{bands}}}}}}}]}}"#)).unwrap() };
+        let b0 = r#"[{"type":"hpf","freq":80,"gain":0,"q":0.707},{"type":"bell","freq":3000,"gain":6,"q":1}]"#;
+        let b1 = r#"[{"type":"hpf","freq":80,"gain":0,"q":0.707},{"type":"bell","freq":200,"gain":-9,"q":2},{"type":"bell","freq":3000,"gain":6,"q":1}]"#;
+        let b2 = r#"[{"type":"hpf","freq":80,"gain":0,"q":0.707,"slope":48},{"type":"bell","freq":200,"gain":-9,"q":2},{"type":"highshelf","freq":3000,"gain":6,"q":1}]"#;
+        let b3 = r#"[{"type":"bell","freq":200,"gain":-9,"q":2}]"#;
+        let block = |r: &mut crate::render::Renderer| { let (mut l, mut rr) = (vec![0.0f32; 4800], vec![0.0f32; 4800]); r.process(&media, &mut l, &mut rr); l };
+        let saut = |l: &[f32]| l.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0f32, f32::max);
+        let mut r = crate::render::Renderer::new(&proj(b0), &media, &opts());
+        let _ = block(&mut r);
+        let calme = saut(&block(&mut r));   // plus grand écart entre deux échantillons en régime établi
+        // 1. un point ajouté à 0 dB d'effet sur le reste : les points inchangés ne bougent pas d'un poil
+        let mut temoin = crate::render::Renderer::new(&proj(b0), &media, &opts());
+        let _ = block(&mut temoin); let _ = block(&mut temoin);
+        let plat = r#"[{"type":"hpf","freq":80,"gain":0,"q":0.707},{"type":"bell","freq":1000,"gain":0,"q":1},{"type":"bell","freq":3000,"gain":6,"q":1}]"#;
+        assert!(r.fx_live(false, 0, "eq", &format!(r#"bands:{{"bands":{plat}}}"#), 0.0));
+        let (a, b) = (block(&mut r), block(&mut temoin));
+        let ecart = a.iter().zip(&b).map(|(x, y)| (x - y).abs()).fold(0.0f32, f32::max);
+        assert!(ecart < 1e-6, "un point à 0 dB ajouté change le son : {ecart}");
+        // 2. chaque changement de forme : pas de clic, et le son rejoint celui d'un EQ construit directement ainsi
+        for (nom, bands) in [("point ajouté", b1), ("pente et type changés", b2), ("points retirés", b3), ("tout retiré", "[]")] {
+            assert!(r.fx_live(false, 0, "eq", &format!(r#"bands:{{"bands":{bands}}}"#), 0.0), "{nom}");
+            let pendant = block(&mut r);
+            assert!(saut(&pendant) < calme * 2.5, "{nom} : clic ({} pour {calme} au calme)", saut(&pendant));
+            let _ = block(&mut r);
+            let apres = block(&mut r);
+            let mut neuf = crate::render::Renderer::new(&proj(bands), &media, &opts());
+            for _ in 0..block_count(&r) - 1 { let _ = block(&mut neuf); }
+            let cible = block(&mut neuf);
+            let e = apres.iter().zip(&cible).map(|(x, y)| (x - y).abs()).fold(0.0f32, f32::max);
+            assert!(e < 2e-3, "{nom} : le son ne rejoint pas l'EQ voulu (écart {e})");
+        }
+        fn block_count(r: &crate::render::Renderer) -> usize { r.position() / 4800 }
+    }
+    #[test]
+    fn interrupteurs_en_marche() {
+        // pente du Filtre, caractère du Compresseur, inversion / mono de l'Utilitaire changés pendant la lecture :
+        // pas de clic, et le son rejoint celui d'un projet construit directement avec ce réglage
+        let sig: Vec<f32> = (0..SR as usize * 4).map(|i| { let t = i as f32 / SR as f32; ((t * 2.0 * std::f32::consts::PI * 120.0).sin() * 0.5 + (t * 2.0 * std::f32::consts::PI * 2500.0).sin() * 0.2) * (0.6 + 0.4 * (t * 9.0).sin()) }).collect();
+        let media = Media::from([("a".to_owned(), Source::new(SR, vec![sig]))]);
+        let proj = |fx: &str, params: &str| -> Project { serde_json::from_str(&format!(r#"{{"bpm":120,"tracks":[{{"volume":100,"clips":[{{"id":"a","start":0,"duration":4}}],"effects":["{fx}"],"effectParams":{{"{fx}":{params}}}}}]}}"#)).unwrap() };
+        let block = |r: &mut crate::render::Renderer| { let (mut l, mut rr) = (vec![0.0f32; 4800], vec![0.0f32; 4800]); r.process(&media, &mut l, &mut rr); l };
+        let saut = |l: &[f32]| l.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0f32, f32::max);
+        for (fx, avant, key, v, apres, tol) in [
+            ("filter", r#"{"hpf":300,"lpf":20000,"slope":12}"#, "slope", 24.0, r#"{"hpf":300,"lpf":20000,"slope":24}"#, 2e-3f32),
+            ("filter", r#"{"hpf":300,"lpf":20000,"slope":24}"#, "slope", 12.0, r#"{"hpf":300,"lpf":20000,"slope":12}"#, 2e-3),
+            ("comp", r#"{"threshold":-30,"ratio":4,"mode":0}"#, "mode", 2.0, r#"{"threshold":-30,"ratio":4,"mode":2}"#, 3e-2),
+            ("util", r#"{"gain":0,"mono":0,"invert":0}"#, "mono", 1.0, r#"{"gain":0,"mono":1,"invert":0}"#, 1e-5),
+        ] {
+            let mut r = crate::render::Renderer::new(&proj(fx, avant), &media, &opts());
+            let _ = block(&mut r);
+            let calme = saut(&block(&mut r));
+            assert!(r.fx_live_from(false, 0, fx, key, v, Some(0.0)), "{fx} {key}");
+            let pendant = block(&mut r);
+            assert!(saut(&pendant) < calme * 2.5, "{fx} {key} : clic ({} pour {calme})", saut(&pendant));
+            for _ in 0..6 { let _ = block(&mut r); }
+            let a = block(&mut r);
+            let mut neuf = crate::render::Renderer::new(&proj(fx, apres), &media, &opts());
+            for _ in 0..9 { let _ = block(&mut neuf); }
+            let b = block(&mut neuf);
+            let e = a.iter().zip(&b).map(|(x, y)| (x - y).abs()).fold(0.0f32, f32::max);
+            assert!(e < tol, "{fx} {key} : le son ne rejoint pas le réglage voulu (écart {e})");
+        }
+        // inversion : le signe change, rien d'autre
+        let mut r = crate::render::Renderer::new(&proj("util", r#"{"gain":0}"#), &media, &opts());
+        let mut t = crate::render::Renderer::new(&proj("util", r#"{"gain":0}"#), &media, &opts());
+        let _ = block(&mut r); let _ = block(&mut t);
+        assert!(r.fx_live(false, 0, "util", "invert", 1.0));
+        let _ = (block(&mut r), block(&mut t));   // le bloc du changement (le limiteur de sortie a un peu de retard)
+        let (a, b) = (block(&mut r), block(&mut t));
+        let e = a.iter().zip(&b).map(|(x, y)| (x + y).abs()).fold(0.0f32, f32::max); let d = a.iter().zip(&b).map(|(x, y)| (x - y).abs()).fold(0.0f32, f32::max);
+        assert!(e < 1e-6, "inversion : somme {e}, différence {d}");
+    }
+    #[test]
     fn metronome_pile_sur_les_temps() {
         let mut p = project(vec![clip(0.0, 6.0, 0.0)]);
         p.bpm = 100.0; p.metronome = Some(crate::model::Metronome { bpb: 4, volume: 1.0 });

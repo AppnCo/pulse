@@ -1620,6 +1620,13 @@ pub struct Chain {
     bpm0: f64,
     /// Bandes de l'EQ libre et filtre de la chaîne pour chacune (None = bande ignorée)
     eq_bands: Vec<(EqBand, Option<(usize, usize)>)>,
+    /// Gain de sortie de l'EQ libre (dB), gardé pour refaire l'EQ en marche
+    eq_out: Option<f64>,
+    /// EQ d'avant un changement de forme (point ajouté / retiré, type, pente…) : il joue encore, en fondu vers le nouveau
+    eq_fade: Option<EqFade>,
+    /// Filtre : coupe-bas / coupe-haut en cours (Hz) et ancien filtre qui s'efface quand la pente change en marche
+    cut_p: (f64, f64),
+    cut_fade: Option<EqFade>,
     /// Filtre coupe-bas / coupe-haut : (coupe-bas ?, Q en dB) pour chaque cellule de `cut`
     cut_kinds: Vec<(bool, f64)>,
     names: Vec<String>,
@@ -1927,54 +1934,101 @@ fn legacy_eq_bands(p: &crate::model::EqParams) -> Vec<EqBand> {
     out
 }
 
+/// L'EQ qui s'en va pendant un échange en marche : (filtres, points dynamiques, échantillons restants, durée du fondu)
+struct EqFade { filters: Vec<[Biquad; 2]>, dyn_eq: Vec<DynBand>, left: usize, total: usize }
+/// Filtres de l'EQ libre pour une liste de bandes (24 au plus), comme le navigateur
+#[allow(clippy::type_complexity)]
+fn eq_build(bands: &[EqBand], out: Option<f64>, sr: f64) -> (Vec<[Biquad; 2]>, Vec<DynBand>, Vec<(EqBand, Option<(usize, usize)>)>) {
+    let (mut filters, mut dyn_eq, mut eq_bands) = (Vec::new(), Vec::new(), Vec::new());
+    let mut k = 0;
+    for bd in bands.iter().take(24) {
+        if bd.on != Some(false) && bd.freq > 0.0 && eq_is_dynamic(bd) {
+            dyn_eq.push(DynBand::new(bd, sr));
+            eq_bands.push((bd.clone(), None));
+        } else if bd.on != Some(false) && bd.freq > 0.0 {
+            let secs = eq_sections(bd, sr);
+            let n = secs.len();
+            for b in secs { filters.push([b.clone(), b]); }
+            eq_bands.push((bd.clone(), Some((k, n))));
+            k += n;
+        } else {
+            eq_bands.push((bd.clone(), None));
+        }
+    }
+    if let Some(o) = out.filter(|o| *o != 0.0) { let b = Biquad::gain(o); filters.push([b.clone(), b]); }
+    (filters, dyn_eq, eq_bands)
+}
+/// Cellules du Filtre — Butterworth : une cellule (Q 0,7071) à 12 dB / octave, deux (Q 0,5412 puis 1,3066) à 24 dB
+#[allow(clippy::type_complexity)]
+fn cut_build(hpf: f64, lpf: f64, steep: bool, sr: f64) -> (Vec<[Biquad; 2]>, Vec<(bool, f64)>) {
+    let (mut cut, mut kinds) = (Vec::new(), Vec::new());
+    let qs: &[f64] = if steep { &[0.5412, 1.3066] } else { &[std::f64::consts::FRAC_1_SQRT_2] };
+    if hpf > 20.0 {
+        for q in qs { let b = Biquad::highpass(sr, hpf.min(20_000.0), 20.0 * q.log10()); cut.push([b.clone(), b]); kinds.push((true, 20.0 * q.log10())); }
+    }
+    if lpf < 20_000.0 {
+        for q in qs { let b = Biquad::lowpass(sr, lpf.max(20.0), 20.0 * q.log10()); cut.push([b.clone(), b]); kinds.push((false, 20.0 * q.log10())); }
+    }
+    (cut, kinds)
+}
+fn eq_same(a: &EqBand, b: &EqBand) -> bool {
+    a.kind == b.kind && a.freq == b.freq && a.gain == b.gain && a.q == b.q && a.on == b.on && a.slope == b.slope && a.dyn_range == b.dyn_range && a.thr == b.thr
+}
+
 impl Chain {
+    /// EQ libre refait pendant la lecture (point ajouté ou retiré, type, pente, point dynamique, point éteint) :
+    /// les points qui n'ont pas changé gardent leur mémoire, et l'ancien EQ fond vers le nouveau en 30 ms — ni clic ni attente.
+    pub fn eq_swap(&mut self, bands: &[EqBand], out: Option<f64>) {
+        let (mut filters, dyn_eq, eq_bands) = eq_build(bands, out, self.sr);
+        // un point resté identique reprend son filtre tel quel (même état → même son, le fondu ne s'entend que sur ce qui change)
+        let mut used = vec![false; self.eq_bands.len()];
+        for (bd, slot) in &eq_bands {
+            let Some((k, n)) = *slot else { continue };
+            let found = self.eq_bands.iter().enumerate().find(|(i, (o, os))| !used[*i] && os.is_some_and(|(_, on)| on == n) && eq_same(o, bd));
+            if let Some((i, (_, Some((ok, _))))) = found {
+                used[i] = true;
+                for j in 0..n { if let (Some(dst), Some(src)) = (filters.get_mut(k + j), self.filters.get(ok + j)) { *dst = src.clone(); } }
+            }
+        }
+        let old_f = std::mem::replace(&mut self.filters, filters);
+        let old_d = std::mem::replace(&mut self.dyn_eq, dyn_eq);
+        self.eq_bands = eq_bands;
+        self.eq_out = out;
+        // un échange pendant un fondu : on garde l'EQ le plus ancien encore audible, le fondu repart de là
+        if self.eq_fade.is_none() {
+            let total = ((0.03 * self.sr) as usize).max(1);
+            self.eq_fade = Some(EqFade { filters: old_f, dyn_eq: old_d, left: total, total });
+        }
+    }
     pub fn for_track(track: &Track, sr: f64, bpm: f64) -> Self {
         Self::new(&track.effects, &track.effect_params, sr, bpm, -0.3).with_order(&track.fx_order)
     }
     /// `bpm` : tempo du projet (échos calés sur le rythme). `ceiling_db` : plafond du projet (limiteur de bus).
     pub fn new(effects: &[String], effect_params: &EffectParams, sr: f64, bpm: f64, ceiling_db: f64) -> Self {
         let has = |name: &str| effects.iter().any(|e| e == name);
+        #[allow(unused_assignments)]
         let mut cut = Vec::new();
+        #[allow(unused_assignments)]
         let mut cut_kinds = Vec::new();
+        #[allow(unused_assignments)]
         let mut eq_bands = Vec::new();
+        #[allow(unused_assignments)]
         let mut dyn_eq = Vec::new();
+        let mut cut_p = (20.0, 20_000.0);
         if has("filter") {
-            // Butterworth : une cellule (Q 0,7071) à 12 dB / octave, deux (Q 0,5412 puis 1,3066) à 24 dB
             let p = effect_params.filter.clone().unwrap_or_default();
-            let (hpf, lpf) = (p.hpf.unwrap_or(80.0), p.lpf.unwrap_or(20_000.0));
-            let qs: &[f64] = if p.slope == Some(24.0) { &[0.5412, 1.3066] } else { &[std::f64::consts::FRAC_1_SQRT_2] };
-            if hpf > 20.0 {
-                for q in qs { let b = Biquad::highpass(sr, hpf.min(20_000.0), 20.0 * q.log10()); cut.push([b.clone(), b]); cut_kinds.push((true, 20.0 * q.log10())); }
-            }
-            if lpf < 20_000.0 {
-                for q in qs { let b = Biquad::lowpass(sr, lpf.max(20.0), 20.0 * q.log10()); cut.push([b.clone(), b]); cut_kinds.push((false, 20.0 * q.log10())); }
-            }
+            cut_p = (p.hpf.unwrap_or(80.0), p.lpf.unwrap_or(20_000.0));
+            (cut, cut_kinds) = cut_build(cut_p.0, cut_p.1, p.slope == Some(24.0), sr);
         }
         let mut filters = Vec::new();
-        let mut push = |b: Biquad| filters.push([b.clone(), b]);
+        let mut eq_out = None;
         if has("eq") {
             let p = effect_params.eq.clone().unwrap_or_default();
             let legacy;
             let bands = match p.bands.as_ref() { Some(b) => b, None => { legacy = legacy_eq_bands(&p); &legacy } };
-            {
-                // EQ libre : mêmes bandes que le navigateur (24 au plus, Q linéaire, dB pour les coupes)
-                let mut k = 0;
-                for bd in bands.iter().take(24) {
-                    if bd.on != Some(false) && bd.freq > 0.0 && eq_is_dynamic(bd) {
-                        dyn_eq.push(DynBand::new(bd, sr));
-                        eq_bands.push((bd.clone(), None));
-                    } else if bd.on != Some(false) && bd.freq > 0.0 {
-                        let secs = eq_sections(bd, sr);
-                        let n = secs.len();
-                        for b in secs { push(b); }
-                        eq_bands.push((bd.clone(), Some((k, n))));
-                        k += n;
-                    } else {
-                        eq_bands.push((bd.clone(), None));
-                    }
-                }
-                if let Some(out) = p.out.filter(|o| *o != 0.0) { push(Biquad::gain(out)); }
-            }
+            // EQ libre : mêmes bandes que le navigateur (24 au plus, Q linéaire, dB pour les coupes)
+            eq_out = p.out;
+            (filters, dyn_eq, eq_bands) = eq_build(bands, p.out, sr);
         }
         let sat = if has("sat") { effect_params.sat.as_ref().and_then(|p| Saturator::from_params(p, sr)) } else { None };
         let de = effect_params.deess.clone().unwrap_or_default();
@@ -2033,7 +2087,7 @@ impl Chain {
         let souffle = has("souffle").then(|| { let p = crate::analog::SouffleParams::from(&effect_params.souffle.clone().unwrap_or_default()); (crate::analog::Souffle::new(&p, sr), p) });
         let comp_p = effect_params.comp.clone().unwrap_or_default();
         Self { cut, filters, dyn_eq, sat, gate, crush, util, width, modfx, deess, deess2, mband, msat, comp, master, limit, delay, reverb, pitch, fet76, pre73, opto2a, eqp1, busg, tape, l670, dtr, stripe, eq550, comp25, bus33, massif, horizon, plate, techo, hall80, h910, dim, prev76, eclat, souffle, order: Stage::DEFAULT.to_vec(),
-            auto: Vec::new(), auto_from: 0.0, pos: 0, tempo: Vec::new(), tempo_i: 0, sr, comp_p, reverb_p: effect_params.reverb.clone().unwrap_or_default(), delay_p: effect_params.delay.clone().unwrap_or_default(), bpm0: bpm, eq_bands, cut_kinds, names: effects.to_vec(), deess_freq: de.freq.unwrap_or(5500.0) }
+            auto: Vec::new(), auto_from: 0.0, pos: 0, tempo: Vec::new(), tempo_i: 0, sr, comp_p, reverb_p: effect_params.reverb.clone().unwrap_or_default(), delay_p: effect_params.delay.clone().unwrap_or_default(), bpm0: bpm, eq_bands, eq_out, eq_fade: None, cut_p, cut_fade: None, cut_kinds, names: effects.to_vec(), deess_freq: de.freq.unwrap_or(5500.0) }
     }
     /// Tempo qui change en cours de morceau : l'écho calé sur le rythme (1/4, 1/8…) suit le tempo de l'endroit joué.
     /// `from` = instant du premier échantillon traité (le même que pour `with_auto`).
@@ -2098,15 +2152,15 @@ impl Chain {
             ("comp", k) => {
                 let p = &mut self.comp_p;
                 match k { "threshold" => p.threshold = Some(v), "ratio" => p.ratio = Some(v), "mix" => p.mix = Some(v), "attack" => p.attack = Some(v),
-                    "release" => p.release = Some(v), "knee" => p.knee = Some(v), "makeup" => p.makeup = Some(v), "scHp" => p.sc_hp = Some(v), "range" => p.range = Some(v), _ => {} }
+                    "release" => p.release = Some(v), "knee" => p.knee = Some(v), "makeup" => p.makeup = Some(v), "scHp" => p.sc_hp = Some(v), "range" => p.range = Some(v), "mode" => p.mode = Some(v), "autoRel" => p.auto_rel = Some(v), _ => {} }
                 comp_changed = true;
             }
             ("delay", k) => if let Some(d) = &mut self.delay {
                 let p = &mut self.delay_p;
                 match k { "wet" => { p.wet = Some(v); d.wet = (v / 100.0).clamp(0.0, 1.0) } "dry" => { p.dry = Some(v); d.dry = v / 100.0 } "feedback" => { p.feedback = Some(v); d.fb = (v / 100.0).clamp(0.0, 0.9) }
                     // filtres et ducking de l'écho : recalculés sans vider les répétitions en cours
-                    "duck" | "hpf" | "lpf" => {
-                        match k { "duck" => p.duck = Some(v), "hpf" => p.hpf = Some(v), _ => p.lpf = Some(v) }
+                    "duck" | "hpf" | "lpf" | "beats" => {
+                        match k { "duck" => p.duck = Some(v), "hpf" => p.hpf = Some(v), "beats" => p.beats = Some(v), _ => p.lpf = Some(v) }
                         let bpm = if self.tempo.len() >= 2 { self.tempo[self.tempo_i].1 } else { self.bpm0 };
                         d.retune(p, self.sr, bpm); d.settle();
                     }
@@ -2123,6 +2177,8 @@ impl Chain {
                     }
                     _ => {} }
             },
+            ("util", "invert") => if let Some(u) = &mut self.util { u.g = u.g.abs() * if v > 0.0 { -1.0 } else { 1.0 }; },
+            ("util", "mono") => if let Some(u) = &mut self.util { u.mono = v > 0.0; },
             ("util", "gain") => if let Some(u) = &mut self.util { let sign = if u.g < 0.0 { -1.0 } else { 1.0 }; u.g = 10f64.powf(v / 20.0) * sign; },
             ("width", "width") => if let Some(w) = &mut self.width { w.width = v / 100.0; },
             ("deess", "thr") => if let Some(d) = &mut self.deess2 { d.thr = v; },
@@ -2176,14 +2232,27 @@ impl Chain {
                     match k { "rate" => if f.beats.is_none() { f.rate = v }, "depth" => f.depth = v, "width" => f.width = v, "feedback" => f.fb = v / 100.0, "mix" => f.mix = v / 100.0, "time" => f.time = v / 1000.0, _ => {} }
                 }
             }
+            // pente changée en marche : nouveau filtre, l'ancien s'efface en fondu de 30 ms
+            ("filter", "slope") => {
+                let (cut, kinds) = cut_build(self.cut_p.0, self.cut_p.1, v >= 18.0, self.sr);
+                let old = std::mem::replace(&mut self.cut, cut);
+                self.cut_kinds = kinds;
+                if self.cut_fade.is_none() { let total = ((0.03 * self.sr) as usize).max(1); self.cut_fade = Some(EqFade { filters: old, dyn_eq: Vec::new(), left: total, total }); }
+            }
             ("filter", "hpf") | ("filter", "lpf") => {
                 let hp = key == "hpf";
+                if hp { self.cut_p.0 = v } else { self.cut_p.1 = v }
                 for (j, (is_hp, qdb)) in self.cut_kinds.iter().enumerate() {
                     if *is_hp != hp { continue; }
                     let b = if hp { Biquad::highpass(self.sr, v.min(20_000.0), *qdb) } else { Biquad::lowpass(self.sr, v.max(20.0), *qdb) };
                     for ch in 0..2 { self.cut[j][ch].retune(b.clone()); }
                 }
                 cut_changed = true;
+            }
+            ("eq", k) if k.starts_with("bands:") => {
+                #[derive(serde::Deserialize)]
+                struct Swap { bands: Vec<EqBand>, out: Option<f64> }
+                if let Ok(sw) = serde_json::from_str::<Swap>(&k[6..]) { self.eq_swap(&sw.bands, sw.out); }
             }
             ("eq", k) => {
                 let Some((idx, field)) = k.strip_prefix('b').and_then(|r| r.split_once('-')) else { return false };
@@ -2253,8 +2322,8 @@ impl Chain {
     /// L'étage a-t-il quelque chose à faire ? (la boucle par échantillon ne passe que par ceux-là)
     fn has(&self, st: Stage) -> bool {
         match st {
-            Stage::Filter => !self.cut.is_empty(),
-            Stage::Eq => !self.filters.is_empty() || !self.dyn_eq.is_empty(),
+            Stage::Filter => !self.cut.is_empty() || self.cut_fade.is_some(),
+            Stage::Eq => !self.filters.is_empty() || !self.dyn_eq.is_empty() || self.eq_fade.is_some(),
             Stage::Crush => self.crush.is_some(), Stage::Util => self.util.is_some(), Stage::Width => self.width.is_some(),
             Stage::Tremolo | Stage::Phaser | Stage::Flanger | Stage::Chorus | Stage::Doubler | Stage::Slapback => self.modfx.iter().any(|(x, _)| *x == st),
             Stage::Gate => self.gate.is_some(), Stage::Sat => self.sat.is_some(), Stage::Deess => self.deess.is_some() || self.deess2.is_some(),
@@ -2295,10 +2364,19 @@ impl Chain {
             for stage in order {
                 match stage {
                     Stage::Filter => {
+                        let dry = x;
                         for ch in 0..nc {
                             for f in &mut self.cut {
                                 x[ch] = f[ch].tick(x[ch]);
                             }
+                        }
+                        if let Some(fd) = &mut self.cut_fade {
+                            let mut y = dry;
+                            for ch in 0..nc { for f in &mut fd.filters { y[ch] = f[ch].tick(y[ch]); } }
+                            let w = fd.left as f64 / fd.total as f64;
+                            for ch in 0..nc { x[ch] = x[ch] * (1.0 - w) + y[ch] * w; }
+                            fd.left -= 1;
+                            if fd.left == 0 { self.cut_fade = None; }
                         }
                     }
                     Stage::Crush => {
@@ -2327,12 +2405,23 @@ impl Chain {
                         }
                     }
                     Stage::Eq => {
+                        let dry = x;
                         for ch in 0..nc {
                             for f in &mut self.filters {
                                 x[ch] = f[ch].tick(x[ch]);
                             }
                         }
                         for d in &mut self.dyn_eq { d.tick(&mut x, nc); }
+                        // échange en marche : l'ancien EQ joue encore à côté et s'efface en fondu
+                        if let Some(fd) = &mut self.eq_fade {
+                            let mut y = dry;
+                            for ch in 0..nc { for f in &mut fd.filters { y[ch] = f[ch].tick(y[ch]); } }
+                            for d in &mut fd.dyn_eq { d.tick(&mut y, nc); }
+                            let w = fd.left as f64 / fd.total as f64;
+                            for ch in 0..nc { x[ch] = x[ch] * (1.0 - w) + y[ch] * w; }
+                            fd.left -= 1;
+                            if fd.left == 0 { self.eq_fade = None; }
+                        }
                     }
                     Stage::Sat => {
                         if let Some(sat) = &mut self.sat {
@@ -2920,6 +3009,11 @@ impl FxChain {
         for (i, (c, ids)) in self.parts.iter_mut().enumerate() {
             if !ids.iter().any(|id| id == fx) { continue; }
             hit = true;
+            if key.starts_with("bands:") || matches!((ty, key), ("comp", "mode" | "autoRel") | ("delay", "beats") | ("util", "invert" | "mono") | ("filter", "slope")) {
+                self.ramps.retain(|r| !(r.part == i && r.fx == fx));
+                c.live(ty, key, v);
+                continue;
+            }
             if let Some(r) = self.ramps.iter_mut().find(|r| r.part == i && r.fx == fx && r.key == key) {
                 r.to = v;
                 r.left = if r.cur == v { 0 } else { self.ramp_len.max(RAMP_STEP) };

@@ -8267,6 +8267,8 @@ function tryLiveFx() {
     _liveSnap.fx = now.fx;
     return true;
 }
+// L'appli a refusé un réglage envoyé en direct (appli plus ancienne que la page) : on reconstruit, comme avant
+if (window.PulseAudio && PulseAudio.setLiveFail) PulseAudio.setLiveFail(() => { _liveSnap.rest = null; refreshPlaybackSoon(); });
 function refreshPlaybackSoon() {
     if (!state.playing || state.recording) return;
     if (tryLiveFx()) return;

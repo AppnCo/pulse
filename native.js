@@ -95,6 +95,17 @@ window.PulseNative = (function () {
         }
         return core().invoke('native_swap', { json: JSON.stringify(project), sizes });
     }
+    // EQ dont la forme change pendant la lecture (point ajouté / retiré, type, pente…) : le moteur échange l'EQ en fondu, sans rien reconstruire.
+    // Une appli plus ancienne n'a pas la commande : on le retient (`eqSwapOk` = false) et la page reconstruit comme avant
+    // Ce que l'appli installée sait faire en direct (une appli plus ancienne n'a pas la commande → liste vide)
+    // (demandé dès que le pont avec l'appli existe : au chargement, sinon au premier réglage envoyé)
+    let caps = [], capsAsked = false;
+    const askCaps = () => { if (capsAsked || !isAvailable()) return; capsAsked = true; core().invoke('native_caps').then((c) => { if (Array.isArray(c)) caps = c; }, () => {}); };
+    let eqSwapOk = null;
+    const eqSwap = (bus, idx, fx, eq) => {
+        if (!isAvailable() || eqSwapOk === false) return Promise.reject(new Error('eq_swap indisponible'));
+        return core().invoke('native_eq_swap', { bus, idx, fx, eq }).then((r) => { eqSwapOk = true; return r; }, (e) => { if (eqSwapOk !== true) eqSwapOk = false; throw e; });
+    };
     const stop = () => isAvailable() ? core().invoke('native_stop') : Promise.resolve();
     // volumes, pan, mute / solo… changés pendant la lecture : le moteur les prend en direct, sans relancer
     const mix = (project) => isAvailable() ? core().invoke('native_mix', { json: JSON.stringify(project) }) : Promise.resolve();
@@ -104,6 +115,7 @@ window.PulseNative = (function () {
     let liveFull = null;
     const fxLive = (items) => {
         if (!isAvailable()) return Promise.resolve();
+        askCaps();
         if (liveFull === false) return core().invoke('native_fx_live', { items: items.map(i => i.slice(0, 5)) });
         return core().invoke('native_fx_live', { items }).then((r) => { liveFull = true; return r; }, (e) => {
             if (liveFull === true) throw e;
@@ -137,7 +149,8 @@ window.PulseNative = (function () {
     };
     // le canal est testé dès le chargement (quelques ms), avant la première lecture
     if (isAvailable()) setTimeout(() => { rawWorks().catch(() => {}); }, 0);
-    return { get available() { return isAvailable(); }, get chunked() { return rawOk === false; }, render, play, swap, scope, stop, mix, fxLive, get liveFull() { return liveFull; }, loop, live, info, isEnabled, setEnabled, monitor, sendBytes, readBytes, onError: null };
+    if (isAvailable()) setTimeout(askCaps, 0);
+    return { get available() { return isAvailable(); }, get chunked() { return rawOk === false; }, render, play, swap, scope, stop, mix, fxLive, eqSwap, get caps() { askCaps(); return caps; }, get eqSwapOk() { return eqSwapOk; }, get liveFull() { return liveFull; }, loop, live, info, isEnabled, setEnabled, monitor, sendBytes, readBytes, onError: null };
 })();
 
 // Claviers MIDI dans l'appli : la fenêtre n'a pas « Web MIDI », on lui prête la même interface avec CoreMIDI (Rust).
