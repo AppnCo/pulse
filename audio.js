@@ -2752,7 +2752,7 @@ window.PulseAudio = (function() {
             if (kind === 'pitch' && !(prev.semi || 0) && !(prev.formant || 0)) return false;
             for (const k of keys) items.push([bus, idx, id, k, changed[k], fin(prev[k] ?? (k in extra ? extra[k] : (autoRanges['fx:' + kind + ':' + k] || {}).def))]);
         }
-        if (items.length) nativeBackend.fxLive(items).catch(() => nativeRefreshSoon());
+        if (items.length) { nativeStats.live += items.length; nativeBackend.fxLive(items).catch(() => nativeRefreshSoon()); }
         return true;
     }
     // Plugins ajoutés / retirés / déplacés pendant la lecture (appli du 14/11, capacité « chain-swap ») : le moteur refait la chaîne
@@ -4093,15 +4093,19 @@ window.PulseAudio = (function() {
 
     // opts.smooth : relance pour un changement d'effet pendant la lecture → fondu enchaîné de 20 ms entre l'ancien et le nouveau montage,
     // même position, sans coupure (avant : le son s'arrêtait net, 50 ms de silence + un « clac » à chaque plugin ajouté)
+    // Ce qui s'est passé pendant une lecture native (pour le journal quand le son a eu des trous)
+    let nativeStats = { swaps: 0, restarts: 0, live: 0, t0: 0 };
     async function play(project, fromTime, opts = {}) {
         if (nativeBackend && !(recNode || recorder)) {
             // changement pendant la lecture : le moteur natif passe au nouveau mix en fondu, sans s'arrêter
             if (opts.smooth && nativeOn && isPlaying && nativeBackend.swap) {
+                nativeStats.swaps++;
                 nativeProject = project;
                 try { await nativeBackend.swap(withMetro(project)); return; }
                 catch (err) { if (!nativeOn) return; /* sinon : relance complète ci-dessous */ }
             }
             stopAll();
+            nativeStats = { swaps: 0, restarts: 0, live: 0, t0: performance.now() };
             clearLiveNodes();
             nativeProject = project; nativeFrom = fromTime;
             void nativeBackend.caps;   // la lecture démarre : on sait dès maintenant ce que l'appli prend en direct
@@ -4163,7 +4167,17 @@ window.PulseAudio = (function() {
         if (nativeOn) {
             nativeOn = false; clearTimeout(nativeTimer);
             // trous dans le son pendant cette lecture (le mixeur n'a pas suivi) : notés dans le journal
-            try { const b = nativeBackend; if (b && b.info) b.info().then(i => { if (i && i.underruns > 0 && typeof diagAdd === 'function') diagAdd('trous', i.underruns + ' trou(s) dans le son pendant la lecture native'); }).catch(() => {}); } catch {}
+            try {
+                const b = nativeBackend, st = nativeStats, p = nativeProject;
+                if (b && b.info) b.info().then(i => {
+                    if (!(i && i.underruns > 0) || typeof diagAdd !== 'function') return;
+                    // le contexte : de quoi trouver la cause (taille du projet, plugins externes, tampon, reconstructions pendant la lecture)
+                    const tr = (p && p.tracks) || [], fx = tr.reduce((n, t) => n + (t.effects || []).length, 0) + ((p && p.buses) || []).reduce((n, b2) => n + (b2.effects || []).length, 0);
+                    const ext = tr.reduce((n, t) => n + (t.effects || []).filter(e => fxType(e) === 'vst').length, 0);
+                    diagAdd('trous', `${i.underruns} trou(s) dans le son pendant la lecture native — ${Math.round((performance.now() - st.t0) / 1000)} s, ${tr.length} pistes, ${fx} plugins dont ${ext} externes, tampon ${bufferMode}, ${st.swaps} remix en fondu, ${st.live} réglages en direct, moniteur ${monitorOn ? 'oui' : 'non'}`);
+                }).catch(() => {});
+            } catch {}
+            nativeStats = { swaps: 0, restarts: 0, live: 0, t0: performance.now() };
             try { nativeBackend && nativeBackend.stop(); } catch {}
         }
         if (loopNext || loopTimer || loopSwapTimer) { clearTimeout(loopTimer); clearTimeout(loopSwapTimer); loopTimer = loopSwapTimer = null; if (loopNext) { tearPass(loopNext); loopNext = null; } }
