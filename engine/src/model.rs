@@ -174,6 +174,9 @@ pub struct EffectParams {
     pub prev76: Option<PreV76Json>,
     pub eclat: Option<EclatJson>,
     pub souffle: Option<SouffleJson>,
+    /// Bouton « Mix » de chaque plugin (0–100 %, 100 = tout l'effet) : `_mix: { "eq": 60, "eq#2": 30 }`
+    #[serde(rename = "_mix")]
+    pub mix: std::collections::HashMap<String, f64>,
     /// Exemplaires en plus d'un même effet (« comp#2 », « eq#3»…), réglages bruts : lus par `EffectParams::instance`
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
@@ -190,7 +193,9 @@ impl EffectParams {
         let v = self.extra.get(id).cloned().unwrap_or(serde_json::Value::Null);
         let mut m = serde_json::Map::new();
         if !v.is_null() { m.insert(ty.to_owned(), v); }
-        serde_json::from_value(serde_json::Value::Object(m)).unwrap_or_default()
+        let mut out: EffectParams = serde_json::from_value(serde_json::Value::Object(m)).unwrap_or_default();
+        if let Some(x) = self.mix.get(id) { out.mix.insert(ty.to_owned(), *x); }
+        out
     }
     fn clone_without_extra(&self) -> EffectParams { let mut c = self.clone(); c.extra.clear(); c }
 }
@@ -668,6 +673,8 @@ pub struct EqParams {
     pub presence: Option<f64>,
     pub air: Option<f64>,
     pub lpf: Option<f64>,
+    /// Solo d'un point (écoute) : on n'entend que la zone de ce point (n° dans `bands`)
+    pub solo: Option<f64>,
 }
 
 /// Une bande de l'EQ libre : "bell", "lowshelf", "highshelf", "hpf", "lpf", "notch" ou "tilt". `q` est linéaire.

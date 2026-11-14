@@ -31,11 +31,19 @@ function isInstruTrack(t) { return !!t && (t.preset === 'instru' || t.type === '
 // Petit helper d'échappement HTML — pour tous les noms user-provided
 // Boutons qui tournent (tous les plugins, tranches) : sensibilité douce ; ⌘ ou Maj maintenu = réglage très fin, comme Logic
 function knobFine(ev) { return !!(ev && (ev.shiftKey || ev.metaKey)); }
+// Glisser un réglage : ⇧ (ou ⌘) enfoncé = 10× plus fin, même en cours de geste (pas de saut : le mouvement s'additionne)
+// fineDrag(y0)(ev) → pixels « effectifs » parcourus vers le haut ; fineDrag(x0, 'x') pour un geste horizontal
+const FINE_K = 0.1;
+function fineDrag(p0, axis = 'y') {
+    let last = p0, acc = 0;
+    return (ev) => { const p = axis === 'x' ? ev.clientX : ev.clientY, d = axis === 'x' ? p - last : last - p; last = p; acc += d * (knobFine(ev) ? FINE_K : 1); return acc; };
+}
+window.fineDrag = fineDrag;
 // Molette proportionnelle à la force du geste (≈ 1 cran pour un cran de molette, une fraction pour un petit geste au trackpad) ;
 // ⌘ ou Maj = 4× plus fin. wheelSteps : nombre entier de pas, le reste s'accumule (un geste lent finit quand même par bouger)
 function wheelAmt(e) {
     const px = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY;
-    return Math.max(-4, Math.min(4, -px / 50)) * (knobFine(e) ? 0.25 : 1);
+    return Math.max(-4, Math.min(4, -px / 50)) * (e.shiftKey ? FINE_K : knobFine(e) ? 0.25 : 1);   // ⇧ = très fin ; ⌘ (zoom…) comme avant
 }
 function wheelSteps(el, e, perNotch = 1) {
     el._wacc = (el._wacc || 0) + wheelAmt(e) * perNotch;
@@ -769,6 +777,20 @@ function ctxTargets(idx) {
 function createGroupFromTracks(idxs) {
     const list = idxs.filter(i => state.project.tracks[i] && !state.project.tracks[i].isCapture);
     if (!list.length) { flash('La piste d\'enregistrement ne se range pas dans un groupe'); return; }
+    // comme Logic : des groupes choisis en entier (toutes leurs pistes) gardent leur bus et se rangent dans le nouveau
+    const chosen = new Set(list), whole = [];
+    list.forEach(i => {
+        const g = trackGroup(state.project.tracks[i]); if (!g) return;
+        const full = groupChain(g).filter(x => !isFolder(x) && groupTracksDeep(x).every(k => chosen.has(k)));
+        const top = full[full.length - 1];
+        if (top && !whole.includes(top)) whole.push(top);
+    });
+    if (whole.length) {
+        const inWhole = new Set(whole.flatMap(b => groupTracksDeep(b)));
+        const loose = list.filter(i => !inWhole.has(i)).map(i => state.project.tracks[i]);
+        wrapGroups(whole.map(b => b.id), loose);
+        return;
+    }
     pushUndo();
     const ordered = gatherTracks(list);
     const first = state.project.tracks[ordered[0]];
@@ -909,11 +931,12 @@ function wrapGroup(busId) {
 }
 
 // Plusieurs groupes d'un coup dans un nouveau grand groupe = un bus de plus (Mix Bus 1, 2…), autant de niveaux qu'on veut
-function wrapGroups(ids) {
+function wrapGroups(ids, looseTracks = []) {
     let list = ids.map(busById).filter(b => b && !b.noOut);
     // un groupe déjà contenu dans un autre groupe choisi suit son grand groupe
     list = list.filter(b => !groupChain(b).slice(1).some(p => list.includes(p)));
     if (!list.length) return;
+    if (list.some(a => list.some(b => a !== b && busFeeds(a, b.id)))) { flash('Impossible : un de ces groupes passe déjà par un autre'); return; }
     pushUndo();
     const outs = [...new Set(list.map(b => b.output || 'master'))];
     const used = new Set((state.project.buses || []).map(b => b.name));
@@ -922,7 +945,7 @@ function wrapGroups(ids) {
     state.project.buses.push({ id, name: 'Mix Bus ' + n, isGroup: true, output: outs.length === 1 ? outs[0] : 'master', color: '#7C3AED', volume: 100 });
     // leurs pistes restent ensemble dans la liste, à la place de la première
     const tracks = state.project.tracks;
-    const mine = new Set(list.flatMap(b => groupTracksDeep(b).map(i => tracks[i])));
+    const mine = new Set([...list.flatMap(b => groupTracksDeep(b).map(i => tracks[i])), ...looseTracks]);
     const first = tracks.findIndex(t => mine.has(t));
     if (first >= 0) {
         const block = tracks.filter(t => mine.has(t)), rest = tracks.filter(t => !mine.has(t));
@@ -932,6 +955,7 @@ function wrapGroups(ids) {
         if (selT) state.selectedTrack = state.project.tracks.indexOf(selT);
     }
     list.forEach(b => { b.output = id; });
+    looseTracks.forEach(t => { t.output = id; });
     state.mixBuses = new Set([id]); state.selectedBus = id; state._selBusTrack = state.selectedTrack;
     afterGroupChange(list.length > 1 ? `${list.length} groupes rangés dans « Mix Bus ${n} » — double-clic sur le nom pour le renommer` : `« ${list[0].name} » rangé dans « Mix Bus ${n} »`);
 }
@@ -1510,6 +1534,15 @@ function fadeHandleStyle(dir, px, k) {
     return `${dir === 'in' ? 'left' : 'right'}:${(px / 2).toFixed(1)}px; top:${((1 - Math.pow(0.5, k)) * 100).toFixed(1)}%`;
 }
 
+// Taille des formes d'onde de toutes les pistes (bouton à côté du métronome, comme Logic) : 1 = normal ; le son ne change pas
+function waveZoom() { const z = state.waveZoom ?? (() => { try { return parseFloat(localStorage.getItem('pulse_wave_zoom')) || 1; } catch { return 1; } })(); return Math.max(0.5, Math.min(8, z)); }
+function setWaveZoom(z) {
+    state.waveZoom = Math.max(0.5, Math.min(8, Math.round(z * 100) / 100));
+    try { localStorage.setItem('pulse_wave_zoom', String(state.waveZoom)); } catch {}
+    const inp = document.getElementById('waveZoomIn'); if (inp && +inp.value !== state.waveZoom) inp.value = state.waveZoom;
+    const lb = document.getElementById('waveZoomVal'); if (lb) lb.textContent = state.waveZoom === 1 ? '' : '×' + String(state.waveZoom).replace('.', ',');
+    clearTimeout(setWaveZoom._t); setWaveZoom._t = setTimeout(() => rerenderTracks(), 30);
+}
 function renderClipWaveformLoop(c, segWidthPx, fullDur) {
     if (!c.peaks || !c.peaks.length || segWidthPx < 8) return '';
     const ratio = segWidthPx / (fullDur * state.pxPerSecond);
@@ -1524,7 +1557,7 @@ function renderClipWaveformLoop(c, segWidthPx, fullDur) {
     for (let i = 0; i < targetBars; i++) {
         const idx = Math.floor(p0 + ((i * step) % span));
         const v = c.peaks[idx] || 0;
-        const halfH = Math.max(0.5, (v * h) * 0.48);
+        const halfH = Math.max(0.5, Math.min((v * waveZoom() * h) * 0.48, cy * 0.97));
         const x = i * barWidth;
         const bw = Math.max(0.5, barWidth - 0.5);
         path += `M${x.toFixed(1)} ${(cy - halfH).toFixed(1)}h${bw.toFixed(1)}v${(halfH * 2).toFixed(1)}h-${bw.toFixed(1)}z`;
@@ -1546,7 +1579,7 @@ function renderClipWaveformFine(c, widthPx) {
     const bw = 2, n = Math.max(1, Math.floor((hi - lo) / bw)), span = hi - lo;
     const sr = buf.sampleRate, off = c.offset || 0;
     const d0 = buf.getChannelData(0), d1 = buf.numberOfChannels > 1 ? buf.getChannelData(1) : null;
-    const gainScale = c.gain !== undefined ? Math.min(2, c.gain) : 1;
+    const gainScale = (c.gain !== undefined ? Math.min(2, c.gain) : 1) * waveZoom();
     const envAt = (tt) => Math.min(1, c.fadeIn > 0 && tt < c.fadeIn ? Math.pow(tt / c.fadeIn, fadeK(c, 'in')) : 1,
         c.fadeOut > 0 && tt > c.duration - c.fadeOut ? Math.pow(Math.max(0, (c.duration - tt) / c.fadeOut), fadeK(c, 'out')) : 1);
     // Zoom très serré (moins de 3 échantillons par pixel) : la vraie forme d'onde en ligne, comme Logic / Pro Tools
@@ -1614,7 +1647,7 @@ function renderClipWaveform(c, widthPx) {
     const h = Math.max(20, state.trackHeight - 28);
     const barWidth = widthPx / targetBars;
     const cy = h / 2;
-    const gainScale = c.gain !== undefined ? Math.min(2, c.gain) : 1;
+    const gainScale = (c.gain !== undefined ? Math.min(2, c.gain) : 1) * waveZoom();
 
     let path = '';
     for (let i = 0; i < targetBars; i++) {
@@ -2377,7 +2410,7 @@ function initInspector() {
 // Effets actifs d'une piste ou d'un bus, dans l'ordre où le son les traverse
 // Plugins de la tranche, dans l'ordre, ÉTEINTS compris (x.fxOff) : un plugin éteint garde sa case, grisé, comme dans Logic.
 // Le moteur, lui, ne joue que x.effects (un plugin éteint en sort, rien à changer côté son).
-function fxIsOff(x, n) { return (x.fxOff || []).includes(n) && !(x.effects || []).includes(n); }
+function fxIsOff(x, n) { if (n === 'tune') return !(x.autotune && x.autotune.on); return (x.fxOff || []).includes(n) && !(x.effects || []).includes(n); }
 function chainOf(x) {
     const on = [...(x.effects || []), ...(x.fxOff || []).filter(n => !(x.effects || []).includes(n))];
     const order = Array.isArray(x.fxOrder) ? [...x.fxOrder, ...FX_ORDER.filter(n => !x.fxOrder.includes(n))] : FX_ORDER;
@@ -2499,10 +2532,10 @@ function slotListsHtml(kind, x) {
     const sends = (kind === 'track' || (kind === 'bus' && !x.premaster && !x.locked)) ? projectSends() : [];
     const canAdd = !x.premaster && !x.locked;
     return `<div class="insp-fx">
-            <div class="strip-sends-title">Effets${canAdd && chain.some(n => n !== 'limit' && n !== 'master') ? `<button class="fx-all ${chain.some(n => n !== 'limit' && n !== 'master' && !fxIsOff(x, n)) ? 'on' : ''}" data-tooltip="Avant / après : coupe tous les plugins de la tranche d'un coup, reclique pour les rallumer">${FX_POW_SVG}</button>` : ''}${canAdd ? '<button class="slot-plus" data-plus="fx" data-tooltip="Ajouter un effet (insert)">+</button>' : ''}</div>
+            <div class="strip-sends-title">Effets${canAdd && (chain.some(n => n !== 'limit' && n !== 'master') || (kind === 'track' && hasTune(x))) ? `<button class="fx-all ${chain.some(n => n !== 'limit' && n !== 'master' && !fxIsOff(x, n)) || (kind === 'track' && hasTune(x) && x.autotune && x.autotune.on) ? 'on' : ''}" data-tooltip="Avant / après : coupe tous les plugins de la tranche d'un coup, reclique pour les rallumer">${FX_POW_SVG}</button>` : ''}${canAdd ? '<button class="slot-plus" data-plus="fx" data-tooltip="Ajouter un effet (insert)">+</button>' : ''}</div>
             <div class="insp-slots insp-fx-box" data-add="fx">
             ${kind === 'track' && showTuneSlot(x) ? `<div class="insp-fx-row insp-tune-row ${x.autotune && x.autotune.on ? 'on' : 'is-off'}" data-fx="tune" data-tooltip="${x.autotune && x.autotune.on ? 'Auto-Tune : clic pour régler' : 'Auto-Tune éteint : clic pour le régler et l\'allumer'}">
-                <span>PulseTune</span><i class="insp-del" data-tooltip="Retirer PulseTune (Auto-Tune) de cette piste">×</i>
+                <b class="fx-pow" data-tooltip="Allumer / éteindre PulseTune (il garde ses réglages)">${FX_POW_SVG}</b><span>PulseTune</span><i class="insp-del" data-tooltip="Retirer PulseTune (Auto-Tune) de cette piste">×</i>
             </div>` : ''}
             ${chain.map((n, k) => `
             <div class="insp-fx-row ${x.premaster || n === 'limit' || n === 'master' ? '' : 'can-drag'} ${fxIsOff(x, n) ? 'is-off' : ''}" data-fx="${n}" data-tooltip="${esc(fxLabel(n))} · clic : ouvrir / fermer · glisser : changer l'ordre · clic droit : copier ou supprimer">
@@ -2617,11 +2650,12 @@ function bindInspKnob(input) {
         const sx = e.clientX, sy = e.clientY, v0 = parseInt(input.value) || 0;
         let moved = false;
         document.body.classList.add('resizing-col');
+        const fx = fineDrag(sx, 'x'), fy = fineDrag(sy);
         const move = (ev) => {
-            const d = (ev.clientX - sx) - (ev.clientY - sy);   // haut ou droite = vers la droite ; Shift = fin
-            if (!moved && Math.abs(d) < 2) return;
+            const raw = (ev.clientX - sx) - (ev.clientY - sy), d = fx(ev) + fy(ev);   // haut ou droite = vers la droite ; Shift = fin
+            if (!moved && Math.abs(raw) < 2) return;
             moved = true;
-            set(v0 + d * (ev.shiftKey ? 0.25 : 1));
+            set(Math.round(v0 + d));
             showBadge();
         };
         const up = () => {
@@ -3084,7 +3118,18 @@ function setFxOn(x, fx, on) {
     fxGroup(x).forEach(o => setFxOnOne(o, fx, on, o === x));
 }
 // Allume / éteint un plugin d'UNE piste ou d'un groupe ; éteint, il garde sa place dans la chaîne (fxOrder figé, fxOff)
+// PulseTune allumé / éteint comme les autres plugins (⏻ de sa ligne, ⏻ « tous les effets ») : il garde ses réglages
+async function setTuneOn(o, on) {
+    const i = state.project.tracks.indexOf(o); if (i < 0 || !o.tuneSlot) return;
+    if (!!(o.autotune && o.autotune.on) === on) return;
+    if (on) { o.autotune = { ...(o.autotune || {}), on: true }; await tuneWholeTrack(i, null, true); }
+    else { const keep = { ...(o.autotune || {}), on: false }; await untuneWholeTrack(i); o.autotune = keep; }
+    saveProject(); refreshFxViews();
+    plugWins().forEach(w => { if (w.dataset.fx === 'tune' && w._plugT === o) w.classList.toggle('is-on', on); });
+}
+function hasTune(o) { return !!(o && o.tuneSlot && state.project.tracks.includes(o) && (typeof showTuneSlot !== 'function' || showTuneSlot(o))); }
 function setFxOnOne(o, fx, on, isMain = true) {
+        if (fx === 'tune') { setTuneOn(o, on); return; }
         o.effects = o.effects || [];
         const k = o.effects.indexOf(fx);
         if (!on) {
@@ -3101,10 +3146,10 @@ function setFxOnOne(o, fx, on, isMain = true) {
 }
 // Bouton ⏻ du haut de la liste (pas dans Logic) : tout couper d'un coup pour l'avant / après, puis rallumer exactement les mêmes
 function toggleAllFx(x) {
-    const chain = chainOf(x).filter(n => n !== 'limit' && n !== 'master');
+    const chain = [...(hasTune(x) ? ['tune'] : []), ...chainOf(x).filter(n => n !== 'limit' && n !== 'master')];
     if (!chain.length) return;
     pushUndo();
-    const live = chain.filter(n => !fxIsOff(x, n));
+    const live = chain.filter(n => n === 'tune' ? !!(x.autotune && x.autotune.on) : !fxIsOff(x, n));
     if (live.length) { x.fxAB = live; live.forEach(n => setFxOnOne(x, n, false)); flash(`Avant : ${live.length} plugin${live.length > 1 ? 's' : ''} coupé${live.length > 1 ? 's' : ''} — reclique pour l'après`); }
     else { const back = (x.fxAB || chain).filter(n => chain.includes(n)); back.forEach(n => setFxOnOne(x, n, true)); delete x.fxAB; flash(`Après : ${back.length} plugin${back.length > 1 ? 's' : ''} rallumé${back.length > 1 ? 's' : ''}`); }
     saveProject(); refreshPlaybackSoon(); refreshFxViews();
@@ -3357,10 +3402,10 @@ function openAddEffectMenu(anchor, target, x, replaceId = null) {
     menu.classList.add('fx-add-menu');
     menu.innerHTML = '';
     const fxChoice = Object.fromEntries(ADD_FX_CHOICES);
-    const nameOf = (n) => (fxChoice[n] || n).replace(/\s*\(.*\)$/, '');
+    const nameOf = (n) => n === 'tune' ? 'PulseTune' : (fxChoice[n] || n).replace(/\s*\(.*\)$/, '');
     const descOf = (n) => FX_DESC[n] || ((fxChoice[n] || '').match(/\((.*)\)$/) || [])[1] || '';
     let recent = [];
-    try { recent = JSON.parse(localStorage.getItem('pulse_fx_recent') || '[]').filter(n => fxChoice[n]); } catch {}
+    try { recent = JSON.parse(localStorage.getItem('pulse_fx_recent') || '[]').filter(n => fxChoice[n] || (n === 'tune' && state.project.tracks.includes(x))); } catch {}
     // Deux gammes rangées à part : les plugins Pulse et la gamme Analogique (onglets en haut de la colonne de gauche)
     const extList = window.PulseExt && PulseExt.available() ? PulseExt.visible() : [];
     // liste des externes pas encore lue (tout début de séance) : le menu se complète tout seul dès qu'elle arrive
@@ -3405,12 +3450,15 @@ function openAddEffectMenu(anchor, target, x, replaceId = null) {
         try { localStorage.setItem('pulse_fx_recent', JSON.stringify([n, ...recent.filter(r => r !== n)].slice(0, 3))); } catch {}
         if (n === 'tune') {
             const ti = state.project.tracks.indexOf(x);
-            if (!x.tuneSlot) { pushUndo(); x.tuneSlot = true; saveProject(); }
+            const fresh = !x.tuneSlot;
+            if (fresh) { pushUndo(); x.tuneSlot = true; saveProject(); }
             renderInspector();
             if (state.mixerOpen) { renderMixer(); bindMixerEvents(); }
             const row = document.querySelector('#inspector .insp-strip .insp-fx-row[data-fx="tune"]');
             const rr = (row || anchor).getBoundingClientRect();
             openTunePanel(ti, -1, rr.left - 290, rr.top - 20, true);
+            // un plugin ajouté est allumé, comme les autres
+            if (fresh && !(x.autotune && x.autotune.on)) { const w = findPlugWin(x, 'tune'), pw = w && w.querySelector('.tb-power'); if (pw) pw.click(); }
             return;
         }
         // plusieurs pistes choisies : l'effet est posé sur toutes (celles qui ne l'ont pas encore)
@@ -3448,7 +3496,7 @@ function openAddEffectMenu(anchor, target, x, replaceId = null) {
         el.className = 'ctx-item fam-fx' + (String(n).startsWith('ext:') ? ' fam-ext' : ''); el.dataset.cat = c; el.dataset.fx = n;
         // petite image de la fenêtre du plugin à côté de son nom (assets/fxthumbs)
         if (String(n).startsWith('ext:')) { el.innerHTML = `<span class="fam-txt"><span class="fam-nm">${esc(nameOf(n))}</span></span>`; el.addEventListener('click', () => pick(n)); right.appendChild(el); return; }   // plugin externe : nom seul, ligne compacte
-        el.innerHTML = `<span class="fam-thumb-wrap">${n === 'tune' ? '<span class="fam-thumb fam-thumb-none">' + pIcon('note') + '</span>' : `<img class="fam-thumb" src="assets/fxthumbs/${esc(fxType(n))}.webp" alt="" loading="lazy" onerror="this.style.visibility='hidden'">`}</span><span class="fam-txt"><span class="fam-nm">${esc(n === 'tune' ? 'PulseTune' : nameOf(n))}${has(n) ? '<i class="fam-tag">déjà là · ouvrir</i>' : ''}</span><span class="fam-ds">${esc(n === 'tune' ? 'Auto-Tune : corrige la justesse de la voix' : descOf(n))}</span></span>`;
+        el.innerHTML = `<span class="fam-thumb-wrap">${`<img class="fam-thumb" src="assets/fxthumbs/${esc(n === 'tune' ? 'tune' : fxType(n))}.webp" alt="" loading="lazy" onerror="this.style.visibility='hidden'">`}</span><span class="fam-txt"><span class="fam-nm">${esc(n === 'tune' ? 'PulseTune' : nameOf(n))}${has(n) ? '<i class="fam-tag">déjà là · ouvrir</i>' : ''}</span><span class="fam-ds">${esc(n === 'tune' ? 'Auto-Tune : corrige la justesse de la voix' : descOf(n))}</span></span>`;
         el.addEventListener('click', () => pick(n));
         right.appendChild(el);
     }));
@@ -3578,6 +3626,7 @@ function bindFxDrag(strip, x) {
     const rows = () => [...strip.querySelectorAll('.insp-fx-row.can-drag')];
     rows().forEach(row => row.addEventListener('mousedown', (e) => {
         if (e.button !== 0 || e.target.closest('.insp-del, .fx-pow, .fx-swap')) return;
+        e.preventDefault();   // l'appli Mac (WebKit) lancerait sinon son propre glisser (sélection de texte) et le geste serait perdu
         const x0 = e.clientX, y0 = e.clientY; let on = false, target = -1, mark = null, dst = x, dstStrip = strip;
         const list = rows(), from = list.indexOf(row);
         const move = (ev) => {
@@ -3729,9 +3778,10 @@ function sendKnobHtml(v) { return `<span class="send-knob" data-tooltip="Glisser
         const inp = k.closest('.strip-send-row').querySelector('input[type="range"]'); if (!inp) return;
         e.preventDefault(); e.stopPropagation();
         let y0 = e.clientY, v = parseFloat(inp.value) || 0;
+        const fd = fineDrag(y0);
         k.classList.add('turning');
         const move = (ev) => {
-            const nv = Math.max(0, Math.min(100, v + (y0 - ev.clientY) * (knobFine(ev) ? 0.04 : 0.3)));
+            const nv = Math.max(0, Math.min(100, v + fd(ev) * 0.3));
             if (Math.round(nv) === Math.round(parseFloat(inp.value))) return;
             inp.value = Math.round(nv); inp.dispatchEvent(new Event('input', { bubbles: true }));
         };
@@ -3746,14 +3796,15 @@ function sendKnobHtml(v) { return `<span class="send-knob" data-tooltip="Glisser
     document.addEventListener('mousedown', (e) => {
         const row = e.target.closest && e.target.closest('.send-bar-row'); if (!row || e.button !== 0) return;
         const inp = row.querySelector('input[type="range"]'); if (!inp) return;
-        if (e.target.closest && e.target.closest('.sb-edit')) return;
+        if (e.target.closest && e.target.closest('.sb-edit, .sb-pow, .sb-swap, .sb-del')) return;   // ⏻ ⇅ × de la ligne : leurs propres clics
         e.preventDefault(); e.stopPropagation();
         if (e.metaKey || e.ctrlKey) { inp.value = 0; inp.dispatchEvent(new Event('input', { bubbles: true })); inp.dispatchEvent(new Event('change', { bubbles: true })); return; }   // ⌘ + clic = à 0
         const x0 = e.clientX, v0 = parseFloat(inp.value) || 0, w = Math.max(40, row.getBoundingClientRect().width);
         row.classList.add('turning');
+        const fd = fineDrag(x0, 'x');
         const move = (ev) => {
             if (Math.abs(ev.clientX - x0) > 2) moved = true;
-            const nv = Math.round(Math.max(0, Math.min(100, v0 + (ev.clientX - x0) / w * 100 * (ev.shiftKey ? 0.15 : 1))));
+            const nv = Math.round(Math.max(0, Math.min(100, v0 + fd(ev) / w * 100)));
             if (nv === Math.round(parseFloat(inp.value))) return;
             inp.value = nv; inp.dispatchEvent(new Event('input', { bubbles: true }));
         };
@@ -3813,13 +3864,13 @@ function sendKnobHtml(v) { return `<span class="send-knob" data-tooltip="Glisser
     // Molette au survol (comme Logic) : envois, faders, gauche/droite se dosent en faisant défiler ; Maj = réglage fin
     document.addEventListener('wheel', (e) => {
         if (e.altKey || e.metaKey || e.ctrlKey || !e.target.closest) return;
-        const el = e.target.closest('.send-bar-row, .send-knob, .strip-send-row, input.fader, input.t-vol, input.group-vol, input.bus-pan, input.insp-pan-input, .strip-pan input[type="range"]');
+        const el = e.target.closest('.send-bar-row, .send-knob, .strip-send-row, input.fader, input.t-vol, input.group-vol, input.bus-pan, input.insp-pan-input, .strip-pan input[type="range"], .strip[data-kind="bus"] .strip-pan');
         if (!el) return;
         const inp = el.matches('input[type="range"]') ? el : el.querySelector('input[type="range"]');
         if (!inp || inp.disabled) return;
         e.preventDefault(); e.stopPropagation();
         const min = parseFloat(inp.min), max = parseFloat(inp.max), span = max - min;
-        const step = (e.shiftKey ? 0.25 : 1) * span / 100 * Math.max(0.5, Math.min(4, Math.abs(e.deltaMode === 0 ? e.deltaY / 12 : e.deltaY * 3)));
+        const step = (e.shiftKey ? FINE_K : 1) * span / 100 * Math.max(0.5, Math.min(4, Math.abs(e.deltaMode === 0 ? e.deltaY / 12 : e.deltaY * 3)));
         inp._wacc = (inp._wacc || 0) + (e.deltaY < 0 ? step : -step);
         const whole = el.matches('.strip-send-row, .send-bar-row, .send-knob') || inp.classList.contains('insp-pan-input');
         const apply = whole ? Math.trunc(inp._wacc) : inp._wacc;
@@ -3893,9 +3944,15 @@ function renderMixer() {
                 </div>` : `
                 <button class="strip-sound" data-tooltip="Réglage du groupe : charge un réglage prêt à l'emploi">${b.sound && presetsFor(b)[b.sound.preset] ? esc(presetsFor(b)[b.sound.preset].label) : 'Réglage'} ▾</button>
                 ${slotListsHtml('bus', b)}
-                <label class="insp-pan strip-bus-pan"><span>G</span><input type="range" class="bus-pan" min="-100" max="100" step="1" data-default="0" value="${b.pan || 0}" data-tooltip="Gauche / droite du groupe (⌘ + clic = centre, double-clic = écrire la valeur)"><span>D</span></label>`}
+                <div class="strip-pan">
+                    <div class="strip-pan-knob" style="transform: rotate(${((b.pan || 0) / 100) * 135}deg)" data-tooltip="Gauche / droite du groupe : glisse pour placer le son (${b.pan ? (b.pan > 0 ? 'à droite' : 'à gauche') : 'au centre'})"></div>
+                    <input type="range" class="bus-pan" min="-100" max="100" step="1" data-default="0" value="${b.pan || 0}" tabindex="-1" aria-hidden="true" hidden>
+                </div>`}
                 <div class="strip-fader-wrap">
-                    <input type="range" class="fader" min="0" max="100" step="0.5" data-vmap="1" data-default="${volToPos(100)}" value="${volToPos(b.volume ?? 100)}" ${b.locked?'disabled':''}>
+                    <div class="fader-row">
+                        <div class="vu-rail"><div class="vu-bar"></div></div>
+                        <input type="range" class="fader" min="0" max="100" step="0.5" data-vmap="1" data-default="${volToPos(100)}" value="${volToPos(b.volume ?? 100)}" ${b.locked?'disabled':''}>
+                    </div>
                     <div class="strip-db">${volumeToDb(b.volume ?? 100)} dB</div>
                 </div>
                 <div class="strip-output">→ ${busLabel(b.output)}</div>
@@ -4105,11 +4162,24 @@ document.addEventListener('click', (e) => {
 function initProjectName() {
     const el = document.getElementById('projectName');
     el.textContent = state.project.name;
+    // le nom est gardé à chaque lettre (quitter sans sortir du champ ne le perd plus)
+    let typed = null;
+    el.addEventListener('input', () => {
+        const v = el.textContent.trim(); if (!v) return;
+        state.project.name = v;
+        clearTimeout(typed); typed = setTimeout(() => { updateDocTitle(); saveProject(); flushProjectDocSave(); }, 400);
+    });
+    let before = state.project.name;
+    el.addEventListener('focus', () => { before = state.project.name; });
     el.addEventListener('blur', () => {
+        clearTimeout(typed);
         state.project.name = el.textContent.trim() || 'Projet sans titre';
         el.textContent = state.project.name;
         updateDocTitle();
-        saveProject();
+        saveProject(); flushProjectDocSave();
+        // projet déjà rangé dans un dossier : il est réenregistré tout de suite sous son nouveau nom (dossier + fichier .pulse)
+        if (state.project.name !== before && state.project.savedDir && nativeFs()) saveProjectFolder();
+        before = state.project.name;
     });
     el.addEventListener('keydown', e => {
         if (e.key === 'Enter') { e.preventDefault(); el.blur(); }
@@ -4286,8 +4356,16 @@ async function saveProjectFolder(askAgain = false) {
     state._savingFolder = true;
     try {
         saveProject();
-        const dir = await ensureProjectFolder(askAgain);
+        let dir = await ensureProjectFolder(askAgain);
         if (!dir) return;
+        // le projet a été renommé (en haut à gauche) : le dossier et le fichier .pulse prennent ce nom
+        const nm = (state.project.name || '').trim();
+        if (nm && !/^(Projet sans titre|Mon projet)$/i.test(nm)) {
+            try {
+                const nd = await window.__TAURI__.core.invoke('rename_project_folder', { dir, name: nm });
+                if (nd && nd !== dir) { dir = nd; state.project.savedDir = nd; state._savedParts = null; saveProject(); }
+            } catch (err) { console.warn('Renommer le dossier du projet', err); }
+        }
         flash('Enregistrement du projet…');
         const base = dir.split(/[\\/]/).filter(Boolean).pop() || 'Projet';
         // Gros projet : sons répartis en plusieurs fichiers dans Sons/ (un bloc de plusieurs centaines de Mo ne passe pas d'un coup)
@@ -4412,6 +4490,14 @@ async function openPulseFileInStudio(file, opts = {}) {
         }
         // Un .pulse ouvert depuis son dossier de projet : on continue d'y enregistrer
         if (opts.dir && nativeFs()) { try { if (await window.__TAURI__.core.invoke('project_folder_ok', { dir: opts.dir })) project.savedDir = opts.dir; } catch {} }
+        // Nom : un fichier enregistré avant d'avoir nommé le projet ne lui redonne pas « Projet sans titre »
+        const dflt = (n) => !n || /^(Projet sans titre|Mon projet)$/i.test(String(n).trim());
+        if (dflt(project.name)) {
+            let known = null; try { known = project.id ? await PulsePersist.loadProjectDoc(project.id) : null; } catch {}
+            const fromFile = file.name.replace(/\.pulse$/i, '').replace(/ - sons \d+$/i, '').trim();
+            if (known && !dflt(known.name)) project.name = known.name;
+            else if (!dflt(fromFile) && !/^Projet$/i.test(fromFile)) project.name = fromFile;
+        }
         await PulsePersist.saveProjectDoc(project);
         localStorage.setItem('pulse_current_project', JSON.stringify(project));
         _skipUnloadGuard = true;
@@ -6050,23 +6136,35 @@ function bindGlobalDragDrop() {
         return overlay;
     };
 
+    // Le voile ne reste jamais bloqué : un fichier qui ne fait que passer au-dessus de la fenêtre (dans l'appli Mac,
+    // la sortie n'est pas toujours signalée) → il s'efface dès que le glisser ne survole plus la page, ou au moindre clic / touche
+    let lastOver = 0, watch = null;
+    const hideOverlay = () => { if (overlay) overlay.classList.remove('visible'); if (watch) { clearInterval(watch); watch = null; } };
+    const showOverlay = () => {
+        createOverlay().classList.add('visible'); lastOver = performance.now();
+        if (!watch) watch = setInterval(() => { if (performance.now() - lastOver > 400) hideOverlay(); }, 150);
+    };
     window.addEventListener('dragenter', (e) => {
         if (!hasFiles(e)) return;
-        if (e.target.closest('.instru-dropzone')) return; // priorité à la dropzone instru
+        if (e.target.closest?.('.instru-dropzone')) return; // priorité à la dropzone instru
         e.preventDefault();
-        createOverlay().classList.add('visible');
+        showOverlay();
     });
     window.addEventListener('dragover', (e) => {
-        if (hasFiles(e)) e.preventDefault();
+        if (!hasFiles(e)) return;
+        e.preventDefault();
+        lastOver = performance.now();
     });
     window.addEventListener('dragleave', (e) => {
-        if (e.clientX === 0 && e.clientY === 0 && overlay) overlay.classList.remove('visible');
+        if (!e.relatedTarget || (e.clientX === 0 && e.clientY === 0)) hideOverlay();
     });
+    window.addEventListener('dragend', hideOverlay);
+    ['mousedown', 'mousemove', 'keydown', 'blur', 'wheel'].forEach(ev => window.addEventListener(ev, () => { if (overlay && overlay.classList.contains('visible')) hideOverlay(); }, true));
     window.addEventListener('drop', async (e) => {
         if (!hasFiles(e)) return;
         if (e.target.closest('.instru-dropzone')) return;
         e.preventDefault();
-        if (overlay) overlay.classList.remove('visible');
+        hideOverlay();
 
         const pulseFile = Array.from(e.dataTransfer.files).find(f => /\.pulse$/i.test(f.name));
         if (pulseFile) {
@@ -6128,12 +6226,14 @@ function vuEls(now) {
     const m = { row: [], mini: [], rail: [], first: null };
     document.querySelectorAll('.tracks-panel .track-item[data-i]').forEach(it => { const i = it.dataset.i; if (m.row[i] !== undefined) return; m.row[i] = it.querySelector('.t-meter'); m.mini[i] = it.querySelector('.vu-mini'); if (!m.first) m.first = it; });
     document.querySelectorAll('.mixer-strips .strip[data-kind="track"][data-i]').forEach(st => { const i = st.dataset.i; if (m.rail[i] === undefined) m.rail[i] = st.querySelector('.vu-rail'); });
+    m.bus = [...document.querySelectorAll('.mixer-strips .strip[data-kind="bus"][data-i]')].map(st => ({ b: state.project.buses[parseInt(st.dataset.i)], rail: st.querySelector('.vu-rail') })).filter(x => x.b && x.rail);
     _vuEls = m; _vuElsAt = now; return m;
 }
 function updateAllVuMeters() {
     const now = performance.now();
     if (_phAnim && !(state.playing || state.recording)) updatePlayhead();   // sécurité : la tête ne continue jamais seule après l'arrêt
     const els = vuEls(now);
+    const trackLvl = [];
     // Pistes
     state.project.tracks.forEach((_, i) => {
         // Vu-mètre de la ligne de piste : deux barres collées (gauche / droite), une seule si le son est mono
@@ -6153,6 +6253,7 @@ function updateAllVuMeters() {
         if (vuTempArray.length !== an.frequencyBinCount) vuTempArray = new Uint8Array(an.frequencyBinCount);
         an.getByteTimeDomainData(vuTempArray);
         const level = computeRms(vuTempArray);
+        trackLvl[i] = level;
         applyVuPeak(i, level, now);
         const pct = (level * 100).toFixed(1) + '%';
         const peakPct = ((_vuPeaks[i]?.peak || 0) * 100).toFixed(1) + '%';
@@ -6162,6 +6263,22 @@ function updateAllVuMeters() {
         // Track panel
         const panel = els.mini[i];
         if (panel) { panel.style.setProperty('--lvl', pct); panel.style.setProperty('--peak', peakPct); }
+    });
+    // Groupes : niveau mesuré après leurs effets ; un groupe sans traitement = la somme de ses pistes × son volume
+    (els.bus || []).forEach(({ b, rail }) => {
+        let level;
+        const an = PulseAudio.getBusAnalyser && PulseAudio.getBusAnalyser(b.id);
+        if (an) {
+            if (vuTempArray.length !== an.fftSize) vuTempArray = new Uint8Array(an.fftSize);
+            an.getByteTimeDomainData(vuTempArray);
+            level = computeRms(vuTempArray);
+        } else {
+            const sum = groupTracksDeep(b).reduce((a, k) => a + (trackLvl[k] || 0) ** 2, 0);
+            level = b.muted ? 0 : Math.min(1, Math.sqrt(sum) * (b.volume ?? 100) / 100);
+        }
+        applyVuPeak('bus:' + b.id, level, now);
+        rail.style.setProperty('--lvl', (level * 100).toFixed(1) + '%');
+        rail.style.setProperty('--peak', ((_vuPeaks['bus:' + b.id]?.peak || 0) * 100).toFixed(1) + '%');
     });
     // Master
     const ma = PulseAudio.getMasterAnalyser();
@@ -6860,6 +6977,8 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false) {
     panel.style.left = Math.max(8, Math.min(window.innerWidth - panel.offsetWidth - 8, x)) + 'px';
     panel.style.top = Math.max(8, Math.min(window.innerHeight - panel.offsetHeight - 8, y)) + 'px';
     if (trackMode) makePlugWindow(panel, trk, 'tune', trackIdx);
+    // une fois dessinée (polices, clavier) : la fenêtre tient dans l'écran, bas compris
+    requestAnimationFrame(() => { const r = panel.getBoundingClientRect(); if (r.bottom > window.innerHeight - 8) panel.style.top = Math.max(8, window.innerHeight - r.height - 8) + 'px'; });
     const status = panel.querySelector('.tune-status');
     const chroma = () => !!mask && mask.every(Boolean);
     const paint = () => {
@@ -6936,7 +7055,7 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false) {
         knob.addEventListener('mousedown', (e) => {
             if (e.button !== 0) return; e.preventDefault();
             const y0 = e.clientY, v0 = K[kd.key];
-            const mv = (ev) => { const nv = Math.round(Math.max(0, Math.min(100, v0 + (y0 - ev.clientY) * (knobFine(ev) ? 0.04 : 0.25)))); if (nv !== K[kd.key]) { K[kd.key] = nv; draw(); } };
+            const fd = fineDrag(y0); const mv = (ev) => { const nv = Math.round(Math.max(0, Math.min(100, v0 + fd(ev) * 0.25))); if (nv !== K[kd.key]) { K[kd.key] = nv; draw(); } };
             const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); changed(); };
             document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
         });
@@ -8269,6 +8388,12 @@ function tryLiveFx() {
         for (const id of new Set([...Object.keys(a), ...Object.keys(b)])) {
             if (JSON.stringify(a[id]) === JSON.stringify(b[id])) continue;
             if (fxType(id) === 'vst' && a[id] && b[id] && a[id].path === b[id].path && a[id].latency === b[id].latency) continue;   // plugin externe : ses réglages vivent dans le plugin (une latence qui change, elle, reconstruit)
+            // bouton Mix des plugins : chaque plugin touché reçoit son nouveau mélange
+            if (id === '_mix') {
+                const ma = a._mix || {}, mb = b._mix || {};
+                for (const fid of new Set([...Object.keys(ma), ...Object.keys(mb)])) if (ma[fid] !== mb[fid]) sends.push([key, fid, { _mix: mb[fid] ?? 100 }, { _mix: ma[fid] ?? 100 }]);
+                continue;
+            }
             const pa = a[id] || {}, pb = b[id];
             if (!pb || typeof pb !== 'object') return false;
             const changed = {};
@@ -8284,6 +8409,13 @@ function tryLiveFx() {
 }
 // L'appli a refusé un réglage envoyé en direct (appli plus ancienne que la page) : on reconstruit, comme avant
 if (window.PulseAudio && PulseAudio.setLiveFail) PulseAudio.setLiveFail(() => { _liveSnap.rest = null; refreshPlaybackSoon(); });
+// Un bouton de plugin tourné pendant la lecture : le son suit PENDANT le geste (une fois par image, le reste est lissé par le moteur)
+let _liveNudgeRaf = 0;
+function liveNudge() {
+    if (!state.playing || state.recording || _liveNudgeRaf) return;
+    _liveNudgeRaf = requestAnimationFrame(() => { _liveNudgeRaf = 0; refreshPlaybackSoon(); });
+}
+window.liveNudge = liveNudge;
 function refreshPlaybackSoon() {
     if (!state.playing || state.recording) return;
     if (tryLiveFx()) return;
@@ -8682,7 +8814,7 @@ function openEqPanel(trackIdx, anchorEl) {
     const already = findPlugWin(t, 'eq');
     if (already) { plugFront(already); return; }
     t.effectParams = t.effectParams || {};
-    const W = 760, H = 300, PB = 20, FMIN = 20, FMAX = 20000;   // PB : bande du bas pour les fréquences
+    const W = 760, H = 380, PB = 20, FMIN = 20, FMAX = 20000;   // PB : bande du bas pour les fréquences ; H 380 (avant 300) : plus de hauteur = gain plus précis (Pro-Q ≈ 21 px par dB)
     let DB = 12; try { DB = +localStorage.getItem('pulse_eq_range') || 12; } catch {}
     const mid = (H - PB) / 2;
     const fx = (f) => Math.log(f / FMIN) / Math.log(FMAX / FMIN) * W;
@@ -8993,6 +9125,13 @@ function openEqPanel(trackIdx, anchorEl) {
             }
             const patch = { freq: xf(x) };
             if (!EQ_FLAT(b0.type)) patch.gain = Math.round(yd0(y) * 2) / 2;
+            // coupe-bas / coupe-haut (comme Pro-Q) : monter ou descendre le point règle sa résonance — le point reste sur le haut de la courbe
+            else if (b0.type === 'hpf' || b0.type === 'lpf') {
+                const want = yd0(y), at = (q) => eqBandDb({ ...b0, freq: patch.freq, q, on: true }, patch.freq);
+                let lo = Math.log(0.1), hi = Math.log(18);
+                for (let k = 0; k < 30; k++) { const m = (lo + hi) / 2; if (at(Math.exp(m)) < want) lo = m; else hi = m; }
+                patch.q = Math.round(Math.exp((lo + hi) / 2) * 100) / 100;
+            }
             update(i, patch);
         };
         const up = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
@@ -9449,8 +9588,9 @@ function makePlugWindow(panel, t, fxName, trackIdx) {
     plugFront(panel);
     panel.addEventListener('mousedown', () => { if (!isFrontPlug(panel)) plugFront(panel); }, true);
     const head = panel.querySelector('.fx-panel-header');
-    if (head) head.addEventListener('mousedown', (e) => {
-        if (e.button !== 0 || e.target.closest('button, input, label, select')) return;
+    // on attrape la fenêtre par son bandeau, ou par le fond de ses barres (haut et bas) : jamais coincée
+    if (head) panel.addEventListener('mousedown', (e) => {
+        if (e.button !== 0 || !e.target.closest('.fx-panel-header, .tp-bar, .fx-panel-footer') || e.target.closest('button, input, label, select, textarea, canvas, [contenteditable="true"], [role="slider"], .pk, .knob')) return;
         e.preventDefault();
         const r = panel.getBoundingClientRect(), dx = e.clientX - r.left, dy = e.clientY - r.top;
         const move = (ev) => {
@@ -9466,6 +9606,7 @@ function makePlugWindow(panel, t, fxName, trackIdx) {
         panel.classList.add('dragging');
         document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
     });
+    requestAnimationFrame(() => { if (panel.isConnected) addMixKnob(panel, t, fxName); });   // après la façade : on voit si le plugin a déjà son propre Mix
     // Si la piste ou le groupe disparaît (suppression, autre projet), sa fenêtre se ferme
     const owner = t && t.__real ? t.__real : t;   // fenêtre d'un exemplaire en plus : sa vraie piste
     const alive = () => typeof trackIdx === 'number' ? state.project.tracks[trackIdx] === owner : (state.project.tracks.includes(owner) || (state.project.buses || []).includes(owner));
@@ -9475,9 +9616,36 @@ function makePlugWindow(panel, t, fxName, trackIdx) {
     }, 500);
 }
 
+// Bouton « Mix » dans le bandeau des plugins qui n'ont pas déjà le leur : 0 % = son d'origine, 100 % = tout l'effet
+// (rangé dans effectParams._mix[nom du plugin] ; le moteur mélange, le son d'origine recalé sur le retard du plugin)
+function addMixKnob(panel, t, fxName) {
+    const base = fxType(fxName);
+    if (['tune', 'vst', 'master'].includes(base) || panel.querySelector('.fx-mix-host')) return;
+    if (panel.querySelector('[data-key="mix"], [data-key="wet"], [data-key="dry"]')) return;
+    const head = panel.querySelector('.fx-panel-header'); if (!head) return;
+    const owner = t && t.__real ? t.__real : t, fid = (t && t.__fxId) || fxName;
+    if (!owner) return;
+    const host = document.createElement('div'); host.className = 'fx-mix-host';
+    host.dataset.tooltip = 'Mix : 0 % = le son d\'origine, 100 % = tout l\'effet (glisser · double-clic = écrire)';
+    const close = head.querySelector('.fx-panel-close');
+    head.insertBefore(host, close || null);
+    const cur = () => { const m = ((owner.effectParams || {})._mix || {})[fid]; return Number.isFinite(m) ? m : 100; };
+    let armed = false;
+    proKnob(host, { key: '_mix', label: 'Mix', min: 0, max: 100, val: cur(), fmt: (v) => Math.round(v) + ' %',
+        onChange: (v) => {
+            if (!armed) { pushUndo(); armed = true; }
+            owner.effectParams = owner.effectParams || {};
+            const mm = owner.effectParams._mix = owner.effectParams._mix || {};
+            const r = Math.round(v);
+            if (r >= 100) delete mm[fid]; else mm[fid] = r;
+            if (!Object.keys(mm).length) delete owner.effectParams._mix;
+        },
+        onEnd: () => { armed = false; saveProject(); refreshPlaybackSoon(); } });
+}
+
 // === Limiteur (style « écran plein + panneau flottant », planche docs-planche-limiteur-gate-deesser-multibande.html) ===
 // Petit bouton rotatif plat à bague lumineuse, partagé par les nouvelles façades
-function proKnob(host, { label, min, max, val, fmt, onChange, onEnd, log, color = '#A855F7', big, key }) {
+function proKnob(host, { label, min, max, val, fmt, onChange, onEnd, log, color = '#A855F7', big, key, def }) {
     const el = document.createElement('div'); el.className = 'pk' + (big ? ' big' : ''); host.appendChild(el);
     if (key) el.dataset.key = key;   // automation (mode A) : toucher le bouton affiche sa courbe sur la piste
     const fr = () => log ? Math.log(val / min) / Math.log(max / min) : (val - min) / (max - min);
@@ -9492,7 +9660,7 @@ function proKnob(host, { label, min, max, val, fmt, onChange, onEnd, log, color 
     let y0 = null, f0 = 0;
     el.addEventListener('mousedown', (e) => {
         e.preventDefault(); e.stopPropagation(); y0 = e.clientY; f0 = fr();
-        const mv = (ev) => { const f = Math.max(0, Math.min(1, f0 + (y0 - ev.clientY) / (knobFine(ev) ? 1500 : 300))); val = log ? min * Math.pow(max / min, f) : min + f * (max - min); draw(); onChange && onChange(val); if (key) el.dispatchEvent(new Event('input', { bubbles: true })); };
+        const fd = fineDrag(y0); const mv = (ev) => { const f = Math.max(0, Math.min(1, f0 + fd(ev) / 300)); val = log ? min * Math.pow(max / min, f) : min + f * (max - min); draw(); onChange && onChange(val); liveNudge(); if (key) el.dispatchEvent(new Event('input', { bubbles: true })); };
         const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); onEnd && onEnd(val); };
         document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
     });
@@ -9511,6 +9679,18 @@ function proKnob(host, { label, min, max, val, fmt, onChange, onEnd, log, color 
     let held = null;
     el._pkShow = (v) => { if (held === null) held = val; const k = val; val = v; draw(); val = k; };
     el._pkRestore = () => { if (held !== null) { held = null; draw(); } };
+    // ⌘ / ⌥ + clic : valeur de départ (celle de la fiche du réglage si on ne l'a pas donnée)
+    el._pkReset = () => {
+        let d = def;
+        if (d === undefined && key) {
+            if (key === '_mix') d = 100;
+            else { const fx = el.closest('.fx-panel') && el.closest('.fx-panel').dataset.fx; const ty = fx ? fxType(fx) : null;
+                const dd = ty && typeof fxAllDefs === 'function' ? fxAllDefs(ty).find(x => x.key === key) : null; if (dd) d = dd.def; }
+        }
+        if (d === undefined || !Number.isFinite(d)) return false;
+        val = Math.max(min, Math.min(max, d)); draw(); onChange && onChange(val); onEnd && onEnd(val); liveNudge();
+        return true;
+    };
     return { set(v) { val = v; draw(); }, el };
 }
 
@@ -10777,7 +10957,7 @@ function openPitchPanel(trackIdx, anchorEl) {
         e.preventDefault();
         const y0 = e.clientY, v0 = val(d); let moved = false;
         // 12 px par demi-ton ; Maj = réglage fin (au dixième pour le formant)
-        const mv = (ev) => { const v = v0 + (y0 - ev.clientY) / (knobFine(ev) ? 150 : 24); const before = val(d); if (!moved && Math.abs(Math.round(v / d.step) * d.step - before) < d.step / 2) return;
+        const fd = fineDrag(y0); const mv = (ev) => { const v = v0 + fd(ev) / 24; const before = val(d); if (!moved && Math.abs(Math.round(v / d.step) * d.step - before) < d.step / 2) return;
             if (!moved) arm(); moved = true; setVal(d, v); autoTouch(t, 'fx:pitch:' + d.key); };
         const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); if (moved) finish(); };
         document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
@@ -11414,6 +11594,17 @@ const FX_PANEL_DEFS = {
     ]
 };
 
+// Écho : un seul bouton « Mix » à la place de « Quantité » + « Voix d'origine » (0 % = voix seule, 50 % = voix et écho à fond,
+// 100 % = l'écho seul). Il règle les deux valeurs du moteur (wet / dry), qui partent déjà en direct et s'automatisent.
+const DELAY_MIX_DEF = { key: 'mix', label: 'Mix', unit: '%', min: 0, max: 100, def: 13, step: 1,
+    tip: '0 % = ta voix seule · 50 % = ta voix et l\'écho à fond · 100 % = seulement l\'écho',
+    virt: { get: (ep) => { const w = ep.wet ?? 25, d = ep.dry ?? 100; return Math.round(d >= 100 ? w / 2 : 100 - d / 2); },
+            set: (ep, m) => { ep.wet = Math.round(Math.min(100, 2 * m)); ep.dry = Math.round(Math.min(100, 2 * (100 - m))); } } };
+function panelDefsOf(fxName) {
+    const d = FX_PANEL_DEFS[fxName] || [];
+    if (fxName !== 'delay') return d;
+    return d.flatMap(x => x.key === 'wet' ? [DELAY_MIX_DEF] : x.key === 'dry' ? [] : [x]);
+}
 function openEffectPanel(trackIdx, fxName, anchorEl) {
     if (fxType(fxName) === 'vst') return window.PulseExt && PulseExt.openEditor(fxName);
     if (String(fxName).includes('#')) {
@@ -11465,7 +11656,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
     t.effectParams = t.effectParams || {};
 
     const DEFS = FX_PANEL_DEFS;
-    const defs = DEFS[fxName];
+    const defs = DEFS === FX_PANEL_DEFS ? panelDefsOf(fxName) : DEFS[fxName];
     if (!defs) return;
     const params = t.effectParams[fxName] || {};
 
@@ -11478,7 +11669,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
     const cat = (ADD_FX_CATEGORIES.find(c => c[1].includes(fxName)) || ['Effet'])[0];
     panel.className = 'fx-panel fx-pro' + (hasAdv && !advanced ? ' simple' : '') + (fxName === 'delay' || fxName === 'reverb' ? ' fx-wideface fx-screen' : '');
     panel.style.setProperty('--fx-accent', FX_CAT_COLORS[cat] || 'var(--violet-2)');
-    const valOf = (d) => params[d.key] !== undefined ? params[d.key] : d.def;
+    const valOf = (d) => d.virt ? d.virt.get(params) : params[d.key] !== undefined ? params[d.key] : d.def;
     // Façade : seul le compresseur change d'habillage selon son caractère (Propre reste net, numérique)
     const SCREEN = fxName === 'delay' || fxName === 'reverb';   // écran plein + panneau flottant (gamme Digital)
     const skinOf = () => fxName === 'comp' ? (FX_SKINS[Math.round((t.effectParams.comp || {}).mode || 0)] || 'P') : SCREEN ? 'S' : 'P';
@@ -11723,7 +11914,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
         const d = defs.find(x => x.key === key); if (!d) return;
         const cur = t.effectParams[fxName] || {};
         const isAuto = d.auto && cur[key] === undefined;
-        const val = isAuto ? d.auto(curP()) : (cur[key] !== undefined ? cur[key] : d.def);
+        const val = d.virt ? d.virt.get(cur) : isAuto ? d.auto(curP()) : (cur[key] !== undefined ? cur[key] : d.def);
         const sl = panel.querySelector(`.fx-slider[data-key="${key}"]`); if (sl) sl.value = val;
         const autoRel = key === 'release' && skinOf() === 'U' && !!cur.autoRel;
         const kn = panel.querySelector(`.fx-knob[data-key="${key}"]`); if (kn) kn.innerHTML = fxKnobSvg(d, val, undefined, skinOf(), autoRel);
@@ -11780,7 +11971,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
         if (!live) refreshPlaybackSoon();
         saveProject();
     };
-    const valOf2 = (d) => { const v = (t.effectParams[fxName] || {})[d.key]; return v !== undefined ? v : d.def; };
+    const valOf2 = (d) => { if (d.virt) return d.virt.get(t.effectParams[fxName] || {}); const v = (t.effectParams[fxName] || {})[d.key]; return v !== undefined ? v : d.def; };
     panel.querySelectorAll('.fx-slider').forEach(sl => {
         sl.addEventListener('change', () => { sl._undone = false; });
         sl.addEventListener('input', () => {
@@ -11788,7 +11979,8 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
             const val = parseFloat(sl.value);
             if (!sl._undone) { pushUndo(); sl._undone = true; }
             t.effectParams[fxName] = t.effectParams[fxName] || {};
-            t.effectParams[fxName][key] = val;
+            const vd = defs.find(x => x.key === key);
+            if (vd && vd.virt) vd.virt.set(t.effectParams[fxName], val); else t.effectParams[fxName][key] = val;
             (t.proKeep = t.proKeep || {})[fxName] = true;   // réglé à la main : le curseur « Son » n'y touche plus
             if (key === 'mode') { applySkin(); defs.forEach(d => refreshCell(d.key)); }
             refreshCell(key);
@@ -11802,7 +11994,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
         const d = defs.find(x => x.key === key); if (!d) return;
         pushUndo();
         t.effectParams[fxName] = t.effectParams[fxName] || {};
-        if (d.auto) delete t.effectParams[fxName][key]; else t.effectParams[fxName][key] = d.def;
+        if (d.virt) d.virt.set(t.effectParams[fxName], d.def); else if (d.auto) delete t.effectParams[fxName][key]; else t.effectParams[fxName][key] = d.def;
         refreshAll(); commit();
     };
     const endGesture = (key) => { const sl = panel.querySelector(`.fx-slider[data-key="${key}"]`); if (sl) sl._undone = false; };
@@ -11830,7 +12022,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
             kn.focus();
             const y0 = e.clientY, f0 = fracNow();
             panel.classList.add('dragging');
-            const move = (ev) => toFrac(Math.max(0, Math.min(1, f0 + (y0 - ev.clientY) / (knobFine(ev) ? 2000 : 320))));
+            const fd = fineDrag(y0); const move = (ev) => toFrac(Math.max(0, Math.min(1, f0 + fd(ev) / 320)));
             const up = () => { panel.classList.remove('dragging'); endGesture(key); document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
             document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
         });
@@ -12683,7 +12875,14 @@ function bindMixerEvents() {
             const menu = document.createElement('div'); menu.className = 'track-ctx-menu';
             menu.style.cssText = `position:fixed;left:${e.clientX}px;top:${e.clientY}px;z-index:200;`;
             const members = groupMemberIdx(b).length;
+            // comme dans la liste des pistes : ranger ce groupe (ou les groupes choisis) dans un nouveau grand groupe, ou dans un autre
+            const ch = mixChosenBuses().filter(x => !x.premaster && !x.noOut && !isFolder(x));
+            const wrapIds = ch.length > 1 && ch.some(x => x.id === b.id) ? ch.map(x => x.id) : [b.id];
+            const others = (state.project.buses || []).filter(o => o !== b && !o.premaster && !o.locked && o.id !== b.output && isVisibleGroup(o) && !busFeeds(o, b.id));
             const items = [['Renommer', () => renameBusInline(strip.querySelector('.strip-name'), b)],
+                ...(b.noOut ? [] : [[wrapIds.length > 1 ? `Ranger les ${wrapIds.length} groupes choisis dans un nouveau grand groupe (bus)` : 'Ranger dans un nouveau grand groupe (bus)', () => wrapGroups(wrapIds)]]),
+                ...(b.noOut ? [] : others.map(o => [`Ranger dans « ${o.name} »`, () => moveGroupInto(b.id, o.id)])),
+                ...(b.output && b.output !== 'master' && busById(b.output) ? [[`Sortir de « ${busById(b.output).name} »`, () => moveGroupInto(b.id, busById(b.output).output || 'master')]] : []),
                 ...(members ? [['Éclater le groupe (les pistes restent, le bus disparaît)', () => dissolveGroup(b.id)]] : []),
                 ['Supprimer le bus', () => deleteBus(b.id)]];
             items.forEach(([label, action]) => { const it = document.createElement('div'); it.className = 'ctx-item'; it.textContent = label; it.addEventListener('mousedown', (ev) => { ev.stopPropagation(); closeAllMenus(); action(); }); menu.appendChild(it); });
@@ -12865,6 +13064,7 @@ function bindMixerEvents() {
             bpan.addEventListener('input', () => {
                 if (!pu) { pushUndo(); pu = true; }
                 b.pan = parseInt(bpan.value);
+                const kn = strip.querySelector('.strip-pan-knob'); if (kn) updatePanKnobVisual(kn, b.pan);
                 refreshPlaybackSoon();
             });
             bpan.addEventListener('dblclick', () => { pushUndo(); bpan.value = 0; b.pan = 0; refreshPlaybackSoon(); saveProject(); });
@@ -12875,6 +13075,21 @@ function bindMixerEvents() {
         if (knob && kind === 'track') {
             knob.addEventListener('mousedown', (e) => startPanDrag(e, knob, i));
         }
+        // rond du groupe : même geste que les pistes, ⌘ / ⌥ + clic ou double-clic = centre
+        if (knob && kind === 'bus') {
+            const b = state.project.buses[i], hid = strip.querySelector('.bus-pan');
+            const setPan = (v) => { b.pan = v; if (hid) hid.value = v; updatePanKnobVisual(knob, v); refreshPlaybackSoon(); };
+            knob.addEventListener('dblclick', () => { pushUndo(); setPan(0); saveProject(); });
+            knob.addEventListener('mousedown', (e) => {
+                if (e.button !== 0) return;
+                e.preventDefault(); e.stopPropagation();
+                if (e.metaKey || e.altKey) { pushUndo(); setPan(0); saveProject(); return; }
+                const x0 = e.clientX, p0 = b.pan || 0, fd = fineDrag(x0, 'x'); let undone = false;
+                const mv = (ev) => { const dx = fd(ev); if (!dx && !undone) return; if (!undone) { pushUndo(); undone = true; } setPan(Math.max(-100, Math.min(100, Math.round(p0 + dx)))); };
+                const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); if (undone) saveProject(); };
+                document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
+            });
+        }
     });
 }
 
@@ -12884,9 +13099,10 @@ function startPanDrag(e, knob, trackIdx) {
     const t = state.project.tracks[trackIdx];
     const startPan = t.pan || 0;
     let undone = false;
+    const fd = fineDrag(startX, 'x');
 
     const onMove = (ev) => {
-        const dx = ev.clientX - startX;
+        const dx = Math.round(fd(ev));
         if (!undone && dx !== 0) { pushUndo(); undone = true; }
         const pan = Math.max(-100, Math.min(100, startPan + dx));
         const prev = t.pan || 0;
@@ -13178,7 +13394,11 @@ function dismissMenuOnOutside(menu) {
 }
 // ⇧⌘D (comme « Créer une pile de pistes » de Logic) : petit menu sous la souris — dossier (juste ranger) ou groupe (bus)
 function openStackMenu() {
-    const idxs = selectedTrackIdxs().filter(i => state.project.tracks[i] && !state.project.tracks[i].isCapture);
+    let idxs = selectedTrackIdxs().filter(i => state.project.tracks[i] && !state.project.tracks[i].isCapture);
+    // groupes choisis (clic / ⌘ + clic sur leurs en-têtes ou leurs tranches) : toutes leurs pistes → « Nouveau groupe » les range
+    // dans un nouveau grand groupe en gardant leurs bus (autant de niveaux qu'on veut, comme les piles de Logic)
+    const chosenG = mixChosenBuses().filter(b => isVisibleGroup(b) && !isFolder(b) && !b.premaster);
+    if (chosenG.length && idxs.length <= 1) idxs = [...new Set(chosenG.flatMap(b => groupTracksDeep(b)))].sort((a, b) => a - b).filter(i => !state.project.tracks[i].isCapture);
     if (!idxs.length) { flash('Choisis d\'abord une ou plusieurs pistes (Shift / ⌘ + clic)'); return; }
     closeAllMenus();
     const n = idxs.length, pl = n > 1 ? `les ${n} pistes` : 'cette piste';
@@ -14294,12 +14514,13 @@ function bindTrackEvents() {
             const sx = e.clientX, sy = e.clientY, v0 = t.pan || 0;
             let moved = false;
             document.body.classList.add('resizing-col');
+            const fx = fineDrag(sx, 'x'), fy = fineDrag(sy);
             const move = (ev) => {
                 // Droite ou haut = vers la droite ; Shift = réglage fin
-                const d = (ev.clientX - sx) - (ev.clientY - sy);
-                if (!moved && Math.abs(d) < 2) return;
+                const raw = (ev.clientX - sx) - (ev.clientY - sy), d = fx(ev) + fy(ev);
+                if (!moved && Math.abs(raw) < 2) return;
                 if (!moved) { pushUndo(); moved = true; }
-                apply(v0 + d * (ev.shiftKey ? 0.25 : 1), false);
+                apply(Math.round(v0 + d), false);
                 showBadge(state.project.tracks[i].pan || 0);
             };
             const up = () => {
@@ -14559,15 +14780,26 @@ function bindTimelineClick() {
         let at = snapTime(eventToTime(e), e.metaKey || e.ctrlKey);
         let rawAt = at;
         const lo = mc.start + 0.02, hi = mc.start + mc.duration - 0.02;
+        const tag = document.createElement('b'); tag.className = 'split-tag'; line.appendChild(tag);
         const place = () => {
             at = Math.max(lo, Math.min(hi, at));
             line.style.left = (at * state.pxPerSecond) + 'px';
+            const m = Math.floor(at / 60), sec = at - m * 60;
+            tag.textContent = `${m}:${sec.toFixed(3).padStart(6, '0').replace('.', ',')}`;
         };
         const looped = mc.loopEnd && mc.loopEnd > mc.start + mc.duration + 1e-6;
         if (looped) { flash('Cette région est répétée : supprime sa répétition (clic droit) avant de la scinder'); return; }
         place();
         document.body.classList.add('is-splitting');
-        const onMove = (ev) => { at = snapTime(eventToTime(ev), ev.metaKey || ev.ctrlKey); rawAt = at; place(); };
+        // ⇧ enfoncé : la coupe bouge 5× plus lentement que la souris et sans aimant (précision au millimètre)
+        let fine = null;
+        const onMove = (ev) => {
+            if (ev.shiftKey) {
+                if (!fine) fine = { x: ev.clientX, at };
+                at = fine.at + (ev.clientX - fine.x) / state.pxPerSecond * 0.2;
+            } else { fine = null; at = snapTime(eventToTime(ev), ev.metaKey || ev.ctrlKey); }
+            rawAt = at; place();
+        };
         const finish = (doCut) => {
             document.removeEventListener('mousemove', onMove);
             document.removeEventListener('mouseup', onUp);
@@ -14957,6 +15189,31 @@ function setMouseTool(which, value, quiet) {
     }
     renderToolMenus();
     if (!quiet) flash(`${which === 'left' ? 'Clic' : which === 'cmd' ? '⌘ + clic' : 'Clic droit'} : ${MOUSE_TOOL_LABELS[value]}`);
+}
+// ⌘ enfoncé sur les pistes : le curseur montre l'outil du ⌘ + clic (flèche + petit badge « M », ciseau…), comme Logic
+function toolCursorUrl(tool) {
+    const ico = MOUSE_TOOL_ICONS[tool]; if (!ico || tool === 'pointer' || tool === 'none') return null;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">`
+        + `<path d="M3 2v17l4.5-4.2 3 6.6 2.6-1.2-3-6.4H16z" fill="#fff" stroke="#000" stroke-width="1.2" stroke-linejoin="round"/>`
+        + `<rect x="15" y="15" width="16" height="16" rx="4" fill="#7C3AED" stroke="#fff" stroke-width="1"/>`
+        + `<g transform="translate(16 16) scale(.58)" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" color="#fff" font-family="-apple-system, Helvetica, Arial, sans-serif">${ico}</g></svg>`;
+    return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 3 2, auto`;
+}
+function bindCmdToolCursor() {
+    if (bindCmdToolCursor.done) return; bindCmdToolCursor.done = true;
+    let st = document.getElementById('cmdToolCursor');
+    if (!st) { st = document.createElement('style'); st.id = 'cmdToolCursor'; document.head.appendChild(st); }
+    let on = false;
+    const set = (v) => {
+        if (v === on) return; on = v;
+        const cur = v ? toolCursorUrl(mouseTool('cmd')) : null;
+        st.textContent = cur ? `.timeline-tracks, .timeline-tracks * { cursor: ${cur} !important; }` : '';
+        document.body.classList.toggle('cmd-tool-held', !!cur);
+    };
+    window.addEventListener('keydown', (e) => { if (e.key === 'Meta' || (e.metaKey && !on)) set(!e.shiftKey && !e.altKey); }, true);
+    window.addEventListener('keyup', (e) => { if (e.key === 'Meta' || !e.metaKey) set(false); }, true);
+    window.addEventListener('mousemove', (e) => { if (!!e.metaKey !== on) set(!!e.metaKey && !e.shiftKey && !e.altKey); }, true);
+    window.addEventListener('blur', () => set(false));
 }
 // Les 3 menus d'outils à côté de l'aimant, comme dans Logic
 function renderToolMenus() {
@@ -16384,10 +16641,20 @@ function resetRange(el) {
 document.addEventListener('mousedown', (e) => {
     if (!(e.metaKey || e.ctrlKey || e.altKey) || e.button !== 0) return;
     // ⌥ + clic sur un pan rond (piste, table de mixage) = au centre, comme Logic
-    const pk = e.altKey && e.target && e.target.closest ? e.target.closest('.t-knob, .strip-pan-knob') : null;
+    const pk = (e.altKey || e.metaKey) && e.target && e.target.closest ? e.target.closest('.t-knob, .strip-pan-knob') : null;
+    // ⌘ / ⌥ + clic sur n'importe quel bouton rond de plugin : retour à sa valeur de départ
+    const kb = (e.altKey || e.metaKey) && e.target && e.target.closest ? e.target.closest('.pk, .fx-knob, .tp-knob') : null;
+    if (kb && !pk) {
+        if (kb._pkReset) { e.preventDefault(); e.stopPropagation(); kb._pkReset(); return; }
+        if (kb.matches('.fx-knob, .tp-knob')) { e.preventDefault(); e.stopPropagation(); kb.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); return; }
+    }
+    if (!pk && (e.altKey || e.metaKey) && e.target && e.target.closest) {
+        const ip = e.target.closest('.insp-pan, .send-knob'); const inp = ip && ip.querySelector('input[type="range"][data-default]');
+        if (inp && !inp.disabled) { e.preventDefault(); e.stopPropagation(); resetRange(inp); return; }
+    }
     if (pk) {
         e.preventDefault(); e.stopPropagation();
-        if (pk.classList.contains('t-knob')) { pk.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); return; }
+        if (pk.classList.contains('t-knob') || pk.closest('.strip[data-kind="bus"]')) { pk.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); return; }
         const i = parseInt(pk.closest('.strip')?.dataset.i), t = state.project.tracks[i]; if (!t) return;
         pushUndo(); t.pan = 0; updatePanKnobVisual(pk, 0); PulseAudio.updateTrackPan(i, 0); syncTrackPan(i); saveProject();
         return;
@@ -16958,6 +17225,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         updateLoopButton();
         renderLoopOverlay();
     });
+    { const wz = document.getElementById('waveZoomIn'), box = document.getElementById('waveZoom');
+      if (wz) {
+          wz.value = waveZoom(); setWaveZoom(waveZoom());
+          wz.addEventListener('input', () => setWaveZoom(parseFloat(wz.value)));
+          box.addEventListener('wheel', (e) => { e.preventDefault(); e.stopPropagation(); setWaveZoom(waveZoom() * Math.pow(1.0025, -e.deltaY * (knobFine(e) ? 0.25 : 1))); }, { passive: false });
+      } }
     document.getElementById('btnMetronome').addEventListener('click', () => {
         state.metronome = !state.metronome;
         document.getElementById('btnMetronome').style.color = state.metronome ? 'var(--violet-3)' : '';
@@ -17042,6 +17315,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('btnScissors').addEventListener('click', () => setActiveTool(state.tool === 'scissors' ? 'pointer' : 'scissors'));
     // Menus d'outils façon Logic (outil du clic gardé d'une séance à l'autre)
     renderToolMenus();
+    bindCmdToolCursor();
     document.body.dataset.leftTool = mouseTool('left');
     if (mouseTool('left') === 'cut') { state.tool = 'scissors'; document.body.classList.add('tool-scissors'); document.getElementById('btnScissors').classList.add('active'); }
     document.getElementById('btnTap').addEventListener('click', toggleTapMode);

@@ -2743,7 +2743,8 @@ window.PulseAudio = (function() {
             }
         } else {
             const keys = Object.keys(changed || {});
-            const extra = oldEngine ? {} : { ...(NATIVE_LIVE_EXTRA[kind] || {}), ...((nativeBackend.caps || []).includes('switches') ? NATIVE_LIVE_SWITCH[kind] : {}) };
+            if (keys.includes('_mix') && !(nativeBackend.caps || []).includes('mix')) return false;   // appli d'avant le 14/11 : pas de Mix
+            const extra = oldEngine ? {} : { ...(NATIVE_LIVE_EXTRA[kind] || {}), ...((nativeBackend.caps || []).includes('switches') ? NATIVE_LIVE_SWITCH[kind] : {}), ...((nativeBackend.caps || []).includes('mix') ? { _mix: 100 } : {}) };
             if (!keys.length || !keys.every(k => (autoRanges['fx:' + kind + ':' + k] || k in extra) && Number.isFinite(changed[k]))) return false;
             if (kind === 'sat' && 'drive' in changed && !(changed.drive > 0)) return false;
             if (kind === 'deess' && (('thr' in changed && prev.thr === undefined) || ('amount' in changed && !(changed.amount > 0)))) return false;
@@ -2797,6 +2798,7 @@ window.PulseAudio = (function() {
             return true;
         }
         const keys = Object.keys(changed || {});
+        if (keys.includes('_mix')) return false;   // Mix : mélange monté avec la chaîne (navigateur) → on la refait
         if (!keys.length || !keys.every(k => autoRanges['fx:' + kind + ':' + k] && Number.isFinite(changed[k]))) return false;
         // réglages qui font apparaître / disparaître le plugin ou changent sa version : on reconstruit
         if (kind === 'sat' && 'drive' in changed && !(changed.drive > 0)) return false;
@@ -4401,6 +4403,7 @@ window.PulseAudio = (function() {
         const base = Object.fromEntries(Object.entries(params).filter(([k]) => !ids.has(k) && !FX_CHAIN.includes(k) && k !== 'order' && k !== 'auto' && k !== 'grKey'));
         const parts = groups.filter(g => g.length).map(g => {
             const p = { ...base, order: g.map(fxType), grKeys: {} };
+            if (params._mix) { p._mix = {}; for (const id of g) if (params._mix[id] !== undefined) p._mix[fxType(id)] = params._mix[id]; }
             for (const id of g) { if (params[id] !== undefined) p[fxType(id)] = params[id]; if (params.grKey) p.grKeys[fxType(id)] = id.includes('#') ? params.grKey + '~' + id : params.grKey; }
             if (params.grKey) p.grKey = params.grKey;
             if (params.auto) {
@@ -4845,7 +4848,31 @@ window.PulseAudio = (function() {
         };
 
         const custom = Array.isArray(params.order) ? params.order.filter(n => FX_CHAIN.includes(n)) : [];
-        for (const n of [...custom, ...FX_CHAIN.filter(x => !custom.includes(x))]) B[n]();
+        // Bouton « Mix » de chaque plugin (_mix, 0–100) : son d'origine (recalé sur le retard des machines analogiques) + son traité
+        const mixOf = (n) => { const m = (params._mix || {})[n]; return Number.isFinite(m) && m < 100 ? Math.max(0, m) / 100 : 1; };
+        for (const n of [...custom, ...FX_CHAIN.filter(x => !custom.includes(x))]) {
+            const m = enabled.includes(n) ? mixOf(n) : 1;
+            const mc = enabled.includes(n) ? curveOf(n, '_mix', (x) => x / 100) : null;   // Mix automatisé
+            if (m >= 1 && !mc) { B[n](); continue; }
+            const before = prev;
+            B[n]();
+            if (prev === before) continue;
+            const lat = fxLatency([n], {}, null, actx.sampleRate);
+            let src = before;
+            if (lat > 0) { const dl = actx.createDelay(1); dl.delayTime.value = lat; before.connect(dl); src = dl; }
+            const dg = actx.createGain(), wg = actx.createGain(), sum = actx.createGain();
+            dg.gain.value = 1 - m; wg.gain.value = m;
+            src.connect(dg); prev.connect(wg); dg.connect(sum); wg.connect(sum);
+            if (mc) {
+                // courbe : effet = m, son d'origine = 1 − m (un gain fixe à 1 plus un gain qui suit −m)
+                const neg = mc.map(pt => ({ t: pt.t, v: -pt.v })), dn = actx.createGain();
+                dg.gain.value = 1;
+                const sched = (param, c) => { param.setValueAtTime(pulseAutoAtMain(c, autoAt.from), autoAt.t0); c.forEach(pt => { if (pt.t > autoAt.from) autoRamp(param, c, pt.v, autoAt.t0 + (pt.t - autoAt.from)); }); };
+                sched(wg.gain, mc); sched(dn.gain, neg);
+                src.connect(dn); dn.connect(sum);
+            }
+            prev = sum;
+        }
 
         return { input, output: prev };
     }
@@ -4884,6 +4911,15 @@ window.PulseAudio = (function() {
         return ch;
     }
 
+    // Vumètre d'un groupe : null si le groupe n'est pas mixé à part (le page additionne alors ses pistes)
+    function getBusAnalyser(busId) {
+        if (nativeOn) {
+            const lv = nativeLive && nativeLive.levels, i = nativeBusIndex(busId);
+            if (i < 0 || !(lv && (lv.buses || []).some(b => b[0] === i))) return null;
+            return nativeMeter('bus:' + busId, lv => { const b = (lv.buses || []).find(x => x[0] === nativeBusIndex(busId)); return b ? b[3] : 0; });
+        }
+        return liveBusSpec.get(busId) || null;
+    }
     function getTrackAnalyser(trackIdx) {
         if (nativeOn) return nativeHasTrack(trackIdx) ? nativeMeter('a' + trackIdx, lv => { const t = nativeTrackLevel(lv, trackIdx); return t ? t[3] : 0; }) : null;
         const n = liveNodes.get(trackIdx);
@@ -5165,7 +5201,7 @@ window.PulseAudio = (function() {
         debugLive: () => [...liveNodes].map(([i, n]) => ({ i, name: n.tname, audible: !!n.audible, vol: n.vol, fx: n.tfx, clips: n.tclips })),
         clipSig, liveFxSet,
         debugLiveBuses: () => [...liveBusNodes].map(([id, g]) => ({ id, gain: g.gain.value })),
-        setLiveFail, liveChainSwap, getTrackAnalyser, getTrackMeters, trackChannelCount, getMasterAnalyser, getTrackSpectrum, getBusSpectrum, getCompReduction, getCompInput, setMasterVolume,
+        setLiveFail, liveChainSwap, getTrackAnalyser, getBusAnalyser, getTrackMeters, trackChannelCount, getMasterAnalyser, getTrackSpectrum, getBusSpectrum, getCompReduction, getCompInput, setMasterVolume,
         setMetronome, setMetronomeBpm, setCountIn, isCountInEnabled,
         startMetronome, stopMetronome, playCountIn, stopCountIn, isCountingIn,
         exportWav, exportTrackWav, renderFreeze, audioBufferToWav, computeNormalizeGain, setLoop, loopScheduled, getRecWraps, getRecLinearPosition,

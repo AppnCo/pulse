@@ -15,6 +15,9 @@ use std::sync::{Arc, Mutex};
 pub struct Levels {
     /// (piste, crête gauche, crête droite, efficace)
     pub tracks: Vec<(usize, f32, f32, f32)>,
+    /// (groupe, crête gauche, crête droite, efficace) après le fader et le pan du groupe
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub buses: Vec<(usize, f32, f32, f32)>,
     pub master: f32,
     /// Réduction des compresseurs : (groupe ?, indice, dB)
     pub gr: Vec<(bool, usize, f32)>,
@@ -338,7 +341,7 @@ fn spawn_feeder(mut renderer: Box<Renderer>, mut media: Arc<Media>, ring: Arc<Ri
                 let (tracks, master) = renderer.levels();
                 let mut sh = shared.lock().unwrap();
                 if n > 0 {
-                    sh.levels.push_back((lin, Levels { tracks: tracks.to_vec(), master, gr: renderer.grs().to_vec(), agr: renderer.agrs().iter().map(|&(b, i, k, g)| (b, i, k.to_string(), g)).collect(), cin: renderer.cins().to_vec(), fx: renderer.fx_meters().to_vec(), scope: renderer.scope() }));
+                    sh.levels.push_back((lin, Levels { tracks: tracks.to_vec(), buses: renderer.bus_levels().to_vec(), master, gr: renderer.grs().to_vec(), agr: renderer.agrs().iter().map(|&(b, i, k, g)| (b, i, k.to_string(), g)).collect(), cin: renderer.cins().to_vec(), fx: renderer.fx_meters().to_vec(), scope: renderer.scope() }));
                     while sh.levels.len() > 256 { sh.levels.pop_front(); }
                 }
                 lin += n;

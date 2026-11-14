@@ -8,8 +8,9 @@ export default async (c) => {
   const row = `document.querySelector('#inspector .insp-strip[data-kind="track"] .strip-send-row[data-bsend]')`;
   const p = await J(ev, `const r = ${row}; const b = r.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }`);
   await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y }); await sleep(200);
+  // inspecteur (tranche étroite) : ⏻ et × au survol ; ⇅ caché ici (il masquerait le nom), visible dans la table de mixage
   const vis = await J(ev, `const r = ${row}; return ['.sb-pow', '.sb-swap', '.sb-del'].map(s => getComputedStyle(r.querySelector(s)).display)`);
-  check('survol : ⏻ ⇅ × visibles', vis.every(d => d !== 'none'), JSON.stringify(vis));
+  check('survol : ⏻ et × visibles', vis[0] !== 'none' && vis[2] !== 'none', JSON.stringify(vis));
   await ev(`${row}.querySelector('.sb-pow').click()`); await sleep(300);
   let t = await J(ev, `const t = state.project.tracks[0]; return { s: t.busSends, m: t.sendMute }`);
   check('⏻ : envoi coupé (0), niveau 37 gardé', t.s.b1 === 0 && t.m['busSend:b1'] === 37, JSON.stringify(t));

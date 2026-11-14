@@ -611,6 +611,105 @@ mod tests {
         near(rms(&r, 0.3, 0.9), 0.006155);
     }
 
+    /// Audit (lancé à la main) : chaque réglage de chaque plugin, tourné pendant la lecture, doit donner le même son que
+    /// le plugin réglé d'avance. PULSE_KEYS = fichier JSON [[effet, réglage, min, max, défaut, interrupteur], …]
+    #[test]
+    #[ignore]
+    fn audit_reglages_en_direct() {
+        let path = std::env::var("PULSE_KEYS").expect("PULSE_KEYS");
+        let keys: Vec<(String, String, f64, f64, f64, bool)> = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let sr = 48000.0;
+        let n = 4800usize;
+        let sig = |i: usize| { let t = i as f64 / sr; (0.25 * (2.0 * std::f64::consts::PI * 220.0 * t).sin() + 0.15 * (2.0 * std::f64::consts::PI * 3100.0 * t).sin() + 0.1 * (2.0 * std::f64::consts::PI * 7300.0 * t).sin()) as f32 };
+        let run = |fx: &str, params: &str, live: Option<(&str, f64)>| -> Vec<f32> {
+            let p: crate::model::EffectParams = serde_json::from_str(params).unwrap();
+            let mut c = crate::fx::FxChain::new(&[fx.to_string()], &p, &[], sr, 120.0, -0.3);
+            let mut out = Vec::new();
+            for b in 0..16 {
+                if b == 6 { if let Some((k, v)) = live { c.set_live(fx, k, v); } }
+                let mut l: Vec<f32> = (0..n).map(|i| sig(b * n + i)).collect();
+                let mut r = l.clone();
+                c.process(&mut l, &mut r, false);
+                if b >= 12 { out.extend_from_slice(&l); out.extend_from_slice(&r); }
+            }
+            out
+        };
+        let d = |a: &[f32], b: &[f32]| (a.iter().zip(b).map(|(x, y)| ((x - y) as f64).powi(2)).sum::<f64>() / a.len() as f64).sqrt();
+        let (mut bad, mut ok, mut none) = (Vec::new(), 0, Vec::new());
+        for (fx, key, min, max, def, sw) in &keys {
+            let (v0, v) = if *sw { (*def, if *def == *max { *min } else { *max }) } else { (min + 0.35 * (max - min), min + 0.75 * (max - min)) };
+            // le plugin est déjà actif (Saturation poussée, De-esser, Gate…) : on mesure le réglage, pas l'allumage
+            let pre = match fx.as_str() { "sat" if key != "drive" => r#""drive":40,"#, "deess" if key != "amount" => r#""amount":60,"#, "gate" if key != "threshold" => r#""threshold":-20,"#, _ => "" };
+            let base = run(fx, &format!(r#"{{"{fx}":{{{pre}"{key}":{v0}}}}}"#), None);
+            let want = run(fx, &format!(r#"{{"{fx}":{{{pre}"{key}":{v}}}}}"#), None);
+            let got = run(fx, &format!(r#"{{"{fx}":{{{pre}"{key}":{v0}}}}}"#), Some((key, v)));
+            let (dw, dg) = (d(&base, &want), d(&got, &want));
+            if dw < 1e-4 { none.push(format!("{fx}:{key}")); continue; }
+            if dg > 0.1 * dw { bad.push(format!("{fx}:{key} ({:.0} %)", 100.0 * dg / dw)); } else { ok += 1; }
+        }
+        println!("EN DIRECT OK : {ok}\nPAS EN DIRECT ({}) : {}\nSANS EFFET MESURABLE ({}) : {}", bad.len(), bad.join(", "), none.len(), none.join(", "));
+    }
+
+    /// Solo d'un point d'EQ (appli) : on n'entend que sa zone, comme dans le navigateur
+    #[test]
+    fn solo_d_un_point_d_eq() {
+        let sr = SR as usize;
+        let mut media = Media::new();
+        let s: Vec<f32> = (0..sr).map(|i| { let t = i as f64 / SR as f64; (0.3 * (2.0 * std::f64::consts::PI * 100.0 * t).sin() + 0.3 * (2.0 * std::f64::consts::PI * 5000.0 * t).sin()) as f32 }).collect();
+        media.insert("s".into(), Source::new(SR, vec![s]));
+        let run = |solo: &str| {
+            let p: Project = serde_json::from_str(&format!(r#"{{"tracks":[{{"volume":100,"clips":[{{"id":"s","start":0,"duration":1}}],"effects":["eq"],"effectParams":{{"eq":{{"bands":[{{"type":"bell","freq":5000,"gain":0,"q":2}}]{solo}}}}}}}]}}"#)).unwrap();
+            render(&p, &media, &RenderOptions { master_volume: 1.0, ..Default::default() }).0
+        };
+        let rms = |x: &[f32]| (x[10000..40000].iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / 30000.0).sqrt();
+        let (all, solo) = (run(""), run(r#","solo":0"#));
+        // sans solo : 100 Hz + 5 kHz ; en solo sur le point à 5 kHz : il ne reste (presque) que 5 kHz
+        assert!((rms(&solo) - rms(&all) * std::f64::consts::FRAC_1_SQRT_2).abs() < 0.01, "{} {}", rms(&all), rms(&solo));
+    }
+
+    /// Bouton « Mix » commun à tous les plugins : 0 % = le son d'origine (recalé, même derrière une machine analogique qui retarde),
+    /// 100 % = l'effet seul, 50 % = moitié-moitié
+    #[test]
+    fn mix_de_chaque_plugin() {
+        let sr = SR as usize;
+        let mut media = Media::new();
+        let sine: Vec<f32> = (0..sr).map(|i| (0.3 * (2.0 * std::f64::consts::PI * 220.0 * i as f64 / SR as f64).sin()) as f32).collect();
+        media.insert("s".into(), Source::new(SR, vec![sine]));
+        let run = |fx: &str, params: &str| {
+            let p: Project = serde_json::from_str(&format!(r#"{{"tracks":[{{"volume":100,"clips":[{{"id":"s","start":0,"duration":1}}],"effects":{fx},"effectParams":{params}}}]}}"#)).unwrap();
+            render(&p, &media, &RenderOptions { master_volume: 1.0, ..Default::default() }).0
+        };
+        let diff = |a: &[f32], b: &[f32]| a[4800..40000].iter().zip(&b[4800..40000]).map(|(x, y)| (x - y).abs()).fold(0.0f32, f32::max);
+        let dry = run("[]", "{}");
+        let eq_full = run(r#"["eq"]"#, r#"{"eq":{"bands":[{"type":"bell","freq":220,"gain":12,"q":1}]}}"#);
+        let eq_0 = run(r#"["eq"]"#, r#"{"eq":{"bands":[{"type":"bell","freq":220,"gain":12,"q":1}]},"_mix":{"eq":0}}"#);
+        let eq_50 = run(r#"["eq"]"#, r#"{"eq":{"bands":[{"type":"bell","freq":220,"gain":12,"q":1}]},"_mix":{"eq":50}}"#);
+        assert!(diff(&dry, &eq_full) > 0.2, "l'EQ change le son");
+        assert!(diff(&dry, &eq_0) < 1e-3, "Mix 0 % = son d'origine : {}", diff(&dry, &eq_0));
+        let half: Vec<f32> = dry.iter().zip(&eq_full).map(|(a, b)| (a + b) * 0.5).collect();
+        assert!(diff(&half, &eq_50) < 2e-3, "Mix 50 % = moitié-moitié : {}", diff(&half, &eq_50));
+        // machine analogique (retard de 31 échantillons) : Mix 0 % = son d'origine, sans décalage
+        let pre_0 = run(r#"["pre73"]"#, r#"{"pre73":{"gain":60},"_mix":{"pre73":0}}"#);
+        assert!(diff(&dry, &pre_0) < 2e-3, "Pulse 73 à 0 % : {}", diff(&dry, &pre_0));
+    }
+
+    /// Vumètre des groupes mixés à part (effets, pan…) : chaque groupe qui reçoit du son a un niveau, un groupe coupé reste à zéro
+    #[test]
+    fn niveaux_des_groupes() {
+        let mut media = Media::new();
+        media.insert("s".into(), Source::new(SR, vec![vec![0.5f32; SR as usize]]));
+        let p: Project = serde_json::from_str(r#"{"buses":[{"id":"a","output":"master","volume":100,"pan":10},{"id":"b","output":"master","volume":100,"pan":10,"muted":true}],
+            "tracks":[{"volume":100,"output":"a","clips":[{"id":"s","start":0,"duration":1}]},{"volume":100,"output":"b","clips":[{"id":"s","start":0,"duration":1}]}]}"#).unwrap();
+        let mut ren = crate::render::Renderer::new(&p, &media, &RenderOptions { master_volume: 1.0, sample_rate: SR, ..Default::default() });
+        let (mut l, mut r) = (vec![0.0f32; 1024], vec![0.0f32; 1024]);
+        for _ in 0..4 { ren.process(&media, &mut l, &mut r); }
+        let lv = ren.bus_levels().to_vec();
+        let a = lv.iter().find(|x| x.0 == 0).expect("groupe a");
+        assert!(a.1 > 0.1 && a.3 > 0.1, "{a:?}");
+        // un groupe coupé n'est pas mixé du tout, ou reste à zéro
+        assert!(lv.iter().filter(|x| x.0 == 1).all(|x| x.1 == 0.0 && x.3 == 0.0), "groupe coupé : {lv:?}");
+    }
+
     /// Écho calé sur le rythme : à 120 BPM, ½ temps = 0,25 s. Valeurs mesurées dans Chrome.
     #[test]
     fn echo_comme_le_navigateur() {

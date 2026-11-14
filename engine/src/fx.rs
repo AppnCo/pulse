@@ -1557,6 +1557,12 @@ pub struct FxMeters {
     pub limit: Option<[f32; 3]>,
 }
 
+/// Son d'origine retardé d'autant que l'étage (mélange « Mix » sans décalage)
+#[derive(Clone)]
+struct DryLine { buf: Vec<[f64; 2]>, i: usize }
+impl DryLine {
+    fn push(&mut self, x: [f64; 2]) -> [f64; 2] { let o = self.buf[self.i]; self.buf[self.i] = x; self.i = (self.i + 1) % self.buf.len(); o }
+}
 pub struct Chain {
     /// Filtre (coupe-bas / coupe-haut), avant l'EQ
     cut: Vec<[Biquad; 2]>,
@@ -1604,6 +1610,10 @@ pub struct Chain {
     souffle: Option<(crate::analog::Souffle, crate::analog::SouffleParams)>,
     l670: Option<(crate::analog::L670, crate::analog::L670Params)>,
     order: Vec<Stage>,
+    /// Bouton « Mix » de chaque étage (1 = tout l'effet) et, pour les étages qui retardent le son (machines analogiques),
+    /// la ligne qui retarde d'autant le son d'origine (sinon le mélange creuserait des fréquences)
+    mixes: [f64; 64],
+    dry_lines: Vec<(usize, DryLine)>,
     /// Automation des réglages d'effet (même liste de réglages que le navigateur, voir AUTO_FX dans studio.js)
     auto: Vec<AutoParam>,
     auto_from: f64,
@@ -1646,6 +1656,7 @@ struct AutoParam {
 /// Plages des réglages automatisables (mêmes que FX_PANEL_DEFS dans studio.js)
 fn auto_range(fx: &str, key: &str) -> Option<(f64, f64, bool)> {
     Some(match (fx, key) {
+        (_, "_mix") => (0.0, 100.0, false),
         ("comp", "threshold") => (-40.0, 0.0, false),
         ("comp", "ratio") => (1.0, 20.0, false),
         ("comp", "mix") => (0.0, 100.0, false),
@@ -2029,6 +2040,13 @@ impl Chain {
             // EQ libre : mêmes bandes que le navigateur (24 au plus, Q linéaire, dB pour les coupes)
             eq_out = p.out;
             (filters, dyn_eq, eq_bands) = eq_build(bands, p.out, sr);
+            // solo d'un point : seulement sa zone (même filtre que le navigateur : passe-bande)
+            if let Some(b) = p.solo.and_then(|i| if i >= 0.0 { bands.get(i as usize) } else { None }).filter(|b| b.freq > 0.0) {
+                let q = if b.kind == "bell" || b.kind == "notch" { (if b.q > 0.0 { b.q } else { 1.0 }).max(0.5) } else { 0.7 };
+                let bp = Biquad::bandpass(sr, b.freq.clamp(20.0, 20000.0), q);
+                filters = vec![[bp, bp]];
+                dyn_eq = Vec::new();
+            }
         }
         let sat = if has("sat") { effect_params.sat.as_ref().and_then(|p| Saturator::from_params(p, sr)) } else { None };
         let de = effect_params.deess.clone().unwrap_or_default();
@@ -2087,7 +2105,24 @@ impl Chain {
         let souffle = has("souffle").then(|| { let p = crate::analog::SouffleParams::from(&effect_params.souffle.clone().unwrap_or_default()); (crate::analog::Souffle::new(&p, sr), p) });
         let comp_p = effect_params.comp.clone().unwrap_or_default();
         Self { cut, filters, dyn_eq, sat, gate, crush, util, width, modfx, deess, deess2, mband, msat, comp, master, limit, delay, reverb, pitch, fet76, pre73, opto2a, eqp1, busg, tape, l670, dtr, stripe, eq550, comp25, bus33, massif, horizon, plate, techo, hall80, h910, dim, prev76, eclat, souffle, order: Stage::DEFAULT.to_vec(),
+            mixes: Self::mixes_of(effect_params), dry_lines: Self::dry_lines_of(effects),
             auto: Vec::new(), auto_from: 0.0, pos: 0, tempo: Vec::new(), tempo_i: 0, sr, comp_p, reverb_p: effect_params.reverb.clone().unwrap_or_default(), delay_p: effect_params.delay.clone().unwrap_or_default(), bpm0: bpm, eq_bands, eq_out, eq_fade: None, cut_p, cut_fade: None, cut_kinds, names: effects.to_vec(), deess_freq: de.freq.unwrap_or(5500.0) }
+    }
+    fn mixes_of(p: &EffectParams) -> [f64; 64] {
+        let mut m = [1.0; 64];
+        for (name, v) in &p.mix { if let Some(st) = Stage::parse(crate::model::fx_type(name)) { m[st as usize] = (v / 100.0).clamp(0.0, 1.0); } }
+        m
+    }
+    fn dry_lines_of(effects: &[String]) -> Vec<(usize, DryLine)> {
+        effects.iter().filter_map(|e| {
+            let ty = crate::model::fx_type(e);
+            let lat = match ty {
+                "fet76" | "pre73" | "opto2a" | "eqp1" | "busg" | "prev76" | "massif" | "bus33" | "comp25" | "eq550" | "stripe" | "dtr" | "l670" => crate::analog::Fet76::LATENCY,
+                "tape" => crate::analog::Tape::LATENCY,
+                _ => 0,
+            };
+            (lat > 0).then(|| Stage::parse(ty).map(|st| (st as usize, DryLine { buf: vec![[0.0; 2]; lat], i: 0 }))).flatten()
+        }).collect()
     }
     /// Tempo qui change en cours de morceau : l'écho calé sur le rythme (1/4, 1/8…) suit le tempo de l'endroit joué.
     /// `from` = instant du premier échantillon traité (le même que pour `with_auto`).
@@ -2146,6 +2181,7 @@ impl Chain {
     /// Un réglage d'effet changé en direct (automation de Pulse, ou réglage d'un plugin), en unités du panneau de Pulse.
     /// Renvoie vrai si le compresseur doit être recalculé (`retune`).
     pub fn set_live(&mut self, fx: &str, key: &str, v: f64) -> bool {
+        if key == "_mix" { if let Some(st) = Stage::parse(fx) { self.mixes[st as usize] = (v / 100.0).clamp(0.0, 1.0); } return false; }
         let mut comp_changed = false;
         let mut cut_changed = false;
         match (fx, key) {
@@ -2362,6 +2398,8 @@ impl Chain {
             let mut nc = if mono { 1 } else { 2 };
             let mut x = [left[n] as f64, if nc == 2 { right[n] as f64 } else { 0.0 }];
             for stage in order {
+                let si = *stage as usize;
+                let (pre, nc0) = (x, nc);
                 match stage {
                     Stage::Filter => {
                         let dry = x;
@@ -2549,6 +2587,12 @@ impl Chain {
                         }
                     }
                 }
+                // Mix : son d'origine (recalé sur le retard de l'étage) + son traité
+                let mut d = pre;
+                if nc0 == 1 && nc == 2 { d[1] = d[0]; }
+                if let Some((_, dl)) = self.dry_lines.iter_mut().find(|(i, _)| *i == si) { d = dl.push(d); }
+                let m = self.mixes[si];
+                if m < 1.0 { for ch in 0..nc { x[ch] = d[ch] * (1.0 - m) + x[ch] * m; } }
             }
             left[n] = x[0] as f32;
             if nc == 2 {

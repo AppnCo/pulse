@@ -30,7 +30,9 @@ window.PulseNative = (function () {
         if (!isAvailable()) throw new Error('moteur natif absent');
         const sizes = {};
         for (const id of new Set(PulsePersist.mediaIds(project, false))) { const b = await PulsePersist.loadBlob(id); if (b) sizes[id] = b.size; }
-        const ask = () => core().invoke('native_render', { json: JSON.stringify(project), sizes, master, range, only });
+        // un solo d'EQ (écoute) ne part jamais dans un export
+        const json = JSON.stringify(project, (k, v) => (k === 'eq' && v && typeof v === 'object' && !Array.isArray(v) && v.solo !== undefined) ? (({ solo, ...r }) => r)(v) : v);
+        const ask = () => core().invoke('native_render', { json, sizes, master, range, only });
         try { return await ask(); }
         catch (err) {
             if (!/sons manquants/.test(String((err && err.message) || err))) throw err;

@@ -33,6 +33,6 @@ export default async (c) => {
   check('table : ⌥ + clic sur le pan = centre', (await T('pan')) === 0, JSON.stringify([p, await T('pan')]));
   p = await altClick('.mixer-strips .strip[data-kind="bus"] .fader');
   check('table : ⌥ + clic sur le fader du groupe = 0 dB', await J(ev, `return busById('g1').volume`) === 100, JSON.stringify(p));
-  p = await altClick('.mixer-strips .strip[data-kind="bus"] .bus-pan');
+  p = await altClick('.mixer-strips .strip[data-kind="bus"] .strip-pan-knob');
   check('table : ⌥ + clic sur le pan du groupe = centre', await J(ev, `return busById('g1').pan || 0`) === 0, JSON.stringify([p, await J(ev, `return busById('g1').pan`)]));
 };

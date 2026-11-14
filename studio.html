@@ -94,6 +94,10 @@
                 <button class="btn-ghost" id="btnMetronome" data-tooltip="Métronome (K)">
                     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12l1 7-7 10-7-10z"></path><line x1="12" y1="3" x2="12" y2="20"></line></svg>
                 </button>
+                <label class="wave-zoom" id="waveZoom" data-tooltip="Taille des formes d'onde de toutes les pistes (le son ne change pas) · glisser ou molette · ⌘ + clic = normal">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12h2M7 8v8M11 4v16M15 7v10M19 10v4M21 12h0"></path></svg>
+                    <input type="range" id="waveZoomIn" min="0.5" max="8" step="0.05" value="1" data-default="1"><em id="waveZoomVal"></em>
+                </label>
                 <button class="btn-countin active" id="btnCountIn" data-tooltip="Décompte 1-2-3-4 avant d'enregistrer">1-2-3-4</button>
                 <button class="btn-ghost" id="btnScissors" data-tooltip="Scinder une région en deux (B) — ou double-clic sur la région, 2e clic maintenu puis relâché" data-tooltip-placement="top">
                     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><line x1="20" y1="4" x2="8.12" y2="15.88"></line><line x1="14.47" y1="14.48" x2="20" y2="20"></line><line x1="8.12" y1="8.12" x2="12" y2="12"></line></svg>

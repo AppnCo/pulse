@@ -256,7 +256,7 @@ fn native_fx_live(player: State<Player>, items: Vec<serde_json::Value>) -> Resul
 /// « eq-swap » = forme de l'EQ changée en marche ; « switches » = pente du Filtre, caractère / relâchement auto du Compresseur,
 /// temps de l'Écho, inversion / mono de l'Utilitaire pris sans reconstruire.
 #[tauri::command]
-fn native_caps() -> Vec<&'static str> { vec!["eq-swap", "switches", "chain-swap"] }
+fn native_caps() -> Vec<&'static str> { vec!["eq-swap", "switches", "chain-swap", "mix", "bus-meters"] }
 
 /// Plugins ajoutés / retirés / déplacés pendant la lecture : `json` = projet à jour, `owners` = [[groupe ?, indice], …] dont la chaîne change.
 /// Le mixeur refait leur chaîne en fondu ; s'il ne peut pas (retard des effets changé, plugin externe…), `native_live` le compte
@@ -452,6 +452,36 @@ fn create_project_folder(root: State<PickedRoot>, parent: String, name: String) 
     std::fs::create_dir_all(dir.join("Bounces")).map_err(|e| format!("impossible de créer le dossier : {e}"))?;
     std::fs::write(dir.join(MARKER), b"Dossier de projet Pulse\n").map_err(|e| e.to_string())?;
     Ok(dir.to_string_lossy().into_owned())
+}
+
+/// Le projet a changé de nom : son dossier et son fichier .pulse (et les morceaux de Sons/) prennent ce nom.
+/// Un numéro est ajouté si un autre dossier porte déjà ce nom. Renvoie le nouveau chemin (ou l'ancien si rien à faire).
+#[tauri::command]
+fn rename_project_folder(dir: String, name: String) -> Result<String, String> {
+    let old = std::path::PathBuf::from(&dir);
+    if !old.join(MARKER).is_file() { return Err("ce n'est pas un dossier de projet Pulse".into()); }
+    let old_base = old.file_name().map(|x| x.to_string_lossy().into_owned()).unwrap_or_default();
+    let base = safe_name(&name);
+    if old_base == base { return Ok(dir); }
+    let parent = old.parent().ok_or("dossier sans parent")?.to_path_buf();
+    let mut new = parent.join(&base);
+    let mut n = 2;
+    while new.exists() {
+        new = parent.join(format!("{base} {n}"));
+        n += 1;
+    }
+    let new_base = new.file_name().map(|x| x.to_string_lossy().into_owned()).unwrap_or_default();
+    std::fs::rename(&old, &new).map_err(|e| format!("impossible de renommer le dossier : {e}"))?;
+    let f_old = new.join(format!("{old_base}.pulse"));
+    if f_old.is_file() { let _ = std::fs::rename(&f_old, new.join(format!("{new_base}.pulse"))); }
+    if let Ok(rd) = std::fs::read_dir(new.join("Sons")) {
+        let pre = format!("{old_base} - sons ");
+        for e in rd.flatten() {
+            let fname = e.file_name().to_string_lossy().into_owned();
+            if let Some(rest) = fname.strip_prefix(&pre) { let _ = std::fs::rename(e.path(), new.join("Sons").join(format!("{new_base} - sons {rest}"))); }
+        }
+    }
+    Ok(new.to_string_lossy().into_owned())
 }
 
 /// Ce dossier de projet existe-t-il encore (et est-ce bien un dossier Pulse) ?
@@ -1110,7 +1140,7 @@ fn main() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![native_render, native_eq_swap, native_caps, native_chain_swap, ext_cmd::ext_scan, ext_cmd::ext_verdicts, ext_cmd::ext_set_param, ext_cmd::ext_render_notes, ext_cmd::ext_create, ext_cmd::ext_state, ext_cmd::ext_editor, ext_cmd::ext_remove, ext_cmd::ext_loaded, ext_cmd::ext_latencies, ext_cmd::ext_params, ext_cmd::ext_edits, native_info, native_play, native_play_staged, stage_put, save_file_staged, save_download_staged, read_file_part, project_file_size, web_update, migration_state, migration_put, migration_read, migration_done, native_play_project, native_mix, native_fx_live, native_swap, native_loop, native_live, native_scope, native_stop, diag_write, monitor_start, monitor_stop, monitor_gain, monitor_track, monitor_info, midi_ports, midi_start, pick_folder, create_project_folder, project_folder_ok, save_file, reveal_project_folder, take_pending_open, read_pulse_file, import_url, read_import_file, save_download, test_log, test_exit])
+        .invoke_handler(tauri::generate_handler![native_render, native_eq_swap, native_caps, native_chain_swap, ext_cmd::ext_scan, ext_cmd::ext_verdicts, ext_cmd::ext_set_param, ext_cmd::ext_render_notes, ext_cmd::ext_create, ext_cmd::ext_state, ext_cmd::ext_editor, ext_cmd::ext_remove, ext_cmd::ext_loaded, ext_cmd::ext_latencies, ext_cmd::ext_params, ext_cmd::ext_edits, native_info, native_play, native_play_staged, stage_put, save_file_staged, save_download_staged, read_file_part, project_file_size, web_update, migration_state, migration_put, migration_read, migration_done, native_play_project, native_mix, native_fx_live, native_swap, native_loop, native_live, native_scope, native_stop, diag_write, monitor_start, monitor_stop, monitor_gain, monitor_track, monitor_info, midi_ports, midi_start, pick_folder, create_project_folder, rename_project_folder, project_folder_ok, save_file, reveal_project_folder, take_pending_open, read_pulse_file, import_url, read_import_file, save_download, test_log, test_exit])
         .build(context)
         .expect("Pulse n'a pas pu démarrer la fenêtre")
         .run(|app, event| {

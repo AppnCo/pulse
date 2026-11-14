@@ -1,0 +1,20 @@
+<!doctype html><meta charset="utf-8"><title>regard</title><body style="margin:0;background:#111"><iframe id="f" src="studio.html" style="width:100vw;height:100vh;border:0"></iframe>
+<script>
+// Outil de comparaison (pas un test) : ouvre les fenêtres de plugins de référence une par une, sans son ;
+// outils/regard-plugins.sh prend une capture d'écran avant / pendant chaque ouverture
+const log=t=>{ try{ window.__TAURI__.core.invoke('test_log',{text:t}); }catch{} };
+const f=document.getElementById('f'); const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+(async()=>{ try{
+  await sleep(2500); const w=f.contentWindow; w.__TAURI__=window.__TAURI__;
+  const list=await w.PulseExt.scan(true);
+  const want=(new URLSearchParams(location.search).get('p')||'Pro-Q 4|Pro-C 2|Pro-L 2|Pro-DS|Pro-G|Pro-MB|Saturn 2|Timeless 3|Pro-R 2').split('|');
+  const ST=w.eval('state'); const t=ST.project.tracks[0];
+  for (const name of want) {
+    const info=list.find(p=>p.name.includes(name)); if(!info){ log('ABSENT '+name); continue; }
+    log('AVANT '+name); await sleep(1500);
+    const id=await w.PulseExt.add(t, info); log('OUVERT '+name+' '+id); await sleep(4500);
+    try{ await w.PulseExt.openEditor(id, true); }catch{} log('FERME '+name); await sleep(1500);
+  }
+  log('FIN OK');
+} catch(e){ log('ERREUR '+(e&&e.stack||e)); log('FIN'); } })();
+</script>

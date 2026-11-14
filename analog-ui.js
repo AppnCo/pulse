@@ -89,11 +89,13 @@ function anaKnob(parent, { strip, cx, cy, d, key, min, max, def, steps, get, set
         if (e.button !== 0) return;
         e.preventDefault(); e.stopPropagation();
         const y0 = e.clientY, f0 = frac(get()); let moved = false;
+        const fd = typeof window.fineDrag === 'function' ? window.fineDrag(y0) : (ev) => y0 - ev.clientY;
         const mv = (ev) => {
-            const v = fromFrac(f0 + (y0 - ev.clientY) / ((typeof knobFine === 'function' ? knobFine(ev) : ev.shiftKey) ? 1750 : (steps ? 25 * (steps.length - 1) : 320)));
+            const v = fromFrac(f0 + fd(ev) / (steps ? 25 * (steps.length - 1) : 320));
             if (v === get()) return;
             if (!moved) { moved = true; onStart && onStart(); }
             set(v); draw(); g.dispatchEvent(new Event('input', { bubbles: true }));
+            if (typeof liveNudge === 'function') liveNudge();   // le son suit pendant le geste, pas seulement au lâcher
         };
         const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); if (moved) onEnd && onEnd(); };
         document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
@@ -109,6 +111,7 @@ function anaKnob(parent, { strip, cx, cy, d, key, min, max, def, steps, get, set
         onStart && onStart(); set(v); draw(); onEnd && onEnd();
     }, { passive: false });
     g.addEventListener('dblclick', (e) => { e.stopPropagation(); onStart && onStart(); set(def); draw(); onEnd && onEnd(); });
+    g._pkReset = () => { if (def === undefined) return false; onStart && onStart(); set(def); draw(); onEnd && onEnd(); return true; };   // ⌘ / ⌥ + clic
     g._pkShow = (v) => draw(v);
     g._pkRestore = () => draw();
     draw();

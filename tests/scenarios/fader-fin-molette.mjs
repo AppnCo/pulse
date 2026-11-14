@@ -26,7 +26,7 @@ export default async (c) => {
   await sleep(400);
   check('molette sur le volume du groupe : il baisse', await J(ev, `return busById('g1').volume < 100`), String(await J(ev, `return busById('g1').volume`)));
   await ev(`document.getElementById('btnMixer').click()`); await sleep(500);
-  const bp = await at('.mixer-strips .strip[data-kind="bus"] .bus-pan');
+  const bp = await at('.mixer-strips .strip[data-kind="bus"] .strip-pan-knob');
   for (let k = 0; k < 3; k++) { await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: bp.x, y: bp.y, deltaX: 0, deltaY: -40 }); await sleep(60); }
   await sleep(400);
   check('molette sur le pan du groupe (table) : il bouge', await J(ev, `return (busById('g1').pan || 0) !== 0`), String(await J(ev, `return busById('g1').pan`)));

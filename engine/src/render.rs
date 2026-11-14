@@ -391,6 +391,8 @@ pub struct Renderer {
     fade_in_end: Option<usize>,
     /// Niveaux du dernier bloc mixé : (piste, crête gauche, crête droite avant le pan, efficace après le pan)
     levels: Vec<(usize, f32, f32, f32)>,
+    /// Niveaux des groupes sur le dernier bloc : (groupe, crête gauche, crête droite, efficace), après leur fader et leur pan
+    bus_levels: Vec<(usize, f32, f32, f32)>,
     /// Niveau efficace du master sur le dernier bloc
     master_rms: f32,
     /// Réduction des compresseurs sur le dernier bloc : (groupe ?, indice, dB)
@@ -582,7 +584,7 @@ impl Renderer {
         let limiter = opts.only_track.is_none().then(|| crate::fx::Limiter::new(project.ceiling(), sr));
         let _ = base_opts;
         Self { sr, lat_max, warm, warmed: false, from, to, frames, pos: 0, master_volume: opts.master_volume, only_track: opts.only_track.is_some(), n_buses: project.buses.len(), tracks, buses, sends, limiter, base: RenderOptions { sample_rate: opts.sample_rate, master_volume: base_opts.master_volume, range: opts.range, only_track: opts.only_track, start: opts.start },
-               loop_ab: None, metro: None, metro_segs: Vec::new(), wrapped: false, fade_in_end: None, levels: Vec::new(), master_rms: 0.0,
+               loop_ab: None, metro: None, metro_segs: Vec::new(), wrapped: false, fade_in_end: None, levels: Vec::new(), bus_levels: Vec::new(), master_rms: 0.0,
                grs: Vec::new(), agrs: Vec::new(), cins: Vec::new(), fxm: Vec::new(), scope_target: None, scope: vec![0.0; SCOPE], scope_i: 0 }.with_metro(project)
     }
     fn with_metro(mut self, project: &Project) -> Self { self.set_metro(project); self }
@@ -678,6 +680,7 @@ impl Renderer {
     pub fn take_wrap(&mut self) -> bool { std::mem::take(&mut self.wrapped) }
     /// Niveaux du dernier bloc : (piste, crête G, crête D, efficace) et efficace du master
     pub fn levels(&self) -> (&[(usize, f32, f32, f32)], f32) { (&self.levels, self.master_rms) }
+    pub fn bus_levels(&self) -> &[(usize, f32, f32, f32)] { &self.bus_levels }
     /// Réduction des compresseurs (groupe ?, indice, dB) sur le dernier bloc
     pub fn grs(&self) -> &[(bool, usize, f32)] { &self.grs }
     pub fn agrs(&self) -> &[(bool, usize, &'static str, f32)] { &self.agrs }
@@ -785,6 +788,7 @@ impl Renderer {
         let limit = match self.loop_ab { Some((_, b)) if self.pos < b => b, _ => self.frames };
         let n = left.len().min(right.len()).min(limit.saturating_sub(self.pos));
         self.levels.clear();
+        self.bus_levels.clear();
         self.grs.clear();
         self.agrs.clear();
         self.cins.clear();
@@ -908,6 +912,7 @@ impl Renderer {
                 let busmute = if b.muted { 0.0f32 } else { 1.0 };
                 let k = smooth_k(sr);
                 let ks = k as f32;
+                let (mut pk_l, mut pk_r, mut sq) = (0.0f32, 0.0f32, 0.0f32);
                 for m in 0..n {
                     let t = from + (b0 + m) as f64 / sr;
                     b.own_s += (b.own - b.own_s) * k;
@@ -923,6 +928,9 @@ impl Renderer {
                     let (l, r) = (xl * gl, xr * gr);
                     dl[m] += l * route;
                     dr[m] += r * route;
+                    pk_l = pk_l.max((l * busmute).abs());
+                    pk_r = pk_r.max((r * busmute).abs());
+                    sq += ((l + r) * 0.5 * busmute) * ((l + r) * 0.5 * busmute);
                     for ((k, level, c, pre), s) in b.sends.iter().zip(b.sends_s.iter_mut()) {
                         let level = heard(s, *level, c, t, ks);
                         let (sl, sr2) = if *pre { (pre_l, pre_r) } else { (l, r) };
@@ -936,6 +944,7 @@ impl Renderer {
                         aux_buf[k].1[m] += sr2 * level;
                     }
                 }
+                if n > 0 { self.bus_levels.push((i, pk_l, pk_r, (sq / n as f32).sqrt())); }
             }
             for ((_, _, g, d, _), (al, ar)) in b.aux.iter().zip(aux_buf) {
                 let (dl, dr): (&mut [f32], &mut [f32]) = match d {

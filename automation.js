@@ -51,10 +51,15 @@ function bandAutoDefs(name, o) {
     return bands.flatMap((b, i) => !b ? [] : BAND_AUTO_DEFS[name].filter(([f]) => !(b.base && (f === 'lo' || f === 'hi'))).map(([f, l, unit, min, max, def, log]) => ({
         key: `b${i}-${f}`, label: `${b.base ? 'Tout le son' : 'Bande ' + (i + 1)} · ${l}`, unit, min, max, def, log: !!log, band: i, field: f })));
 }
-function fxNumericDefs(name, o) { if (name === 'eq') return eqAutoDefs(o); if (BAND_AUTO_DEFS[name]) return [...bandAutoDefs(name, o), ...(AUTO_EXTRA_DEFS[name] || [])]; return fxAllDefs(name).filter(d => !d.choices && !d.toggle && d.min !== undefined && (AUTO_FX[name] || []).includes(d.key)); }
+// Bouton « Mix » commun (plugins sans mélange à eux) : il s'automatise comme les autres réglages
+const MIX_AUTO_DEF = { key: '_mix', label: 'Mix', unit: ' %', min: 0, max: 100, def: 100 };
+function fxHasOwnMix(name) { return name === 'msat' || name === 'tune' || name === 'master' || fxAllDefs(name).some(d => ['mix', 'wet', 'dry'].includes(d.key)); }
+function fxNumericDefs0(name, o) { if (name === 'eq') return eqAutoDefs(o); if (BAND_AUTO_DEFS[name]) return [...bandAutoDefs(name, o), ...(AUTO_EXTRA_DEFS[name] || [])]; return fxAllDefs(name).filter(d => !d.choices && !d.toggle && d.min !== undefined && (AUTO_FX[name] || []).includes(d.key)); }
+function fxNumericDefs(name, o) { const d = fxNumericDefs0(name, o); return fxHasOwnMix(name) ? d : [...d, MIX_AUTO_DEF]; }
 // Le moteur audio reçoit les plages de ces réglages (les courbes sont rangées entre 0 et 1)
-if (window.PulseAudio && PulseAudio.setAutoRanges) PulseAudio.setAutoRanges(Object.fromEntries(Object.entries(AUTO_FX).flatMap(([fx, keys]) =>
-    keys.map(k => fxAllDefs(fx).find(d => d.key === k)).filter(Boolean).map(d => [`fx:${fx}:${d.key}`, { min: d.min, max: d.max, log: !!(d.log && d.min > 0), def: d.def }]))));
+if (window.PulseAudio && PulseAudio.setAutoRanges) PulseAudio.setAutoRanges(Object.fromEntries([...Object.entries(AUTO_FX).flatMap(([fx, keys]) =>
+    keys.map(k => fxAllDefs(fx).find(d => d.key === k)).filter(Boolean).map(d => [`fx:${fx}:${d.key}`, { min: d.min, max: d.max, log: !!(d.log && d.min > 0), def: d.def }])),
+    ...Object.keys(FX_NAMES).map(fx => [`fx:${fx}:_mix`, { min: 0, max: 100, log: false, def: 100 }])]));
 function autoInfo(o, pid) {
     if (pid === 'volume') return { label: 'Volume', cur: () => 1, norm: v => v, denorm: v => v, fmt: v => Math.round(v * 100) + ' %' };
     const lin = (label, min, max, cur, fmt) => ({ label, cur, norm: v => Math.max(0, Math.min(1, (v - min) / (max - min))), denorm: n => min + n * (max - min), fmt });
