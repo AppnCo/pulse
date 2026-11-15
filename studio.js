@@ -8669,8 +8669,11 @@ function openEqPanel(trackIdx, anchorEl, opts = {}) {
     let sel = 0;
     let open = false;                   // comme Pro-Q : les réglages du point ne s'ouvrent (en bas) qu'au clic sur le point ; un clic dans le vide les ferme
     const hist = [], fut = [];          // ↶ ↷ de l'EQ : un pas par geste
-    const eqSnap = () => JSON.stringify({ eq: t.effectParams.eq || null, bands: t.eqBands || null });
-    const eqRestore = (j) => { const o = JSON.parse(j); if (o.eq) t.effectParams.eq = o.eq; else delete t.effectParams.eq; if (o.bands) t.eqBands = o.bands; else delete t.eqBands; };
+    // ↶ ↷ de l'EQ : les courbes des points (recalées quand un point part) reviennent avec eux
+    const eqAuto = () => t.__fxEqOf ? null : Object.fromEntries(Object.entries(t.automation || {}).filter(([k]) => k.startsWith('fx:eq:')));
+    const eqSnap = () => JSON.stringify({ eq: t.effectParams.eq || null, bands: t.eqBands || null, auto: eqAuto() });
+    const eqRestore = (j) => { const o = JSON.parse(j); if (o.eq) t.effectParams.eq = o.eq; else delete t.effectParams.eq; if (o.bands) t.eqBands = o.bands; else delete t.eqBands;
+        if (o.auto && !t.__fxEqOf) { if (!t.automation) t.automation = {}; const au = t.automation; for (const k of Object.keys(au)) if (k.startsWith('fx:eq:')) delete au[k]; Object.assign(au, o.auto); } };
     const histPush = () => { hist.push(eqSnap()); if (hist.length > 60) hist.shift(); fut.length = 0; };
     // Où se pose un point : sur SA courbe (comme Pro-Q), jamais sur la courbe totale — un coupe-bas ne bouge pas quand un autre point monte
     const ptDb = (b) => b.type === 'notch' ? 0 : (b.type === 'hpf' || b.type === 'lpf') ? eqBandDb({ ...b, on: true }, b.freq) : (b.gain || 0);
@@ -8692,7 +8695,7 @@ function openEqPanel(trackIdx, anchorEl, opts = {}) {
         if (prev.autogain) { t.effectParams.eq.autogain = true; t.effectParams.eq.out = autoOut(arr); }
         if (soloI >= 0 && soloI < arr.length) t.effectParams.eq.solo = soloI; else soloI = -1;
         // Automation (mode A) : la bande qu'on vient de bouger devient la courbe affichée, et s'écrit pendant la lecture
-        if (state.automationMode && arr.length === before.length) {
+        if (state.automationMode && arr.length === before.length && !t.__fxEqOf) {   // EQ intégré d'un Écho / d'une Reverb : pas de courbe « fx:eq » (elle viserait l'EQ de la piste)
             arr.forEach((b, i) => ['freq', 'gain'].forEach(f => {
                 const o0 = before[i] || {};
                 if ((b[f] || 0) === (o0[f] || 0) || (f === 'gain' && !EQ_GAIN_TYPES.includes(b.type))) return;
@@ -8870,11 +8873,28 @@ function openEqPanel(trackIdx, anchorEl, opts = {}) {
         commit(arr); draw();
     };
     const removeBand = (i) => {
-        const gone = multi.size > 1 && multi.has(i) ? multi : new Set([i]);
+        const gone = multi.size > 1 && multi.has(i) ? new Set(multi) : new Set([i]);   // copie : `multi` est vidé plus bas
         const arr = bands().filter((_, k) => !gone.has(k));
         multi.clear(); open = false; hideHover();
         sel = Math.max(0, Math.min(sel, arr.length - 1));
-        commit(arr); draw();
+        commit(arr);
+        // (après commit : l'étape d'annulation garde les anciennes courbes)
+        // Les courbes d'automation repèrent un point par sa place (fx:eq:b3-gain) : on les recale sur les points restants,
+        // sinon la courbe d'un point retiré ou décalé pilote le voisin
+        // (modifiées sur place : un « EQ #2 » voit ses propres courbes à travers la vue de la piste)
+        if (!t.__fxEqOf && t.automation) {
+            const au = t.automation, moved = [];
+            for (const k of Object.keys(au)) {
+                const m = /^fx:eq:b(\d+)-(.+)$/.exec(k); if (!m) continue;
+                const n = +m[1], v = au[k]; delete au[k];
+                if (gone.has(n)) continue;
+                let below = 0; for (const g of gone) if (g < n) below++;
+                moved.push(['fx:eq:b' + (n - below) + '-' + m[2], v]);
+            }
+            for (const [k, v] of moved) au[k] = v;
+            if (/^fx:eq:b\d+-/.test(t.autoParam || '') && !(t.autoParam in au)) t.autoParam = 'volume';
+        }
+        draw();
     };
 
     // Souris sur la courbe
