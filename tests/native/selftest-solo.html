@@ -1,0 +1,29 @@
+<!doctype html><meta charset="utf-8"><title>selftest solo</title><body style="margin:0;background:#111"><iframe id="f" src="studio.html" style="width:100vw;height:100vh;border:0"></iframe>
+<script>
+// Solo d'un point d'EQ et solo d'une bande du Multibande, dans l'appli (moteur natif) : le niveau de sortie suit
+const log=t=>{ try{ window.__TAURI__.core.invoke('test_log',{text:t}); }catch{} };
+const f=document.getElementById('f'); const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+(async()=>{ try{
+  await sleep(2500); const w=f.contentWindow; w.__TAURI__=window.__TAURI__; const inv=window.__TAURI__.core.invoke;
+  const ST=w.eval('state'); const ctx=await w.PulseAudio.init(); const sr=48000, b=ctx.createBuffer(1,sr*30,sr), d=b.getChannelData(0);
+  for(let i=0;i<d.length;i++) d[i]=0.3*Math.sin(2*Math.PI*100*i/sr)+0.08*Math.sin(2*Math.PI*5000*i/sr);
+  w.PulseAudio.registerBuffer('ssolo',b); await w.PulsePersist.saveBlob('ssolo', new Blob([w.PulseAudio.audioBufferToWav(b)],{type:'audio/wav'}),{kind:'import'});
+  const t=ST.project.tracks[0]; t.clips=[{id:"ssolo",start:0,duration:30,offset:0}]; t.volume=60;
+  t.effects=['eq']; t.effectParams={ eq:{ bands:[{type:'hpf',freq:1000,gain:0,q:0.71,slope:24},{type:'bell',freq:5000,gain:0,q:2}] } };
+  const lvl=async()=>{ await sleep(900); let s=0; for(let k=0;k<6;k++){ const lv=(await inv('native_live')).levels; s+=(lv&&lv.master)||0; await sleep(80);} const ni=await inv('native_info'); log('  état: joue='+ni.playing+' pos='+ni.position.toFixed(2)+' trous='+ni.underruns+' err='+ni.error+' niveau='+(s/6).toFixed(3)); return s/6; };
+  ST.playhead=0.2; await w.togglePlay(); await sleep(800);
+  const a=await lvl();
+  t.effectParams.eq.solo=0; w.eval('refreshPlaybackSoon')(); const hp=await lvl();
+  t.effectParams.eq.solo=1; w.eval('refreshPlaybackSoon')(); const bell=await lvl();
+  delete t.effectParams.eq.solo; w.eval('refreshPlaybackSoon')(); const back=await lvl();
+  log('eq solo: normal='+a.toFixed(3)+' solo_coupe_bas='+hp.toFixed(3)+' solo_cloche='+bell.toFixed(3)+' retour='+back.toFixed(3));
+  // Multibande : bande 0 = graves (20-300 Hz), bande 1 = aigus (3-10 kHz)
+  t.effects=['mband']; t.effectParams={ mband:{ bands:[{lo:20,hi:300,thr:0,range:0},{lo:3000,hi:10000,thr:0,range:0}] } }; w.eval('refreshPlaybackSoon')();
+  const m0=await lvl();
+  t.effectParams.mband.bands[1].solo=true; w.eval('refreshPlaybackSoon')(); const ms=await lvl();
+  t.effectParams.mband.bands[1].solo=false; t.effectParams.mband.bands[0].mute=true; w.eval('refreshPlaybackSoon')(); const mm=await lvl();
+  log('mb solo: normal='+m0.toFixed(3)+' solo_aigus='+ms.toFixed(3)+' graves_coupés='+mm.toFixed(3));
+  await w.togglePlay();
+  log('FIN OK');
+} catch(e){ log('ERREUR '+(e&&e.stack||e)); log('FIN'); } })();
+</script>

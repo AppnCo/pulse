@@ -665,6 +665,10 @@ mod tests {
         let (all, solo) = (run(""), run(r#","solo":0"#));
         // sans solo : 100 Hz + 5 kHz ; en solo sur le point à 5 kHz : il ne reste (presque) que 5 kHz
         assert!((rms(&solo) - rms(&all) * std::f64::consts::FRAC_1_SQRT_2).abs() < 0.01, "{} {}", rms(&all), rms(&solo));
+        // coupe-bas en solo : on entend ce qu'il retire (les graves à 100 Hz), plus les aigus
+        let p: Project = serde_json::from_str(r#"{"tracks":[{"volume":100,"clips":[{"id":"s","start":0,"duration":1}],"effects":["eq"],"effectParams":{"eq":{"bands":[{"type":"hpf","freq":1000,"gain":0,"q":0.71,"slope":24}],"solo":0}}}]}"#).unwrap();
+        let hp = render(&p, &media, &RenderOptions { master_volume: 1.0, ..Default::default() }).0;
+        assert!((rms(&hp) - rms(&all) * std::f64::consts::FRAC_1_SQRT_2).abs() < 0.015, "coupe-bas en solo : {} {}", rms(&all), rms(&hp));
     }
 
     /// Bouton « Mix » commun à tous les plugins : 0 % = le son d'origine (recalé, même derrière une machine analogique qui retarde),

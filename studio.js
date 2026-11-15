@@ -8804,14 +8804,38 @@ const EQ_PRESETS = {
     basse:   { label: 'Basse / 808 : nette', bands: [{ type: 'hpf', freq: 28, q: 0.7 }, { type: 'bell', freq: 250, gain: -3, q: 1.2 }, { type: 'bell', freq: 1200, gain: 1.5, q: 0.9 }] }
 };
 
-function openEqPanel(trackIdx, anchorEl) {
-    closeTransientPanels();
+// EQ de l'Écho / de la Reverb : le vrai EQ (mêmes gestes, mêmes boutons) branché sur leurs points (effectParams.<fx>.eq = liste de points).
+// Vue de la piste où « effectParams.eq » renvoie à ces points (sortie / point dynamique : l'EQ d'un effet n'en a pas, ils sont cachés)
+function fxEqView(owner, fxName) {
+    owner.effectParams = owner.effectParams || {};
+    const ep = () => (owner.effectParams[fxName] = owner.effectParams[fxName] || {});
+    const extra = {};   // solo, échelle… : gardés le temps de la fenêtre
+    const box = new Proxy(extra, {
+        get(o, k) { if (k === 'bands') return (ep().eq = Array.isArray(ep().eq) ? ep().eq : []); return o[k]; },
+        set(o, k, v) { if (k === 'bands') ep().eq = Array.isArray(v) ? v : []; else o[k] = v; return true; },
+        deleteProperty(o, k) { if (k === 'bands') ep().eq = []; else delete o[k]; return true; },
+        ownKeys(o) { return [...new Set(['bands', ...Reflect.ownKeys(o)])]; },
+        getOwnPropertyDescriptor(o, k) { return k === 'bands' ? { enumerable: true, configurable: true, writable: true, value: this.get(o, 'bands') } : Reflect.getOwnPropertyDescriptor(o, k); }
+    });
+    const epx = new Proxy(owner.effectParams, {
+        get(o, k) { return k === 'eq' ? box : o[k]; },
+        set(o, k, v) { if (k === 'eq') { ep().eq = (v && Array.isArray(v.bands)) ? v.bands.map(b => ({ ...b })) : []; return true; } o[k] = v; return true; },
+        deleteProperty(o, k) { if (k === 'eq') { ep().eq = []; return true; } delete o[k]; return true; }
+    });
+    return new Proxy(owner, {
+        get(o, k) { if (k === 'effectParams') return epx; if (k === 'effects') return [...(o.effects || []), 'eq']; if (k === 'eqBands') return undefined; if (k === '__fxEqOf') return fxName; return o[k]; },
+        set(o, k, v) { if (k === 'eqBands' || k === 'effects' || (k === 'effectParams' && v === epx)) return true; o[k] = v; return true; },
+        deleteProperty(o, k) { if (k === 'eqBands') return true; delete o[k]; return true; }
+    });
+}
+function openEqPanel(trackIdx, anchorEl, opts = {}) {
+    if (!opts.embed) closeTransientPanels();
     // trackIdx : numéro de piste, ou directement un groupe
     const t = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;
     // EQ pas encore utilisé sur cette piste : il s'ouvre vide (aucun point), pas avec les 4 réglages de l'ancienne chaîne
     if (t && !(t.effects || []).includes('eq') && !(t.effectParams && t.effectParams.eq)) { t.effectParams = t.effectParams || {}; t.effectParams.eq = { bands: [] }; }
     if (!t) return;
-    const already = findPlugWin(t, 'eq');
+    const already = opts.embed ? null : findPlugWin(t, 'eq');
     if (already) { plugFront(already); return; }
     t.effectParams = t.effectParams || {};
     const W = 760, H = 380, PB = 20, FMIN = 20, FMAX = 20000;   // PB : bande du bas pour les fréquences ; H 380 (avant 300) : plus de hauteur = gain plus précis (Pro-Q ≈ 21 px par dB)
@@ -8876,7 +8900,7 @@ function openEqPanel(trackIdx, anchorEl) {
     const fmtF = (f) => f >= 1000 ? (f / 1000).toFixed(f >= 10000 ? 1 : 2).replace(/\.?0+$/, '') + ' kHz' : Math.round(f) + ' Hz';
 
     const panel = document.createElement('div');
-    panel.className = 'fx-panel eq-panel';
+    panel.className = 'fx-panel eq-panel' + (opts.embed ? ' eq-embed' : '');
     panel.innerHTML = `
         <div class="fx-panel-header">
             <label class="fx-bypass-label fx-power" data-tooltip="Allumer ou éteindre l'effet"><input type="checkbox" class="fx-bypass" ${t.effects?.includes('eq') ? 'checked' : ''}><span class="fx-power-btn">⏻</span></label>
@@ -8896,7 +8920,7 @@ function openEqPanel(trackIdx, anchorEl) {
         </div>
         <div class="eq-graph"><div class="eq-svghost"></div><div class="eq-detail eq-bub"></div></div>
         <div class="eq-hint">Double-clic pour poser un point (tout à gauche = coupe-bas, tout à droite = coupe-haut) · tire pour régler · molette = largeur (Q) · double-clic sur un point = le retirer · ⇧ + glisser = choisir plusieurs points</div>`;
-    document.body.appendChild(panel);
+    (opts.embed || document.body).appendChild(panel);
     const graph = panel.querySelector('.eq-graph'), detail = panel.querySelector('.eq-detail'), host = panel.querySelector('.eq-svghost');
     let showAn = true;
     panel.querySelector('.eq-an').addEventListener('click', (e) => { showAn = !showAn; e.currentTarget.classList.toggle('on', showAn); });
@@ -8988,7 +9012,7 @@ function openEqPanel(trackIdx, anchorEl) {
             <line x1="0" y1="${mid}" x2="${W}" y2="${mid}" class="viz-zero"/>
             <path d="${shade}" class="eq-cut"/>${fills}${own}${dyns}<path d="${line}" class="viz-line eq-line"/><g class="eq-live"></g>${pts}
             ${arr.length ? '' : `<text x="${W / 2}" y="${mid - 12}" class="eq-empty-txt" text-anchor="middle">Double-clic sur la courbe pour poser un point</text>`}
-            ${soloI >= 0 ? `<text x="10" y="20" class="eq-solo-txt">Solo du point ${soloI + 1} : tu n'entends que sa zone</text>` : ''}</svg>`;
+            ${soloI >= 0 ? `<text x="10" y="20" class="eq-solo-txt">Solo du point ${soloI + 1} : ${(arr[soloI] || {}).type === 'hpf' || (arr[soloI] || {}).type === 'lpf' ? 'tu entends ce qu\'il retire' : 'tu n\'entends que sa zone'}</text>` : ''}</svg>`;
         const ep = t.effectParams.eq || {};
         panel.querySelector('.eq-out b').textContent = `${(ep.out || 0) > 0 ? '+' : ''}${(ep.out || 0).toFixed(1).replace('.', ',')} dB`;
         const b = arr[sel];
@@ -9271,7 +9295,8 @@ function openEqPanel(trackIdx, anchorEl) {
     draw();
 
     // Le son de la piste pendant la lecture, en fond de la courbe (comme sur les EQ de studio)
-    const specOf = () => typeof trackIdx === 'number' ? PulseAudio.getTrackSpectrum(trackIdx) : (t.id && PulseAudio.getBusSpectrum ? PulseAudio.getBusSpectrum(t.id) : null);
+    const sIdx = opts.specIdx !== undefined ? opts.specIdx : trackIdx, sOwn = typeof sIdx === 'number' ? null : (opts.specIdx !== undefined ? opts.specIdx : t);
+    const specOf = () => typeof sIdx === 'number' ? PulseAudio.getTrackSpectrum(sIdx) : (sOwn && sOwn.id && PulseAudio.getBusSpectrum ? PulseAudio.getBusSpectrum(sOwn.id) : null);
     if (PulseAudio.getTrackSpectrum) {
         const cv = document.createElement('canvas');
         cv.className = 'eq-spec';
@@ -9326,6 +9351,7 @@ function openEqPanel(trackIdx, anchorEl) {
         requestAnimationFrame(loop);
     }
 
+    if (opts.embed) return panel;   // intégré dans une autre fenêtre (Écho, Reverb) : pas de position, pas de fenêtre à part
     const rect = anchorEl.getBoundingClientRect(), pw = Math.min(800, window.innerWidth - 16);
     let left = rect.right + 8;
     if (left + pw > window.innerWidth) left = Math.max(8, rect.left - pw - 8);
@@ -9606,7 +9632,7 @@ function makePlugWindow(panel, t, fxName, trackIdx) {
         panel.classList.add('dragging');
         document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
     });
-    requestAnimationFrame(() => { if (panel.isConnected) addMixKnob(panel, t, fxName); });   // après la façade : on voit si le plugin a déjà son propre Mix
+    requestAnimationFrame(() => { if (panel.isConnected) { addMixKnob(panel, t, fxName); addHelpToggle(panel); } });   // après la façade : on voit si le plugin a déjà son propre Mix
     // Si la piste ou le groupe disparaît (suppression, autre projet), sa fenêtre se ferme
     const owner = t && t.__real ? t.__real : t;   // fenêtre d'un exemplaire en plus : sa vraie piste
     const alive = () => typeof trackIdx === 'number' ? state.project.tracks[trackIdx] === owner : (state.project.tracks.includes(owner) || (state.project.buses || []).includes(owner));
@@ -9614,6 +9640,41 @@ function makePlugWindow(panel, t, fxName, trackIdx) {
         if (!panel.isConnected) return clearInterval(watch);
         if (!alive()) { panel.remove(); clearInterval(watch); }
     }, 500);
+}
+
+// Phrases d'aide des plugins : cachées, elles s'affichent avec le bouton « ? » du bandeau (comme PulseTune) — la façade reste propre.
+// Le choix (aide affichée ou non) vaut pour tous les plugins et reste d'une séance à l'autre.
+const HELP_SEL = '.eq-hint, .eq-empty-txt, .gate-hint, .ds-hint, .mb-hint, .lim-txt.big, .rveq-empty, .fx-help, .fx-hint';
+function markHelp(panel) {
+    panel.querySelectorAll(HELP_SEL).forEach(e => e.classList.add('help-txt'));
+    // phrases-consignes (barre du bas, textes des graphiques) : reconnues à leurs tournures, jamais les valeurs (« 30 % », « 1/8 = 250 ms »)
+    const HELP_RE = /double-clic|glisse|glisser|\btire\b|molette|lance la lecture|tourne un|clique|clic droit|« \+ »|nouvelle bande|choisis /i;
+    // 1re case de la barre du bas : la phrase qui décrit le plugin (« le volume monte et descend en rythme »)
+    panel.querySelectorAll('.lim-sb > span:first-child').forEach(e => { if (!e.classList.contains('lim-spacer') && !e.querySelector('b, input, select, button') && e.textContent.trim().length > 18 && !/\d/.test(e.textContent)) e.classList.add('help-txt'); });
+    panel.querySelectorAll('.lim-sb > span, svg text.lim-txt, svg text.viz-txt').forEach(e => {
+        if (e.classList.contains('lim-spacer') || e.querySelector('b, input, select, button')) return;
+        const tx = e.textContent.trim();
+        if (tx.length > 24 && HELP_RE.test(tx)) e.classList.add('help-txt');
+    });
+}
+function addHelpToggle(panel) {
+    if (panel.querySelector('.tune-help-btn, .fx-help-btn')) return;
+    markHelp(panel);
+    // les façades redessinées (graphiques…) recréent leurs phrases : on les marque à nouveau
+    new MutationObserver(() => markHelp(panel)).observe(panel, { childList: true, subtree: true });
+    const head = panel.querySelector('.fx-panel-header'); if (!head) return;
+    let on = false; try { on = localStorage.getItem('pulse_fx_help') === '1'; } catch {}
+    panel.classList.toggle('help-on', on);
+    const b = document.createElement('button'); b.className = 'fx-help-btn' + (on ? ' on' : ''); b.textContent = '?';
+    b.dataset.tooltip = 'Aide : afficher / cacher les explications de ce plugin';
+    b.addEventListener('mousedown', (e) => e.stopPropagation());
+    b.addEventListener('click', (e) => {
+        e.stopPropagation(); on = !panel.classList.contains('help-on');
+        try { localStorage.setItem('pulse_fx_help', on ? '1' : '0'); } catch {}
+        document.querySelectorAll('.fx-panel').forEach(p => { p.classList.toggle('help-on', on); const hb = p.querySelector('.fx-help-btn'); if (hb) hb.classList.toggle('on', on); });
+    });
+    const anchor = head.querySelector('.fx-mix-host') || head.querySelector('.fx-panel-close');
+    head.insertBefore(b, anchor || null);
 }
 
 // Bouton « Mix » dans le bandeau des plugins qui n'ont pas déjà le leur : 0 % = son d'origine, 100 % = tout l'effet
@@ -11893,7 +11954,11 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
         requestAnimationFrame(tick);
     }
 
-    if (fxName === 'reverb' || fxName === 'delay') bindFxEq(panel, t, fxName);
+    if (fxName === 'reverb' || fxName === 'delay') {
+        // le vrai EQ, en plus petit, sur les points de l'écho / de la reverb
+        const host = panel.querySelector('.rv-eq-host');
+        if (host) { panel.querySelectorAll('.rv-eq-head .rv-eq-btn, .rv-eq-head .rv-eq-clear, .rv-eq-read, .rv-eq-detail').forEach(e => e.remove()); openEqPanel(fxEqView(t, fxName), null, { embed: host, specIdx: trackIdx }); }
+    }
 
     // Events
     panel.querySelector('.fx-panel-close').addEventListener('click', () => panel.remove());
@@ -16535,7 +16600,7 @@ function bindGroupResize() {
 }
 
 // === Largeur du bloc de faders à gauche (inspecteur) : tirer son bord ===
-const INSP_W_KEY = 'pulse_insp_w', INSP_W_DEFAULT = 208, INSP_W_MIN = 130, INSP_W_MAX = 420;
+const INSP_W_KEY = 'pulse_insp_w', INSP_W_DEFAULT = 244, INSP_W_MIN = 130, INSP_W_MAX = 420;
 function setInspectorWidth(px, persist = true) {
     const w = Math.max(INSP_W_MIN, Math.min(INSP_W_MAX, Math.round(px)));
     document.documentElement.style.setProperty('--insp-w', w + 'px');
@@ -16579,7 +16644,7 @@ function initInspectorResizer() {
 }
 
 // === Largeur du panneau des pistes : tirer le bord entre les pistes et la timeline ===
-const TRACKS_W_KEY = 'pulse_tracks_w', TRACKS_W_DEFAULT = 240, TRACKS_W_MIN = 200, TRACKS_W_MAX = 520;
+const TRACKS_W_KEY = 'pulse_tracks_w', TRACKS_W_DEFAULT = 280, TRACKS_W_MIN = 200, TRACKS_W_MAX = 520;
 function setTracksWidth(px, persist = true) {
     const w = Math.max(TRACKS_W_MIN, Math.min(TRACKS_W_MAX, Math.round(px)));
     document.documentElement.style.setProperty('--tracks-w', w + 'px');

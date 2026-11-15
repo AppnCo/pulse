@@ -8,7 +8,7 @@ export default async (c) => {
   const res = {};
   for (const fx of FX) {
     await ev(`document.querySelectorAll('.fx-panel').forEach(p => p.remove()); openEffectPanel(2, '${fx}', document.body)`); await sleep(250);
-    res[fx] = await J(ev, `const p=[...document.querySelectorAll('.fx-panel')].pop(); return p ? [!!p.querySelector('.fx-mix-host'), p.querySelectorAll('[data-key="mix"],[data-key="wet"],[data-key="_mix"]').length] : null`);
+    res[fx] = await J(ev, `const p=[...document.querySelectorAll('.fx-panel:not(.eq-embed)')].pop(); return p ? [!!p.querySelector('.fx-mix-host'), p.querySelectorAll('[data-key="mix"],[data-key="wet"],[data-key="_mix"]').length] : null`);
   }
   const withMix = FX.filter(f => res[f] && res[f][1] >= 1);
   check('chaque plugin a un Mix (le sien ou le commun)', withMix.length === FX.length, JSON.stringify(res));

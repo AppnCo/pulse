@@ -4646,10 +4646,11 @@ window.PulseAudio = (function() {
             const isStatic = (bd) => bd && bd.on !== false && bd.freq > 0 && !(eqIsDynamic(bd) && worklet);
             if (solo && solo.freq > 0) {
                 // Solo d'une bande (écoute seulement, jamais à l'export) : on n'entend que la zone du point
+                // sa zone (cloche, encoche, plateaux) ; coupe-bas / coupe-haut : ce qu'il retire (comme le moteur de l'appli)
                 const f = actx.createBiquadFilter();
-                f.type = 'bandpass';
+                f.type = solo.type === 'hpf' ? 'lowpass' : solo.type === 'lpf' ? 'highpass' : 'bandpass';
                 f.frequency.value = Math.max(20, Math.min(20000, solo.freq));
-                f.Q.value = solo.type === 'bell' || solo.type === 'notch' ? Math.max(0.5, solo.q || 1) : 0.7;
+                f.Q.value = solo.type === 'hpf' || solo.type === 'lpf' ? -3.0103 : solo.type === 'bell' || solo.type === 'notch' ? Math.max(0.5, solo.q || 1) : 0.7;
                 connect(f);
             } else if (worklet) {
                 // Filtres calés sur l'analogique (worklet pulse-eq), comme le moteur Rust ; l'automation y est suivie à chaque bloc

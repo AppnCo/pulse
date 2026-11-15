@@ -115,7 +115,7 @@
 /* === Workspace === */
 .workspace {
     display: grid;
-    grid-template-columns: var(--tracks-w, 240px) 1fr;
+    grid-template-columns: var(--tracks-w, 280px) 1fr;
     overflow: hidden;
     position: relative;
 }
@@ -2409,7 +2409,7 @@ body.automation-mode .clip { opacity: 0.75; }
 .tune-keys { margin-top: 8px; }
 
 /* Mon texte (bloc-notes à droite) */
-body.lyrics-open .workspace { grid-template-columns: var(--tracks-w, 240px) 1fr minmax(240px, 320px); }
+body.lyrics-open .workspace { grid-template-columns: var(--tracks-w, 280px) 1fr minmax(240px, 320px); }
 .lyrics-panel { display: flex; flex-direction: column; min-height: 0; background: var(--bg-1); border-left: 1px solid var(--border); }
 .lyrics-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-3, rgba(255, 255, 255, 0.5)); }
 .lyrics-tools { display: flex; gap: 4px; }
@@ -2480,8 +2480,8 @@ body.lyrics-open .workspace { grid-template-columns: var(--tracks-w, 240px) 1fr 
 .master-panel { width: 270px; position: fixed; z-index: 250; }
 
 /* Tranche à gauche (inspecteur) */
-body.inspector-open .workspace { grid-template-columns: var(--insp-w, 208px) var(--tracks-w, 240px) 1fr; }
-body.inspector-open.lyrics-open .workspace { grid-template-columns: var(--insp-w, 208px) var(--tracks-w, 240px) 1fr minmax(220px, 300px); }
+body.inspector-open .workspace { grid-template-columns: var(--insp-w, 244px) var(--tracks-w, 280px) 1fr; }
+body.inspector-open.lyrics-open .workspace { grid-template-columns: var(--insp-w, 244px) var(--tracks-w, 280px) 1fr minmax(220px, 300px); }
 .inspector { display: flex; gap: 6px; padding: 10px 8px; background: var(--bg-1); border-right: 1px solid var(--border); overflow-y: auto; overflow-x: hidden; min-height: 0; }
 .inspector .insp-strip { width: 92px; flex: 1 1 0; min-width: 0; padding: 10px 6px; gap: 8px; align-self: stretch; }
 .inspector .strip-name { font-size: 11px; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -4138,3 +4138,58 @@ body.fx-drag-copy .insp-fx-row.fx-dragging::after { content: '+'; position: abso
 .wave-zoom input { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); width: 150px; padding: 8px 10px; background: var(--bg-2, #1a1424); border: 1px solid var(--border, #333); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.5); display: none; z-index: 500; }
 .wave-zoom:hover input, .wave-zoom:focus-within input { display: block; }
 .wave-zoom em { position: absolute; right: -4px; bottom: -2px; font-size: 9px; min-width: 0; pointer-events: none; }
+/* aide des plugins : cachée tant que « ? » n'est pas allumé */
+.fx-panel:not(.help-on) .help-txt { display: none !important; }
+.fx-help-btn { width: 24px; height: 24px; border-radius: 50%; border: 1px solid rgba(255,255,255,.25); background: rgba(255,255,255,.06); color: #cbbfe3; font: 700 13px/1 system-ui, sans-serif; cursor: pointer; margin-left: auto; margin-right: 6px; flex: none; }
+.fx-help-btn:hover { border-color: var(--violet-2, #A855F7); color: #fff; }
+.fx-help-btn.on { background: var(--violet-2, #A855F7); border-color: var(--violet-2, #A855F7); color: #fff; }
+.fx-panel-header .fx-help-btn + .fx-mix-host { margin-left: 0; }
+
+/* ===== Prise en main (audit 14/11) : plus rien d'utile sous 22-24 px ===== */
+/* volume sur la piste : barre et poignée plus grosses */
+.t-vol { height: 16px; }
+.t-vol::-webkit-slider-runnable-track { height: 8px; border-radius: 4px; }
+.t-vol::-webkit-slider-thumb { width: 12px; height: 18px; margin-top: -5px; border-radius: 4px; }
+.track-item.is-short .t-vol { height: 16px; }
+/* M S R i des pistes */
+.track-item .t-mini { flex: none; width: 22px; min-width: 22px; height: 24px; font-size: 12px; }
+/* bords pour agrandir une piste / un groupe, séparateurs des panneaux : zone d'attrape plus large (le trait visible reste fin) */
+.track-resize, .group-resize { height: 12px; bottom: -5px; }
+.track-resize::after { bottom: 5px; }
+.panel-resizer { width: 12px; }
+.panel-resizer::after { left: 5px; }
+/* poignée pour déplacer une piste */
+.track-drag-handle { padding: 4px 6px 4px 2px; min-width: 20px; justify-content: center; }
+/* groupes : M S son, flèche replier */
+.g-mini { min-width: 24px; height: 24px; }
+.group-toggle { min-width: 24px; min-height: 24px; }
+/* « + » des effets / envois */
+.slot-plus { width: 22px; height: 22px; font-size: 15px; }
+/* barre du haut : aimant, ×2 / ÷2, Tap, solo général ; Mono et sortie de l'inspecteur */
+.snap-btn, .bpm-mini, .bpm-tap, .btn-solo-all { min-height: 26px; }
+.insp-mono, .strip-output.insp-output { min-height: 24px; }
+/* en-tête de piste : pan rond 32 px, boutons M S R i à 22 px (la colonne des pistes est plus large par défaut : 280 px) */
+.track-item .t-knob { width: 32px; height: 32px; margin-top: -16px; }
+.track-item .track-info { padding-right: 46px; }
+.track-item .track-buttons .t-mini { flex: none; width: 22px; min-width: 22px; height: 24px; }
+@container (max-width: 230px) { .track-item .track-buttons .t-mini { flex: 0 1 22px; width: auto; min-width: 17px; } }
+/* EQ de l'Écho / de la Reverb : le vrai EQ, intégré en plus petit (pas de bandeau, pas de sortie ni de point dynamique : l'effet n'en a pas) */
+.eq-panel.eq-embed { position: static; width: 100% !important; max-width: none; box-shadow: none; border: 0; background: transparent; padding: 0; z-index: auto; }
+.eq-embed > .fx-panel-header, .eq-embed .eq-ag, .eq-embed .eq-out, .eq-embed .eq-dyn, .eq-embed .eq-dynrow { display: none !important; }
+.eq-embed .eq-graph { margin: 0 0 6px; }
+.eq-embed .eq-bar { padding: 4px 0 6px; flex-wrap: wrap; gap: 4px; }
+/* EQ intégré : le menu du point passe sous la courbe (dans un petit EQ, il la recouvrirait) */
+.eq-embed .eq-detail { position: static !important; transform: none !important; left: auto !important; right: auto !important; bottom: auto !important; top: auto !important; margin: 4px 0 0; }
+.eq-embed .eq-graph { overflow: visible; }
+/* tranches étroites (inspecteur réduit) : ⏻ plus fin, le nom de l'effet garde sa place */
+@container (max-width: 100px) {
+  .insp-fx-row:has(.fx-pow) { padding-left: 15px; }
+  .insp-fx-row .fx-pow { width: 13px; left: 1px; }
+  .insp-fx-row .fx-pow svg { width: 10px; height: 10px; }
+}
+.insp-sends-box { container-type: inline-size; }
+@container (max-width: 100px) { .strip-send-row.send-bar-row { padding-left: 15px; } .strip-send-row .sb-pow { width: 13px; } }
+/* table de mixage : au moins 4 effets visibles malgré les longs faders */
+.mixer-strips .insp-fx .insp-slots { min-height: 118px; }
+.mixer-strips .strip-sends .insp-slots { min-height: 58px; }
+.strip .fader, .mixer-strips .vu-rail { height: clamp(100px, calc(84vh - 540px), 210px); }

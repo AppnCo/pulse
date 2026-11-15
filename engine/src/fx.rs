@@ -2042,8 +2042,13 @@ impl Chain {
             (filters, dyn_eq, eq_bands) = eq_build(bands, p.out, sr);
             // solo d'un point : seulement sa zone (même filtre que le navigateur : passe-bande)
             if let Some(b) = p.solo.and_then(|i| if i >= 0.0 { bands.get(i as usize) } else { None }).filter(|b| b.freq > 0.0) {
-                let q = if b.kind == "bell" || b.kind == "notch" { (if b.q > 0.0 { b.q } else { 1.0 }).max(0.5) } else { 0.7 };
-                let bp = Biquad::bandpass(sr, b.freq.clamp(20.0, 20000.0), q);
+                // ce que le point travaille : sa zone (cloche, encoche, plateaux) ; pour un coupe-bas / coupe-haut, ce qu'il retire
+                let (f, q_db) = (b.freq.clamp(20.0, 20000.0), 20.0 * std::f64::consts::FRAC_1_SQRT_2.log10());
+                let bp = match b.kind.as_str() {
+                    "hpf" => Biquad::lowpass(sr, f, q_db),
+                    "lpf" => Biquad::highpass(sr, f, q_db),
+                    _ => Biquad::bandpass(sr, f, if b.kind == "bell" || b.kind == "notch" { (if b.q > 0.0 { b.q } else { 1.0 }).max(0.5) } else { 0.7 }),
+                };
                 filters = vec![[bp, bp]];
                 dyn_eq = Vec::new();
             }
