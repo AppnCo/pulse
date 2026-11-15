@@ -28,4 +28,10 @@ export default async (c) => {
   await ev(`${row}.querySelector('.sb-del').click()`); await sleep(300);
   t = await J(ev, `return state.project.tracks[0].busSends`);
   check('× : envoi retiré', !t.b2, JSON.stringify(t));
+  // groupe supprimé / dissous : les envois vers lui partent avec Pre, ⏻ et courbe (avant le 15/11, dissoudre laissait l'envoi)
+  for (const [fn, id] of [['deleteBus', 'b1'], ['dissolveGroup', 'b2']]) {
+    const r = await J(ev, `const t = state.project.tracks[0]; t.busSends = { ${id}: 40 }; t.preSends = { 'busSend:${id}': true }; t.sendMute = { 'busSend:${id}': 40 }; t.automation = { 'busSend:${id}': { points: [{ t: 0, v: 20 }] }, volume: { points: [{ t: 0, v: 0.5 }] } };
+      ${fn}('${id}'); return [t.busSends, t.preSends, t.sendMute, Object.keys(t.automation)]`);
+    check(fn + ' : envois vers le groupe retirés', JSON.stringify(r) === JSON.stringify([{}, {}, {}, ['volume']]), JSON.stringify(r));
+  }
 };

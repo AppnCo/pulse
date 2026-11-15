@@ -1023,13 +1023,23 @@ function nextCopyName(name) {
 }
 
 // Supprimer un bus : ce qui y sortait repart vers sa sortie à lui, les envois vers ce bus disparaissent
+// Groupe qui disparaît : les envois vers lui partent avec leur Pre, leur ⏻ et leur courbe d'automation
+function dropSendsTo(busId) {
+    const k = 'busSend:' + busId;
+    [...state.project.tracks, ...(state.project.buses || [])].forEach(o => {
+        if (o.busSends) delete o.busSends[busId];
+        for (const m of [o.preSends, o.sendMute, o.automation]) if (m) delete m[k];
+        if (o.autoParam === k) o.autoParam = 'volume';
+    });
+}
 function deleteBus(busId) {
     const bus = (state.project.buses || []).find(b => b.id === busId);
     if (!bus || bus.premaster || bus.locked) return;
     pushUndo();
     const out = bus.output || 'master';
-    state.project.tracks.forEach(t => { if (t.output === busId) t.output = out; if (t.busSends) delete t.busSends[busId]; });
-    (state.project.buses || []).forEach(b => { if (b.output === busId) b.output = out; if (b.busSends) delete b.busSends[busId]; });
+    state.project.tracks.forEach(t => { if (t.output === busId) t.output = out; });
+    (state.project.buses || []).forEach(b => { if (b.output === busId) b.output = out; });
+    dropSendsTo(busId);
     state.project.buses = state.project.buses.filter(b => b !== bus);
     if (state.mixBuses instanceof Set) state.mixBuses.delete(busId);
     if (state._inspRight && state._inspRight.bus === busId) state._inspRight = null;
@@ -1101,6 +1111,7 @@ function dissolveGroup(busId) {
     const out = bus.output || 'master';
     state.project.tracks.forEach(t => { if (t.output === busId) t.output = out; });
     (state.project.buses || []).forEach(b => { if (b.output === busId) b.output = out; });
+    dropSendsTo(busId);
     state.project.buses = state.project.buses.filter(b => b !== bus);
     afterGroupChange('Groupe dissous — les pistes sont toujours là');
 }
