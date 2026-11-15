@@ -91,6 +91,9 @@ const f=document.getElementById('f'); const sleep=ms=>new Promise(r=>setTimeout(
       { let rb3=0; w.PulseAudio.play=function(){ rb3++; return op.apply(this,arguments); }; const r0=(await inv('native_live')).refused;
         tr0.effects=tr0.effects.concat(['sat']); tr0.effectParams.sat={drive:40}; w.refreshPlaybackSoon(); await sleep(400);
         tr0.effects=tr0.effects.filter(e=>e!=='sat'); w.refreshPlaybackSoon(); await sleep(400);
+        // piste mono : reverb retirée (la piste redevient mono) puis remise (stéréo) — en fondu, sans reconstruire
+        const hadRv=tr0.effects.includes('reverb'); tr0.effects=tr0.effects.filter(e=>e!=='reverb'); w.refreshPlaybackSoon(); await sleep(400);
+        tr0.effects=tr0.effects.concat(['reverb']); w.refreshPlaybackSoon(); await sleep(400); log('reverb sur piste mono: avant='+hadRv+' reconstructions='+rb3);
         // une machine analogique retarde le son : la page reconstruit (normal)
         tr0.effects=tr0.effects.concat(['fet76']); w.refreshPlaybackSoon(); await sleep(600);
         w.PulseAudio.play=op; const lvx=await inv('native_live'); const u3=(await inv('native_info')).underruns;

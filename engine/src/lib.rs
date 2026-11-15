@@ -147,7 +147,7 @@ mod tests {
         // piste stéréo : on ajoute une saturation et un EQ, on les retire, pendant la lecture → pas de clic, son = projet neuf
         let sig: Vec<f32> = (0..SR as usize * 4).map(|i| { let t = i as f32 / SR as f32; ((t * 2.0 * std::f32::consts::PI * 150.0).sin() * 0.4 + (t * 2.0 * std::f32::consts::PI * 2000.0).sin() * 0.1) }).collect();
         let media = Media::from([("a".to_owned(), Source::new(SR, vec![sig.clone(), sig.clone()]))]);
-        let proj = |fx: &str| -> Project { serde_json::from_str(&format!(r#"{{"bpm":120,"tracks":[{{"volume":100,"clips":[{{"id":"a","start":0,"duration":4}}],"effects":{fx},"effectParams":{{"sat":{{"drive":60}},"eq":{{"bands":[{{"type":"bell","freq":2000,"gain":8,"q":1}}]}},"fet76":{{}}}}}}],"buses":[]}}"#)).unwrap() };
+        let proj = |fx: &str| -> Project { serde_json::from_str(&format!(r#"{{"bpm":120,"tracks":[{{"volume":100,"clips":[{{"id":"a","start":0,"duration":4}}],"effects":{fx},"effectParams":{{"sat":{{"drive":60}},"eq":{{"bands":[{{"type":"bell","freq":2000,"gain":8,"q":1}}]}},"fet76":{{}},"delay":{{"pp":1,"ms":300,"wet":30}}}}}}],"buses":[]}}"#)).unwrap() };
         let block = |r: &mut crate::render::Renderer| { let (mut l, mut rr) = (vec![0.0f32; 4800], vec![0.0f32; 4800]); r.process(&media, &mut l, &mut rr); l };
         let saut = |l: &[f32]| l.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0f32, f32::max);
         let mut r = crate::render::Renderer::new(&proj("[]"), &media, &opts());
@@ -171,10 +171,30 @@ mod tests {
         }
         // un plugin qui retarde le son (machine analogique) : refusé, il faut reconstruire
         assert!(!r.chain_swap(&proj(r#"["fet76"]"#), &media, &[(false, 0)]));
-        // piste mono qui deviendrait stéréo (reverb) : refusé
-        let mono = Media::from([("a".to_owned(), Source::new(SR, vec![sig]))]);
+        // piste mono qui devient stéréo (reverb ajoutée en marche) puis redevient mono : accepté, sans clic,
+        // et une fois la reverb retirée le son rejoint le projet neuf (loi de pan mono revenue)
+        // son lent avec une composante continue : un saut de gain se voit quel que soit l'instant (pas de passage par zéro)
+        let lent: Vec<f32> = (0..SR as usize * 4).map(|i| 0.3 + 0.05 * (i as f32 / SR as f32 * 2.0 * std::f32::consts::PI * 150.0).sin()).collect();
+        let mono = Media::from([("a".to_owned(), Source::new(SR, vec![lent]))]);
+        let blk = |r: &mut crate::render::Renderer| { let (mut l, mut rr) = (vec![0.0f32; 4800], vec![0.0f32; 4800]); r.process(&mono, &mut l, &mut rr); (l, rr) };
         let mut m = crate::render::Renderer::new(&proj("[]"), &mono, &opts());
-        assert!(!m.chain_swap(&proj(r#"["reverb"]"#), &mono, &[(false, 0)]));
+        let _ = blk(&mut m);
+        let calme = saut(&blk(&mut m).0);
+        for fx in [r#"["reverb"]"#, "[]", r#"["delay"]"#, "[]"] {
+            assert!(m.chain_swap(&proj(fx), &mono, &[(false, 0)]), "mono {fx}");
+            let (pl, pr) = blk(&mut m);
+            // (la reverb / l'écho ajoutent leur propre son : marge de 0,02, un saut de loi de pan en ferait ≈ 0,09)
+            let tol = (calme * 2.5).max(0.02);
+            assert!(saut(&pl) < tol && saut(&pr) < tol, "mono {fx} : clic ({} / {} pour {tol})", saut(&pl), saut(&pr));
+            for _ in 0..3 { let _ = blk(&mut m); }
+        }
+        let (a, ar) = blk(&mut m);
+        let n = m.position() / 4800;
+        let mut neuf = crate::render::Renderer::new(&proj("[]"), &mono, &opts());
+        for _ in 0..n - 1 { let _ = blk(&mut neuf); }
+        let (b, br) = blk(&mut neuf);
+        let e = a.iter().zip(&b).chain(ar.iter().zip(&br)).map(|(x, y)| (x - y).abs()).fold(0.0f32, f32::max);
+        assert!(e < 2e-3, "mono : le son ne rejoint pas le projet neuf (écart {e})");
     }
     #[test]
     fn metronome_pile_sur_les_temps() {

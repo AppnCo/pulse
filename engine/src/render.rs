@@ -312,16 +312,22 @@ struct TrackRt {
     lat: f64,
     /// Ancienne chaîne d'effets qui s'efface après un plugin ajouté / retiré en marche
     fade: Option<ChainFade>,
+    /// Piste mono qui passe en stéréo (reverb ajoutée en marche) ou l'inverse : part de la loi de pan mono (1 = toute)
+    /// pendant le passage, et sa cible ; arrivée à 1 sans fondu en cours, la piste redevient mono
+    law: f32,
+    law_to: f32,
 }
 
 /// Chaîne d'effets qui s'efface (fondu de 30 ms) pendant qu'une nouvelle prend sa place
-struct ChainFade { chain: crate::fx::FxChain, left: usize, total: usize }
+struct ChainFade { chain: crate::fx::FxChain, left: usize, total: usize, mono_out: bool }
 impl ChainFade {
-    fn new(chain: crate::fx::FxChain, sr: f64) -> Self { let total = ((0.03 * sr) as usize).max(1); Self { chain, left: total, total } }
+    /// `mono_out` : l'ancienne chaîne ne sortait qu'à gauche (piste mono) → sa droite = sa gauche pendant le fondu
+    fn new(chain: crate::fx::FxChain, sr: f64, mono_out: bool) -> Self { let total = ((0.03 * sr) as usize).max(1); Self { chain, left: total, total, mono_out } }
     /// `l` / `r` : sortie de la nouvelle chaîne ; `il` / `ir` : ce qui y est entré. L'ancienne chaîne traite la même entrée, puis fondu.
     /// Renvoie false quand le fondu est fini.
     fn mix(&mut self, l: &mut [f32], r: &mut [f32], mut il: Vec<f32>, mut ir: Vec<f32>, mono: bool) -> bool {
         self.chain.process(&mut il, &mut ir, mono);
+        if self.mono_out && ir.len() == il.len() { ir.copy_from_slice(&il); }
         for m in 0..l.len() {
             let w = (self.left.saturating_sub(m)) as f32 / self.total as f32;
             if w <= 0.0 { break; }
@@ -535,7 +541,7 @@ impl Renderer {
                 clips: rt_clips, force_mono, stereo_in, mono_in, stereo, chain, vol: taps.vol, route_gain: taps.route_gain, dest: taps.dest,
                 sends_s: taps.sends.iter().map(|x| x.1).collect(), aux_s: taps.aux.iter().map(|x| x.0).collect(),
                 sends: taps.sends, aux: taps.aux, curve: taps.curve, pan_curve: taps.pan_curve, pan0: taps.pan0,
-                lat: fx_latency(&track.effects, &track.effect_params, Some(&track.automation), sr), fade: None,
+                lat: fx_latency(&track.effects, &track.effect_params, Some(&track.automation), sr), fade: None, law: 0.0, law_to: 0.0,
             });
         }
 
@@ -726,15 +732,19 @@ impl Renderer {
                 let chain = crate::fx::FxChain::new(&def.effects, &def.effect_params, &def.fx_order, sr, project.bpm, project.ceiling())
                     .with_auto(&def.automation, now).with_tempo(project.tempo_segments(), now);
                 let old = std::mem::replace(&mut b.chain, chain);
-                b.fade = Some(ChainFade::new(old, sr));
+                b.fade = Some(ChainFade::new(old, sr, false));
             } else {
                 let (Some(tr), Some(def)) = (self.tracks.iter_mut().find(|t| t.idx == idx), project.tracks.get(idx)) else { ok = false; continue };
                 let lat = fx_latency(&def.effects, &def.effect_params, Some(&def.automation), sr);
                 if ext(&def.effects) || tr.chain.has_ext() || (lat - tr.lat).abs() > 1e-9 { ok = false; continue; }
                 let chain = crate::fx::FxChain::for_track(def, sr, project.bpm).with_auto(&def.automation, now).with_tempo(project.tempo_segments(), now);
-                if (tr.stereo_in || chain.outputs_stereo()) != tr.stereo { ok = false; continue; }
+                // piste mono ↔ stéréo (reverb, écho ping-pong ajouté / retiré) : la loi de pan glisse de l'une à l'autre
+                let st = tr.stereo_in || chain.outputs_stereo();
+                if st && !tr.stereo { tr.stereo = true; tr.law = 1.0; }
+                tr.law_to = if st { 0.0 } else { 1.0 };
                 let old = std::mem::replace(&mut tr.chain, chain);
-                tr.fade = Some(ChainFade::new(old, sr));
+                let mono_out = !(tr.stereo_in || old.outputs_stereo());
+                tr.fade = Some(ChainFade::new(old, sr, mono_out));
             }
         }
         ok
@@ -828,6 +838,7 @@ impl Renderer {
                 };
                 let k = smooth_k(sr);
                 let ks = k as f32;
+                let law_k = 1.0 / (0.03 * sr) as f32;
                 let (mut pk_l, mut pk_r, mut sq) = (0.0f32, 0.0f32, 0.0f32);
                 for m in 0..n {
                     let t = from + (b0 + m) as f64 / sr;
@@ -846,7 +857,13 @@ impl Renderer {
                         let r_in = trr[m] * g;
                         // Balance (comme Logic, PulsePan d'audio.js) : l'autre côté s'éteint, rien n'est reporté
                         let (gl, gr) = balance_gains(pan);
-                        (l_in * gl, r_in * gr)
+                        if tr.law != tr.law_to { tr.law = if tr.law < tr.law_to { (tr.law + law_k).min(tr.law_to) } else { (tr.law - law_k).max(tr.law_to) }; }
+                        if tr.law > 0.0 {
+                            // passage mono ↔ stéréo en marche : mélange des deux lois de pan (pas de saut de niveau)
+                            let a = (pan + 1.0) / 2.0 * FRAC_PI_2;
+                            let w = tr.law;
+                            (l_in * gl * (1.0 - w) + l_in * a.cos() as f32 * w, r_in * gr * (1.0 - w) + l_in * a.sin() as f32 * w)
+                        } else { (l_in * gl, r_in * gr) }
                     } else {
                         // Mono : puissance constante
                         let a = (pan + 1.0) / 2.0 * FRAC_PI_2;
@@ -872,6 +889,8 @@ impl Renderer {
                     }
                 }
                 self.levels.push((tr.idx, pk_l, pk_r, (sq / n as f32).sqrt()));
+                // reverb retirée d'une piste mono : fondu fini → la piste redevient mono
+                if tr.stereo && tr.law_to >= 1.0 && tr.law >= 1.0 && tr.fade.is_none() { tr.stereo = false; tr.law = 0.0; tr.law_to = 0.0; }
             }
             // Envois vers un groupe : vers son entrée (groupe à effets) ou directement vers le master
             for ((_, _, g, d, _), (al, ar)) in tr.aux.iter().zip(aux_buf) {
@@ -1050,6 +1069,8 @@ fn track_front(tr: &mut TrackRt, media: &Media, n: usize, sr: f64, from: f64, b0
         if !tr.chain.is_empty() {
             tr.chain.process(&mut tl, &mut trr, tr.mono_in);
         }
+        // piste mono encore en stéréo le temps d'un passage (reverb retirée) : la nouvelle chaîne ne sort qu'à gauche
+        if tr.stereo && !tr.stereo_in && !tr.chain.outputs_stereo() && trr.len() == tl.len() { trr.copy_from_slice(&tl); }
         // plugin ajouté / retiré en marche : l'ancienne chaîne s'efface
         if let (Some(fd), Some((il, ir))) = (tr.fade.as_mut(), input) {
             if !fd.mix(&mut tl, &mut trr, il, ir, tr.mono_in) { tr.fade = None; }
