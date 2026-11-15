@@ -3499,7 +3499,7 @@ body.automation-mode .track-item .t-auto .auto-chip { max-width: 150px; height: 
   font: 600 12px/13px system-ui, sans-serif; letter-spacing: 0; cursor: pointer; transition: background .12s, border-color .12s, color .12s;
 }
 .slot-plus:hover { color: #fff; border-color: var(--violet-2, #A855F7); background: rgba(168, 85, 247, .3); box-shadow: 0 0 8px rgba(168, 85, 247, .45); }
-.mixer-strips .strip[data-kind="track"], .mixer-strips .strip[data-kind="bus"]:not(.strip-locked) { width: 96px; }
+.mixer-strips .strip[data-kind="track"], .mixer-strips .strip[data-kind="bus"] { width: 96px; }
 .mixer-strips .insp-fx, .mixer-strips .strip-sends { width: 100%; display: flex !important; flex-direction: column; gap: 3px; }
 .mixer-strips .insp-fx .insp-slots { flex: none; height: 150px; }
 .mixer-strips .strip-sends .insp-slots { flex: none; height: 100px; }
@@ -4092,7 +4092,7 @@ body.fx-drag-copy .insp-fx-row.fx-dragging::after { content: '+'; position: abso
 .strip .fader { height: clamp(100px, calc(84vh - 470px), 210px); }
 .mixer-strips .vu-rail { height: clamp(100px, calc(84vh - 470px), 210px); }
 /* tranches un peu plus larges : les noms d'effets restent lisibles avec les boutons plus gros */
-.mixer-strips .strip[data-kind="track"], .mixer-strips .strip[data-kind="bus"]:not(.strip-locked) { width: 108px; }
+.mixer-strips .strip[data-kind="track"], .mixer-strips .strip[data-kind="bus"] { width: 108px; }
 /* la place de ⏻ est toujours gardée : rien ne bouge sous la souris au survol (une cible qui se décale = un clic raté) */
 .insp-fx-row:has(.fx-pow) { padding-left: 23px; }
 /* bouton Mix commun dans le bandeau des plugins */

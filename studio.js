@@ -3956,7 +3956,7 @@ function renderMixer() {
         <div class="strip-sep"></div>
         ${buses.map((b, bi) => `
             <div class="strip strip-bus ${b.locked?'strip-locked':''}" style="--track-color: ${b.color || 'var(--violet-2)'}" data-kind="bus" data-i="${bi}">
-                <div class="strip-name">${esc(b.name)}${b.locked ? ' <span class="chip chip-red">Verrouillé</span>' : ''}</div>
+                <div class="strip-name"${b.locked ? ' data-tooltip="Verrouillé (bordure rouge) : ce bus ne se règle pas"' : ''}>${esc(b.name)}</div>
                 ${b.premaster ? '' : `<div class="strip-ms"><button class="strip-m ${b.muted ? 'active' : ''}" data-tooltip="Couper ce bus">M</button><button class="strip-s ${b.solo ? 'active' : ''}" data-tooltip="Écouter seulement ce bus et ce qui y entre">S</button></div>`}
                 ${b.premaster || b.locked ? `<div class="strip-fx">
                     ${b.premaster ? `<button class="return-edit master-edit" data-bus="${esc(b.id)}" data-tooltip="Le réglage final de tout le morceau">Finition ▾</button>` : `<div class="strip-fx-slot active" data-fx="preset">${esc(({ 'bus-allvocal': 'Toutes les voix', 'bus-safety': 'Sécurité', 'bus-mix1': 'Finition' })[b.preset] || 'Groupe')}</div>`}
