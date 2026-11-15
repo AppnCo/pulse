@@ -25,9 +25,17 @@ export default async (c) => {
   // le Pre et la courbe d'automation suivent l'envoi (avant le 15/11 ils restaient sur Bus 1)
   t = await J(ev, `const t = state.project.tracks[0]; return { pre: Object.keys(t.preSends || {}), au: Object.keys(t.automation || {}) }`);
   check('⇅ : Pre et automation suivent', JSON.stringify(t) === JSON.stringify({ pre: ['busSend:b2'], au: ['busSend:b2'] }), JSON.stringify(t));
+  // clic droit → « Changer de bus… » (inspecteur étroit : le ⇅ n'y est pas affiché)
+  { const q = await J(ev, `const r = ${row}.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }`);
+    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: q.x, y: q.y, button: 'right', buttons: 2, clickCount: 1 });
+    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: q.x, y: q.y, button: 'right', buttons: 0, clickCount: 1 }); await sleep(300);
+    await ev(`{ const it = [...document.querySelectorAll('.track-ctx-menu .ctx-item')].find(e => /Changer de bus/.test(e.textContent)); it && it.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })) }`); await sleep(300);
+    await ev(`{ const it = [...document.querySelectorAll('.track-ctx-menu .ctx-item')].find(e => /^Bus 1/.test(e.textContent.trim())); it && it.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })) }`); await sleep(400);
+    t = await J(ev, `const t = state.project.tracks[0]; return { s: t.busSends, au: Object.keys(t.automation || {}) }`);
+    check('clic droit « Changer de bus » : revenu sur Bus 1 avec niveau et courbe', JSON.stringify(t) === JSON.stringify({ s: { b1: 37 }, au: ['busSend:b1'] }), JSON.stringify(t)); }
   await ev(`${row}.querySelector('.sb-del').click()`); await sleep(300);
   t = await J(ev, `return state.project.tracks[0].busSends`);
-  check('× : envoi retiré', !t.b2, JSON.stringify(t));
+  check('× : envoi retiré', !t.b1 && !t.b2, JSON.stringify(t));
   // groupe supprimé / dissous : les envois vers lui partent avec Pre, ⏻ et courbe (avant le 15/11, dissoudre laissait l'envoi)
   for (const [fn, id] of [['deleteBus', 'b1'], ['dissolveGroup', 'b2']]) {
     const r = await J(ev, `const t = state.project.tracks[0]; t.busSends = { ${id}: 40 }; t.preSends = { 'busSend:${id}': true }; t.sendMute = { 'busSend:${id}': 40 }; t.automation = { 'busSend:${id}': { points: [{ t: 0, v: 20 }] }, volume: { points: [{ t: 0, v: 0.5 }] } };

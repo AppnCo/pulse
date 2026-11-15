@@ -2892,6 +2892,8 @@ function bindSlotLists(strip, kind, x, idx) {
             const setPre = (on) => { pushUndo(); set.forEach(o => { o.preSends = o.preSends || {}; if (on) o.preSends[key] = true; else delete o.preSends[key]; }); saveProject(); refreshPlaybackSoon(); refreshStrips(); flash(on ? 'Envoi avant le fader (Pre) : il ne suit plus le fader ni le gauche/droite' : 'Envoi après le fader (Post) : il suit le fader'); };
             item((isPre ? '   ' : '✓ ') + 'Après le fader (Post)', () => setPre(false));
             item((isPre ? '✓ ' : '   ') + 'Avant le fader (Pre)', () => setPre(true));
+            // ⇅ au clic droit : dans l'inspecteur étroit, le bouton ⇅ n'a pas la place (il cacherait le nom)
+            if (isBusSend) item('Changer de bus… (même niveau, même courbe)', () => { state._sendSwap = { x, id, val: lvlOf(x), keys: Object.keys(x.busSends || {}), at: performance.now() }; setTimeout(() => openSendTargetMenu(srow, kind, x), 0); });
             if (isBusSend) item(`Afficher ${busById(id) ? busById(id).name : 'le bus'} à droite (ses effets)`, () => { if (srow.closest('#inspector')) { state._inspRight = { owner: state.selectedTrack, bus: id }; refreshStrips(); } else openSendBus(id, false); });
             else item(`Transformer « ${(projectSends().find(sd => sd.id === id) || {}).name || 'ce retour'} » en bus (pour y mettre des plugins)`, () => convertSendToBus(id));
             if (isBusSend) item('Retirer cet envoi', () => {
