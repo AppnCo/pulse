@@ -4,7 +4,7 @@ export default async (c) => {
   const { ev, sleep, send, check } = c; const m = mouse(send);
   await boot(c, { id: 'esv', name: 'E', bpm: 120, sends: [],
     buses: [{ id: 'b1', name: 'Bus 1', busNum: 1, isGroup: true, isAux: true, output: 'master', volume: 100, effects: [] }, { id: 'b2', name: 'Bus 2', busNum: 2, isGroup: true, isAux: true, output: 'master', volume: 100, effects: [] }],
-    tracks: [{ name: 'Voix', type: 'audio', color: '#A855F7', volume: 100, clips: [], busSends: { b1: 37 } }] }, { mic: false });
+    tracks: [{ name: 'Voix', type: 'audio', color: '#A855F7', volume: 100, clips: [], busSends: { b1: 37 }, preSends: { 'busSend:b1': true }, automation: { 'busSend:b1': { points: [{ t: 0, v: 20 }, { t: 4, v: 60 }] } } }] }, { mic: false });
   const row = `document.querySelector('#inspector .insp-strip[data-kind="track"] .strip-send-row[data-bsend]')`;
   const p = await J(ev, `const r = ${row}; const b = r.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }`);
   await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y }); await sleep(200);
@@ -22,6 +22,9 @@ export default async (c) => {
   await ev(`const it = [...document.querySelectorAll('.track-ctx-menu .ctx-item')].find(e => /^Bus 2/.test(e.textContent.trim())); it.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))`); await sleep(400);
   t = await J(ev, `return state.project.tracks[0].busSends`);
   check('⇅ : envoi passé sur Bus 2 au même niveau, Bus 1 retiré', t.b2 === 37 && t.b1 === undefined, JSON.stringify(t));
+  // le Pre et la courbe d'automation suivent l'envoi (avant le 15/11 ils restaient sur Bus 1)
+  t = await J(ev, `const t = state.project.tracks[0]; return { pre: Object.keys(t.preSends || {}), au: Object.keys(t.automation || {}) }`);
+  check('⇅ : Pre et automation suivent', JSON.stringify(t) === JSON.stringify({ pre: ['busSend:b2'], au: ['busSend:b2'] }), JSON.stringify(t));
   await ev(`${row}.querySelector('.sb-del').click()`); await sleep(300);
   t = await J(ev, `return state.project.tracks[0].busSends`);
   check('× : envoi retiré', !t.b2, JSON.stringify(t));

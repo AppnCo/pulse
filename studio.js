@@ -2570,7 +2570,11 @@ function refreshStrips() {
     const sw = state._sendSwap;
     if (sw && performance.now() - sw.at < 60000) {
         const nk = Object.keys(sw.x.busSends || {}).find(k => !sw.keys.includes(k));
-        if (nk) { sw.x.busSends[nk] = sw.val; delete sw.x.busSends[sw.id]; if (sw.x.preSends && sw.x.preSends['busSend:' + sw.id]) { sw.x.preSends['busSend:' + nk] = true; delete sw.x.preSends['busSend:' + sw.id]; } state._sendSwap = null; saveProject(); refreshPlaybackSoon(); }
+        if (nk) { sw.x.busSends[nk] = sw.val; delete sw.x.busSends[sw.id]; // le Pre, l'état éteint et la courbe d'automation suivent l'emplacement (comme Logic), sinon ils restent sur l'ancien groupe
+            const ok = 'busSend:' + sw.id, nk2 = 'busSend:' + nk;
+            for (const m of [sw.x.preSends, sw.x.sendMute, sw.x.automation]) if (m && ok in m) { m[nk2] = m[ok]; delete m[ok]; }
+            if (sw.x.autoParam === ok) sw.x.autoParam = nk2;
+            state._sendSwap = null; saveProject(); refreshPlaybackSoon(); }
     } else if (sw) state._sendSwap = null;
     renderInspector();
     if (state.mixerOpen) { renderMixer(); bindMixerEvents(); }
