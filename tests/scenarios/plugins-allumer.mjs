@@ -38,4 +38,9 @@ export default async (c) => {
   await sleep(300); await ev(`document.querySelectorAll('.fx-panel').forEach(p => p.remove()); renderInspector()`); await sleep(150);
   const st = await rowsState();
   check('⇅ : le comp est remplacé, à la même place', !!picked && st === `${picked}:on eq:off sat:on`, picked + ' → ' + st);
+  // ⇅ sur un 2e exemplaire : ses courbes partent avec lui (avant le 15/11, un futur « Comp #2 » les reprenait)
+  { const r = await J(ev, `const x = state.project.tracks[0]; x.effects = [...x.effects, 'comp#2']; x.automation = { 'fx:comp#2:thr': { points: [{ t: 0, v: -30 }] }, 'fx:comp:thr': { points: [{ t: 0, v: -20 }] } };
+      replaceFx(x, 'comp#2', 'gate'); const afterReplace = Object.keys(x.automation).sort();
+      const again = nextFxInstance(x, 'comp'); return { afterReplace, again }`);
+    check('⇅ d un Comp #2 : ses courbes partent, celles du 1er restent', JSON.stringify(r) === JSON.stringify({ afterReplace: ['fx:comp:thr'], again: 'comp#2' }), JSON.stringify(r)); }
 };

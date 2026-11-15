@@ -3174,6 +3174,10 @@ function replaceFx(x, old, n) {
     if (x.fxOff) { x.fxOff = x.fxOff.filter(k => k !== old); if (!x.fxOff.length) delete x.fxOff; }
     x.fxOrder = [...chain, ...FX_ORDER.filter(k => !chain.includes(k))];
     if (String(old).includes('#') && x.effectParams) delete x.effectParams[old];
+    // l'exemplaire remplacé part avec ses courbes (sinon un futur « #2 » du même plugin les reprendrait), le nouveau part sans courbe
+    const dropAuto = (id) => Object.keys(x.automation || {}).filter(k => k.startsWith(`fx:${id}:`)).forEach(k => delete x.automation[k]);
+    if (String(old).includes('#')) dropAuto(old);
+    if (newId !== n) dropAuto(newId);
     if (FX_START[n] && newId !== n) { x.effectParams = x.effectParams || {}; x.effectParams[newId] = JSON.parse(JSON.stringify(FX_START[n])); }
     const w = findPlugWin(x, old); if (w) w.remove();
     saveProject(); refreshPlaybackSoon(); refreshFxViews();
