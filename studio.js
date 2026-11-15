@@ -8881,19 +8881,7 @@ function openEqPanel(trackIdx, anchorEl, opts = {}) {
         // (après commit : l'étape d'annulation garde les anciennes courbes)
         // Les courbes d'automation repèrent un point par sa place (fx:eq:b3-gain) : on les recale sur les points restants,
         // sinon la courbe d'un point retiré ou décalé pilote le voisin
-        // (modifiées sur place : un « EQ #2 » voit ses propres courbes à travers la vue de la piste)
-        if (!t.__fxEqOf && t.automation) {
-            const au = t.automation, moved = [];
-            for (const k of Object.keys(au)) {
-                const m = /^fx:eq:b(\d+)-(.+)$/.exec(k); if (!m) continue;
-                const n = +m[1], v = au[k]; delete au[k];
-                if (gone.has(n)) continue;
-                let below = 0; for (const g of gone) if (g < n) below++;
-                moved.push(['fx:eq:b' + (n - below) + '-' + m[2], v]);
-            }
-            for (const [k, v] of moved) au[k] = v;
-            if (/^fx:eq:b\d+-/.test(t.autoParam || '') && !(t.autoParam in au)) t.autoParam = 'volume';
-        }
+        if (!t.__fxEqOf) autoDropBands(t, 'eq', gone);
         draw();
     };
 
@@ -10199,7 +10187,7 @@ function openMbandPanel(trackIdx, anchorEl) {
         c0.querySelectorAll('.mb-md span').forEach(x => x.addEventListener('click', () => { step(() => { const r = Math.abs(b.range ?? 6) || 6; b.range = x.dataset.v === 'c' ? -r : r; }); buildFp(); draw(); }));
         c0.querySelector('.mb-so').addEventListener('click', () => { step(() => { b.solo = !b.solo; if (b.solo) delete b.mute; if (!b.solo) delete b.solo; }); buildFp(); draw(); });
         c0.querySelector('.mb-mu').addEventListener('click', () => { step(() => { b.mute = !b.mute; if (b.mute) delete b.solo; if (!b.mute) delete b.mute; }); buildFp(); draw(); });
-        c0.querySelector('.mb-del').addEventListener('click', () => { step(() => { BS().splice(sel, 1); sel = Math.min(sel, BS().length - 1); }); buildFp(); draw(); });
+        c0.querySelector('.mb-del').addEventListener('click', () => { step(() => { BS().splice(sel, 1); autoDropBands(t, 'mband', new Set([sel])); sel = Math.min(sel, BS().length - 1); }); buildFp(); draw(); });
         const sp = document.createElement('div'); sp.className = 'lim-sep'; fp.appendChild(sp);
         const k = (key, o) => { knobs[key] = proKnob(fp, { color: c, onEnd: commit, key: `b${sel}-${key}`, ...o, onChange: (v) => { arm(); b[key] = o.round(v); draw(); } }); };
         k('thr', { label: 'Seuil', min: -60, max: 0, val: b.thr ?? -30, big: true, fmt: (v) => Math.round(v) + ' dB', round: (v) => Math.round(v) });
@@ -10399,7 +10387,7 @@ function openMsatPanel(trackIdx, anchorEl) {
         fp.appendChild(c0);
         c0.querySelectorAll('.ms-sty').forEach(x => x.addEventListener('click', () => { step(() => { b.sty = x.dataset.k; b.va = Math.min(b.va ?? 1, MSAT_STY[b.sty].v.length - 1); }); buildFp(); draw(); }));
         c0.querySelectorAll('.ms-va span').forEach(x => x.addEventListener('click', () => { step(() => { b.va = +x.dataset.i; }); buildFp(); draw(); }));
-        c0.querySelector('.mb-del').addEventListener('click', () => { step(() => { BS().splice(sel, 1); sel = Math.max(0, Math.min(sel, BS().length - 1)); }); buildFp(); draw(); });
+        c0.querySelector('.mb-del').addEventListener('click', () => { step(() => { BS().splice(sel, 1); autoDropBands(t, 'msat', new Set([sel])); sel = Math.max(0, Math.min(sel, BS().length - 1)); }); buildFp(); draw(); });
         const sep = () => { const d = document.createElement('div'); d.className = 'lim-sep'; fp.appendChild(d); }; sep();
         const pm = (v) => (v > 0 ? '+' : '') + Math.round(v);
         const k = (host, key, o) => proKnob(host, { color: c, onEnd: finish, key: `b${sel}-${key}`, ...o, onChange: (v) => { arm(); b[key] = o.round ? o.round(v) : Math.round(v); draw(); } });

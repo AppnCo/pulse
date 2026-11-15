@@ -48,4 +48,19 @@ export default async ({ ev, nav, send, sleep }) => {
     ok('aucune courbe fx:eq écrite', !/fx:eq:/.test(ka), ka);
   }
   await ev(`state.automationMode=false`);
+  // Multibande / Saturation multibande : ✕ de la bande choisie (la 1re) → les courbes des suivantes reculent d'une place
+  for (const [kind, band] of [['mband', '{lo:100,hi:300,thr:-30,range:-6}'], ['msat', '{lo:100,hi:300,sty:"ampli",va:0,heat:30}']]) {
+    await ev(`(()=>{ document.querySelectorAll('.fx-panel').forEach(p=>p.remove()); const t=state.project.tracks[0]; t.effects=['${kind}']; const b=${band};
+      t.effectParams={${kind}:{bands:[{...b},{...b,lo:400,hi:900},{...b,lo:2000,hi:5000}]}}; const c=(v)=>({points:[{t:0,v},{t:4,v}]});
+      t.automation={'fx:${kind}:b0-lo':c(1),'fx:${kind}:b2-hi':c(3),volume:c(0.5)}; openEffectPanel(0,'${kind}',document.body); })()`); await sleep(400);
+    await ev(`document.querySelector('.fx-panel .mb-del').click()`); await sleep(200);
+    // bande retirée = celle qui manque (la Saturation multibande part sur une autre que la 1re)
+    const r = JSON.parse(await ev(`JSON.stringify([state.project.tracks[0].effectParams.${kind}.bands.map(b=>b.lo), Object.keys(state.project.tracks[0].automation).sort()])`));
+    const gone = [100, 400, 2000].findIndex(x => !r[0].includes(x));
+    const want = [...(gone === 0 ? [] : ['fx:' + kind + ':b0-lo']), ...(gone === 2 ? [] : ['fx:' + kind + ':b1-hi']), 'volume'].sort();
+    ok(kind + ' : courbes recalées (bande ' + gone + ' retirée)', r[0].length === 2 && JSON.stringify(r[1]) === JSON.stringify(want), JSON.stringify(r));
+    await ev(`undoAction()`); await sleep(200);
+    const u = await ev(`JSON.stringify(Object.keys(state.project.tracks[0].automation).sort())`);
+    ok(kind + ' : ⌘Z rend les courbes', u === JSON.stringify(['fx:' + kind + ':b0-lo', 'fx:' + kind + ':b2-hi', 'volume']), u);
+  }
 };

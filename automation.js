@@ -197,6 +197,22 @@ function openAutoParamMenu(anchor, o) {
     document.body.appendChild(menu);
     setTimeout(() => document.addEventListener('mousedown', closeAllMenus, { once: true }), 10);
 }
+// Bandes retirées (EQ, Multibande, Saturation multibande) : les courbes repèrent une bande par sa place (« fx:eq:b3-gain »),
+// on les recale sur les bandes restantes, sinon la courbe d'une bande retirée ou décalée pilote la voisine.
+// Modifiées sur place : la vue d'un 2e exemplaire (« mband#2 ») traduit les clés vers les siennes.
+function autoDropBands(o, kind, gone) {
+    const au = o && o.automation; if (!au) return;
+    const re = new RegExp('^fx:' + kind + ':b(\\d+)-(.+)$'), moved = [];
+    for (const k of Object.keys(au)) {
+        const m = re.exec(k); if (!m) continue;
+        const n = +m[1], v = au[k]; delete au[k];
+        if (gone.has(n)) continue;
+        let below = 0; for (const g of gone) if (g < n) below++;
+        moved.push(['fx:' + kind + ':b' + (n - below) + '-' + m[2], v]);
+    }
+    for (const [k, v] of moved) au[k] = v;
+    if (re.test(o.autoParam || '') && !(o.autoParam in au)) o.autoParam = 'volume';
+}
 // Autosélection (comme Logic) : en mode A, toucher un réglage affiche sa courbe sur la piste
 let _autoRaf = 0;
 function autoSelectParam(o, pid) {
