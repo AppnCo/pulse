@@ -3540,14 +3540,6 @@ body.automation-mode .track-item .t-auto .auto-chip { max-width: 150px; height: 
 .rv-eq-host .viz-grid { stroke: rgba(255,255,255,.07); }
 .rv-eq-host .viz-zero { stroke: rgba(255,255,255,.16); }
 .rv-eq-host .viz-txt { fill: #8a7cab; font-size: 9px; }
-.rveq-fill { fill: rgba(168,85,247,.16); }
-.rveq-line { fill: none; stroke: #C084FC; stroke-width: 1.8; filter: drop-shadow(0 0 3px rgba(168,85,247,.6)); }
-.rveq-pt { cursor: grab; }
-.rveq-pt circle { fill: #2a1840; stroke: #C084FC; stroke-width: 1.5; }
-.rveq-pt text { fill: #fff; font-size: 8.5px; font-weight: 700; pointer-events: none; }
-.rveq-pt.sel circle { fill: #A855F7; stroke: #fff; filter: drop-shadow(0 0 5px #A855F7); }
-.rveq-pt.off circle { fill: #1a1228; stroke: #5b4d75; }
-.rveq-pt.off text { fill: #6f6390; }
 
 /* Écho et Reverb : « écran plein + panneau flottant » (gamme Digital, comme le Limiteur et le Gate) */
 .fx-panel.fx-pro.fx-screen { width: 880px; max-width: calc(100vw - 16px); padding: 0; overflow: hidden; background: #0f0a18; }
@@ -4033,8 +4025,6 @@ body.fx-drag-copy .insp-fx-row.fx-dragging::after { content: '+'; position: abso
 .rv-eq-detail .eq-num { width: 62px; background: #0d0915; color: #fff; border: 1px solid #3a2c50; border-radius: 5px; padding: 2px 5px; font: 600 12.5px -apple-system, system-ui, sans-serif; text-align: left; }
 .rv-eq-detail .eq-num:disabled { opacity: .4; }
 .rv-eq-detail select.eq-num { width: 92px; }
-.fx-pro.fx-screen.rveq-wide .fx-face { grid-template-columns: 1fr; }
-.fx-pro.fx-screen.rveq-wide .scr-col { display: none; }
 
 /* PulseTune : tracé de la correction */
 .tp-trace { position: relative; margin: 6px 12px 4px; height: 96px; border-radius: 12px; overflow: hidden; background: linear-gradient(#0b0712, #120b1f); border: 1px solid rgba(168,85,247,.22); box-shadow: inset 0 2px 14px #000a; }
