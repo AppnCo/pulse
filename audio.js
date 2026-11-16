@@ -2768,7 +2768,8 @@ window.PulseAudio = (function() {
             if (/^t\d+$/.test(k)) { owners.push([false, +k.slice(1)]); o = (nativeProject.tracks || [])[+k.slice(1)]; }
             else { const i = (nativeProject.buses || []).findIndex(b => 'b' + b.id === k); if (i < 0) return false; owners.push([true, i]); o = nativeProject.buses[i]; }
             const [pe, pp] = old[k] || [[], {}];
-            if (!o || [...(o.effects || []), ...pe].some(e => fxType(e) === 'vst')) return false;
+            // plugin externe dans la chaîne : seulement si l'appli sait le passer d'une chaîne à l'autre (« chain-swap-ext »)
+            if (!o || (!nativeBackend.caps.includes('chain-swap-ext') && [...(o.effects || []), ...pe].some(e => fxType(e) === 'vst'))) return false;
             if (Math.abs(fxLatency(o.effects, o.effectParams, o.automation, sr) - fxLatency(pe, pp, o.automation, sr)) > 1e-9) return false;
         }
         nativeBackend.chainSwap(withMetro(nativeProject), owners).catch(() => nativeRefreshSoon());

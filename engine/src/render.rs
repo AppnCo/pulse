@@ -645,6 +645,11 @@ impl Renderer {
     pub fn sample_rate(&self) -> f64 { self.sr }
     /// Plus grand retard d'effets du projet, en secondes (0 sans Pitch, machine analogique à retard ni plugin externe)
     pub fn max_latency(&self) -> f64 { self.lat_max }
+    /// Mixeur construit sous `ext::deferred` : il prend maintenant les plugins externes (l'ancien mixeur les lui laisse)
+    pub fn claim_ext(&mut self) {
+        for tr in &mut self.tracks { tr.chain.claim_ext(); for c in &mut tr.clips { if let Some(f) = c.fx.as_mut() { f.claim_ext(); } } }
+        for b in &mut self.buses { b.chain.claim_ext(); }
+    }
     /// Secondes à rejouer à blanc avant un remplacement en lecture (0 = aucun effet à longue queue)
     pub fn warm_secs(&self) -> f64 { self.warm }
     /// Échantillons déjà mixés
@@ -722,13 +727,12 @@ impl Renderer {
     pub fn chain_swap(&mut self, project: &Project, media: &Media, owners: &[(bool, usize)]) -> bool {
         let project = &prepared(project, media, self.base.sample_rate as f64, self.base.only_track.is_some());
         let (sr, now) = (self.sr, self.time());
-        let ext = |fx: &[String]| fx.iter().any(|e| crate::model::fx_type(e) == "vst");
         let mut ok = true;
         for &(bus, idx) in owners {
             if bus {
                 let (Some(b), Some(def)) = (self.buses.iter_mut().find(|b| b.i == idx), project.buses.get(idx)) else { ok = false; continue };
                 let lat = fx_latency(&def.effects, &def.effect_params, Some(&def.automation), sr);
-                if ext(&def.effects) || b.chain.has_ext() || (lat - b.lat).abs() > 1e-9 { ok = false; continue; }
+                if (lat - b.lat).abs() > 1e-9 { ok = false; continue; }
                 let chain = crate::fx::FxChain::new(&def.effects, &def.effect_params, &def.fx_order, sr, project.bpm, project.ceiling())
                     .with_auto(&def.automation, now).with_tempo(project.tempo_segments(), now);
                 let old = std::mem::replace(&mut b.chain, chain);
@@ -736,7 +740,7 @@ impl Renderer {
             } else {
                 let (Some(tr), Some(def)) = (self.tracks.iter_mut().find(|t| t.idx == idx), project.tracks.get(idx)) else { ok = false; continue };
                 let lat = fx_latency(&def.effects, &def.effect_params, Some(&def.automation), sr);
-                if ext(&def.effects) || tr.chain.has_ext() || (lat - tr.lat).abs() > 1e-9 { ok = false; continue; }
+                if (lat - tr.lat).abs() > 1e-9 { ok = false; continue; }
                 let chain = crate::fx::FxChain::for_track(def, sr, project.bpm).with_auto(&def.automation, now).with_tempo(project.tempo_segments(), now);
                 // piste mono ↔ stéréo (reverb, écho ping-pong ajouté / retiré) : la loi de pan glisse de l'une à l'autre
                 let st = tr.stereo_in || chain.outputs_stereo();

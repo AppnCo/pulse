@@ -1,0 +1,37 @@
+<!doctype html><meta charset="utf-8"><title>selftest bascule plugins externes</title><body style="margin:0;background:#111;color:#0f0;font:14px monospace"><pre id="o" style="position:fixed;z-index:9;top:60px;left:10px;background:#000c;padding:8px"></pre>
+<iframe id="f" src="studio.html" style="width:100vw;height:100vh;border:0"></iframe>
+<script>
+// Bascule : pendant la lecture, ce qui refait le mixeur (région déplacée) ou la chaîne d'une piste (plugin Pulse ajouté / retiré
+// sur une piste qui a un plugin externe) ne doit JAMAIS faire jouer un bloc sans les plugins externes (native_info.ext_dry),
+// ni trou de son. Une reverb sur une piste force le mixeur neuf à se « rejouer à blanc » (le moment où l'ancien perdait ses plugins).
+const o=document.getElementById('o'); const log=t=>{ o.textContent+=t+'\n'; try{ window.__TAURI__.core.invoke('test_log',{text:t}); }catch{} };
+const f=document.getElementById('f'); const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const POOL=[/Pro-Q 4$/,/Pro-C 2$/,/Pro-Q 3$/,/Saturn 2$/,/Pro-L 2$/];
+(async()=>{ try{
+  await sleep(2500); const w=f.contentWindow; w.__TAURI__=window.__TAURI__; const inv=window.__TAURI__.core.invoke;
+  const list=await w.PulseExt.scan(false); const pool=POOL.map(re=>list.find(p=>re.test(p.name)&&!p.path.startsWith('au:'))).filter(Boolean);
+  log('plugins du test: '+pool.map(p=>p.name).join(', '));
+  if(!pool.length){ log('AUCUN PLUGIN'); log('FIN'); return; }
+  const ST=w.eval('state'); const ctx=await w.PulseAudio.init(); const sr=48000,b=ctx.createBuffer(1,sr*30,sr); const d=b.getChannelData(0); for(let i=0;i<d.length;i++)d[i]=0.03*Math.sin(2*Math.PI*(110+i%7*55)*i/sr)*(i%24000<12000?1:0.2);
+  w.PulseAudio.registerBuffer('send',b); await w.PulsePersist.saveBlob('send', new Blob([w.PulseAudio.audioBufferToWav(b)],{type:'audio/wav'}),{kind:'import'});
+  const P=ST.project; P.tracks=[]; let n=0;
+  for(let i=0;i<8;i++){ const t={name:'P'+(i+1),type:'audio',color:'#3B82F6',output:'master',volume:15,clips:[{id:'send',start:0,duration:30,offset:0},{id:'send',start:30,duration:30,offset:0}],effects:[],effectParams:{}};
+    const p=pool[i%pool.length]; const id='vst#b'+(n++); await inv('ext_create',{id,path:p.path,state:null}); t.effects.push(id); t.effectParams[id]={path:p.path,name:p.name,vendor:p.vendor};
+    if(i<3){ t.effects.push('reverb'); t.effectParams.reverb={wet:20,decay:3}; }
+    P.tracks.push(t); }
+  w.eval('typeof renderAll==="function" && renderAll()');
+  ST.playhead=0; await w.togglePlay(); await sleep(2000);
+  const i0=await inv('native_info'), l0=await inv('native_live');
+  const stat=()=>w.PulseAudio.debugNative?w.PulseAudio.debugNative():{};
+  // 1) dix reconstructions complètes : une région déplacée à chaque fois
+  for(let k=0;k<10;k++){ P.tracks[k%8].clips[1].start=30+0.01*(k+1); w.refreshPlaybackSoon(); await sleep(900); }
+  const i1=await inv('native_info');
+  log('régions déplacées: blocs sans plugin='+(i1.ext_dry-i0.ext_dry)+' occupés='+(i1.ext_misses-i0.ext_misses)+' joue='+(await inv('native_live')).playing);
+  // 2) dix échanges de chaîne : un plugin Pulse ajouté puis retiré sur une piste qui a un plugin externe
+  for(let k=0;k<10;k++){ const t=P.tracks[3+k%5]; if(k%2===0){ t.effects.push('comp'); t.effectParams.comp={threshold:-20,ratio:3}; } else { const u=P.tracks[3+(k-1)%5]; u.effects=u.effects.filter(e=>e!=='comp'); } w.refreshPlaybackSoon(); await sleep(900); }
+  const i2=await inv('native_info'), l2=await inv('native_live');
+  log('plugin Pulse ajouté / retiré: blocs sans plugin='+(i2.ext_dry-i1.ext_dry)+' occupés='+(i2.ext_misses-i1.ext_misses)+' refus='+(l2.refused-l0.refused)+' capacités='+(await inv('native_caps')).includes('chain-swap-ext'));
+  log('BILAN: sans plugin='+(i2.ext_dry-i0.ext_dry)+' trous='+(i2.underruns-i0.underruns)+' joue='+l2.playing+' pos='+l2.position.toFixed(1));
+  await w.togglePlay(); log('FIN OK');
+} catch(e){ log('ERREUR '+(e&&e.stack||e)); log('FIN'); } })();
+</script>

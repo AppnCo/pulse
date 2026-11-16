@@ -3039,7 +3039,8 @@ impl FxChain {
             let Some(Some(slot)) = ext.get_mut(i) else { continue };
             let pre = format!("fx:{}:", ids[0]);
             let curves: Vec<(u32, crate::model::Curve)> = automation.other.iter().filter_map(|(k, c)| k.strip_prefix(&pre).and_then(|n| n.parse::<u32>().ok()).map(|n| (n, c.clone()))).collect();
-            if !curves.is_empty() { slot.set_auto(curves, from); }
+            // sans courbe : le plugin connaît quand même l'instant du morceau (sortie prêtée pendant un fondu, voir ext.rs)
+            if curves.is_empty() { slot.seek(from); } else { slot.set_auto(curves, from); }
         }
         Self { parts, ext, ramps: self.ramps, ramp_len: self.ramp_len }
     }
@@ -3047,6 +3048,8 @@ impl FxChain {
         Self { parts: self.parts.into_iter().map(|(c, ids)| (c.with_tempo(segs.clone(), from), ids)).collect(), ext: self.ext, ramps: self.ramps, ramp_len: self.ramp_len }
     }
     pub fn seek(&mut self, t: f64) { for (c, _) in &mut self.parts { c.seek(t); } for e in self.ext.iter_mut().flatten() { e.seek(t); } }
+    /// Les plugins externes de la chaîne passent à cet exemplaire (voir `ext::deferred`)
+    pub fn claim_ext(&mut self) { for e in self.ext.iter_mut().flatten() { e.claim(); } }
     /// La chaîne contient-elle un plugin externe ?
     pub fn has_ext(&self) -> bool { self.ext.iter().any(|e| e.is_some()) }
     /// Réglage changé en direct : `fx` = nom d'exemplaire (« comp#2 ») ou de type. La valeur entendue glisse vers `v`.

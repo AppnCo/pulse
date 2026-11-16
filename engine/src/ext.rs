@@ -61,21 +61,54 @@ mod imp {
     /// Retard du plugin (échantillons) : compensé par le moteur comme celui du Pitch et des machines analogiques
     pub fn latency(id: &str) -> u32 { get(id).and_then(|s| s.lock().ok().map(|g| g.latency())).unwrap_or(0) }
 
-    // Génération de chaque instance : à chaque nouveau mixeur (fondu entre l'ancien et le nouveau), seul le plus récent
-    // fait passer le son dans le plugin ; l'ancien laisse passer le son tel quel le temps du fondu (sinon deux sons
-    // différents traverseraient le même plugin dans le même bloc → clic)
-    fn gens() -> &'static Mutex<HashMap<String, Arc<std::sync::atomic::AtomicU64>>> {
-        static G: OnceLock<Mutex<HashMap<String, Arc<std::sync::atomic::AtomicU64>>>> = OnceLock::new();
+    // Génération de chaque instance : pendant un fondu entre un ancien et un nouveau mixeur (ou une ancienne et une nouvelle
+    // chaîne), seul le plus récent fait passer le son dans le plugin (sinon deux sons différents traverseraient le même
+    // plugin dans le même bloc → clic). L'ancien reprend la sortie que le nouveau vient d'obtenir (`out`) : il s'efface avec
+    // le plugin, pas sans lui. Un mixeur construit « en attente » (`deferred`) ne prend la main qu'à `claim` : tant qu'il se
+    // prépare (rejoué à blanc), l'ancien garde le plugin — avant, tous les plugins externes étaient contournés pendant ce calcul.
+    #[derive(Default)]
+    pub struct Turn { latest: std::sync::atomic::AtomicU64, out: Mutex<(u64, f64, Vec<f32>, Vec<f32>)> }
+    fn gens() -> &'static Mutex<HashMap<String, Arc<Turn>>> {
+        static G: OnceLock<Mutex<HashMap<String, Arc<Turn>>>> = OnceLock::new();
         G.get_or_init(|| Mutex::new(HashMap::new()))
     }
-    pub struct ExtSlot { inst: Option<Shared>, buf: vst3_host::AudioBuffers, gen: u64, latest: Arc<std::sync::atomic::AtomicU64>,
+    thread_local! { static DEFER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+    /// Tout ce qui est construit dans `f` (sur ce fil) attend `claim` pour prendre les plugins externes
+    pub fn deferred<T>(f: impl FnOnce() -> T) -> T {
+        let was = DEFER.with(|d| d.replace(true));
+        let r = f();
+        DEFER.with(|d| d.set(was));
+        r
+    }
+    /// Blocs joués SANS le plugin par un mixeur qui s'efface (doit rester à 0)
+    pub static DRY: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    pub struct ExtSlot { inst: Option<Shared>, buf: vst3_host::AudioBuffers, gen: u64, turn: Arc<Turn>, seen: u64,
         /// automation : (réglage du plugin, courbe 0..1), position en échantillons depuis `from` (secondes)
         auto: Vec<(u32, crate::model::Curve, f64)>, pos: usize, from: f64, sr: f64 }
     impl ExtSlot {
         pub fn new(id: &str, sr: f64) -> Self {
-            let latest = gens().lock().unwrap().entry(id.to_owned()).or_default().clone();
-            let gen = latest.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-            Self { inst: get(id), buf: vst3_host::AudioBuffers::new(2, 2, MAX_BLOCK, sr), gen, latest, auto: Vec::new(), pos: 0, from: 0.0, sr }
+            let turn = gens().lock().unwrap().entry(id.to_owned()).or_default().clone();
+            let mut s = Self { inst: get(id), buf: vst3_host::AudioBuffers::new(2, 2, MAX_BLOCK, sr), gen: 0, turn, seen: 0, auto: Vec::new(), pos: 0, from: 0.0, sr };
+            if !DEFER.with(|d| d.get()) { s.claim(); }
+            s
+        }
+        /// Prend la main sur le plugin (les exemplaires plus anciens lui laissent)
+        pub fn claim(&mut self) { if self.gen == 0 { self.gen = self.turn.latest.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1; } }
+        /// Bloc sans passer par le plugin : en attente = son tel quel ; dépassé = sortie du plus récent si elle est là
+        fn aside(&mut self, left: &mut [f32], right: &mut [f32], mono: bool) {
+            if self.gen != 0 {
+                if let Ok(o) = self.turn.out.try_lock() {
+                    // `seen` : jamais deux fois le même bloc (le plus récent a pu sauter un tour) ; même instant du morceau
+                    // (un mixeur qui exporte ou se prépare ailleurs dans le morceau ne prête pas sa sortie)
+                    let t = self.from + self.pos as f64 / self.sr;
+                    if o.0 != self.seen && (o.1 - t).abs() < 0.002 && o.2.len() == left.len() && o.3.len() == right.len() {
+                        self.seen = o.0; left.copy_from_slice(&o.2); right.copy_from_slice(&o.3); self.pos += left.len(); return;
+                    }
+                }
+                DRY.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            if mono { right.copy_from_slice(left); }
+            self.pos += left.len();
         }
         pub fn is_live(&self) -> bool { self.inst.is_some() }
         /// Courbes « fx:vst#…:<n° du réglage> » (valeurs 0..1 = valeurs du plugin)
@@ -83,7 +116,7 @@ mod imp {
         pub fn seek(&mut self, t: f64) { self.from = t; self.pos = 0; }
         pub fn process(&mut self, left: &mut [f32], right: &mut [f32], mono: bool) {
             let Some(p) = &self.inst else { if mono { right.copy_from_slice(left); } return };
-            if self.latest.load(std::sync::atomic::Ordering::SeqCst) != self.gen { if mono { right.copy_from_slice(left); } return; }
+            if self.turn.latest.load(std::sync::atomic::Ordering::SeqCst) != self.gen { self.aside(left, right, mono); return; }
             let Some(mut g) = lock_soon(p, 3000) else { miss(); if mono { right.copy_from_slice(left); } return };
             let mut at = 0;
             while at < left.len() {
@@ -118,6 +151,9 @@ mod imp {
                 if !ok && mono { right[at..at + n].copy_from_slice(&left[at..at + n]); }
                 at += n;
             }
+            drop(g);
+            // sortie gardée pour un exemplaire plus ancien qui s'efface (même bloc, juste après)
+            if let Ok(mut o) = self.turn.out.try_lock() { o.0 += 1; o.1 = self.from + self.pos as f64 / self.sr; o.2.clear(); o.2.extend_from_slice(left); o.3.clear(); o.3.extend_from_slice(right); }
             self.pos += left.len();
         }
     }
@@ -127,8 +163,10 @@ mod imp {
 mod imp {
     pub struct ExtSlot;
     pub fn latency(_id: &str) -> u32 { 0 }
+    pub fn deferred<T>(f: impl FnOnce() -> T) -> T { f() }
     impl ExtSlot {
         pub fn new(_id: &str, _sr: f64) -> Self { ExtSlot }
+        pub fn claim(&mut self) {}
         pub fn is_live(&self) -> bool { false }
         pub fn process(&mut self, left: &mut [f32], right: &mut [f32], mono: bool) { if mono { right.copy_from_slice(left); } }
         pub fn set_auto(&mut self, _c: Vec<(u32, crate::model::Curve)>, _from: f64) {}

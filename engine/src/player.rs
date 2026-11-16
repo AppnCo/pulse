@@ -268,6 +268,8 @@ pub fn start_fade(new: &mut Renderer, new_media: &Media, old: Box<Renderer>, med
         left -= n;
     }
     let _ = new.take_wrap();
+    // à partir d'ici le nouveau mixeur joue pour de bon : il prend les plugins externes, l'ancien s'efface avec leur sortie
+    new.claim_ext();
     new.seek(t);
     if let Some(lp) = old.loop_secs() { new.set_loop(Some(lp)); }
     Fade { old, media, done: 0 }

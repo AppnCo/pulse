@@ -13,6 +13,7 @@ use tauri::{ipc::{InvokeBody, Request}, Emitter, Manager, State};
 struct Info {
     /// Blocs passés sans un plugin externe parce que l'appli le tenait (doit rester à 0)
     ext_misses: u64,
+    ext_dry: u64,
     /// Fréquence de la sortie audio (0 = aucune sortie)
     rate: u32,
     playing: bool,
@@ -31,6 +32,7 @@ struct Info {
 fn native_info(player: State<Player>, sounds: State<Sounds>) -> Info {
     Info {
         ext_misses: pulse_engine::ext::MISSES.load(std::sync::atomic::Ordering::Relaxed),
+        ext_dry: pulse_engine::ext::DRY.load(std::sync::atomic::Ordering::Relaxed),
         rate: player.output_rate(),
         playing: player.is_playing(),
         position: player.position(),
@@ -199,7 +201,8 @@ async fn native_swap(player: State<'_, Player>, sounds: State<'_, Sounds>, json:
         };
         // part du début du morceau : le lecteur le cale lui-même sur l'instant en cours
         let opts = render::RenderOptions { sample_rate: rate, start: 0.0, ..Default::default() };
-        Ok((render::Renderer::new(&project, &media, &opts), media))
+        // « en attente » : l'ancien mixeur garde les plugins externes jusqu'au fondu (sinon ils sont contournés pendant le calcul)
+        Ok((pulse_engine::ext::deferred(|| render::Renderer::new(&project, &media, &opts)), media))
     })
     .await
     .map_err(|e| e.to_string())??;
@@ -256,7 +259,7 @@ fn native_fx_live(player: State<Player>, items: Vec<serde_json::Value>) -> Resul
 /// « eq-swap » = forme de l'EQ changée en marche ; « switches » = pente du Filtre, caractère / relâchement auto du Compresseur,
 /// temps de l'Écho, inversion / mono de l'Utilitaire pris sans reconstruire.
 #[tauri::command]
-fn native_caps() -> Vec<&'static str> { vec!["eq-swap", "switches", "chain-swap", "mix", "bus-meters"] }
+fn native_caps() -> Vec<&'static str> { vec!["eq-swap", "switches", "chain-swap", "mix", "bus-meters", "chain-swap-ext"] }
 
 /// Plugins ajoutés / retirés / déplacés pendant la lecture : `json` = projet à jour, `owners` = [[groupe ?, indice], …] dont la chaîne change.
 /// Le mixeur refait leur chaîne en fondu ; s'il ne peut pas (retard des effets changé, plugin externe…), `native_live` le compte
