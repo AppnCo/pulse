@@ -147,7 +147,7 @@ mod tests {
         // piste stéréo : on ajoute une saturation et un EQ, on les retire, pendant la lecture → pas de clic, son = projet neuf
         let sig: Vec<f32> = (0..SR as usize * 4).map(|i| { let t = i as f32 / SR as f32; ((t * 2.0 * std::f32::consts::PI * 150.0).sin() * 0.4 + (t * 2.0 * std::f32::consts::PI * 2000.0).sin() * 0.1) }).collect();
         let media = Media::from([("a".to_owned(), Source::new(SR, vec![sig.clone(), sig.clone()]))]);
-        let proj = |fx: &str| -> Project { serde_json::from_str(&format!(r#"{{"bpm":120,"tracks":[{{"volume":100,"clips":[{{"id":"a","start":0,"duration":4}}],"effects":{fx},"effectParams":{{"sat":{{"drive":60}},"eq":{{"bands":[{{"type":"bell","freq":2000,"gain":8,"q":1}}]}},"fet76":{{}},"delay":{{"pp":1,"ms":300,"wet":30}}}}}}],"buses":[]}}"#)).unwrap() };
+        let proj = |fx: &str| -> Project { serde_json::from_str(&format!(r#"{{"bpm":120,"tracks":[{{"volume":100,"clips":[{{"id":"a","start":0,"duration":4}}],"effects":{fx},"effectParams":{{"sat":{{"drive":60}},"eq":{{"bands":[{{"type":"bell","freq":2000,"gain":8,"q":1}}]}},"pitch":{{"semi":3,"mix":100}},"fet76":{{}},"delay":{{"pp":1,"ms":300,"wet":30}}}}}}],"buses":[]}}"#)).unwrap() };
         let block = |r: &mut crate::render::Renderer| { let (mut l, mut rr) = (vec![0.0f32; 4800], vec![0.0f32; 4800]); r.process(&media, &mut l, &mut rr); l };
         let saut = |l: &[f32]| l.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0f32, f32::max);
         let mut r = crate::render::Renderer::new(&proj("[]"), &media, &opts());
@@ -169,8 +169,31 @@ mod tests {
             let e = a.iter().zip(&b).map(|(x, y)| (x - y).abs()).fold(0.0f32, f32::max);
             assert!(e < 2e-3, "{fx} : le son ne rejoint pas le projet neuf (écart {e})");
         }
-        // un plugin qui retarde le son (machine analogique) : refusé, il faut reconstruire
-        assert!(!r.chain_swap(&proj(r#"["fet76"]"#), &media, &[(false, 0)]));
+        // plugins qui retardent le son (machine analogique 31 éch., Pitch ≈ 59 ms), ajoutés, empilés, retirés : accepté,
+        // l'ancien son reste calé pendant que le nouveau se prépare, puis fondu ; à la fin le son rejoint le projet neuf
+        for fx in [r#"["fet76"]"#, r#"["fet76","sat"]"#, r#"["pitch"]"#, r#"["pitch","fet76"]"#, r#"["eq"]"#, "[]"] {
+            assert!(r.chain_swap(&proj(fx), &media, &[(false, 0)]), "retard {fx}");
+            let pendant = block(&mut r);
+            let _ = block(&mut r);
+            let a = block(&mut r);
+            let n = r.position() / 4800;
+            let mut neuf = crate::render::Renderer::new(&proj(fx), &media, &opts());
+            for _ in 0..n - 1 { let _ = block(&mut neuf); }
+            let b = block(&mut neuf);
+            let tolere = calme.max(saut(&b)) * 1.5;
+            assert!(saut(&pendant) < tolere, "retard {fx} : clic ({} pour {tolere})", saut(&pendant));
+            // pas de trou : le son ne tombe jamais sous la moitié de son niveau pendant le passage
+            let bas = pendant.chunks(480).map(|c| c.iter().fold(0.0f32, |m, x| m.max(x.abs()))).fold(1.0f32, f32::min);
+            // (deux Pitch qui se croisent n'ont pas leurs grains en phase : léger creux pendant les 30 ms du fondu, pas un trou)
+            assert!(bas > if fx.contains("pitch") { 0.05 } else { 0.15 }, "retard {fx} : trou pendant le passage (crête {bas})");
+            calme = saut(&a);
+            let e = a.iter().zip(&b).map(|(x, y)| (x - y).abs()).fold(0.0f32, f32::max);
+            // le Pitch découpe le son en grains depuis son départ : parti en route, il ne rend pas les mêmes échantillons
+            // qu'un Pitch parti du début (même note, même niveau) → on compare les niveaux
+            let rms = |v: &[f32]| (v.iter().map(|x| x * x).sum::<f32>() / v.len() as f32).sqrt();
+            if fx.contains("pitch") { assert!((rms(&a) / rms(&b) - 1.0).abs() < 0.1, "retard {fx} : niveau {} pour {}", rms(&a), rms(&b)); }
+            else { assert!(e < 2e-3, "retard {fx} : le son ne rejoint pas le projet neuf (écart {e})"); }
+        }
         // piste mono qui devient stéréo (reverb ajoutée en marche) puis redevient mono : accepté, sans clic,
         // et une fois la reverb retirée le son rejoint le projet neuf (loi de pan mono revenue)
         // son lent avec une composante continue : un saut de gain se voit quel que soit l'instant (pas de passage par zéro)
@@ -195,6 +218,34 @@ mod tests {
         let (b, br) = blk(&mut neuf);
         let e = a.iter().zip(&b).chain(ar.iter().zip(&br)).map(|(x, y)| (x - y).abs()).fold(0.0f32, f32::max);
         assert!(e < 2e-3, "mono : le son ne rejoint pas le projet neuf (écart {e})");
+    }
+    #[test]
+    fn machine_analogique_sur_un_groupe_en_marche() {
+        // une machine analogique (31 éch. de retard) posée puis retirée sur un groupe pendant la lecture : la piste qui y sort
+        // se recale en fondu, pas de clic, et le son rejoint le projet neuf (une 2e piste hors du groupe sert de repère de calage)
+        let sig: Vec<f32> = (0..SR as usize * 4).map(|i| { let t = i as f32 / SR as f32; (t * 2.0 * std::f32::consts::PI * 150.0).sin() * 0.3 + (t * 2.0 * std::f32::consts::PI * 2000.0).sin() * 0.1 }).collect();
+        let media = Media::from([("a".to_owned(), Source::new(SR, vec![sig]))]);
+        let proj = |fx: &str| -> Project { serde_json::from_str(&format!(r#"{{"bpm":120,"tracks":[{{"volume":100,"output":"g1","clips":[{{"id":"a","start":0,"duration":4}}]}},{{"volume":50,"clips":[{{"id":"a","start":0,"duration":4}}]}}],"buses":[{{"id":"g1","name":"G","effects":{fx},"effectParams":{{"sat":{{"drive":40}},"fet76":{{}}}}}}]}}"#)).unwrap() };
+        let block = |r: &mut crate::render::Renderer| { let (mut l, mut rr) = (vec![0.0f32; 4800], vec![0.0f32; 4800]); r.process(&media, &mut l, &mut rr); l };
+        let saut = |l: &[f32]| l.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0f32, f32::max);
+        let mut r = crate::render::Renderer::new(&proj(r#"["sat"]"#), &media, &opts());
+        let _ = block(&mut r);
+        let mut calme = saut(&block(&mut r));
+        for fx in [r#"["sat","fet76"]"#, r#"["sat"]"#, r#"["fet76","sat"]"#] {
+            assert!(r.chain_swap(&proj(fx), &media, &[(true, 0)]), "{fx}");
+            let pendant = block(&mut r);
+            let _ = block(&mut r);
+            let a = block(&mut r);
+            let n = r.position() / 4800;
+            let mut neuf = crate::render::Renderer::new(&proj(fx), &media, &opts());
+            for _ in 0..n - 1 { let _ = block(&mut neuf); }
+            let b = block(&mut neuf);
+            let tolere = calme.max(saut(&b)) * 1.5;
+            assert!(saut(&pendant) < tolere, "{fx} : clic ({} pour {tolere})", saut(&pendant));
+            calme = saut(&a);
+            let e = a.iter().zip(&b).map(|(x, y)| (x - y).abs()).fold(0.0f32, f32::max);
+            assert!(e < 2e-3, "{fx} : le son ne rejoint pas le projet neuf (écart {e})");
+        }
     }
     #[test]
     fn metronome_pile_sur_les_temps() {

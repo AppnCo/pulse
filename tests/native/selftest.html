@@ -94,7 +94,7 @@ const f=document.getElementById('f'); const sleep=ms=>new Promise(r=>setTimeout(
         // piste mono : reverb retirée (la piste redevient mono) puis remise (stéréo) — en fondu, sans reconstruire
         const hadRv=tr0.effects.includes('reverb'); tr0.effects=tr0.effects.filter(e=>e!=='reverb'); w.refreshPlaybackSoon(); await sleep(400);
         tr0.effects=tr0.effects.concat(['reverb']); w.refreshPlaybackSoon(); await sleep(400); log('reverb sur piste mono: avant='+hadRv+' reconstructions='+rb3);
-        // une machine analogique retarde le son : la page reconstruit (normal)
+        // une machine analogique retarde le son : le moteur recale la piste en marche (« chain-swap-lat »), sans reconstruire
         tr0.effects=tr0.effects.concat(['fet76']); w.refreshPlaybackSoon(); await sleep(600);
         w.PulseAudio.play=op; const lvx=await inv('native_live'); const u3=(await inv('native_info')).underruns;
         log('plugin ajouté en marche: reconstructions='+rb3+' refus='+(lvx.refused-r0)+' trous='+(u3-u1)+' joue='+lvx.playing);

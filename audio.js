@@ -2770,7 +2770,8 @@ window.PulseAudio = (function() {
             const [pe, pp] = old[k] || [[], {}];
             // plugin externe dans la chaîne : seulement si l'appli sait le passer d'une chaîne à l'autre (« chain-swap-ext »)
             if (!o || (!nativeBackend.caps.includes('chain-swap-ext') && [...(o.effects || []), ...pe].some(e => fxType(e) === 'vst'))) return false;
-            if (Math.abs(fxLatency(o.effects, o.effectParams, o.automation, sr) - fxLatency(pe, pp, o.automation, sr)) > 1e-9) return false;
+            // retard des effets changé (machine analogique, Pitch) : seulement si l'appli sait recaler la piste en marche (« chain-swap-lat »)
+            if (!nativeBackend.caps.includes('chain-swap-lat') && Math.abs(fxLatency(o.effects, o.effectParams, o.automation, sr) - fxLatency(pe, pp, o.automation, sr)) > 1e-9) return false;
         }
         nativeBackend.chainSwap(withMetro(nativeProject), owners).catch(() => nativeRefreshSoon());
         return true;

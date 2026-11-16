@@ -316,25 +316,36 @@ struct TrackRt {
     /// pendant le passage, et sa cible ; arrivée à 1 sans fondu en cours, la piste redevient mono
     law: f32,
     law_to: f32,
+    /// Retard total compensé à la construction (effets de la piste + groupes où elle sort, s) et avance en plus (échantillons)
+    /// prise depuis par un échange de plugins en marche : les régions sont lues `skew` échantillons plus tôt
+    lat_total: f64,
+    skew: i64,
+    /// Avance d'avant, qui s'efface (ancienne avance, échantillons restants, durée du fondu)
+    skew_from: Option<(i64, usize, usize)>,
 }
 
 /// Chaîne d'effets qui s'efface (fondu de 30 ms) pendant qu'une nouvelle prend sa place
-struct ChainFade { chain: crate::fx::FxChain, left: usize, total: usize, mono_out: bool }
+struct ChainFade { chain: crate::fx::FxChain, hold: usize, left: usize, total: usize, mono_out: bool,
+    /// Avance de lecture des régions qu'avait l'ancienne chaîne : elle garde son entrée calée comme avant (piste seulement)
+    skew: Option<i64> }
 impl ChainFade {
-    /// `mono_out` : l'ancienne chaîne ne sortait qu'à gauche (piste mono) → sa droite = sa gauche pendant le fondu
-    fn new(chain: crate::fx::FxChain, sr: f64, mono_out: bool) -> Self { let total = ((0.03 * sr) as usize).max(1); Self { chain, left: total, total, mono_out } }
-    /// `l` / `r` : sortie de la nouvelle chaîne ; `il` / `ir` : ce qui y est entré. L'ancienne chaîne traite la même entrée, puis fondu.
+    /// `mono_out` : l'ancienne chaîne ne sortait qu'à gauche (piste mono) → sa droite = sa gauche pendant le fondu.
+    /// `hold` : échantillons pendant lesquels l'ancienne chaîne joue seule (retard de la nouvelle : elle sort d'abord du silence)
+    fn new(chain: crate::fx::FxChain, sr: f64, mono_out: bool, hold: usize) -> Self { let total = ((0.03 * sr) as usize).max(1); Self { chain, hold, left: total, total, mono_out, skew: None } }
+    /// `l` / `r` : sortie de la nouvelle chaîne ; `il` / `ir` : entrée de l'ancienne chaîne, qui la traite, puis fondu.
     /// Renvoie false quand le fondu est fini.
     fn mix(&mut self, l: &mut [f32], r: &mut [f32], mut il: Vec<f32>, mut ir: Vec<f32>, mono: bool) -> bool {
         self.chain.process(&mut il, &mut ir, mono);
         if self.mono_out && ir.len() == il.len() { ir.copy_from_slice(&il); }
+        let hold = self.hold.min(l.len());
         for m in 0..l.len() {
-            let w = (self.left.saturating_sub(m)) as f32 / self.total as f32;
+            let w = if m < hold { 1.0 } else { (self.left.saturating_sub(m - hold)) as f32 / self.total as f32 };
             if w <= 0.0 { break; }
             l[m] = l[m] * (1.0 - w) + il[m] * w;
             if !r.is_empty() && !ir.is_empty() { r[m] = r[m] * (1.0 - w) + ir[m] * w; }
         }
-        self.left = self.left.saturating_sub(l.len());
+        self.hold -= hold;
+        self.left = self.left.saturating_sub(l.len() - hold);
         self.left > 0
     }
 }
@@ -542,6 +553,8 @@ impl Renderer {
                 sends_s: taps.sends.iter().map(|x| x.1).collect(), aux_s: taps.aux.iter().map(|x| x.0).collect(),
                 sends: taps.sends, aux: taps.aux, curve: taps.curve, pan_curve: taps.pan_curve, pan0: taps.pan0,
                 lat: fx_latency(&track.effects, &track.effect_params, Some(&track.automation), sr), fade: None, law: 0.0, law_to: 0.0,
+                lat_total: fx_latency(&track.effects, &track.effect_params, Some(&track.automation), sr) + bus_latency(project, track.output.as_deref(), stem, sr),
+                skew: 0, skew_from: None,
             });
         }
 
@@ -662,7 +675,7 @@ impl Renderer {
         let t = t.max(self.from);
         self.pos = ((t - self.from) * self.sr).round() as usize;
         let t = self.time();
-        for tr in &mut self.tracks { tr.chain.seek(t); tr.fade = None; }
+        for tr in &mut self.tracks { tr.chain.seek(t); tr.fade = None; tr.skew_from = None; }
         for b in &mut self.buses { b.chain.seek(t); b.fade = None; }
     }
     /// Pose (ou enlève) la boucle. Refusée (false) si elle commence avant le début du mixeur : il faut alors relancer.
@@ -727,20 +740,23 @@ impl Renderer {
     pub fn chain_swap(&mut self, project: &Project, media: &Media, owners: &[(bool, usize)]) -> bool {
         let project = &prepared(project, media, self.base.sample_rate as f64, self.base.only_track.is_some());
         let (sr, now) = (self.sr, self.time());
+        let stem = self.base.only_track.is_some();
         let mut ok = true;
         for &(bus, idx) in owners {
             if bus {
                 let (Some(b), Some(def)) = (self.buses.iter_mut().find(|b| b.i == idx), project.buses.get(idx)) else { ok = false; continue };
                 let lat = fx_latency(&def.effects, &def.effect_params, Some(&def.automation), sr);
-                if (lat - b.lat).abs() > 1e-9 { ok = false; continue; }
+                // retard du groupe changé : ses pistes se recalent en fondu (plus bas) — seulement pour un petit retard
+                // (machine analogique ≈ 0,6 ms) ; un Pitch posé sur un groupe (≈ 59 ms) s'entendrait : on reconstruit
+                if (lat - b.lat).abs() > 0.005 { ok = false; continue; }
                 let chain = crate::fx::FxChain::new(&def.effects, &def.effect_params, &def.fx_order, sr, project.bpm, project.ceiling())
                     .with_auto(&def.automation, now).with_tempo(project.tempo_segments(), now);
                 let old = std::mem::replace(&mut b.chain, chain);
-                b.fade = Some(ChainFade::new(old, sr, false));
+                b.fade = Some(ChainFade::new(old, sr, false, (lat * sr).round() as usize));
+                b.lat = lat;
             } else {
                 let (Some(tr), Some(def)) = (self.tracks.iter_mut().find(|t| t.idx == idx), project.tracks.get(idx)) else { ok = false; continue };
                 let lat = fx_latency(&def.effects, &def.effect_params, Some(&def.automation), sr);
-                if (lat - tr.lat).abs() > 1e-9 { ok = false; continue; }
                 let chain = crate::fx::FxChain::for_track(def, sr, project.bpm).with_auto(&def.automation, now).with_tempo(project.tempo_segments(), now);
                 // piste mono ↔ stéréo (reverb, écho ping-pong ajouté / retiré) : la loi de pan glisse de l'une à l'autre
                 let st = tr.stereo_in || chain.outputs_stereo();
@@ -748,8 +764,25 @@ impl Renderer {
                 tr.law_to = if st { 0.0 } else { 1.0 };
                 let old = std::mem::replace(&mut tr.chain, chain);
                 let mono_out = !(tr.stereo_in || old.outputs_stereo());
-                tr.fade = Some(ChainFade::new(old, sr, mono_out));
+                // la nouvelle chaîne sort d'abord son retard en silence : l'ancienne joue seule pendant ce temps, puis fondu
+                let mut fd = ChainFade::new(old, sr, mono_out, (lat * sr).round() as usize);
+                // l'ancienne chaîne garde ses régions calées comme avant (pas possible si une région a ses propres effets :
+                // ils ne peuvent pas tourner deux fois → les deux chaînes reçoivent alors la même entrée, recalée en fondu)
+                if !tr.clips.iter().any(|c| c.fx.is_some()) { fd.skew = Some(tr.skew); }
+                tr.fade = Some(fd);
+                tr.lat = lat;
             }
+        }
+        // retard changé (machine analogique, Pitch ajouté / retiré) : les régions des pistes touchées sont lues plus tôt / plus tard
+        let total = ((0.03 * sr) as usize).max(1);
+        for tr in &mut self.tracks {
+            let Some(def) = project.tracks.get(tr.idx) else { continue };
+            let lat = fx_latency(&def.effects, &def.effect_params, Some(&def.automation), sr) + bus_latency(project, def.output.as_deref(), stem, sr);
+            let skew = ((lat - tr.lat_total) * sr).round() as i64;
+            if skew == tr.skew { continue; }
+            // l'ancienne chaîne a gardé l'ancien calage : la nouvelle prend le sien d'un coup ; sinon l'entrée glisse de l'un à l'autre
+            tr.skew_from = if tr.fade.as_ref().is_some_and(|f| f.skew.is_some()) { None } else { Some((tr.skew, total, total)) };
+            tr.skew = skew;
         }
         ok
     }
@@ -1024,52 +1057,76 @@ impl Renderer {
 /// Rend tout le projet d'un coup (export, pulse-render). Même résultat que la lecture au fil de l'eau.
 /// Étapes 1 et 2 d'une piste (ses régions puis ses effets) : indépendantes des autres pistes,
 /// donc calculées en parallèle sur tous les cœurs du processeur.
-fn track_front(tr: &mut TrackRt, media: &Media, n: usize, sr: f64, from: f64, b0: usize) -> (Vec<f32>, Vec<f32>) {
-        // 1. Les clips de la piste, sommés
+/// Somme des régions d'une piste sur le bloc, lues `skew` échantillons plus tôt. `blend` = (ancienne avance, restant, durée) :
+/// l'ancien calage s'efface dans le nouveau. `fx` = false : sans les effets de région (entrée d'une chaîne qui s'efface).
+fn clip_sum(tr: &mut TrackRt, media: &Media, n: usize, sr: f64, from: f64, b0: usize, skew: i64, blend: Option<(i64, usize, usize)>, fx: bool) -> (Vec<f32>, Vec<f32>) {
         let mut tl = vec![0.0f32; n];
         let mut trr = if tr.stereo { vec![0.0f32; n] } else { Vec::new() };
+        let (force_mono, stereo_in) = (tr.force_mono, tr.stereo_in);
         for c in &mut tr.clips {
             let Some(src) = media.get(&c.clip.id) else { continue };
             let clip = &c.clip;
-            let has_fx = c.fx.is_some();
+            let has_fx = fx && c.fx.is_some();
             let (mut cl, mut cr) = if has_fx { (vec![0.0f32; n], vec![0.0f32; n]) } else { (Vec::new(), Vec::new()) };
             let offset = clip.offset.unwrap_or(0.0).max(0.0);
             let nch = src.n_channels();
-            for k in c.first.max(b0)..c.last.min(b0 + n) {
-                let m = k - b0;
-                let x = from + k as f64 / sr - clip.start; // position dans le clip
-                // Répétition : on reboucle sur la portion [offset, offset + duration)
-                let in_src = offset + (x % clip.duration);
-                if in_src >= src.duration() {
-                    continue;
-                }
-                let g = clip_level(clip, x, c.xin, c.xout) as f32;
-                // Piste forcée en mono : les deux côtés sont mélangés à parts égales (comme Web Audio, 2 → 1 canal)
-                let l = if tr.force_mono && nch > 1 { 0.5 * (src.at(0, in_src) + src.at(1, in_src)) * g } else { src.at(0, in_src) * g };
-                let r = if nch > 1 && !tr.force_mono { src.at(1, in_src) * g } else { l };
-                if has_fx {
-                    cl[m] = l;
-                    cr[m] = r;
-                    continue;
-                }
-                tl[m] += l;
-                if tr.stereo_in {
-                    trr[m] += r;
+            // une passe par calage (une seule hors fondu) ; poids de la passe à l'échantillon m
+            let passes: [Option<(i64, bool)>; 2] = [Some((skew, false)), blend.map(|(s0, _, _)| (s0, true))];
+            for (sk, old) in passes.into_iter().flatten() {
+                let lo = (c.first as i64 - sk).max(b0 as i64) as usize;
+                let hi = (c.last as i64 - sk).min((b0 + n) as i64).max(0) as usize;
+                for k in lo..hi {
+                    let m = k - b0;
+                    let x = from + (k as i64 + sk) as f64 / sr - clip.start; // position dans le clip
+                    // Répétition : on reboucle sur la portion [offset, offset + duration)
+                    let in_src = offset + (x % clip.duration);
+                    if in_src >= src.duration() {
+                        continue;
+                    }
+                    let w = match blend { Some((_, left, total)) => { let o = left.saturating_sub(m) as f32 / total as f32; if old { o } else { 1.0 - o } }, None => 1.0 };
+                    if w <= 0.0 { continue; }
+                    let g = clip_level(clip, x, c.xin, c.xout) as f32 * w;
+                    // Piste forcée en mono : les deux côtés sont mélangés à parts égales (comme Web Audio, 2 → 1 canal)
+                    let l = if force_mono && nch > 1 { 0.5 * (src.at(0, in_src) + src.at(1, in_src)) * g } else { src.at(0, in_src) * g };
+                    let r = if nch > 1 && !force_mono { src.at(1, in_src) * g } else { l };
+                    if has_fx {
+                        cl[m] += l;
+                        cr[m] += r;
+                        continue;
+                    }
+                    tl[m] += l;
+                    if stereo_in {
+                        trr[m] += r;
+                    }
                 }
             }
             // La région passe dans ses effets ; l'écho / la reverb continuent après sa fin (queue)
-            if let Some(chain) = c.fx.as_mut() {
+            if has_fx {
+                let chain = c.fx.as_mut().unwrap();
                 chain.process(&mut cl, &mut cr, !c.src_stereo);
                 for m in 0..n {
                     tl[m] += cl[m];
-                    if tr.stereo_in {
+                    if stereo_in {
                         trr[m] += if c.out_stereo { cr[m] } else { cl[m] };
                     }
                 }
             }
         }
+        (tl, trr)
+}
+
+fn track_front(tr: &mut TrackRt, media: &Media, n: usize, sr: f64, from: f64, b0: usize) -> (Vec<f32>, Vec<f32>) {
+        // 1. Les clips de la piste, sommés
+        let (skew, blend) = (tr.skew, tr.skew_from);
+        let (mut tl, mut trr) = clip_sum(tr, media, n, sr, from, b0, skew, blend, true);
+        if let Some((s0, left, total)) = blend { tr.skew_from = (left > n).then(|| (s0, left - n, total)); }
         // 2. Effets de la piste
-        let input = tr.fade.is_some().then(|| (tl.clone(), trr.clone()));
+        // (plugin ajouté / retiré en marche : entrée de l'ancienne chaîne = la même, ou les régions à son ancien calage)
+        let input = match tr.fade.as_ref().map(|f| f.skew) {
+            Some(Some(s0)) if s0 != skew => Some(clip_sum(tr, media, n, sr, from, b0, s0, None, false)),
+            Some(_) => Some((tl.clone(), trr.clone())),
+            None => None,
+        };
         if !tr.chain.is_empty() {
             tr.chain.process(&mut tl, &mut trr, tr.mono_in);
         }
