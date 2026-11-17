@@ -785,6 +785,40 @@ mod tests {
         assert!(lv.iter().filter(|x| x.0 == 1).all(|x| x.1 == 0.0 && x.3 == 0.0), "groupe coupé : {lv:?}");
     }
 
+    /// Écho avancé (17/11) : passé en mode avancé sans réglage touché, il rend exactement le même son que l'écho simple
+    /// (même en changeant de tempo en route) ; chaque réglage avancé change bien le son, sans jamais s'emballer.
+    #[test]
+    fn echo_avance_neutre_et_reglages() {
+        use crate::fx::Delay;
+        use crate::model::DelayParams;
+        let sr = 48_000.0;
+        let src = |i: usize| if i < 4800 { 0.5 * (2.0 * std::f64::consts::PI * 330.0 * i as f64 / sr).sin() } else { 0.0 };
+        let run = |p: &DelayParams, adv: bool| {
+            let mut d = Delay::new(p, sr, 120.0);
+            if adv { d.make_adv(); }
+            let mut out = Vec::new();
+            for i in 0..(3 * 48_000) {
+                if i == 60_000 { d.set_bpm(90.0); }
+                let mut x = [src(i), 0.3 * src(i)];
+                let n = d.tick(&mut x, 2);
+                out.push((x[0], if n > 1 { x[1] } else { x[0] }));
+            }
+            out
+        };
+        let base: DelayParams = serde_json::from_str(r#"{"wet":40,"feedback":70,"beats":0.5}"#).unwrap();
+        let (a, b) = (run(&base, false), run(&base, true));
+        let worst = a.iter().zip(&b).map(|(x, y)| (x.0 - y.0).abs().max((x.1 - y.1).abs())).fold(0.0, f64::max);
+        assert!(worst < 1e-12, "mode avancé neutre ≠ écho simple : {worst}");
+        for extra in [r#""beatsR":0.75"#, r#""width":0"#, r#""sat":100"#, r#""wow":100"#, r#""mod":100"#, r#""hpLoop":1,"hpf":400"#] {
+            let p: DelayParams = serde_json::from_str(&format!(r#"{{"wet":40,"feedback":85,"beats":0.5,{extra}}}"#)).unwrap();
+            let c = run(&p, false);
+            let diff = a.iter().zip(&c).map(|(x, y)| (x.0 - y.0).abs() + (x.1 - y.1).abs()).sum::<f64>();
+            let peak = c.iter().map(|x| x.0.abs().max(x.1.abs())).fold(0.0, f64::max);
+            assert!(diff > 1.0, "{extra} ne change rien ({diff})");
+            assert!(peak.is_finite() && peak < 1.5, "{extra} s'emballe ({peak})");
+        }
+    }
+
     /// Écho calé sur le rythme : à 120 BPM, ½ temps = 0,25 s. Valeurs mesurées dans Chrome.
     #[test]
     fn echo_comme_le_navigateur() {

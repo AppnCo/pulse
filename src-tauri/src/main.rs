@@ -259,7 +259,7 @@ fn native_fx_live(player: State<Player>, items: Vec<serde_json::Value>) -> Resul
 /// « eq-swap » = forme de l'EQ changée en marche ; « switches » = pente du Filtre, caractère / relâchement auto du Compresseur,
 /// temps de l'Écho, inversion / mono de l'Utilitaire pris sans reconstruire.
 #[tauri::command]
-fn native_caps() -> Vec<&'static str> { vec!["eq-swap", "switches", "chain-swap", "mix", "bus-meters", "chain-swap-ext", "chain-swap-lat"] }
+fn native_caps() -> Vec<&'static str> { vec!["eq-swap", "switches", "chain-swap", "mix", "bus-meters", "chain-swap-ext", "chain-swap-lat", "delay-adv"] }
 
 /// Plugins ajoutés / retirés / déplacés pendant la lecture : `json` = projet à jour, `owners` = [[groupe ?, indice], …] dont la chaîne change.
 /// Le mixeur refait leur chaîne en fondu ; s'il ne peut pas (retard des effets changé, plugin externe…), `native_live` le compte

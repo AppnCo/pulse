@@ -8489,7 +8489,9 @@ const VIZ_W = 216;
 // Écho : les répétitions posées sur la grille du tempo (en haut = gauche, en bas = droite en ping-pong)
 function delayVizSvg(p, bpm) {
     const W = 420, H = 150, bars = 2, beatW = W / (bars * 4), base = H / 2;
-    const beats = p.beats > 0 ? p.beats : 0.5, dt = beats * beatW, pp = !!p.pp;
+    const beats = p.beats > 0 ? p.beats : 0.5, dt = beats * beatW;
+    // voie droite à son propre temps (écho avancé) : gauche en haut, droite en bas, chacune à son rythme
+    const split = p.beatsR > 0 && Math.abs(p.beatsR - beats) > 1e-9, pp = !!p.pp || split;
     let g = '';
     for (let i = 0; i <= bars * 4; i++) g += `<line x1="${(i * beatW).toFixed(1)}" x2="${(i * beatW).toFixed(1)}" y1="0" y2="${H - 14}" class="${i % 4 ? 'viz-grid' : 'viz-grid viz-bar'}"/>${i < bars * 4 ? `<text x="${(i * beatW + 3).toFixed(1)}" y="${H - 3}" class="viz-txt">${Math.floor(i / 4) + 1}.${i % 4 + 1}</text>` : ''}`;
     g += `<line x1="0" x2="${W}" y1="${base}" y2="${base}" class="viz-zero"/>`;
@@ -8498,6 +8500,12 @@ function delayVizSvg(p, bpm) {
     g += `<rect x="2" y="${base - 46}" width="${vw}" height="92" rx="3" class="dl-voice"/>`;
     const filt = Math.min(1, Math.log10(Math.max(20, p.hpf || 20) / 20) / 2 * 0.4 + (1 - Math.log10((p.lpf || 4000) / 1000) / 1.3) * 0.25);
     let a = 0.55 + 0.4 * (p.wet ?? 25) / 100, k = 1;
+    if (split) {
+        const a0 = a, fb = Math.max(0.05, (p.feedback ?? 35) / 100) * (1 - filt * 0.2), w = (d) => Math.max(4, Math.min(d * 0.5, 30)).toFixed(1);
+        [[dt, -1], [p.beatsR * beatW, 1]].forEach(([d, side]) => { let aa = a0; for (let x = d; x < W && aa > 0.03; x += d) { const h = 46 * Math.sqrt(aa);
+            g += `<rect x="${(x + 1).toFixed(1)}" y="${(side < 0 ? base - h : base).toFixed(1)}" width="${w(d)}" height="${h.toFixed(1)}" rx="2" class="dl-rep" style="opacity:${(0.35 + 0.65 * aa).toFixed(2)}"/>`; aa *= fb; } });
+        a = 0;
+    }
     for (let x = dt; x < W && a > 0.03; x += dt, k++) {
         const h = 92 * Math.sqrt(a), top = pp ? (k % 2 ? base - h : base) : base - h / 2, hh = pp ? h : h;
         g += `<rect x="${(x + 1).toFixed(1)}" y="${top.toFixed(1)}" width="${Math.max(4, Math.min(dt * 0.5, 30)).toFixed(1)}" height="${hh.toFixed(1)}" rx="2" class="dl-rep" style="opacity:${(0.35 + 0.65 * a).toFixed(2)}"/>`;
@@ -8505,7 +8513,7 @@ function delayVizSvg(p, bpm) {
         a *= Math.max(0.05, (p.feedback ?? 35) / 100) * (1 - filt * 0.2);
     }
     const ms = Math.round(beats * 60000 / (bpm || 90));
-    g += `<text x="${W - 4}" y="12" class="viz-txt" text-anchor="end">${beatsLabel(beats)} = ${ms} ms · ${Math.round(p.feedback ?? 35)} % de répétitions</text>`;
+    g += `<text x="${W - 4}" y="12" class="viz-txt" text-anchor="end">${beatsLabel(beats)}${split ? ' / ' + beatsLabel(p.beatsR) : ''} = ${ms}${split ? ' / ' + Math.round(p.beatsR * 60000 / (bpm || 90)) : ''} ms · ${Math.round(p.feedback ?? 35)} % de répétitions</text>`;
     if ((p.duck || 0) > 0) g += `<text x="${W - 4}" y="${H - 18}" class="viz-txt dl-duck-txt" text-anchor="end">ducking ${Math.round(p.duck)} % : l'écho se pousse pendant la voix</text>`;
     return `<svg class="viz-svg viz-delay" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${g}</svg>`;
 }
@@ -11487,7 +11495,16 @@ const FX_PANEL_DEFS = {
         { key: 'hpf',      label: 'Coupe-bas',      unit: ' Hz', min: 20,  max: 2000, def: 20, step: 5, log: true, adv: true, tip: 'Retire les graves des répétitions' },
         { key: 'lpf',      label: 'Coupe-haut',     unit: ' Hz', min: 1000, max: 20000, def: 4000, step: 100, log: true, adv: true, tip: 'Chaque répétition s\'assombrit un peu plus' },
         { key: 'dry',      label: 'Voix d\'origine', unit: '%', min: 0,     max: 100, def: 100, step: 1, adv: true, tip: '0 % = seulement l\'écho (piste d\'effet ponctuel)' },
-        { key: 'pp',       label: 'Ping-pong',      unit: '',  min: 0,     max: 1,   def: 0,  step: 1, toggle: true, tip: 'Les répétitions rebondissent de gauche à droite' }
+        { key: 'pp',       label: 'Ping-pong',      unit: '',  min: 0,     max: 1,   def: 0,  step: 1, toggle: true, tip: 'Les répétitions rebondissent de gauche à droite' },
+        // Écho avancé (17/11) : stéréo, couleur bande, modulation
+        { key: 'beatsR',   label: 'Temps droite',   unit: '',  min: 0, max: 2, def: 0, step: 0.125, adv: true, fmt: (v) => v > 0 ? beatsLabel(v) : '= gauche',
+          choices: [0, 0.25, 1 / 3, 0.5, 0.75, 1, 1.5, 2], choiceLabels: ['= gauche', '1/16', '1/8 T', '1/8', '1/8 .', '1/4', '1/4 .', '1/2'], tip: 'La voie droite répète à son propre rythme (ex. 1/8 à gauche, 1/8 pointée à droite)' },
+        { key: 'width',    label: 'Largeur',        unit: '%', min: 0, max: 200, def: 100, step: 1, adv: true, tip: 'Écarte ou resserre les répétitions dans la stéréo (0 % = au centre)' },
+        { key: 'sat',      label: 'Usure',          unit: '%', min: 0, max: 100, def: 0, step: 1, adv: true, tip: 'Saturation dans la boucle : chaque répétition s\'use un peu plus, comme sur bande' },
+        { key: 'wow',      label: 'Pleurage',       unit: '%', min: 0, max: 100, def: 0, step: 1, adv: true, tip: 'La hauteur des répétitions ondule lentement, comme une bande qui tourne mal' },
+        { key: 'mod',      label: 'Modulation',     unit: '%', min: 0, max: 100, def: 0, step: 1, adv: true, tip: 'Chorus sur les répétitions, gauche et droite décalées : plus large et plus vivant' },
+        { key: 'modRate',  label: 'Vitesse mod.',   unit: ' Hz', min: 0.1, max: 5, def: 0.8, step: 0.05, log: true, adv: true, tip: 'Vitesse de la modulation' },
+        { key: 'hpLoop',   label: 'Coupe-bas en boucle', unit: '', min: 0, max: 1, def: 0, step: 1, toggle: true, adv: true, tip: 'Le coupe-bas agit sur chaque répétition : elles s\'amincissent au fil des rebonds' }
     ]
 };
 

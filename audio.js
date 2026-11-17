@@ -2463,15 +2463,47 @@ window.PulseAudio = (function() {
                     this.tT0 = p.tT0 || 0; this.tFrom = p.tFrom || 0;
                     let k = 0; this.tempo.forEach((x, j) => { if (x.sec <= this.tFrom + 1e-9) k = j; }); this.ti = k;
                 }
+                // Écho avancé (même calcul que Delay::tick_adv de fx.rs) : voie droite à son temps, modulation, pleurage, saturation,
+                // largeur, coupe-bas dans la boucle. Sans eux, l'ancien calcul exact.
+                this.beatsR = this.beats && p.beatsR > 0 ? p.beatsR : 0;
+                this.bpm0 = this.beats ? 60 * this.beats / Math.max(1e-9, p.time ?? 0.3) : 0;
+                this.DR = this.beatsR ? this.lenOf(this.beatsR, this.bpm0) : this.D;
+                this.width = Math.max(0, Math.min(200, p.width ?? 100)) / 100;
+                this.sat = Math.max(0, Math.min(100, p.sat || 0)) / 100;
+                this.wow = Math.max(0, Math.min(100, p.wow || 0)) / 100;
+                this.modu = Math.max(0, Math.min(100, p.mod || 0)) / 100;
+                this.modRate = p.modRate > 0 ? Math.max(0.05, Math.min(10, p.modRate)) : 0.8;
+                this.hpLoop = (p.hpLoop || 0) >= 0.5;
+                this.zl = [0, 0]; this.ph = [0, 0, 0];
+                this.adv = false; this.cap = this.D;
+                if (this.DR !== this.D || Math.abs(this.width - 1) > 1e-9 || this.sat > 0 || this.wow > 0 || this.modu > 0 || this.hpLoop || p.forceAdv) this.makeAdv();
+            }
+            lenOf(beats, bpm) { return Math.max(1, Math.min(Math.round(4 * sampleRate), Math.round((60 / (bpm > 0 ? bpm : 90)) * beats * sampleRate))); }
+            margin() { return Math.ceil(0.0076 * sampleRate) + 4; }
+            // mémoire recopiée (les plus récents gardés, dans l'ordre) dans une nouvelle longueur
+            resize(nw) {
+                const old = this.cap;
+                this.buf = this.buf.map(b => { const nb = new Float64Array(nw); for (let k = 0; k < Math.min(old, nw); k++) nb[(nw - 1 - k) % nw] = b[(this.i + old - 1 - k) % old]; return nb; });
+                this.cap = nw; this.i = 0;
+            }
+            makeAdv() { if (this.adv) return; this.adv = true; const nw = Math.max(this.D, this.DR) + this.margin(); if (this.buf.length) this.resize(nw); else this.cap = nw; }
+            read(b, d) {
+                const cap = this.cap, pos = this.i - d, f = Math.floor(pos), fr = pos - f;
+                const a = ((f % cap) + cap) % cap, v = b[a];
+                return fr === 0 ? v : v + (b[a + 1 === cap ? 0 : a + 1] - v) * fr;
             }
             // Nouvelle longueur d'écho, les répétitions en cours gardées (même recopie que Delay::set_bpm de fx.rs)
             setBpm(bpm) {
-                const time = (60 / (bpm > 0 ? bpm : 90)) * this.beats;
-                const nw = Math.max(1, Math.min(Math.round(4 * sampleRate), Math.round(time * sampleRate)));
+                const nw = this.lenOf(this.beats, bpm);
+                if (this.adv) {
+                    const dr = this.beatsR ? this.lenOf(this.beatsR, bpm) : nw, cap = Math.max(nw, dr) + this.margin();
+                    this.D = nw; this.DR = dr; if (cap !== this.cap) this.resize(cap);
+                    return;
+                }
                 const old = this.D;
                 if (nw === old) return;
                 this.buf = this.buf.map(b => { const nb = new Float64Array(nw); for (let k = 0; k < Math.min(old, nw); k++) nb[(nw - 1 - k) % nw] = b[(this.i + old - 1 - k) % old]; return nb; });
-                this.D = nw; this.i = 0;
+                this.D = nw; this.DR = nw; this.cap = nw; this.i = 0;
             }
             tempoStep(t) {
                 const tp = this.tempo;
@@ -2482,8 +2514,40 @@ window.PulseAudio = (function() {
             process(inputs, outputs) {
                 const inp = inputs[0], out = outputs[0];
                 const n = out[0].length, nc = out.length, ni = inp ? inp.length : 0;
-                while (this.buf.length < Math.max(2, nc)) { this.buf.push(new Float64Array(this.D)); this.lp.push(0); }
+                while (this.buf.length < Math.max(2, nc)) { this.buf.push(new Float64Array(this.cap)); this.lp.push(0); }
                 const tb = this.tempo ? currentTime - this.tT0 + this.tFrom : 0;
+                if (this.adv && nc >= 2) {
+                    const ms = sampleRate / 1000, TAU = 2 * Math.PI;
+                    for (let i = 0; i < n; i++) {
+                        if (this.tempo) this.tempoStep(tb + i / sampleRate);
+                        const bl = this.buf[0], br = this.buf[1];
+                        const xl = ni > 0 ? inp[0][i] : 0, xr = ni > 1 ? inp[1][i] : xl, mid = 0.5 * (xl + xr);
+                        const pm = this.ph[0] * TAU, p1 = this.ph[1] * TAU, p2 = this.ph[2] * TAU;
+                        const w = this.wow * 2.5 * ms * 0.5 * (1 - (0.8 * Math.cos(p1) + 0.2 * Math.cos(p2)));
+                        const m = this.modu * 5 * ms * 0.5;
+                        const oL = w + m * (1 - Math.cos(pm)), oR = w + m * (1 - Math.cos(pm + 0.5 * Math.PI));
+                        this.ph[0] = (this.ph[0] + this.modRate / sampleRate) % 1;
+                        this.ph[1] = (this.ph[1] + 0.55 / sampleRate) % 1;
+                        this.ph[2] = (this.ph[2] + 5.5 / sampleRate) % 1;
+                        const dl = this.read(bl, this.D + oL), dr = this.read(br, this.DR + oR);
+                        const g = this.wet * this.duck.gain(mid);
+                        this.lp[0] = dl + (this.lp[0] - dl) * this.k;
+                        this.lp[1] = dr + (this.lp[1] - dr) * this.k;
+                        const f = this.pp ? [this.lp[1] * this.fb, this.lp[0] * this.fb] : [this.lp[0] * this.fb, this.lp[1] * this.fb];
+                        for (let ch = 0; ch < 2; ch++) {
+                            if (this.hpLoop && this.kh) { this.zl[ch] = f[ch] + (this.zl[ch] - f[ch]) * this.kh; f[ch] -= this.zl[ch]; }
+                            if (this.sat > 0) { const dv = 1 + 4 * this.sat; f[ch] = Math.tanh(dv * f[ch]) / dv; }
+                        }
+                        const fl = this.pp ? this.hp(0, mid) : this.hp(0, xl), fr = this.pp ? 0 : this.hp(1, xr);
+                        bl[this.i] = fl + f[0]; br[this.i] = fr + f[1];
+                        let el = this.eqw(0, dl), er = this.eqw(1, dr);
+                        if (Math.abs(this.width - 1) > 1e-9) { const c = 0.5 * (el + er), sd = 0.5 * (el - er) * this.width; el = c + sd; er = c - sd; }
+                        out[0][i] = xl * this.dry + el * g;
+                        out[1][i] = xr * this.dry + er * g;
+                        if (++this.i >= this.cap) this.i = 0;
+                    }
+                    return true;
+                }
                 if (this.pp && nc >= 2) {
                     // Même calcul que le moteur Rust (engine/src/fx.rs, Delay::tick)
                     for (let i = 0; i < n; i++) {
@@ -2517,7 +2581,13 @@ window.PulseAudio = (function() {
                 return true;
             }
         }
-        registerProcessor('pulse-delay', pulseAuto(PulseDelay, (s, v) => { if (v.feedback !== undefined) s.fb = Math.max(0, Math.min(0.9, v.feedback)); if (v.wet !== undefined) s.wet = Math.max(0, Math.min(1, v.wet)); if (v.dry !== undefined) s.dry = v.dry; }));
+        registerProcessor('pulse-delay', pulseAuto(PulseDelay, (s, v) => { if (v.feedback !== undefined) s.fb = Math.max(0, Math.min(0.9, v.feedback)); if (v.wet !== undefined) s.wet = Math.max(0, Math.min(1, v.wet)); if (v.dry !== undefined) s.dry = v.dry;
+            // écho avancé : pris tout de suite (bouton bougé ou automation), comme set_live de fx.rs
+            if (v.width !== undefined) s.width = Math.max(0, Math.min(200, v.width)) / 100;
+            if (v.sat !== undefined) s.sat = Math.max(0, Math.min(100, v.sat)) / 100;
+            if (v.wow !== undefined) s.wow = Math.max(0, Math.min(100, v.wow)) / 100;
+            if (v.mod !== undefined) s.modu = Math.max(0, Math.min(100, v.mod)) / 100;
+            if (v.modRate !== undefined) s.modRate = Math.max(0.05, Math.min(10, v.modRate)); }));
 
         // Largeur stéréo : on écarte ou on resserre ce qui diffère entre la gauche et la droite. 1 = inchangé.
         class PulseWidth extends AudioWorkletProcessor {
@@ -2744,7 +2814,11 @@ window.PulseAudio = (function() {
         } else {
             const keys = Object.keys(changed || {});
             if (keys.includes('_mix') && !(nativeBackend.caps || []).includes('mix')) return false;   // appli d'avant le 14/11 : pas de Mix
-            const extra = oldEngine ? {} : { ...(NATIVE_LIVE_EXTRA[kind] || {}), ...((nativeBackend.caps || []).includes('switches') ? NATIVE_LIVE_SWITCH[kind] : {}), ...((nativeBackend.caps || []).includes('mix') ? { _mix: 100 } : {}) };
+            // écho avancé : seulement l'appli qui le connaît (« delay-adv », 17/11) ; avant, on reconstruit (et l'ancienne appli l'ignore)
+            const advOk = (nativeBackend.caps || []).includes('delay-adv');
+            if (kind === 'delay' && !advOk && keys.some(k => DELAY_ADV_KEYS.includes(k) || k === 'beatsR' || k === 'hpLoop')) return false;
+            const extra = oldEngine ? {} : { ...(NATIVE_LIVE_EXTRA[kind] || {}), ...((nativeBackend.caps || []).includes('switches') ? NATIVE_LIVE_SWITCH[kind] : {}), ...((nativeBackend.caps || []).includes('mix') ? { _mix: 100 } : {}),
+                ...(kind === 'delay' && advOk ? { beatsR: 0, hpLoop: 0, width: 100, sat: 0, wow: 0, mod: 0, modRate: 0.8 } : {}) };
             if (!keys.length || !keys.every(k => (autoRanges['fx:' + kind + ':' + k] || k in extra) && Number.isFinite(changed[k]))) return false;
             if (kind === 'sat' && 'drive' in changed && !(changed.drive > 0)) return false;
             if (kind === 'deess' && (('thr' in changed && prev.thr === undefined) || ('amount' in changed && !(changed.amount > 0)))) return false;
@@ -2776,6 +2850,13 @@ window.PulseAudio = (function() {
         nativeBackend.chainSwap(withMetro(nativeProject), owners).catch(() => nativeRefreshSoon());
         return true;
     }
+    // Écho avancé (17/11) : réglages qui le font passer en stéréo avec sa mémoire allongée (mêmes conditions que Delay::new de fx.rs)
+    const DELAY_ADV_KEYS = ['width', 'sat', 'wow', 'mod', 'modRate'];
+    function delayIsAdv(dp, auto) {
+        if (dp.beatsR > 0 && !(dp.ms > 0) && Math.abs(dp.beatsR - (dp.beats > 0 ? dp.beats : 0.5)) > 1e-9) return true;
+        if (Math.abs((dp.width ?? 100) - 100) > 1e-9 || dp.sat > 0 || dp.wow > 0 || dp.mod > 0 || (dp.hpLoop || 0) >= 0.5) return true;
+        return !!auto && DELAY_ADV_KEYS.some(k => auto[k]);
+    }
     function liveFxSet(ownerKey, id, changed, prev = {}) {
         if (nativeOn) return nativeFxLive(ownerKey, id, changed, prev);
         const kind = String(id).split('#')[0];
@@ -2805,6 +2886,8 @@ window.PulseAudio = (function() {
         // réglages qui font apparaître / disparaître le plugin ou changent sa version : on reconstruit
         if (kind === 'sat' && 'drive' in changed && !(changed.drive > 0)) return false;
         if (kind === 'deess' && (('thr' in changed && prev.thr === undefined) || ('amount' in changed && !(changed.amount > 0)))) return false;
+        // écho encore en mode simple (mono possible, mémoire courte) : le 1er réglage avancé le reconstruit, la suite part en direct
+        if (kind === 'delay' && !n._adv && keys.some(k => DELAY_ADV_KEYS.includes(k))) return false;
         const conv = liveFxConv.get(n) || {}, msg = {};
         for (const k of keys) msg[k] = conv[k] ? conv[k](changed[k]) : changed[k];
         try { n.port.postMessage({ live: msg }); return true; } catch (e) { return false; }
@@ -4823,14 +4906,18 @@ window.PulseAudio = (function() {
                 // tempo qui change : l'écho calé sur le rythme part au tempo de l'endroit où la lecture commence, puis suit
                 const tp = !(dp.ms > 0) && params.tempo && params.tempo.length > 1 ? params.tempo : null;
                 const bpm0 = tp ? tp.reduce((b, x) => x.sec <= autoAt.from + 1e-9 ? x.bpm : b, tp[0].bpm) : bpm;
-                connect(liveReg('delay', new AudioWorkletNode(actx, 'pulse-delay', {
+                const adv = delayIsAdv(dp, Object.fromEntries(DELAY_ADV_KEYS.map(k => [k, !!curveOf('delay', k)])));
+                const dn = new AudioWorkletNode(actx, 'pulse-delay', {
                     numberOfInputs: 1, numberOfOutputs: 1, channelCountMode: 'max',
-                    ...(dp.pp ? { outputChannelCount: [2] } : {}),
+                    ...(dp.pp || adv ? { outputChannelCount: [2] } : {}),
                     processorOptions: { ...(tp ? { tempo: tp, beats: dp.beats > 0 ? dp.beats : 0.5, tT0: autoAt.t0, tFrom: autoAt.from } : {}),
                         time: delaySeconds(dp, bpm0), feedback: (dp.feedback ?? 35) / 100, wet: (dp.wet ?? 25) / 100, dry: (dp.dry ?? 100) / 100, pp: !!dp.pp,
                         hpf: dp.hpf || 0, lpf: dp.lpf || 0, duck: dp.duck || 0, eq: dp.eq,
-                        ...autoOpts('delay', { feedback: (x) => x / 100, wet: (x) => x / 100, dry: (x) => x / 100 }) }
-                }), { feedback: (x) => x / 100, wet: (x) => x / 100, dry: (x) => x / 100 }));
+                        beatsR: dp.beatsR || 0, width: dp.width ?? 100, sat: dp.sat || 0, wow: dp.wow || 0, mod: dp.mod || 0, modRate: dp.modRate || 0.8, hpLoop: dp.hpLoop || 0, forceAdv: adv,
+                        ...autoOpts('delay', { feedback: (x) => x / 100, wet: (x) => x / 100, dry: (x) => x / 100, width: null, sat: null, wow: null, mod: null, modRate: null }) }
+                });
+                dn._adv = adv;
+                connect(liveReg('delay', dn, { feedback: (x) => x / 100, wet: (x) => x / 100, dry: (x) => x / 100 }));
             }
         };
 

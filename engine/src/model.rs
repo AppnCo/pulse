@@ -596,6 +596,23 @@ pub struct DelayParams {
     pub duck: Option<f64>,
     /// EQ de l'écho : il colore les répétitions, pas la voix d'origine
     pub eq: Option<Vec<EqBand>>,
+    /// Écho avancé (17/11) — largeur stéréo des répétitions (0-200 %, 100 = telles quelles)
+    pub width: Option<f64>,
+    /// Saturation dans la boucle (0-100 %) : chaque répétition s'use un peu plus, comme sur bande
+    pub sat: Option<f64>,
+    /// Pleurage façon bande (0-100 %) : la hauteur des répétitions ondule lentement
+    pub wow: Option<f64>,
+    /// Modulation (0-100 %) et sa vitesse (Hz) : chorus sur les répétitions, gauche et droite décalées
+    #[serde(rename = "mod")]
+    pub modu: Option<f64>,
+    #[serde(rename = "modRate")]
+    pub mod_rate: Option<f64>,
+    /// Temps de la voie droite en nombre de temps (0 = comme la gauche)
+    #[serde(rename = "beatsR")]
+    pub beats_r: Option<f64>,
+    /// 1 = le coupe-bas agit sur chaque répétition (dans la boucle), pas seulement sur ce qui entre
+    #[serde(rename = "hpLoop")]
+    pub hp_loop: Option<f64>,
 }
 
 /// `wet` en pourcentage (0-100), `size` de 1.2 (petite pièce) à 3.2 (grande salle).

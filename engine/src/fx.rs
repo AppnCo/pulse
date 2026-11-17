@@ -1104,6 +1104,27 @@ pub struct Delay {
     /// Écho calé sur le rythme : nombre de temps (None = temps en millisecondes, ne suit pas le tempo)
     beats: Option<f64>,
     sr: f64,
+    /// Écho avancé : voie droite à son propre temps, modulation, pleurage, saturation, largeur, coupe-bas dans la boucle.
+    /// Tant qu'aucun de ces réglages n'est touché, l'écho garde exactement l'ancien calcul (`adv` = faux).
+    adv: bool,
+    /// retard de chaque voie (échantillons) ; en mode avancé la mémoire est plus longue (marge de modulation)
+    dl: [usize; 2],
+    beats_r: f64,
+    width: f64,
+    sat: f64,
+    wow: f64,
+    modu: f64,
+    mod_rate: f64,
+    hp_loop: bool,
+    zl: [f64; 2],
+    /// phases : modulation, pleurage lent, scintillement
+    ph: [f64; 3],
+}
+
+/// Marge de la mémoire de l'écho avancé : 5 ms de modulation + 2,5 ms de pleurage, et de quoi interpoler
+fn delay_margin(sr: f64) -> usize { (0.0076 * sr).ceil() as usize + 4 }
+fn delay_len(beats: f64, bpm: f64, sr: f64) -> usize {
+    ((60.0 / if bpm > 0.0 { bpm } else { 90.0 } * beats * sr).round() as usize).clamp(1, (4.0 * sr) as usize)
 }
 
 impl Delay {
@@ -1111,9 +1132,12 @@ impl Delay {
     /// (même recopie que `retune` ; même calcul que `setBpm` du worklet `pulse-delay`)
     pub fn set_bpm(&mut self, bpm: f64) {
         let Some(beats) = self.beats else { return };
-        let time = 60.0 / if bpm > 0.0 { bpm } else { 90.0 } * beats;
-        let new = ((time * self.sr).round() as usize).clamp(1, (4.0 * self.sr) as usize);
+        let dl = delay_len(beats, bpm, self.sr);
+        let dr = if self.beats_r > 0.0 { delay_len(self.beats_r, bpm, self.sr) } else { dl };
+        let new = if self.adv { dl.max(dr) + delay_margin(self.sr) } else { dl };
         let old = self.buf[0].len();
+        if self.dl == [dl, dr] && new == old { return; }
+        self.dl = [dl, dr];
         if new == old { return; }
         for ch in 0..2 {
             let mut nb = vec![0.0; new];
@@ -1138,6 +1162,8 @@ impl Delay {
         }
         n.lp = self.lp;
         n.zh = self.zh;
+        n.zl = self.zl;
+        n.ph = self.ph;
         n.duck.env = self.duck.env;   // le ducking ne repart pas de zéro à chaque réglage
         let (wet, dry) = (n.wet, n.dry);
         n.wet = self.wet;
@@ -1156,13 +1182,22 @@ impl Delay {
             None => 60.0 / if bpm > 0.0 { bpm } else { 90.0 } * p.beats.filter(|b| *b > 0.0).unwrap_or(0.5),
         };
         let d = ((time * sr).round() as usize).clamp(1, (4.0 * sr) as usize);
+        let beats_r = if p.ms.filter(|m| *m > 0.0).is_some() { 0.0 } else { p.beats_r.filter(|b| *b > 0.0).unwrap_or(0.0) };
+        let dr = if beats_r > 0.0 { delay_len(beats_r, bpm, sr) } else { d };
+        let width = p.width.unwrap_or(100.0).clamp(0.0, 200.0) / 100.0;
+        let sat = p.sat.unwrap_or(0.0).clamp(0.0, 100.0) / 100.0;
+        let wow = p.wow.unwrap_or(0.0).clamp(0.0, 100.0) / 100.0;
+        let modu = p.modu.unwrap_or(0.0).clamp(0.0, 100.0) / 100.0;
+        let hp_loop = p.hp_loop.unwrap_or(0.0) >= 0.5;
+        let adv = dr != d || (width - 1.0).abs() > 1e-9 || sat > 0.0 || wow > 0.0 || modu > 0.0 || hp_loop;
+        let cap = if adv { d.max(dr) + delay_margin(sr) } else { d };
         let eq: Vec<Biquad> = p.eq.as_deref().unwrap_or(&[]).iter().filter(|b| b.on != Some(false)).flat_map(|b| eq_sections(b, sr)).collect();
         Self {
             glide: Glide::new(sr),
             duck: Ducker::new(p.duck, sr),
             kh: p.hpf.filter(|h| *h > 20.0).map_or(0.0, |h| (-2.0 * PI * h / sr).exp()),
             zh: [0.0; 2],
-            buf: [vec![0.0; d], vec![0.0; d]],
+            buf: [vec![0.0; cap], vec![0.0; cap]],
             lp: [0.0; 2],
             i: 0,
             fb: (p.feedback.unwrap_or(35.0) / 100.0).clamp(0.0, 0.9),
@@ -1173,6 +1208,9 @@ impl Delay {
             eq: [eq.clone(), eq],
             beats: if p.ms.filter(|m| *m > 0.0).is_some() { None } else { Some(p.beats.filter(|b| *b > 0.0).unwrap_or(0.5)) },
             sr,
+            adv, dl: [d, dr], beats_r, width, sat, wow, modu,
+            mod_rate: p.mod_rate.filter(|r| *r > 0.0).unwrap_or(0.8).clamp(0.05, 10.0),
+            hp_loop, zl: [0.0; 2], ph: [0.0; 3],
         }
     }
     #[inline]
@@ -1189,6 +1227,7 @@ impl Delay {
     /// Renvoie le nombre de canaux en sortie (le ping-pong rend toujours du stéréo).
     pub fn tick(&mut self, x: &mut [f64; 2], nc: usize) -> usize {
         self.glide.step(&mut self.wet, &mut self.dry);
+        if self.adv { return self.tick_adv(x, nc); }
         if self.pp {
             // Même calcul que le worklet `pulse-delay` : la voix part à gauche, rebondit à droite, et ainsi de suite
             let (inl, inr) = (x[0], if nc > 1 { x[1] } else { x[0] });
@@ -1215,6 +1254,65 @@ impl Delay {
         }
         self.i = (self.i + 1) % self.buf[0].len();
         nc
+    }
+    /// Passe en mode avancé sans rien perdre (réglage avancé touché en direct ou automatisé) : mémoire allongée de la marge
+    pub fn make_adv(&mut self) {
+        if self.adv { return; }
+        let old = self.buf[0].len();
+        let new = self.dl[0].max(self.dl[1]) + delay_margin(self.sr);
+        for ch in 0..2 {
+            let mut nb = vec![0.0; new];
+            for k in 0..old.min(new) { nb[(new - 1 - k) % new] = self.buf[ch][(self.i + old - 1 - k) % old]; }
+            self.buf[ch] = nb;
+        }
+        self.i = 0;
+        self.adv = true;
+    }
+    /// Lecture d'une voie `d` échantillons en arrière (fractionnaire : modulation, pleurage)
+    #[inline]
+    fn read(&self, ch: usize, d: f64) -> f64 {
+        let cap = self.buf[ch].len();
+        let pos = self.i as f64 - d;
+        let f = pos.floor();
+        let fr = pos - f;
+        let a = (f as i64).rem_euclid(cap as i64) as usize;
+        let b = if a + 1 == cap { 0 } else { a + 1 };
+        let v = self.buf[ch][a];
+        if fr == 0.0 { v } else { v + (self.buf[ch][b] - v) * fr }
+    }
+    /// Écho avancé : même calcul dans le worklet `pulse-delay` (audio.js). Toujours en stéréo.
+    fn tick_adv(&mut self, x: &mut [f64; 2], nc: usize) -> usize {
+        let (inl, inr) = (x[0], if nc > 1 { x[1] } else { x[0] });
+        let mid = 0.5 * (inl + inr);
+        let ms = self.sr / 1000.0;
+        // modulation : gauche et droite en quadrature (5 ms au plus) ; pleurage : lent + scintillement, les deux voies ensemble (2,5 ms au plus)
+        let (pm, p1, p2) = (self.ph[0] * 2.0 * PI, self.ph[1] * 2.0 * PI, self.ph[2] * 2.0 * PI);
+        let w = self.wow * 2.5 * ms * 0.5 * (1.0 - (0.8 * p1.cos() + 0.2 * p2.cos()));
+        let m = self.modu * 5.0 * ms * 0.5;
+        let off = [w + m * (1.0 - pm.cos()), w + m * (1.0 - (pm + 0.5 * PI).cos())];
+        self.ph[0] = (self.ph[0] + self.mod_rate / self.sr).fract();
+        self.ph[1] = (self.ph[1] + 0.55 / self.sr).fract();
+        self.ph[2] = (self.ph[2] + 5.5 / self.sr).fract();
+        let dl = self.read(0, self.dl[0] as f64 + off[0]);
+        let dr = self.read(1, self.dl[1] as f64 + off[1]);
+        let g = self.wet * self.duck.gain(mid);
+        self.lp[0] = dl + (self.lp[0] - dl) * self.k;
+        self.lp[1] = dr + (self.lp[1] - dr) * self.k;
+        let mut f = if self.pp { [self.lp[1] * self.fb, self.lp[0] * self.fb] } else { [self.lp[0] * self.fb, self.lp[1] * self.fb] };
+        for ch in 0..2 {
+            if self.hp_loop && self.kh != 0.0 { self.zl[ch] = f[ch] + (self.zl[ch] - f[ch]) * self.kh; f[ch] -= self.zl[ch]; }
+            if self.sat > 0.0 { let dv = 1.0 + 4.0 * self.sat; f[ch] = (dv * f[ch]).tanh() / dv; }
+        }
+        let feed = if self.pp { [self.hp(0, mid), 0.0] } else { [self.hp(0, inl), self.hp(1, inr)] };
+        let i = self.i;
+        self.buf[0][i] = feed[0] + f[0];
+        self.buf[1][i] = feed[1] + f[1];
+        let (mut el, mut er) = (self.eqw(0, dl), self.eqw(1, dr));
+        if (self.width - 1.0).abs() > 1e-9 { let (c, s) = (0.5 * (el + er), 0.5 * (el - er) * self.width); el = c + s; er = c - s; }
+        x[0] = inl * self.dry + el * g;
+        x[1] = inr * self.dry + er * g;
+        self.i = (i + 1) % self.buf[0].len();
+        2
     }
 }
 
@@ -1668,6 +1766,9 @@ fn auto_range(fx: &str, key: &str) -> Option<(f64, f64, bool)> {
         ("comp", "range") => (0.0, 40.0, false),
         ("delay", "wet") | ("delay", "dry") | ("reverb", "wet") => (0.0, 100.0, false),
         ("delay", "feedback") => (0.0, 85.0, false),
+        ("delay", "width") => (0.0, 200.0, false),
+        ("delay", "sat") | ("delay", "wow") | ("delay", "mod") => (0.0, 100.0, false),
+        ("delay", "modRate") => (0.1, 5.0, true),
         ("util", "gain") => (-24.0, 24.0, false),
         ("width", "width") => (0.0, 200.0, false),
         ("filter", "hpf") => (20.0, 1000.0, true),
@@ -2167,6 +2268,10 @@ impl Chain {
         let has = |fx: &str| self.names.iter().any(|n| n == fx) && self.auto.iter().any(|a| a.fx == fx);
         if self.deess.is_none() && self.deess2.is_none() && has("deess") { self.deess = Some(Deesser::new(0.0, self.deess_freq, self.sr)); }
         if self.pitch.is_none() && has("pitch") { self.pitch = Some(Pitch::new(&PitchParams::default(), self.sr)); }
+        // Écho dont un réglage avancé est automatisé : en mode avancé (stéréo) dès le départ, pas en cours de route
+        if self.auto.iter().any(|a| a.fx == "delay" && matches!(a.key.as_str(), "width" | "sat" | "wow" | "mod" | "modRate")) {
+            if let Some(d) = &mut self.delay { d.make_adv(); }
+        }
         self
     }
     fn apply_auto(&mut self, t: f64) {
@@ -2200,8 +2305,15 @@ impl Chain {
                 let p = &mut self.delay_p;
                 match k { "wet" => { p.wet = Some(v); d.wet = (v / 100.0).clamp(0.0, 1.0) } "dry" => { p.dry = Some(v); d.dry = v / 100.0 } "feedback" => { p.feedback = Some(v); d.fb = (v / 100.0).clamp(0.0, 0.9) }
                     // filtres et ducking de l'écho : recalculés sans vider les répétitions en cours
-                    "duck" | "hpf" | "lpf" | "beats" => {
-                        match k { "duck" => p.duck = Some(v), "hpf" => p.hpf = Some(v), "beats" => p.beats = Some(v), _ => p.lpf = Some(v) }
+                    // écho avancé : réglages simples pris tout de suite (automation comprise) tant que l'écho est déjà en mode avancé
+                    "width" | "sat" | "wow" | "mod" | "modRate" => {
+                        d.make_adv();
+                        match k { "width" => { p.width = Some(v); d.width = v.clamp(0.0, 200.0) / 100.0 } "sat" => { p.sat = Some(v); d.sat = v.clamp(0.0, 100.0) / 100.0 }
+                            "wow" => { p.wow = Some(v); d.wow = v.clamp(0.0, 100.0) / 100.0 } "mod" => { p.modu = Some(v); d.modu = v.clamp(0.0, 100.0) / 100.0 }
+                            _ => { p.mod_rate = Some(v); d.mod_rate = v.clamp(0.05, 10.0) } }
+                    }
+                    "duck" | "hpf" | "lpf" | "beats" | "beatsR" | "hpLoop" => {
+                        match k { "duck" => p.duck = Some(v), "hpf" => p.hpf = Some(v), "beats" => p.beats = Some(v), "beatsR" => p.beats_r = Some(v), "hpLoop" => p.hp_loop = Some(v), _ => p.lpf = Some(v) }
                         let bpm = if self.tempo.len() >= 2 { self.tempo[self.tempo_i].1 } else { self.bpm0 };
                         d.retune(p, self.sr, bpm); d.settle();
                     }
@@ -2356,7 +2468,7 @@ impl Chain {
     }
     /// La sortie est en stéréo même pour une entrée mono (reverb, écho ping-pong…), comme les worklets à 2 canaux du navigateur
     pub fn outputs_stereo(&self) -> bool {
-        self.makes_stereo() || self.delay.as_ref().is_some_and(|d| d.pp)
+        self.makes_stereo() || self.delay.as_ref().is_some_and(|d| d.pp || d.adv)
     }
     /// `mono` : la piste n'a que des sons mono (seul `left` est lu). Si la chaîne élargit en stéréo
     /// (`makes_stereo`), `right` doit quand même avoir la taille de `left` : il reçoit le canal droit.

@@ -600,3 +600,15 @@ patterns.push(P('Afficher § à droite (ses effets)', 'Show $1 on the right (its
 exact['Scinder les régions choisies à la tête de lecture (comme le double-clic sur une région)'] = 'Split the selected regions at the playhead (like double-clicking a region)';
 patterns.push(P('« § » rangé dans « § » — double-clic sur le nom pour le renommer', '"$1" moved into "$2" — double-click the name to rename it'));
 patterns.push(P('§ groupes rangés dans « § » — double-clic sur le nom pour le renommer', '$1 groups moved into "$2" — double-click the name to rename it'));
+// Écho avancé (17/11)
+Object.assign(exact, {
+  'Temps droite': 'Right time', '= gauche': '= left', 'Usure': 'Wear', 'Pleurage': 'Wow', 'Vitesse mod.': 'Mod rate', 'Coupe-bas en boucle': 'Low cut in loop',
+  'La voie droite répète à son propre rythme (ex. 1/8 à gauche, 1/8 pointée à droite)': 'The right side repeats at its own rhythm (e.g. 1/8 left, dotted 1/8 right)',
+  'Écarte ou resserre les répétitions dans la stéréo (0 % = au centre)': 'Spreads or narrows the repeats in the stereo field (0% = centre)',
+  'Saturation dans la boucle : chaque répétition s\'use un peu plus, comme sur bande': 'Saturation in the loop: each repeat wears a little more, like tape',
+  'La hauteur des répétitions ondule lentement, comme une bande qui tourne mal': 'The pitch of the repeats wavers slowly, like a tape running unevenly',
+  'Chorus sur les répétitions, gauche et droite décalées : plus large et plus vivant': 'Chorus on the repeats, left and right offset: wider and more alive',
+  'Vitesse de la modulation': 'Modulation speed',
+  'Le coupe-bas agit sur chaque répétition : elles s\'amincissent au fil des rebonds': 'The low cut acts on every repeat: they get thinner with each bounce'
+});
+patterns.push(P('§ / § = § / § ms · § % de répétitions', '$1 / $2 = $3 / $4 ms · $5 % repeats'));
