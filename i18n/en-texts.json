@@ -1337,7 +1337,8 @@
   "Effacer ce qui est à gauche du curseur de base (sur la piste choisie)": "Erase what is left of the playhead (on the chosen track)",
   "Répéter la région choisie une fois de plus, juste après (autant de fois que tu appuies)": "Repeat the chosen region once more, right after (as many times as you press)",
   "Changer de bus… (même niveau, même courbe)": "Change bus… (same level, same curve)",
-  "Changer de bus (le niveau est gardé)": "Change bus (the level is kept)"
+  "Changer de bus (le niveau est gardé)": "Change bus (the level is kept)",
+  "Scinder les régions choisies à la tête de lecture (comme le double-clic sur une région)": "Split the selected regions at the playhead (like double-clicking a region)"
  },
  "patterns": [
   [
@@ -2295,6 +2296,14 @@
   [
    "Afficher (.+?) à droite \\(ses effets\\)",
    "Show $1 on the right (its effects)"
+  ],
+  [
+   "« (.+?) » rangé dans « (.+?) » — double-clic sur le nom pour le renommer",
+   "\"$1\" moved into \"$2\" — double-click the name to rename it"
+  ],
+  [
+   "(.+?) groupes rangés dans « (.+?) » — double-clic sur le nom pour le renommer",
+   "$1 groups moved into \"$2\" — double-click the name to rename it"
   ]
  ]
 }

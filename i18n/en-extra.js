@@ -597,3 +597,6 @@ patterns.push(
 exact['Changer de bus… (même niveau, même courbe)'] = 'Change bus… (same level, same curve)';
 exact['Changer de bus (le niveau est gardé)'] = 'Change bus (the level is kept)';
 patterns.push(P('Afficher § à droite (ses effets)', 'Show $1 on the right (its effects)'));
+exact['Scinder les régions choisies à la tête de lecture (comme le double-clic sur une région)'] = 'Split the selected regions at the playhead (like double-clicking a region)';
+patterns.push(P('« § » rangé dans « § » — double-clic sur le nom pour le renommer', '"$1" moved into "$2" — double-click the name to rename it'));
+patterns.push(P('§ groupes rangés dans « § » — double-clic sur le nom pour le renommer', '$1 groups moved into "$2" — double-click the name to rename it'));

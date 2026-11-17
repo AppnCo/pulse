@@ -58,12 +58,12 @@ export default async ({ ev, nav, send, sleep }) => {
   await tool('right', 'toolmenu'); await mouse('mouseMoved', X(10), Y(0, 0.5)); await mouse('mousePressed', X(10), Y(0, 0.5), { button: 'right', buttons: 2 }); await mouse('mouseReleased', X(10), Y(0, 0.5), { button: 'right' }); await sleep(200);
   r = await ev(`String(!!document.querySelector('.tool-menu'))`); check('clic droit ouvre le menu des outils', r === 'true', r);
   await ev(`document.querySelectorAll('.tool-menu').forEach(m=>m.remove()); 1`);
-  // B : bascule Ciseaux / Pointeur, et le menu suit
+  // B (Séparer de Pro Tools) : scinde les régions choisies à la tête de lecture, l'outil ne change pas
   await tool('right', 'gain'); await tool('cmd', 'mute');
-  await ev(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'b',bubbles:true})); 1`); await sleep(100);
-  r = await ev(`mouseTool('left')+'/'+document.querySelector('.tool-pick[data-which="left"]').dataset.tool`); check('B = Ciseaux dans le menu', r === 'cut/cut', r);
-  await ev(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'b',bubbles:true})); 1`); await sleep(100);
-  r = await ev(`mouseTool('left')`); check('B à nouveau = Pointeur', r === 'pointer', r);
+  r = await ev(`(()=>{ const t=state.project.tracks[0]; const c=t.clips[0]; state.selectedClips=new Set(['0:0']); state.selectedClip={trackIdx:0,clipIdx:0}; state.playhead=c.start+c.duration/2; return t.clips.length })()`);
+  const n0 = +r;
+  await ev(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'b',bubbles:true})); 1`); await sleep(150);
+  r = await ev(`state.project.tracks[0].clips.length+'/'+mouseTool('left')`); check('B = région choisie scindée, outil inchangé', r === (n0 + 1) + '/pointer', r);
   // Y = menu des outils sous la souris
   await mouse('mouseMoved', X(8), Y(0, 0.5));
   await ev(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'y',bubbles:true})); 1`); await sleep(150);

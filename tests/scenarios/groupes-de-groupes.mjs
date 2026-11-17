@@ -27,7 +27,7 @@ export default async (c) => {
     const it = [...document.querySelectorAll('.track-ctx-menu .ctx-item')].find(x => x.textContent.startsWith('Ranger les 2')); if (it) it.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); return it ? it.textContent : [...document.querySelectorAll('.track-ctx-menu .ctx-item')].map(x => x.textContent).join('|')`);
   await sleep(400);
   check('mixeur : « Ranger les 2 groupes choisis… »', /^Ranger les 2/.test(lab || ''), String(lab));
-  check('mixeur : les 2 groupes dans un Mix Bus', await J(ev, `const m = state.project.buses.find(b => /^Mix Bus/.test(b.name)); return !!m && busById('va').output === m.id && busById('vb').output === m.id`));
+  check('mixeur : les 2 groupes dans un Mix Bus', await J(ev, `const m = state.project.buses.find(b => /^Bus [0-9]/.test(b.name)); return !!m && busById('va').output === m.id && busById('vb').output === m.id`));
   // 3. rond de pan + vumètre sur chaque tranche de groupe, même longueur de fader que les pistes
   const ui = await J(ev, `const s = document.querySelector('.mixer-strips .strip[data-kind="bus"]'), t = document.querySelector('.mixer-strips .strip[data-kind="track"]');
     const h = (x, q) => Math.round(x.querySelector(q).getBoundingClientRect().height);

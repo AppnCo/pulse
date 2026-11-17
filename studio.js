@@ -343,7 +343,7 @@ function bindTakePieces() {
             menu.children[0].addEventListener('click', () => { closeAllMenus(); promoteTake(ti, pi); });
             menu.children[1].addEventListener('click', () => { closeAllMenus(); deleteTakePiece(ti, pi); });
             document.body.appendChild(menu);
-            setTimeout(() => document.addEventListener('mousedown', closeAllMenus, { once: true }), 10);
+            setTimeout(() => closeMenusOnOutside(), 10);
         });
     });
     document.querySelectorAll('.takes-lanes').forEach(el => el.addEventListener('mousedown', (e) => e.stopPropagation()));
@@ -700,7 +700,7 @@ function bindGroupEvents() {
                 menu.appendChild(it);
             });
             document.body.appendChild(menu);
-            setTimeout(() => document.addEventListener('mousedown', closeAllMenus, { once: true }), 10);
+            setTimeout(() => closeMenusOnOutside(), 10);
         });
     });
 }
@@ -750,7 +750,7 @@ function bindFolderHeader(h, f) {
             menu.appendChild(it);
         });
         document.body.appendChild(menu);
-        setTimeout(() => document.addEventListener('mousedown', closeAllMenus, { once: true }), 10);
+        setTimeout(() => closeMenusOnOutside(), 10);
     });
 }
 
@@ -930,7 +930,8 @@ function wrapGroup(busId) {
     afterGroupChange(`« ${bus.name} » est maintenant dans un grand groupe — clic droit sur un autre groupe pour l'y ranger aussi`);
 }
 
-// Plusieurs groupes d'un coup dans un nouveau grand groupe = un bus de plus (Mix Bus 1, 2…), autant de niveaux qu'on veut
+// Plusieurs groupes d'un coup dans un nouveau grand groupe = un bus de plus, nommé par son numéro (« Bus 5 », le 1er libre, comme Logic),
+// renommable ; autant de niveaux qu'on veut
 function wrapGroups(ids, looseTracks = []) {
     let list = ids.map(busById).filter(b => b && !b.noOut);
     // un groupe déjà contenu dans un autre groupe choisi suit son grand groupe
@@ -939,10 +940,9 @@ function wrapGroups(ids, looseTracks = []) {
     if (list.some(a => list.some(b => a !== b && busFeeds(a, b.id)))) { flash('Impossible : un de ces groupes passe déjà par un autre'); return; }
     pushUndo();
     const outs = [...new Set(list.map(b => b.output || 'master'))];
-    const used = new Set((state.project.buses || []).map(b => b.name));
-    let n = 1; while (used.has('Mix Bus ' + n)) n++;
+    const n = freeBusNum();
     const id = 'grp_' + Date.now().toString(36);
-    state.project.buses.push({ id, name: 'Mix Bus ' + n, isGroup: true, output: outs.length === 1 ? outs[0] : 'master', color: '#7C3AED', volume: 100 });
+    state.project.buses.push({ id, name: 'Bus ' + n, busNum: n, isGroup: true, output: outs.length === 1 ? outs[0] : 'master', color: '#7C3AED', volume: 100 });
     // leurs pistes restent ensemble dans la liste, à la place de la première
     const tracks = state.project.tracks;
     const mine = new Set([...list.flatMap(b => groupTracksDeep(b).map(i => tracks[i])), ...looseTracks]);
@@ -957,7 +957,7 @@ function wrapGroups(ids, looseTracks = []) {
     list.forEach(b => { b.output = id; });
     looseTracks.forEach(t => { t.output = id; });
     state.mixBuses = new Set([id]); state.selectedBus = id; state._selBusTrack = state.selectedTrack;
-    afterGroupChange(list.length > 1 ? `${list.length} groupes rangés dans « Mix Bus ${n} » — double-clic sur le nom pour le renommer` : `« ${list[0].name} » rangé dans « Mix Bus ${n} »`);
+    afterGroupChange(list.length > 1 ? `${list.length} groupes rangés dans « Bus ${n} » — double-clic sur le nom pour le renommer` : `« ${list[0].name} » rangé dans « Bus ${n} » — double-clic sur le nom pour le renommer`);
 }
 function wrapGroup(busId) { wrapGroups([busId]); }
 
@@ -2353,7 +2353,7 @@ function openMarkerContextMenu(x, y, idx) {
         el.addEventListener('click', () => { closeAllMenus(); item.action(); });
     });
     document.body.appendChild(menu);
-    setTimeout(() => document.addEventListener('mousedown', closeAllMenus, { once: true }), 10);
+    setTimeout(() => closeMenusOnOutside(), 10);
 }
 
 // --- Rendu : mixer strips (tracks + buses) ---
@@ -2902,7 +2902,7 @@ function bindSlotLists(strip, kind, x, idx) {
                 flash('Envoi vers « ' + (busById(id) ? busById(id).name : 'groupe') + ' » retiré');
             });
             document.body.appendChild(menu);
-            setTimeout(() => document.addEventListener('mousedown', closeAllMenus, { once: true }), 10);
+            setTimeout(() => closeMenusOnOutside(), 10);
         });
     });
     // Emplacements vides façon Logic : un clic dans le vide d'une liste ajoute un effet / un envoi
@@ -2985,7 +2985,7 @@ function openSendTargetMenu(anchor, kind, x) {
     // (offsetHeight : la vraie hauteur, sans l'animation d'ouverture qui rétrécit le menu un instant)
     const fitMenu = () => { const h = menu.offsetHeight, t = parseFloat(menu.style.top) || 0; if (t + h > window.innerHeight - 8) menu.style.top = Math.max(8, window.innerHeight - 8 - h) + 'px'; };
     fitMenu(); requestAnimationFrame(fitMenu);
-    setTimeout(() => document.addEventListener('mousedown', closeAllMenus, { once: true }), 10);
+    setTimeout(() => closeMenusOnOutside(), 10);
 }
 
 // Nombre de bus proposés dans le menu des envois (Logic : jusqu'à 256), par paquets de 32
@@ -4926,7 +4926,7 @@ async function openMicMenu(anchor) {
         });
     });
     document.body.appendChild(menu);
-    setTimeout(() => document.addEventListener('mousedown', closeAllMenus, { once: true }), 10);
+    setTimeout(() => closeMenusOnOutside(), 10);
 }
 
 // Message d'aide selon la raison pour laquelle le micro ne répond pas
@@ -5955,7 +5955,7 @@ const SHORTCUT_GROUPS = [
             ['D', 'Effacer ce qui est à gauche du curseur de base (sur la piste choisie)'],
             ['F', 'Effacer ce qui est à droite du curseur de base'],
             ['⌘X', 'Couper la région : la copier et l\'effacer d\'un coup (⌘V la recolle)'],
-            ['B', 'Ciseaux : scinder une région là où tu cliques'],
+            ['B', 'Scinder les régions choisies à la tête de lecture (comme le double-clic sur une région)'],
             ['Y', 'Menu des outils (Pointeur, Crayon, Gomme…) sous la souris'],
             ['Double-clic sur une région', 'La scinder : garde le 2e clic enfoncé, glisse pour choisir l\'endroit, relâche pour couper (Échap annule) — sur son nom : la renommer'],
             ['⌘C', 'Copier la région choisie (ou toutes les régions choisies)'],
@@ -12793,7 +12793,7 @@ function bindMixerEvents() {
                 sw.addEventListener('mousedown', (ev) => { ev.stopPropagation(); closeAllMenus(); pushUndo(); b.color = c; renderMixer(); bindMixerEvents(); rerenderTracks(); saveProject(); }); row.appendChild(sw); });
             menu.appendChild(row);
             document.body.appendChild(menu);
-            setTimeout(() => document.addEventListener('mousedown', closeAllMenus, { once: true }), 10);
+            setTimeout(() => closeMenusOnOutside(), 10);
         });
     });
     // M / S sur chaque tranche : sur toutes les tranches choisies si on clique l'une d'elles (comme Logic)
@@ -12867,7 +12867,7 @@ function bindMixerEvents() {
         menu.innerHTML = '<div class="ctx-item" data-type="bus">Nouveau bus</div>';
         menu.querySelectorAll('.ctx-item').forEach(it => it.addEventListener('mousedown', (ev) => { ev.stopPropagation(); closeAllMenus(); if (it.dataset.type === 'bus') createBus({ withTracks: [] }); else addSend(it.dataset.type); }));
         document.body.appendChild(menu);
-        setTimeout(() => document.addEventListener('mousedown', closeAllMenus, { once: true }), 10);
+        setTimeout(() => closeMenusOnOutside(), 10);
     });
 
     document.querySelectorAll('.mixer-strips .strip').forEach(strip => {
@@ -13317,6 +13317,12 @@ function openStackMenu() {
     const close = (ev) => { if (!menu.contains(ev.target)) { menu.remove(); document.removeEventListener('mousedown', close); } };
     setTimeout(() => document.addEventListener('mousedown', close), 50);
 }
+// Ferme les menus au prochain appui de souris EN DEHORS d'eux : un appui sur un de leurs choix ne doit pas les fermer
+// avant le clic (sinon le choix ne fait rien — ex. « Ranger les groupes choisis… » sur l'en-tête d'un groupe)
+function closeMenusOnOutside() {
+    const off = (e) => { if (e.target && e.target.closest && e.target.closest('.track-ctx-menu')) return; document.removeEventListener('mousedown', off, true); closeAllMenus(); };
+    document.addEventListener('mousedown', off, true);
+}
 function closeAllMenus() {
     document.querySelectorAll('.track-ctx-menu').forEach(m => m.remove());
 }
@@ -13670,7 +13676,7 @@ function openClipFxMenu(x, y, trackIdx, clipIdx, anchor) {
     });
     if (clipHasFx(clip)) item('Retirer les effets de la région', () => removeClipFx(clip, null));
     document.body.appendChild(menu);
-    setTimeout(() => document.addEventListener('mousedown', closeAllMenus, { once: true }), 10);
+    setTimeout(() => closeMenusOnOutside(), 10);
 }
 // Clic sur une pastille : régler l'effet ; × : le retirer ; logo d'une petite région : la liste
 document.addEventListener('mousedown', (e) => {
@@ -17343,8 +17349,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Mode automation
         if (k === 'a' && !mod) { e.preventDefault(); toggleAutomationMode(); return; }
 
-        // Outil ciseau
-        if (k === 'b') { e.preventDefault(); setActiveTool(state.tool === 'scissors' ? 'pointer' : 'scissors'); return; }
+        // B (comme « Séparer » de Pro Tools) : scinde les régions choisies à la tête de lecture — comme le double-clic sur une région
+        // (aucune région choisie : celles de la piste choisie). Les Ciseaux restent dans le menu des outils (clic droit, Y).
+        if (k === 'b') { e.preventDefault(); splitAtPlayhead(); return; }
 
         // Flèches : elles déplacent le curseur (façon Pro Tools, tout se fait sans souris).
         // ← / → = un temps (Shift = une mesure) · ↑ / ↓ = changer de piste · Tab = bord de clip suivant

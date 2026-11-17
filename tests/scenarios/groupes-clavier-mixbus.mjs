@@ -42,13 +42,13 @@ export default async (c) => {
     const it = [...document.querySelectorAll('.track-ctx-menu .ctx-item')].find(x => x.textContent.startsWith('Ranger les 4')); if (it) it.click(); return it ? it.textContent : null`);
   await sleep(400);
   check('clic droit : « Ranger les 4 groupes choisis… »', !!menuLabel, String(menuLabel));
-  const mb = await J(ev, `const b = state.project.buses.find(x => x.name === 'Mix Bus 1'); return b && { id: b.id, out: b.output, kids: state.project.buses.filter(x => x.output === b.id).map(x => x.id).sort().join() }`);
-  check('Mix Bus 1 créé, les 4 groupes dedans, sortie master', mb && mb.kids === 'gt,kb,pc,vx' && mb.out === 'master', JSON.stringify(mb));
+  const mb = await J(ev, `const b = state.project.buses.find(x => x.name === 'Bus 1'); return b && { id: b.id, out: b.output, kids: state.project.buses.filter(x => x.output === b.id).map(x => x.id).sort().join() }`);
+  check('Bus 1 créé, les 4 groupes dedans, sortie master', mb && mb.kids === 'gt,kb,pc,vx' && mb.out === 'master', JSON.stringify(mb));
   check('ordre des pistes intact', await J(ev, `return state.project.tracks.map(t => t.name).join()`) === 'Kick,Bass,Shaker,Clap,Guit,Piano,Lead,Back');
-  // un niveau de plus : Mix Bus 1 dans Mix Bus 2
+  // un niveau de plus : Bus 1 dans Bus 2
   await ev(`wrapGroups(['${mb.id}'])`); await sleep(300);
-  const mb2 = await J(ev, `const b = state.project.buses.find(x => x.name === 'Mix Bus 2'); return b && state.project.buses.find(x => x.name === 'Mix Bus 1').output === b.id && groupChain(busById('kb')).length`);
-  check('Mix Bus 1 dans Mix Bus 2 (3 niveaux)', mb2 === 3, String(mb2));
+  const mb2 = await J(ev, `const b = state.project.buses.find(x => x.name === 'Bus 2'); return b && state.project.buses.find(x => x.name === 'Bus 1').output === b.id && groupChain(busById('kb')).length`);
+  check('Bus 1 dans Bus 2 (3 niveaux)', mb2 === 3, String(mb2));
   await ev(`undoAction()`); await sleep(300); await ev(`undoAction()`); await sleep(300);
-  check('⌘Z ×2 : retour aux 4 groupes séparés', await J(ev, `return !state.project.buses.some(x => /^Mix Bus/.test(x.name)) && ['kb','pc','gt','vx'].every(i => busById(i).output === 'master')`));
+  check('⌘Z ×2 : retour aux 4 groupes séparés', await J(ev, `return !state.project.buses.some(x => /^Bus [0-9]/.test(x.name)) && ['kb','pc','gt','vx'].every(i => busById(i).output === 'master')`));
 };
