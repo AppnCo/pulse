@@ -674,3 +674,6 @@ patterns.push(P('§ · clic : ouvrir / fermer · glisser : changer l\'ordre · c
 exact['Scinder une région en deux (B ou ⌘T : à la tête de lecture) — ou double-clic sur la région, 2e clic maintenu puis relâché'] = 'Split a region in two (B or ⌘T: at the playhead) — or double-click the region, hold the 2nd click then release';
 // Instruments (17/11)
 Object.assign(exact, { 'Classique': 'Classic', 'Le kit de cette batterie': 'The kit for this drum region' });
+Object.assign(exact, { 'Piano à queue': 'Grand piano', 'Crédits': 'Credits',
+  'Le piano à queue n\'a pas pu se charger (connexion ?) : piano de synthèse en attendant': 'The grand piano could not load (connection?): synth piano for now' });
+patterns.push(P('Piano à queue : § d\'Alexander Holm, licence Creative Commons BY 3.0', 'Grand piano: $1 by Alexander Holm, Creative Commons BY 3.0 licence'));

@@ -5,6 +5,7 @@
 
 (function(root) {
     const INSTRUMENTS = {
+        grand:  { label: 'Piano à queue', kind: 'keys', bank: 'grand' },
         piano:  { label: 'Piano',     kind: 'keys' },
         keys:   { label: 'Clavier',   kind: 'keys' },
         bass808:{ label: '808',       kind: 'keys' },
@@ -22,6 +23,35 @@
         { p: 41, name: 'Tom bas' },{ p: 45, name: 'Tom' },      { p: 49, name: 'Crash' }
     ];
     const MAX_NOTES = 4000;
+    // Banques d'échantillons (piano à queue…) : chargées par la page (studio.js, ensureBank) puis données ici.
+    // banque = { sr, zones: [{ p: note MIDI, layers: [{ v: vélocité 1-127, ch: [L, R] }] }] }. Pas encore chargée : son de synthèse de secours.
+    const BANKS = {};
+    function setBank(name, bank) { BANKS[name] = bank; }
+    function hasBank(name) { return !!BANKS[name]; }
+    function sampleVoice(L, R, bank, sr, i0, dur, p, vel) {
+        let z = bank.zones[0];
+        for (const q of bank.zones) if (Math.abs(q.p - p) < Math.abs(z.p - p)) z = q;
+        // deux couches de frappe voisines, mélangées selon la vélocité (pas de saut de timbre d'une vélocité à l'autre)
+        const ls = z.layers;
+        let a = ls[0], b = ls[0], w = 0;
+        if (vel <= ls[0].v) { a = b = ls[0]; } else if (vel >= ls[ls.length - 1].v) { a = b = ls[ls.length - 1]; }
+        else for (let j = 0; j + 1 < ls.length; j++) if (vel >= ls[j].v && vel <= ls[j + 1].v) { a = ls[j]; b = ls[j + 1]; w = (vel - a.v) / (b.v - a.v); break; }
+        const ratio = Math.pow(2, (p - z.p) / 12) * bank.sr / sr, on = Math.round(dur * sr), rr = Math.exp(-1 / (0.12 * sr));
+        const len = Math.min(a.ch[0].length, b.ch[0].length), g = 0.9 * (0.7 + 0.3 * vel / 127);
+        let relE = 1;
+        for (let k = 0; i0 + k < L.length; k++) {
+            const x = k * ratio, xi = x | 0;
+            if (xi + 1 >= len || relE < 1e-4) break;
+            const fr = x - xi;
+            if (k > on) relE *= rr;   // touche relâchée : l'étouffoir coupe la note
+            const e = relE * g;
+            for (let c = 0; c < 2; c++) {
+                const A = a.ch[c], B = b.ch[c];
+                const va = A[xi] + (A[xi + 1] - A[xi]) * fr, vb = B[xi] + (B[xi + 1] - B[xi]) * fr;
+                (c ? R : L)[i0 + k] += (va + (vb - va) * w) * e;
+            }
+        }
+    }
     // Kits de la batterie (région.kit) : Classique (le son d'origine), Trap (808), Boom bap (poussiéreux, années 90)
     const KITS = { classic: 'Classique', trap: 'Trap', boombap: 'Boom bap' };
 
@@ -43,6 +73,11 @@
     function keysVoice(L, R, inst, sr, i0, dur, p, vel) {
         const f = hz(p), on = Math.round(dur * sr), amp = Math.pow(vel / 127, 1.3);
         const att = Math.max(1, Math.round(0.003 * sr));
+        if (INSTRUMENTS[inst] && INSTRUMENTS[inst].bank) {
+            const bank = BANKS[INSTRUMENTS[inst].bank];
+            if (bank) return sampleVoice(L, R, bank, sr, i0, dur, p, vel);
+            inst = 'piano';   // banque pas encore chargée : piano de synthèse en attendant
+        }
         if (inst === 'piano') {
             const tau = Math.max(0.25, 2.6 - (p - 36) * 0.03) * sr, r = 0.18;
             const n = Math.min(L.length - i0, on + Math.round(r * sr * 6));
@@ -337,5 +372,5 @@
         return out;
     }
 
-    root.PulseSynth = { INSTRUMENTS, KITS, DRUM_LANES, render, preview, loopNotes, hz, MAX_NOTES };
+    root.PulseSynth = { INSTRUMENTS, KITS, DRUM_LANES, setBank, hasBank, render, preview, loopNotes, hz, MAX_NOTES };
 })(typeof window !== 'undefined' ? window : globalThis);

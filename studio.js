@@ -4739,6 +4739,8 @@ function openSettings() {
                 <span>Décalage manuel de la voix <em>(+ = la voix est avancée davantage)</em></span>
                 <span><input type="number" id="setLatency" class="set-num" step="1" min="-200" max="300" value="${Math.round(manual)}"> ms</span>
             </div>
+            <h4 class="set-title">Crédits</h4>
+            <div class="set-row set-credits"><span>Piano à queue : <em>Salamander Grand Piano</em> d'Alexander Holm, licence Creative Commons BY 3.0</span></div>
         </div>`;
     document.body.appendChild(modal);
     requestAnimationFrame(() => modal.classList.add('visible'));
@@ -7265,8 +7267,39 @@ const MIDI_INSTS = () => PulseSynth.INSTRUMENTS;
 // Instrument externe (VST3 / Audio Unit) d'une région : identifiant de l'instance, ou null
 const midiExtId = (midi) => (window.PulseExt && PulseExt.instOf) ? PulseExt.instOf(midi) : (midi && /^ext:/.test(midi.inst || '') ? midi.inst.slice(4) : null);
 const midiInstLabel = (inst) => /^ext:/.test(inst || '') ? ((window.PulseExt && PulseExt.nameOf(inst.slice(4))) || 'Instrument') : (MIDI_INSTS()[inst] || MIDI_INSTS().piano).label;
+// Banques d'échantillons des instruments (piano à queue : Salamander Grand Piano, A. Holm, CC BY 3.0) : 30 notes × 4 frappes,
+// chargées une fois (assets/sons/…, ~15 Mo) puis données au synthé. En attendant : son de synthèse, puis les régions sont recalculées.
+const SAMPLE_BANKS = {
+    grand: { dir: 'assets/sons/piano/', vels: [4, 8, 12, 16],
+        notes: ['A0', 'C1', 'Ds1', 'Fs1', 'A1', 'C2', 'Ds2', 'Fs2', 'A2', 'C3', 'Ds3', 'Fs3', 'A3', 'C4', 'Ds4', 'Fs4', 'A4', 'C5', 'Ds5', 'Fs5', 'A5', 'C6', 'Ds6', 'Fs6', 'A6', 'C7', 'Ds7', 'Fs7', 'A7', 'C8'] }
+};
+const _bankLoad = {};
+function bankOf(inst) { const d = window.PulseSynth && PulseSynth.INSTRUMENTS[inst]; return d && d.bank && SAMPLE_BANKS[d.bank] ? d.bank : null; }
+function ensureBank(name) {
+    if (!SAMPLE_BANKS[name] || PulseSynth.hasBank(name)) return Promise.resolve(true);
+    if (_bankLoad[name]) return _bankLoad[name];
+    const def = SAMPLE_BANKS[name], ctx = PulseAudio.getContext();
+    const midiOf = (n) => { const m = /^([A-G])(s?)(\d)$/.exec(n); return 12 * (+m[3] + 1) + { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 }[m[1]] + (m[2] ? 1 : 0); };
+    _bankLoad[name] = (async () => {
+        const zones = await Promise.all(def.notes.map(async (n) => ({ p: midiOf(n), layers: await Promise.all(def.vels.map(async (v) => {
+            const r = await fetch(def.dir + n + 'v' + v + '.m4a'); if (!r.ok) throw new Error('son introuvable : ' + n);
+            const ab = await ctx.decodeAudioData(await r.arrayBuffer());
+            return { v: Math.round(v / 16 * 127), ch: [ab.getChannelData(0), ab.getChannelData(ab.numberOfChannels > 1 ? 1 : 0)] };
+        })) })));
+        PulseSynth.setBank(name, { sr: ctx.sampleRate, zones });
+        return true;
+    })().catch((e) => { _bankLoad[name] = null; console.warn('banque', name, e); return false; });
+    return _bankLoad[name];
+}
+// Région rendue avec le son de secours (banque pas encore là) : on la recalcule dès que la banque arrive
+let _bankRebake = null;
+function bankLater(inst) {
+    const b = bankOf(inst); if (!b || _bankRebake) return;
+    _bankRebake = ensureBank(b).then((ok) => { _bankRebake = null; if (ok) return rebakeExtClips(inst); }).catch(() => { _bankRebake = null; });
+}
 function renderMidiBuffer(midi, bpm) {
     const ctx = PulseAudio.getContext();
+    if (bankOf(midi.inst) && !PulseSynth.hasBank(bankOf(midi.inst))) bankLater(midi.inst);
     if (midiExtId(midi)) {   // instrument externe : son calculé à part (bakeMidiClip) ; ici, un silence de la bonne longueur
         return ctx.createBuffer(2, Math.max(1, Math.ceil(Math.max(0.05, (midi.beats || 4) * 60 / bpm) * ctx.sampleRate)), ctx.sampleRate);
     }
@@ -7281,6 +7314,8 @@ async function bakeMidiClip(clip, midi, bpm) {
         try { buf = await PulseExt.renderNotes(midi, bpm); }
         catch (e) { console.warn('instrument externe', e); flash('L\'instrument externe n\'a pas pu jouer cette région : ' + ((e && e.message) || e)); }
     }
+    // instrument à échantillons : on attend la banque (premier chargement) plutôt que de poser le son de secours
+    if (!buf && bankOf(midi.inst) && !(await ensureBank(bankOf(midi.inst)))) flash('Le piano à queue n\'a pas pu se charger (connexion ?) : piano de synthèse en attendant');
     if (!buf) buf = renderMidiBuffer(midi, bpm);
     const newId = `mid_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     PulseAudio.registerBuffer(newId, buf);
@@ -7345,7 +7380,9 @@ function playMidiPreview(inst, p, v, kit) {
     try {
         const ctx = PulseAudio.getContext();
         if (ctx.state === 'suspended') ctx.resume();
-        const key = `${inst}|${kit || ''}|${p}|${v}|${ctx.sampleRate}`;
+        const bk = bankOf(inst);
+        if (bk && !PulseSynth.hasBank(bk)) ensureBank(bk);   // 1re note : le piano se charge, son de secours en attendant
+        const key = `${inst}|${kit || ''}|${p}|${v}|${ctx.sampleRate}|${bk && PulseSynth.hasBank(bk) ? 1 : 0}`;
         let buf = _prevCache.get(key);
         if (!buf) {
             const r = PulseSynth.preview(inst, p, v, ctx.sampleRate, kit);
@@ -7367,6 +7404,7 @@ function openMidiEditor(trackIdx, clipIdx, fresh) {
     if (!window.PulsePianoRoll) { flash('L\'éditeur de notes n\'est pas chargé — recharge la page (Cmd+Shift+R)'); return; }
     state.selectedClip = { trackIdx, clipIdx };
     _midiSession = { clip, trackIdx, undoPushed: false };
+    if (bankOf(clip.midi.inst)) ensureBank(bankOf(clip.midi.inst));   // piano à queue : chargé dès l'ouverture, pour écouter les notes
     PulsePianoRoll.open({
         midi: clip.midi, title: `${t.name} — ${clip.name || 'Région'}`, color: clip.color || t.color,
         key: state.project.key, flash, bpb: bpbAtSec(clip.start),
@@ -12651,7 +12689,7 @@ function _doAddTrack(type = 'audio') {
         clips: [],
         volume: 100,
         ...home,
-        ...(type === 'keys' ? { midiInst: 'piano' } : type === 'drums' ? { midiInst: 'drums' } : {})
+        ...(type === 'keys' ? { midiInst: 'grand' } : type === 'drums' ? { midiInst: 'drums' } : {})
     });
     state.selectedTrack = at;
     state.selectedTracks = new Set();
