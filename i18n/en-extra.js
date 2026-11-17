@@ -593,3 +593,7 @@ patterns.push(
   ['le projet prend le tempo du fichier \\(([\\d.]+) BPM, (\\d+) changements? de tempo, (\\d+) changements? de signature\\)', 'the project takes the file\'s tempo ($1 BPM, $2 tempo change(s), $3 time signature change(s))'],
   P('⌘Z pour revenir', '⌘Z to go back'),
   P('ses changements de tempo ne sont pas repris (le projet contient déjà des sons)', 'its tempo changes are not used (the project already has sounds)'));
+// 17/11 : clic droit d'un envoi vers un bus (15/11)
+exact['Changer de bus… (même niveau, même courbe)'] = 'Change bus… (same level, same curve)';
+exact['Changer de bus (le niveau est gardé)'] = 'Change bus (the level is kept)';
+patterns.push(P('Afficher § à droite (ses effets)', 'Show $1 on the right (its effects)'));

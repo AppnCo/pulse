@@ -2,7 +2,7 @@
 0.0 dB
 1 à 9
 2 microphones, clean vocal preset. For an interview or a dialogue.
-21 ms
+29 ms
 A step drum machine and a keyboard bass. To lay a foundation without playing.
 A+
 Afficher / cacher l'inspecteur
@@ -99,10 +99,12 @@ Souffle
 Start from scratch
 Stop · à l'arrêt : retour au début
 Studio
+Taille des formes d'onde de toutes les pistes (le son ne change pas) · glisser ou molette · ⌘ + clic = normal
 The base model: your beat on top, one track to record, then your vocals sorted by group (lead, backs, ambience). Add or remove whatever you want.
 The simple studio.
 Tracks
 Tranche E
+Verrouillé (bordure rouge) : ce bus ne se règle pas
 Vocal + Beat
 Zoom vertical : tout grandit / rétrécit (pistes et groupes)
 ajoute de l'air et de la présence sans durcir : se retient sur les « s »

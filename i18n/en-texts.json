@@ -1335,7 +1335,9 @@
   "Clic pour régler · clic maintenu et glisser pour changer l'ordre · clic droit pour copier ou supprimer": "Click to adjust · click, hold and drag to reorder · right-click to copy or remove",
   "Effacer ce qui est à droite du curseur de base": "Erase what is right of the playhead",
   "Effacer ce qui est à gauche du curseur de base (sur la piste choisie)": "Erase what is left of the playhead (on the chosen track)",
-  "Répéter la région choisie une fois de plus, juste après (autant de fois que tu appuies)": "Repeat the chosen region once more, right after (as many times as you press)"
+  "Répéter la région choisie une fois de plus, juste après (autant de fois que tu appuies)": "Repeat the chosen region once more, right after (as many times as you press)",
+  "Changer de bus… (même niveau, même courbe)": "Change bus… (same level, same curve)",
+  "Changer de bus (le niveau est gardé)": "Change bus (the level is kept)"
  },
  "patterns": [
   [
@@ -2289,6 +2291,10 @@
   [
    "ses changements de tempo ne sont pas repris \\(le projet contient déjà des sons\\)",
    "its tempo changes are not used (the project already has sounds)"
+  ],
+  [
+   "Afficher (.+?) à droite \\(ses effets\\)",
+   "Show $1 on the right (its effects)"
   ]
  ]
 }
