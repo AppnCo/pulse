@@ -7289,7 +7289,9 @@ async function bakeMidiClip(clip, midi, bpm) {
     clip.id = newId;
     clip.peaks = makePeaks(buf);
     const pid = (clip.midi && clip.midi.pid) || midi.pid;
-    clip.midi = { inst: midi.inst, beats: midi.beats, notes: midi.notes, bpm, ...(midi.swing ? { swing: midi.swing } : {}), ...(pid ? { pid } : {}) };
+    clip.midi = { inst: midi.inst, ...(midi.kit ? { kit: midi.kit } : {}), beats: midi.beats, notes: midi.notes, bpm, ...(midi.swing ? { swing: midi.swing } : {}), ...(pid ? { pid } : {}) };
+    // le kit choisi devient celui des prochaines régions de la piste
+    if (midi.kit) { const tt = state.project.tracks.find(x => x.clips.includes(clip)); if (tt) tt.midiKit = midi.kit; }
     return buf;
 }
 
@@ -7317,7 +7319,8 @@ async function createMidiClip(trackIdx, atSec, noUndo = false) {
     const inst = t.midiInst || (t.type === 'drums' ? 'drums' : 'piano');
     const n = t.clips.filter(c => c.midi).length + 1;
     const clip = { start, duration: bar, offset: 0, name: `${midiInstLabel(inst)} ${n}`, color: t.color };
-    await bakeMidiClip(clip, { inst, beats, notes: [] }, bpm);
+    // batterie : kit de la piste (le dernier choisi), Trap pour une nouvelle piste
+    await bakeMidiClip(clip, { inst, ...(inst === 'drums' ? { kit: t.midiKit || 'trap' } : {}), beats, notes: [] }, bpm);
     t.clips.push(clip);
     t.clips.sort((a, b) => a.start - b.start);
     state.selectedTrack = trackIdx;
@@ -7327,7 +7330,7 @@ async function createMidiClip(trackIdx, atSec, noUndo = false) {
 }
 
 const _prevCache = new Map();
-function playMidiPreview(inst, p, v) {
+function playMidiPreview(inst, p, v, kit) {
     if (/^ext:/.test(inst || '')) {   // instrument externe : la note est calculée à la demande (jamais gardée : le son de l'instrument peut avoir changé)
         if (!(window.PulseExt && PulseExt.available())) return;
         PulseExt.renderNotes({ inst, beats: 3, notes: [{ s: 0, d: 1, p, v }] }, 120).then(buf => {
@@ -7342,10 +7345,10 @@ function playMidiPreview(inst, p, v) {
     try {
         const ctx = PulseAudio.getContext();
         if (ctx.state === 'suspended') ctx.resume();
-        const key = `${inst}|${p}|${v}|${ctx.sampleRate}`;
+        const key = `${inst}|${kit || ''}|${p}|${v}|${ctx.sampleRate}`;
         let buf = _prevCache.get(key);
         if (!buf) {
-            const r = PulseSynth.preview(inst, p, v, ctx.sampleRate);
+            const r = PulseSynth.preview(inst, p, v, ctx.sampleRate, kit);
             buf = ctx.createBuffer(2, r.length, ctx.sampleRate);
             buf.getChannelData(0).set(r.channels[0]); buf.getChannelData(1).set(r.channels[1]);
             if (_prevCache.size > 300) _prevCache.clear();
@@ -13781,7 +13784,7 @@ async function joinMidiClips(t, cs) {
     notes.sort((a, b) => a.s - b.s || a.p - b.p);
     pushUndo();
     const clip = { start: t0, duration: t1 - t0, offset: 0, name: (cs[0].name || t.name) + ' (joint)', color: cs[0].color };
-    await bakeMidiClip(clip, { inst: cs[0].midi.inst, beats: (t1 - t0) / spb, notes }, bpm);
+    await bakeMidiClip(clip, { inst: cs[0].midi.inst, ...(cs[0].midi.kit ? { kit: cs[0].midi.kit } : {}), beats: (t1 - t0) / spb, notes }, bpm);
     t.clips = t.clips.filter(c => !cs.includes(c));
     t.clips.push(clip);
     t.clips.sort((a, b) => a.start - b.start);

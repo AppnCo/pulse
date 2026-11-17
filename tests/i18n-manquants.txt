@@ -40,7 +40,6 @@ Rap Studio
 Recent projects
 Reverb
 Salle 80
-Scinder une région en deux (B ou ⌘T : à la tête de lecture) — ou double-clic sur la région, 2e clic maintenu puis relâché
 Simple Beat
 Simple setup: 1 vocal + 1 instrumental. Perfect for a quick first track.
 Slapback

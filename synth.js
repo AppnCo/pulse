@@ -8,6 +8,8 @@
         piano:  { label: 'Piano',     kind: 'keys' },
         keys:   { label: 'Clavier',   kind: 'keys' },
         bass808:{ label: '808',       kind: 'keys' },
+        rhodes: { label: 'Rhodes',    kind: 'keys' },
+        pad:    { label: 'Pad',       kind: 'keys' },
         bass:   { label: 'Basse',     kind: 'keys' },
         lead:   { label: 'Lead',      kind: 'keys' },
         pluck:  { label: 'Pizzicato', kind: 'keys' },
@@ -20,6 +22,8 @@
         { p: 41, name: 'Tom bas' },{ p: 45, name: 'Tom' },      { p: 49, name: 'Crash' }
     ];
     const MAX_NOTES = 4000;
+    // Kits de la batterie (région.kit) : Classique (le son d'origine), Trap (808), Boom bap (poussiéreux, années 90)
+    const KITS = { classic: 'Classique', trap: 'Trap', boombap: 'Boom bap' };
 
     // Bruit reproductible : le même motif donne toujours exactement le même son
     function rng(seed) { let a = seed >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return (((t ^ (t >>> 14)) >>> 0) / 4294967296) * 2 - 1; }; }
@@ -82,6 +86,46 @@
                 const e = Math.min(1, k / (0.002 * sr)) * Math.exp(-t / 1.6) * rel(k, on, r, sr);
                 return Math.tanh(Math.sin(ph) * 1.9 * amp) * 0.55 * e;
             });
+        } else if (inst === 'rhodes') {
+            // piano électrique à lames (tine) : FM 1:1 dont l'éclat dépend de la frappe, « cloche » de la lame à l'attaque,
+            // léger grain de micro (saturation paire) et trémolo stéréo des amplis de scène
+            const r = 0.25, n = on + Math.round(r * sr * 6), w = TAU * f / sr;
+            const idx = 0.5 + 2.2 * Math.pow(vel / 127, 2), tau = Math.max(0.9, 3.2 - (p - 40) * 0.035) * sr;
+            const bell = 0.12 * Math.pow(vel / 127, 1.5), wb = TAU * Math.min(f * 14.1, sr / 2.3) / sr;
+            const pan = Math.max(-0.6, Math.min(0.6, (p - 60) / 50)), tr = TAU * 4.2 / sr;
+            const end = Math.min(L.length, i0 + n);
+            for (let i = i0; i < end; i++) {
+                const k = i - i0, e = Math.exp(-k / tau), mi = idx * Math.exp(-k / (0.25 * sr)) + 0.25;
+                let v = Math.sin(w * k + mi * Math.sin(w * k)) * 0.34 + bell * Math.sin(wb * k) * Math.exp(-k / (0.02 * sr));
+                v = v + 0.12 * v * v;                        // grain du micro
+                v *= e * amp * Math.min(1, k / att) * rel(k, on, r, sr);
+                const t = 0.18 * Math.sin(tr * (i0 + k)), pp = Math.max(-1, Math.min(1, pan + t));
+                L[i] += v * Math.cos((pp + 1) * Math.PI / 4) * 1.4142; R[i] += v * Math.sin((pp + 1) * Math.PI / 4) * 1.4142;
+            }
+        } else if (inst === 'pad') {
+            // nappe : 5 dents de scie désaccordées réparties en stéréo, filtre qui s'ouvre lentement, attaque et relâchement longs
+            const r = 1.2, a = 0.35 * sr, n = on + Math.round(r * sr * 5);
+            const det = [-0.012, -0.005, 0, 0.006, 0.013], pans = [-0.8, -0.4, 0, 0.4, 0.8];
+            const nh = Math.max(1, Math.min(12, Math.floor(sr / 2.4 / f)));
+            const ph = det.map((_, j) => (j * 0.2137 + p * 0.071) % 1), lp = [[0, 0], [0, 0]];
+            // une période de dent de scie adoucie en table (calculée une fois par note) : lue au lieu de nh sinus par échantillon
+            const TL = 2048, tab = new Float32Array(TL + 1);
+            for (let x = 0; x <= TL; x++) { let sv = 0; for (let h = 1; h <= nh; h++) sv += Math.sin(TAU * h * x / TL) / h; tab[x] = sv; }
+            const end = Math.min(L.length, i0 + n);
+            for (let i = i0; i < end; i++) {
+                const k = i - i0, env = Math.min(1, k / a) * rel(k, on, r, sr);
+                let l = 0, rr = 0;
+                for (let j = 0; j < 5; j++) {
+                    ph[j] = (ph[j] + f * (1 + det[j]) / sr) % 1;
+                    const xf = ph[j] * TL, xi = xf | 0, sv = tab[xi] + (tab[xi + 1] - tab[xi]) * (xf - xi);
+                    const g = 0.5 + 0.5 * pans[j];
+                    l += sv * (1 - g); rr += sv * g;
+                }
+                const cut = 0.02 + 0.06 * Math.min(1, k / (1.5 * sr));
+                lp[0][0] += (l - lp[0][0]) * cut; lp[0][1] += (lp[0][0] - lp[0][1]) * cut;
+                lp[1][0] += (rr - lp[1][0]) * cut; lp[1][1] += (lp[1][0] - lp[1][1]) * cut;
+                L[i] += lp[0][1] * 0.16 * amp * env; R[i] += lp[1][1] * 0.16 * amp * env;
+            }
         } else if (inst === 'bass') {
             const w = TAU * f / sr, r = 0.08, n = on + Math.round(r * sr * 6);
             let lp = 0;
@@ -113,9 +157,17 @@
         }
     }
 
-    function drumVoice(L, R, sr, i0, p, vel) {
+    // Cymbale « métal » des boîtes à rythmes : 6 carrés aux rapports de la 808, passe-haut
+    function metal(sr) {
+        const fr = [205.3, 304.4, 369.6, 522.7, 540, 800].map(x => x * 1.7), ph = fr.map(() => 0);
+        let a = 0, b = 0, pa = 0, pb = 0;
+        return () => { let s = 0; for (let j = 0; j < 6; j++) { ph[j] = (ph[j] + fr[j] / sr) % 1; s += ph[j] < 0.5 ? 1 : -1; }
+            s /= 6; a = 0.85 * (a + s - pa); pa = s; b = 0.85 * (b + a - pb); pb = a; return b; };
+    }
+    function drumVoice(L, R, sr, i0, p, vel, kit) {
         const amp = Math.pow(vel / 127, 1.2), nz = rng(p * 104729 + i0);
         const exp = (t, tau) => Math.exp(-t / tau);
+        if (kit === 'trap' || kit === 'boombap') return kitVoice(L, R, sr, i0, p, amp, nz, exp, kit === 'trap');
         if (p === 36 || p === 35) {                       // kick : sinus qui tombe + petit clic
             let ph = 0;
             put(L, R, i0, Math.round(0.6 * sr), 0, (k) => {
@@ -162,6 +214,87 @@
         }
     }
 
+    // Kits Trap et Boom bap (mêmes touches que le kit Classique)
+    function kitVoice(L, R, sr, i0, p, amp, nz, exp, trap) {
+        const sat = (x, d) => Math.tanh(x * d) / Math.tanh(d);
+        if (p === 36 || p === 35) {
+            // Trap : kick court et sec (le 808 fait le grave) · Boom bap : kick rond avec du corps et un « toc »
+            let ph = 0;
+            put(L, R, i0, Math.round((trap ? 0.35 : 0.5) * sr), 0, (k) => {
+                const t = k / sr; ph += TAU * (trap ? 52 + 180 * exp(t, 0.018) : 58 + 110 * exp(t, 0.03)) / sr;
+                const body = Math.sin(ph) * exp(t, trap ? 0.11 : 0.2), click = k < 60 ? nz() * (1 - k / 60) * (trap ? 0.5 : 0.3) : 0;
+                return sat(body + click, trap ? 2.2 : 1.6) * 0.9 * amp * Math.min(1, k / 6);
+            });
+        } else if (p === 38 || p === 40) {
+            // Trap : caisse claire serrée + couche de clap · Boom bap : claquement épais, un peu sale
+            let hp = 0, prev = 0, bp = 0;
+            put(L, R, i0, Math.round((trap ? 0.28 : 0.4) * sr), 0, (k) => {
+                const t = k / sr, x = nz(); hp = (trap ? 0.88 : 0.75) * (hp + x - prev); prev = x; bp += (hp - bp) * 0.35;
+                const tone = (Math.sin(TAU * (trap ? 220 : 180) * t) + 0.5 * Math.sin(TAU * (trap ? 330 : 280) * t)) * exp(t, trap ? 0.035 : 0.07);
+                const clap = trap ? [0, 0.008, 0.016].reduce((a, b) => a + (t >= b ? exp(t - b, 0.005) : 0), 0) * hp * 0.3 : 0;
+                return sat(tone * 0.45 + (trap ? hp : bp) * exp(t, trap ? 0.07 : 0.11) * 0.7 + clap, trap ? 1.4 : 2.0) * 0.85 * amp;
+            });
+        } else if (p === 39) {
+            let hp = 0, prev = 0;
+            put(L, R, i0, Math.round(0.35 * sr), 0.08, (k) => {
+                const t = k / sr, x = nz(); hp = 0.8 * (hp + x - prev); prev = x;
+                const burst = [0, 0.009, 0.019, 0.027].reduce((a, b) => a + (t >= b ? exp(t - b, 0.005) : 0), 0);
+                return hp * (burst * 0.4 + (t > 0.03 ? exp(t - 0.03, trap ? 0.09 : 0.12) * 0.6 : 0)) * amp;
+            });
+        } else if (p === 37) {
+            put(L, R, i0, Math.round(0.1 * sr), -0.15, (k) => {
+                const t = k / sr; return (Math.sin(TAU * (trap ? 1900 : 1500) * t) * 0.45 + Math.sin(TAU * 820 * t) * 0.3 + nz() * 0.2) * exp(t, 0.014) * amp;
+            });
+        } else if (p === 42 || p === 44 || p === 46) {
+            // charleston : métal de boîte à rythmes (Trap, très court et net) ou bruit plus sombre (Boom bap)
+            const open = p === 46, tau = open ? (trap ? 0.12 : 0.18) : (trap ? 0.018 : 0.035), m = metal(sr);
+            let lp = 0;
+            put(L, R, i0, Math.round((open ? 0.7 : 0.15) * sr), 0.25, (k) => {
+                const t = k / sr, v = trap ? m() * 0.8 + nz() * 0.15 : nz() * 0.6 + m() * 0.25;
+                lp += (v - lp) * (trap ? 0.9 : 0.45);
+                return lp * exp(t, tau) * 0.5 * amp * Math.min(1, k / 4);
+            });
+        } else if (p === 41 || p === 43 || p === 45 || p === 47) {
+            const base = p === 41 ? 75 : p === 43 ? 95 : p === 45 ? 120 : 150;
+            let ph = 0;
+            put(L, R, i0, Math.round(0.5 * sr), p < 45 ? -0.3 : 0.3, (k) => {
+                const t = k / sr; ph += TAU * (base + (trap ? 90 : 50) * exp(t, trap ? 0.03 : 0.05)) / sr;
+                return sat(Math.sin(ph) * exp(t, trap ? 0.22 : 0.16), 1.5) * 0.75 * amp;
+            });
+        } else if (p === 49 || p === 51 || p === 57) {
+            const m = metal(sr);
+            put(L, R, i0, Math.round(1.8 * sr), -0.2, (k) => {
+                const t = k / sr; return (m() * 0.5 + nz() * 0.35) * exp(t, 0.6) * 0.45 * amp;
+            });
+        }
+    }
+
+    // 808 de la trap : une seule voix ; une note qui commence avant la fin de la précédente y GLISSE (portamento, 60 ms)
+    function render808(L, R, sr, spb, notes, swingOf) {
+        const ns = notes.map(nt => ({ s: swingOf(nt.s), d: Math.max(0.02, nt.d), p: nt.p, v: Math.max(1, Math.min(127, nt.v || 100)) })).sort((a, b) => a.s - b.s);
+        let i = 0;
+        while (i < ns.length) {
+            // une « phrase » : notes qui se chevauchent
+            let j = i; while (j + 1 < ns.length && ns[j + 1].s < ns[j].s + ns[j].d - 1e-6) j++;
+            const ph0 = ns[i], i0 = Math.round(ph0.s * spb * sr), endB = ns[j].s + ns[j].d;
+            const on = Math.round((endB - ph0.s) * spb * sr), r = 0.12, n = on + Math.round(r * sr * 5), amp = Math.pow(ph0.v / 127, 1.3);
+            const starts = ns.slice(i, j + 1).map(x => ({ k: Math.round((x.s - ph0.s) * spb * sr), f: hz(x.p) }));
+            let ph = 0, q = 0, from = starts[0].f, to = starts[0].f, kq = 0;
+            const end = Math.min(L.length, i0 + n), gl = 0.06 * sr;
+            for (let x = i0; x < end; x++) {
+                const k = x - i0;
+                if (q + 1 < starts.length && k >= starts[q + 1].k) { q++; from = to; to = starts[q].f; kq = k; }
+                const g = Math.min(1, (k - kq) / gl), f = q === 0 ? to : from * Math.pow(to / from, g);
+                const t = k / sr, fr = f * (1 + 1.2 * Math.exp(-t / 0.03));
+                ph += TAU * fr / sr;
+                const e = Math.min(1, k / (0.002 * sr)) * Math.exp(-t / 3.5) * rel(k, on, r, sr);
+                const v = Math.tanh(Math.sin(ph) * 2.2 * amp) * 0.6 * e;
+                L[x] += v; R[x] += v;
+            }
+            i = j + 1;
+        }
+    }
+
     // Région MIDI → audio stéréo. `seconds` (optionnel) : durée à produire, sinon la longueur du motif
     function render(midi, bpm, sr = 44100, seconds) {
         const spb = 60 / bpm;
@@ -171,14 +304,16 @@
         const inst = INSTRUMENTS[midi.inst] ? midi.inst : 'piano';
         const notes = (midi.notes || []).slice(0, MAX_NOTES);
         const swing = Math.max(0, Math.min(1, midi.swing || 0));
-        for (const nt of notes) {
+        const swingOf = (st) => { if (swing > 0) { const k = Math.round(st * 4); if (k % 2 === 1 && Math.abs(st * 4 - k) < 0.02) st += swing * (1 / 12); } return st; };
+        if (inst === 'bass808') { render808(L, R, sr, spb, notes.filter(nt => Math.round(swingOf(nt.s) * spb * sr) < n), swingOf); }
+        else for (const nt of notes) {
             // Swing : un seizième sur deux glisse vers le triolet (100 % = triolet complet)
             let st = nt.s;
             if (swing > 0) { const k = Math.round(st * 4); if (k % 2 === 1 && Math.abs(st * 4 - k) < 0.02) st += swing * (1 / 12); }
             const i0 = Math.round(st * spb * sr);
             if (!(i0 >= 0) || i0 >= n) continue;
             const vel = Math.max(1, Math.min(127, nt.v || 100));
-            if (inst === 'drums') drumVoice(L, R, sr, i0, nt.p, vel);
+            if (inst === 'drums') drumVoice(L, R, sr, i0, nt.p, vel, midi.kit);
             else keysVoice(L, R, inst, sr, i0, Math.max(0.02, nt.d * spb), nt.p, vel);
         }
         // Soft-clip : jamais de saturation dure quand beaucoup de notes se superposent
@@ -187,9 +322,9 @@
     }
 
     // Une note seule, pour l'écouter quand on clique sur le clavier
-    function preview(inst, p, vel = 100, sr = 44100) {
+    function preview(inst, p, vel = 100, sr = 44100, kit) {
         const isDrums = inst === 'drums';
-        return render({ inst, beats: isDrums ? 2 : 2.5, notes: [{ s: 0, d: isDrums ? 0.25 : 1, p, v: vel }] }, 120, sr);
+        return render({ inst, kit, beats: isDrums ? 2 : 2.5, notes: [{ s: 0, d: isDrums ? 0.25 : 1, p, v: vel }] }, 120, sr);
     }
 
     // Boucle un motif sur plusieurs mesures : renvoie les notes répétées jusqu'à `beats`
@@ -202,5 +337,5 @@
         return out;
     }
 
-    root.PulseSynth = { INSTRUMENTS, DRUM_LANES, render, preview, loopNotes, hz, MAX_NOTES };
+    root.PulseSynth = { INSTRUMENTS, KITS, DRUM_LANES, render, preview, loopNotes, hz, MAX_NOTES };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -2516,7 +2516,7 @@ window.PulseAudio = (function() {
                 const n = out[0].length, nc = out.length, ni = inp ? inp.length : 0;
                 while (this.buf.length < Math.max(2, nc)) { this.buf.push(new Float64Array(this.cap)); this.lp.push(0); }
                 const tb = this.tempo ? currentTime - this.tT0 + this.tFrom : 0;
-                if (this.adv && nc >= 2) {
+                if (this.adv) {
                     const ms = sampleRate / 1000, TAU = 2 * Math.PI;
                     for (let i = 0; i < n; i++) {
                         if (this.tempo) this.tempoStep(tb + i / sampleRate);
@@ -2542,8 +2542,8 @@ window.PulseAudio = (function() {
                         bl[this.i] = fl + f[0]; br[this.i] = fr + f[1];
                         let el = this.eqw(0, dl), er = this.eqw(1, dr);
                         if (Math.abs(this.width - 1) > 1e-9) { const c = 0.5 * (el + er), sd = 0.5 * (el - er) * this.width; el = c + sd; er = c - sd; }
-                        out[0][i] = xl * this.dry + el * g;
-                        out[1][i] = xr * this.dry + er * g;
+                        if (nc >= 2) { out[0][i] = xl * this.dry + el * g; out[1][i] = xr * this.dry + er * g; }
+                        else out[0][i] = xl * this.dry + 0.5 * (el + er) * g;   // sortie mono (ne devrait pas arriver : l'écho avancé sort en stéréo)
                         if (++this.i >= this.cap) this.i = 0;
                     }
                     return true;
@@ -2582,7 +2582,8 @@ window.PulseAudio = (function() {
             }
         }
         registerProcessor('pulse-delay', pulseAuto(PulseDelay, (s, v) => { if (v.feedback !== undefined) s.fb = Math.max(0, Math.min(0.9, v.feedback)); if (v.wet !== undefined) s.wet = Math.max(0, Math.min(1, v.wet)); if (v.dry !== undefined) s.dry = v.dry;
-            // écho avancé : pris tout de suite (bouton bougé ou automation), comme set_live de fx.rs
+            // écho avancé : pris tout de suite (bouton bougé ou automation), comme set_live de fx.rs (qui passe en mode avancé, make_adv)
+            if (['width', 'sat', 'wow', 'mod', 'modRate'].some(k => v[k] !== undefined)) s.makeAdv();
             if (v.width !== undefined) s.width = Math.max(0, Math.min(200, v.width)) / 100;
             if (v.sat !== undefined) s.sat = Math.max(0, Math.min(100, v.sat)) / 100;
             if (v.wow !== undefined) s.wow = Math.max(0, Math.min(100, v.wow)) / 100;

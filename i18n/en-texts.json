@@ -1429,7 +1429,8 @@
   "Écho à bande": "Tape Echo",
   "Écouter seulement ce bus et ce qui y entre": "Listen only to this bus and what feeds it",
   "élargit la voix ou le synthé sans qu'on entende la modulation, et reste juste en mono": "widens the voice or synth without audible modulation, and stays true in mono",
-  "Scinder une région en deux (B ou ⌘T : à la tête de lecture) — ou double-clic sur la région, 2e clic maintenu puis relâché": "Split a region in two (B or ⌘T: at the playhead) — or double-click the region, hold the 2nd click then release"
+  "Scinder une région en deux (B ou ⌘T : à la tête de lecture) — ou double-clic sur la région, 2e clic maintenu puis relâché": "Split a region in two (B or ⌘T: at the playhead) — or double-click the region, hold the 2nd click then release",
+  "Le kit de cette batterie": "The kit for this drum region"
  },
  "patterns": [
   [

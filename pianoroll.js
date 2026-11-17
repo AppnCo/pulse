@@ -94,7 +94,7 @@
             <div class="me-bar">
                 <span class="me-title"></span>
                 ${isDrums ? '' : `<div class="me-seg me-toolseg" role="group"><button data-tool="draw" data-tooltip="Crayon : un clic pose une note, glisser l'étire (touche 1)">Crayon</button><button data-tool="select" data-tooltip="Pointeur : glisser dans le vide = choisir plusieurs notes ; double-clic = poser une note (touche 2)">Pointeur</button><button data-tool="erase" data-tooltip="Gomme : clique ou glisse sur des notes pour les effacer (touche 3)">Gomme</button><button data-tool="cut" data-tooltip="Ciseaux : clique sur une note pour la couper en deux à cet endroit (touche 4)">Ciseaux</button></div>`}
-                ${isDrums ? '' : `<select class="me-inst" data-tooltip="Le son de cette région">${insts.map(([k, v]) => `<option value="${k}" ${S.midi.inst === k ? 'selected' : ''}>${v.label}</option>`).join('')}${extOpts()}</select><button class="me-btn me-ext-open" style="display:none" data-tooltip="Ouvrir la fenêtre de l'instrument (choisir un son, le régler)">Réglages</button><button class="me-btn me-ext-redo" style="display:none" data-tooltip="Recalculer le son des régions après avoir changé le réglage de l'instrument">${typeof pIcon === 'function' ? pIcon('refresh') : '↻'}</button>`}
+                ${isDrums ? `<select class="me-kit" data-tooltip="Le kit de cette batterie">${Object.entries(root.PulseSynth.KITS || {}).map(([k, v]) => `<option value="${k}" ${(S.midi.kit || 'classic') === k ? 'selected' : ''}>${v}</option>`).join('')}</select>` : `<select class="me-inst" data-tooltip="Le son de cette région">${insts.map(([k, v]) => `<option value="${k}" ${S.midi.inst === k ? 'selected' : ''}>${v.label}</option>`).join('')}${extOpts()}</select><button class="me-btn me-ext-open" style="display:none" data-tooltip="Ouvrir la fenêtre de l'instrument (choisir un son, le régler)">Réglages</button><button class="me-btn me-ext-redo" style="display:none" data-tooltip="Recalculer le son des régions après avoir changé le réglage de l'instrument">${typeof pIcon === 'function' ? pIcon('refresh') : '↻'}</button>`}
                 ${isDrums ? `<div class="me-seg" role="group"><button data-view="steps" data-tooltip="Séquenceur de pas : une case = un coup">Pas</button><button data-view="roll" data-tooltip="Piano roll : placer les coups librement">Piano roll</button></div>` : ''}
                 <label class="me-lbl me-adv">Grille <select class="me-snap">${SNAPS.map(([n], i) => `<option value="${i}" ${i === S.snap ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
                 <label class="me-lbl me-steps-only me-adv">Pas <select class="me-div"><option value="4">1/16</option><option value="8">1/32</option><option value="3">1/8 triolet</option></select></label>
@@ -171,6 +171,8 @@
             }
             S.midi.inst = v; syncExtButtons(); changed('inst');
         };
+        // kit de la batterie (Classique, Trap, Boom bap) : la région est recalculée avec le nouveau son
+        { const ks = q('.me-kit'); if (ks) ks.onchange = (e) => { snapshot(); S.midi.kit = e.target.value; changed('inst'); }; }
         { const bo = q('.me-ext-open'), br = q('.me-ext-redo');
           if (bo) bo.onclick = () => { if (isExtInst() && S.o.onExtOpen) S.o.onExtOpen(S.midi.inst); };
           if (br) br.onclick = () => { if (isExtInst() && S.o.onExtRedo) S.o.onExtRedo(S.midi.inst); };
@@ -995,7 +997,7 @@
     function restore(str) {
         const o = JSON.parse(str);
         const keep = S.midi.inst;
-        S.midi = Object.assign({}, S.midi, { beats: o.m.beats, inst: o.m.inst, swing: o.m.swing || 0 }); S.notes = S.midi.notes = o.notes; S.sel.clear();
+        S.midi = Object.assign({}, S.midi, { beats: o.m.beats, inst: o.m.inst, kit: o.m.kit, swing: o.m.swing || 0 }); S.notes = S.midi.notes = o.notes; S.sel.clear();
         changed('undo', true);
     }
     function undoEd() { if (!S.undo.length) { S.o.flash && S.o.flash('Rien à annuler dans cette région'); return; } S.redo.push(JSON.stringify({ m: S.midi, notes: S.notes })); restore(S.undo.pop()); }
@@ -1012,11 +1014,11 @@
         if (!S || !S.dirty) return;
         clearTimeout(S.t); S.dirty = false;
         const fromHistory = !!S.hist; S.hist = false;
-        S.o.onCommit(clone({ inst: S.midi.inst, beats: S.midi.beats, swing: S.midi.swing || 0, notes: S.notes.map(n => ({ s: n.s, d: n.d, p: n.p, v: n.v })) }), !S.committed, fromHistory);
+        S.o.onCommit(clone({ inst: S.midi.inst, ...(S.midi.kit ? { kit: S.midi.kit } : {}), beats: S.midi.beats, swing: S.midi.swing || 0, notes: S.notes.map(n => ({ s: n.s, d: n.d, p: n.p, v: n.v })) }), !S.committed, fromHistory);
         if (S) S.committed = true; // l'éditeur a pu se fermer pendant onCommit
     }
 
-    function audition(p, v = 100) { if (S && S.o.onPreview) S.o.onPreview(S.midi.inst, p, v); }
+    function audition(p, v = 100) { if (S && S.o.onPreview) S.o.onPreview(S.midi.inst, p, v, S.midi.kit); }
 
     function startLoop() {
         clearInterval(timer);

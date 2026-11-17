@@ -672,3 +672,5 @@ Object.assign(exact, {
 });
 patterns.push(P('§ · clic : ouvrir / fermer · glisser : changer l\'ordre · clic droit : copier ou supprimer', '$1 · click: open / close · drag: reorder · right-click: copy or delete'));
 exact['Scinder une région en deux (B ou ⌘T : à la tête de lecture) — ou double-clic sur la région, 2e clic maintenu puis relâché'] = 'Split a region in two (B or ⌘T: at the playhead) — or double-click the region, hold the 2nd click then release';
+// Instruments (17/11)
+Object.assign(exact, { 'Classique': 'Classic', 'Le kit de cette batterie': 'The kit for this drum region' });
