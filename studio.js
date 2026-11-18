@@ -7346,7 +7346,7 @@ async function bakeMidiClip(clip, midi, bpm) {
     const pid = (clip.midi && clip.midi.pid) || midi.pid;
     clip.midi = { inst: midi.inst, ...(midi.kit ? { kit: midi.kit } : {}), ...(midi.snd ? { snd: midi.snd } : {}), beats: midi.beats, notes: midi.notes, bpm, ...(midi.swing ? { swing: midi.swing } : {}), ...(pid ? { pid } : {}) };
     // le kit choisi devient celui des prochaines régions de la piste
-    if (midi.kit || midi.snd) { const tt = state.project.tracks.find(x => x.clips.includes(clip)); if (tt) { if (midi.kit) tt.midiKit = midi.kit; if (midi.snd) tt.midiSnd = midi.snd; } }
+    if (midi.kit || midi.snd) { const tt = state.project.tracks.find(x => x.clips.includes(clip)); if (tt) { if (midi.kit) tt.midiKit = midi.kit; if (midi.snd) tt.midiSnd = { inst: midi.inst, snd: midi.snd }; } }
     return buf;
 }
 
@@ -7375,7 +7375,7 @@ async function createMidiClip(trackIdx, atSec, noUndo = false) {
     const n = t.clips.filter(c => c.midi).length + 1;
     const clip = { start, duration: bar, offset: 0, name: `${midiInstLabel(inst)} ${n}`, color: t.color };
     // batterie : kit de la piste (le dernier choisi), Trap pour une nouvelle piste
-    await bakeMidiClip(clip, { inst, ...(inst === 'drums' ? { kit: t.midiKit || 'trap' } : {}), ...(inst === 'bass808' && t.midiSnd ? { snd: t.midiSnd } : {}), beats, notes: [] }, bpm);
+    await bakeMidiClip(clip, { inst, ...(inst === 'drums' ? { kit: t.midiKit || 'trap' } : {}), ...(t.midiSnd && t.midiSnd.inst === inst ? { snd: t.midiSnd.snd } : {}), beats, notes: [] }, bpm);
     t.clips.push(clip);
     t.clips.sort((a, b) => a.start - b.start);
     state.selectedTrack = trackIdx;

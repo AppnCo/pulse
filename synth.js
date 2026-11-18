@@ -11,6 +11,7 @@
         bass808:{ label: '808',       kind: 'keys' },
         rhodes: { label: 'Rhodes',    kind: 'keys' },
         pad:    { label: 'Pad',       kind: 'keys' },
+        synth:  { label: 'Synthé',    kind: 'keys' },
         cordes: { label: 'Cordes',    kind: 'keys', bank: 'cordes', fb: 'pad' },
         choeur: { label: 'Chœur',     kind: 'keys' },
         harpe:  { label: 'Harpe',     kind: 'keys', bank: 'harpe', fb: 'pluck' },
@@ -383,6 +384,77 @@
         saturee:   { label: 'Saturée',   snd: { decay: 3, punch: 1.5, drive: 6.5, click: 0.2 } },
         glisse:    { label: 'Glisse lente', snd: { decay: 4, glide: 0.22 } }
     };
+    // Sons réglables (fenêtre « Réglages » du piano roll) : curseurs + presets, par instrument. Valeur absente = défaut.
+    const SYN = { wave: 0, voices: 3, detune: 12, sub: 0, cutoff: 2400, reso: 0.2, fenv: 2, fdec: 0.35, att: 0.004, dec: 0.4, sus: 0.7, rel: 0.25 };
+    const SYN_RANGE = { wave: [0, 1], voices: [1, 7], detune: [0, 50], sub: [0, 1], cutoff: [80, 14000], reso: [0, 0.92], fenv: [0, 6], fdec: [0.02, 2], att: [0.001, 2], dec: [0.03, 4], sus: [0, 1], rel: [0.01, 4] };
+    const SOUNDS = {
+        bass808: { label: '808', def: S808, range: S808_RANGE, presets: PRESETS_808, params: [
+            ['decay', 'Longueur', 's'], ['punch', 'Punch', '%'], ['drive', 'Saturation', '%'], ['glide', 'Glisse', 'ms'], ['click', 'Clic', '%']] },
+        synth: { label: 'Synthé', def: SYN, range: SYN_RANGE, params: [
+            ['wave', 'Forme', 'wave'], ['voices', 'Voix', 'int'], ['detune', 'Désaccord', 'ct'], ['sub', 'Sub', '%'], ['cutoff', 'Filtre', 'hz'], ['reso', 'Résonance', '%'],
+            ['fenv', 'Ouverture', 'oct'], ['fdec', 'Retombée', 's'], ['att', 'Attaque', 's'], ['dec', 'Déclin', 's'], ['sus', 'Tenue', '%'], ['rel', 'Relâchement', 's']],
+            presets: {
+                pluck:  { label: 'Pluck trap', snd: { wave: 0, voices: 3, detune: 10, cutoff: 900, reso: 0.25, fenv: 4.2, fdec: 0.18, att: 0.002, dec: 0.35, sus: 0, rel: 0.3 } },
+                lead:   { label: 'Lead', snd: { wave: 0.35, voices: 5, detune: 18, cutoff: 3200, reso: 0.15, fenv: 1.2, fdec: 0.4, att: 0.01, dec: 0.5, sus: 0.85, rel: 0.2 } },
+                nappe:  { label: 'Nappe sombre', snd: { wave: 0, voices: 7, detune: 22, cutoff: 700, reso: 0.1, fenv: 1.5, fdec: 1.6, att: 0.9, dec: 2, sus: 0.8, rel: 1.8 } },
+                reese:  { label: 'Basse Reese', snd: { wave: 0, voices: 2, detune: 28, sub: 0.6, cutoff: 500, reso: 0.3, fenv: 1, fdec: 0.5, att: 0.005, dec: 1, sus: 1, rel: 0.15 } },
+                cloche: { label: 'Clochette', snd: { wave: 1, voices: 1, detune: 0, cutoff: 5000, reso: 0.5, fenv: 2.5, fdec: 0.12, att: 0.001, dec: 0.9, sus: 0, rel: 0.6 } },
+                carre:  { label: 'Carré rétro', snd: { wave: 1, voices: 1, detune: 0, cutoff: 6000, reso: 0, fenv: 0, att: 0.003, dec: 0.2, sus: 0.6, rel: 0.08 } }
+            } }
+    };
+    SOUNDS.synth.presets = Object.assign({ base: { label: 'De base', snd: {} } }, SOUNDS.synth.presets);
+    function sndOf(inst, snd) {
+        const d = SOUNDS[inst], o = {};
+        for (const k in d.def) { const v = snd && Number.isFinite(+snd[k]) ? +snd[k] : d.def[k], [a, b] = d.range[k]; o[k] = Math.max(a, Math.min(b, v)); }
+        return o;
+    }
+    // Tables d'ondes limitées en bande (dent de scie, carré) selon le nombre d'harmoniques : calculées une fois
+    const _tabs = {};
+    function waveTab(kind, nh) {
+        const key = kind + nh; if (_tabs[key]) return _tabs[key];
+        const TL = 2048, t = new Float32Array(TL + 1);
+        for (let x = 0; x <= TL; x++) { let v = 0; for (let h = 1; h <= nh; h++) { if (kind === 'sq' && h % 2 === 0) continue; v += Math.sin(TAU * h * x / TL) / h; } t[x] = v * (kind === 'sq' ? 0.9 : 0.6); }
+        return (_tabs[key] = t);
+    }
+    // Synthé soustractif : jusqu'à 7 voix désaccordées (dent de scie → carré), sub, filtre passe-bas résonant à enveloppe, ADSR
+    function synthVoice(L, R, sr, i0, dur, p, vel, snd) {
+        const P = sndOf('synth', snd), f = hz(p), amp = Math.pow(vel / 127, 1.2), on = Math.round(dur * sr);
+        const n = Math.min(L.length - i0, on + Math.round(P.rel * sr * 6)); if (n <= 0) return;
+        const nh = Math.max(1, Math.min(60, Math.floor(sr / 2.2 / (f * 1.03)))), TS = waveTab('saw', nh), TQ = waveTab('sq', nh), TL = 2048;
+        const NV = Math.round(P.voices), ph = [], inc = [], pg = [];
+        for (let j = 0; j < NV; j++) {
+            const sp = NV === 1 ? 0 : j / (NV - 1) * 2 - 1;
+            ph.push((j * 0.618 + p * 0.031) % 1); inc.push(f * Math.pow(2, sp * P.detune / 1200) / sr); pg.push((sp + 1) / 2);
+        }
+        const nv = 1 / Math.sqrt(NV), sub = TAU * f / 2 / sr;
+        const z = [[0, 0], [0, 0]], q = 1 - P.reso * 0.97, fkey = Math.max(0.6, Math.min(1.6, Math.pow(f / 261.6, 0.25)));
+        const aS = Math.max(1, P.att * sr), dS = P.dec * sr, fd = P.fdec * sr;
+        let relFrom = 0;
+        for (let k = 0; k < n; k++) {
+            let env;
+            if (k < aS) env = k / aS; else env = P.sus + (1 - P.sus) * Math.exp(-(k - aS) / dS);
+            if (k === on) relFrom = env;
+            if (k >= on) env = relFrom * Math.exp(-(k - on) / (P.rel * sr));
+            let l = 0, r = 0;
+            for (let j = 0; j < NV; j++) {
+                ph[j] += inc[j]; if (ph[j] >= 1) ph[j] -= 1;
+                const xf = ph[j] * TL, xi = xf | 0, fr = xf - xi;
+                const a = TS[xi] + (TS[xi + 1] - TS[xi]) * fr, b = TQ[xi] + (TQ[xi + 1] - TQ[xi]) * fr, v = a + (b - a) * P.wave;
+                l += v * (1 - pg[j]); r += v * pg[j];
+            }
+            const sv = P.sub * Math.sin(sub * k) * 0.7;
+            l = l * nv * 1.4 + sv; r = r * nv * 1.4 + sv;
+            // filtre à variables d'état (2 pôles), coupure qui retombe de « Ouverture » octaves vers « Filtre »
+            const fc = Math.min(sr * 0.45, P.cutoff * fkey * Math.pow(2, P.fenv * Math.exp(-k / fd) * (0.5 + 0.5 * vel / 127)));
+            const g = Math.tan(Math.PI * fc / sr), a1 = 1 / (1 + g * (g + 2 * q * 1)), e = env * amp * 0.5;
+            for (let c = 0; c < 2; c++) {
+                const x = c ? r : l, zz = z[c];
+                const hp = (x - (2 * q + g) * zz[0] - zz[1]) * a1, bp = g * hp + zz[0], lp = g * bp + zz[1];
+                zz[0] = g * hp + bp; zz[1] = g * bp + lp;
+                (c ? R : L)[i0 + k] += lp * e;
+            }
+        }
+    }
     function s808(snd) {
         const o = {};
         for (const k in S808) { const v = snd && Number.isFinite(+snd[k]) ? +snd[k] : S808[k], [a, b] = S808_RANGE[k]; o[k] = Math.max(a, Math.min(b, v)); }
@@ -435,6 +507,7 @@
             if (!(i0 >= 0) || i0 >= n) continue;
             const vel = Math.max(1, Math.min(127, nt.v || 100));
             if (inst === 'drums') drumVoice(L, R, sr, i0, nt.p, vel, midi.kit);
+            else if (inst === 'synth') synthVoice(L, R, sr, i0, Math.max(0.02, nt.d * spb), nt.p, vel, midi.snd);
             else keysVoice(L, R, inst, sr, i0, Math.max(0.02, nt.d * spb), nt.p, vel);
         }
         // Soft-clip : jamais de saturation dure quand beaucoup de notes se superposent
@@ -458,5 +531,5 @@
         return out;
     }
 
-    root.PulseSynth = { INSTRUMENTS, KITS, S808, S808_RANGE, PRESETS_808, DRUM_LANES, setBank, hasBank, render, preview, loopNotes, hz, MAX_NOTES };
+    root.PulseSynth = { INSTRUMENTS, KITS, S808, S808_RANGE, PRESETS_808, SOUNDS, DRUM_LANES, setBank, hasBank, render, preview, loopNotes, hz, MAX_NOTES };
 })(typeof window !== 'undefined' ? window : globalThis);

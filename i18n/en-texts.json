@@ -1457,7 +1457,27 @@
   "Saturée": "Saturated",
   "Glisse lente": "Slow glide",
   "Perso": "Custom",
-  "Un réglage tout prêt": "A ready-made setting"
+  "Un réglage tout prêt": "A ready-made setting",
+  "Synthé": "Synth",
+  "Réglages Synthé": "Synth settings",
+  "Régler le son de cet instrument (presets et curseurs)": "Shape this instrument's sound (presets and sliders)",
+  "Forme": "Shape",
+  "Voix": "Voices",
+  "Désaccord": "Detune",
+  "Sub": "Sub",
+  "Ouverture": "Filter env",
+  "Retombée": "Env decay",
+  "Attaque": "Attack",
+  "Tenue": "Sustain",
+  "Scie": "Saw",
+  "Carré": "Square",
+  "De base": "Init",
+  "Pluck trap": "Trap pluck",
+  "Lead": "Lead",
+  "Nappe sombre": "Dark pad",
+  "Basse Reese": "Reese bass",
+  "Clochette": "Little bell",
+  "Carré rétro": "Retro square"
  },
  "patterns": [
   [

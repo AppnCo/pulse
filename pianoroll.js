@@ -85,27 +85,37 @@
         return cur + (l.length ? `<optgroup label="Instruments externes">${l.map(p => `<option value="extpick|${escH(p.path)}">${escH(p.vendor ? p.vendor + ' — ' : '')}${escH(p.name)}</option>`).join('')}</optgroup>` : '');
     }
     function syncExtButtons() { if (!el) return; el.querySelectorAll('.me-ext-open, .me-ext-redo').forEach(b => { b.style.display = isExtInst() ? '' : 'none'; });
-        const b8 = el.querySelector('.me-808'); if (b8) b8.style.display = S.midi.inst === 'bass808' ? '' : 'none';
-        if (S.midi.inst !== 'bass808') close808(); }
-    // Fenêtre « Réglages 808 » : un preset puis 5 curseurs ; chaque changement recalcule la région (annulable)
+        const b8 = el.querySelector('.me-808'), sd = root.PulseSynth.SOUNDS && root.PulseSynth.SOUNDS[S.midi.inst];
+        if (b8) { b8.style.display = sd ? '' : 'none'; if (sd) b8.textContent = 'Réglages ' + sd.label; }
+        const pn = document.querySelector('.me-808-pop'); if (pn && pn.dataset.inst !== S.midi.inst) close808(); }
+    // Fenêtre « Réglages » d'un son (808, synthé) : un preset puis des curseurs ; chaque changement recalcule la région (annulable)
     function close808() { const pn = document.querySelector('.me-808-pop'); if (pn) pn.remove(); }
+    const UNIT = {
+        s: (v) => v < 1 ? Math.round(v * 1000) + ' ms' : v.toFixed(1) + ' s', ms: (v) => Math.round(v * 1000) + ' ms', int: (v) => String(Math.round(v)), ct: (v) => Math.round(v) + ' ct',
+        hz: (v) => v >= 1000 ? (v / 1000).toFixed(1) + ' kHz' : Math.round(v) + ' Hz', oct: (v) => v.toFixed(1) + ' oct', wave: (v) => v < 0.05 ? 'Scie' : v > 0.95 ? 'Carré' : Math.round((1 - v) * 100) + ' / ' + Math.round(v * 100)
+    };
     function open808() {
         if (!el || document.querySelector('.me-808-pop')) { close808(); return; }
-        const PS = root.PulseSynth, D = PS.S808, RG = PS.S808_RANGE;
-        const NAMES = { decay: ['Longueur', (v) => v.toFixed(1) + ' s'], punch: ['Punch', (v) => Math.round(v / 4 * 100) + ' %'], drive: ['Saturation', (v) => Math.round((v - 1) / 7 * 100) + ' %'],
-            glide: ['Glisse', (v) => Math.round(v * 1000) + ' ms'], click: ['Clic', (v) => Math.round(v * 100) + ' %'] };
+        const sd = root.PulseSynth.SOUNDS[S.midi.inst]; if (!sd) return;
+        const D = sd.def, RG = sd.range;
+        const fmt = (k, u, v) => u === '%' ? Math.round((v - RG[k][0]) / (RG[k][1] - RG[k][0]) * 100) + ' %' : UNIT[u](v);
+        // curseur 0…1000 ; fréquences et temps en échelle logarithmique (le réglage fin reste là où l'oreille l'entend)
+        const isLog = (k, u) => (u === 'hz' || u === 's') && RG[k][0] > 0;
+        const toV = (k, u, t) => { const [a, b] = RG[k]; let v = isLog(k, u) ? a * Math.pow(b / a, t / 1000) : a + (b - a) * t / 1000; return u === 'int' ? Math.round(v) : v; };
+        const toT = (k, u, v) => { const [a, b] = RG[k]; return Math.round(isLog(k, u) ? Math.log(v / a) / Math.log(b / a) * 1000 : (v - a) / (b - a) * 1000); };
         const cur = () => Object.assign({}, D, S.midi.snd || {});
-        const pn = document.createElement('div'); pn.className = 'me-808-pop';
-        const rows = () => { const c = cur(); return Object.keys(NAMES).map((k) => `<label class="me-808-row"><span>${NAMES[k][0]}</span><input type="range" data-k="${k}" min="${RG[k][0]}" max="${RG[k][1]}" step="${(RG[k][1] - RG[k][0]) / 200}" value="${c[k]}"><em>${NAMES[k][1](c[k])}</em></label>`).join(''); };
-        const presetOf = () => { const c = cur(); for (const [id, pr] of Object.entries(PS.PRESETS_808)) { const t = Object.assign({}, D, pr.snd); if (Object.keys(D).every((k) => Math.abs(t[k] - c[k]) < 1e-6)) return id; } return ''; };
+        const pn = document.createElement('div'); pn.className = 'me-808-pop'; pn.dataset.inst = S.midi.inst;
+        const rows = () => { const c = cur(); return sd.params.map(([k, lab, u]) => `<label class="me-808-row"><span>${lab}</span><input type="range" data-k="${k}" data-u="${u}" min="0" max="1000" step="1" value="${toT(k, u, c[k])}"><em>${fmt(k, u, c[k])}</em></label>`).join(''); };
+        const presetOf = () => { const c = cur(); for (const [id, pr] of Object.entries(sd.presets)) { const t = Object.assign({}, D, pr.snd); if (Object.keys(D).every((k) => Math.abs(t[k] - c[k]) < 1e-6)) return id; } return ''; };
         const paint = () => {
             const pid = presetOf();
-            pn.innerHTML = `<div class="me-808-head"><b>808</b><select class="me-808-preset" data-tooltip="Un réglage tout prêt">${pid ? '' : '<option value="" selected>Perso</option>'}${Object.entries(PS.PRESETS_808).map(([id, pr]) => `<option value="${id}" ${id === pid ? 'selected' : ''}>${pr.label}</option>`).join('')}</select><button class="me-btn me-808-x" data-tooltip="Fermer">×</button></div>${rows()}`;
+            pn.innerHTML = `<div class="me-808-head"><b>${sd.label}</b><select class="me-808-preset" data-tooltip="Un réglage tout prêt">${pid ? '' : '<option value="" selected>Perso</option>'}${Object.entries(sd.presets).map(([id, pr]) => `<option value="${id}" ${id === pid ? 'selected' : ''}>${pr.label}</option>`).join('')}</select><button class="me-btn me-808-x" data-tooltip="Fermer">×</button></div>${rows()}`;
             pn.querySelector('.me-808-x').onclick = close808;
-            pn.querySelector('.me-808-preset').onchange = (e) => { const pr = PS.PRESETS_808[e.target.value]; if (!pr) return; snapshot(); S.midi.snd = Object.assign({}, pr.snd); changed('inst'); paint(); };
+            pn.querySelector('.me-808-preset').onchange = (e) => { const pr = sd.presets[e.target.value]; if (!pr) return; snapshot(); S.midi.snd = Object.assign({}, pr.snd); changed('inst'); paint(); };
             pn.querySelectorAll('input[type=range]').forEach((r) => {
-                r.oninput = () => { r.nextElementSibling.textContent = NAMES[r.dataset.k][1](+r.value); };
-                r.onchange = () => { snapshot(); S.midi.snd = Object.assign({}, S.midi.snd || {}, { [r.dataset.k]: +r.value }); changed('inst'); paint(); };
+                const k = r.dataset.k, u = r.dataset.u;
+                r.oninput = () => { r.nextElementSibling.textContent = fmt(k, u, toV(k, u, +r.value)); };
+                r.onchange = () => { snapshot(); S.midi.snd = Object.assign({}, S.midi.snd || {}, { [k]: +toV(k, u, +r.value).toPrecision(5) }); changed('inst'); paint(); };
             });
         };
         paint();
@@ -123,7 +133,7 @@
             <div class="me-bar">
                 <span class="me-title"></span>
                 ${isDrums ? '' : `<div class="me-seg me-toolseg" role="group"><button data-tool="draw" data-tooltip="Crayon : un clic pose une note, glisser l'étire (touche 1)">Crayon</button><button data-tool="select" data-tooltip="Pointeur : glisser dans le vide = choisir plusieurs notes ; double-clic = poser une note (touche 2)">Pointeur</button><button data-tool="erase" data-tooltip="Gomme : clique ou glisse sur des notes pour les effacer (touche 3)">Gomme</button><button data-tool="cut" data-tooltip="Ciseaux : clique sur une note pour la couper en deux à cet endroit (touche 4)">Ciseaux</button></div>`}
-                ${isDrums ? `<select class="me-kit" data-tooltip="Le kit de cette batterie">${Object.entries(root.PulseSynth.KITS || {}).map(([k, v]) => `<option value="${k}" ${(S.midi.kit || 'classic') === k ? 'selected' : ''}>${v}</option>`).join('')}</select>` : `<select class="me-inst" data-tooltip="Le son de cette région">${insts.map(([k, v]) => `<option value="${k}" ${S.midi.inst === k ? 'selected' : ''}>${v.label}</option>`).join('')}${extOpts()}</select><button class="me-btn me-ext-open" style="display:none" data-tooltip="Ouvrir la fenêtre de l'instrument (choisir un son, le régler)">Réglages</button><button class="me-btn me-808" style="display:none" data-tooltip="Régler la 808 : longueur, punch, saturation, glisse, clic">Réglages 808</button><button class="me-btn me-ext-redo" style="display:none" data-tooltip="Recalculer le son des régions après avoir changé le réglage de l'instrument">${typeof pIcon === 'function' ? pIcon('refresh') : '↻'}</button>`}
+                ${isDrums ? `<select class="me-kit" data-tooltip="Le kit de cette batterie">${Object.entries(root.PulseSynth.KITS || {}).map(([k, v]) => `<option value="${k}" ${(S.midi.kit || 'classic') === k ? 'selected' : ''}>${v}</option>`).join('')}</select>` : `<select class="me-inst" data-tooltip="Le son de cette région">${insts.map(([k, v]) => `<option value="${k}" ${S.midi.inst === k ? 'selected' : ''}>${v.label}</option>`).join('')}${extOpts()}</select><button class="me-btn me-ext-open" style="display:none" data-tooltip="Ouvrir la fenêtre de l'instrument (choisir un son, le régler)">Réglages</button><button class="me-btn me-808" style="display:none" data-tooltip="Régler le son de cet instrument (presets et curseurs)">Réglages</button><button class="me-btn me-ext-redo" style="display:none" data-tooltip="Recalculer le son des régions après avoir changé le réglage de l'instrument">${typeof pIcon === 'function' ? pIcon('refresh') : '↻'}</button>`}
                 ${isDrums ? `<div class="me-seg" role="group"><button data-view="steps" data-tooltip="Séquenceur de pas : une case = un coup">Pas</button><button data-view="roll" data-tooltip="Piano roll : placer les coups librement">Piano roll</button></div>` : ''}
                 <label class="me-lbl me-adv">Grille <select class="me-snap">${SNAPS.map(([n], i) => `<option value="${i}" ${i === S.snap ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
                 <label class="me-lbl me-steps-only me-adv">Pas <select class="me-div"><option value="4">1/16</option><option value="8">1/32</option><option value="3">1/8 triolet</option></select></label>
@@ -198,6 +208,7 @@
                 }).catch(() => { inst.disabled = false; });
                 return;
             }
+            if (S.midi.inst !== v) S.midi.snd = undefined;   // les réglages du son appartiennent à l'ancien instrument
             S.midi.inst = v; syncExtButtons(); changed('inst');
         };
         // kit de la batterie (Classique, Trap, Boom bap) : la région est recalculée avec le nouveau son

@@ -18,7 +18,7 @@ export default async (c) => {
   const e0 = await ev(sig(false)), e1 = await ev(sig(true));
   check('preset « Courte » gardé dans la région', m1 && m1.decay === 0.7, JSON.stringify(m1));
   check('le son de la région change', Math.abs(e1 - e0) / e0 > 0.1, `${(+e0).toFixed(0)} → ${(+e1).toFixed(0)}`);
-  await ev(`(()=>{ const r = document.querySelector('.me-808-pop input[data-k=drive]'); r.value = 7; r.dispatchEvent(new Event('input')); r.dispatchEvent(new Event('change')); })()`); await sleep(1200);
+  await ev(`(()=>{ const r = document.querySelector('.me-808-pop input[data-k=drive]'); r.value = 857; r.dispatchEvent(new Event('input')); r.dispatchEvent(new Event('change')); })()`); await sleep(1200);
   const m2 = await J(ev, `return { snd: state.project.tracks[0].clips[0].midi.snd, pre: document.querySelector('.me-808-preset').value }`);
   check('curseur Saturation → réglage perso', Math.abs(m2.snd.drive - 7) < 0.05 && m2.snd.decay === 0.7 && m2.pre === '', JSON.stringify(m2));
   await ev(`PulsePianoRoll._state && document.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', metaKey: true, bubbles: true }))`); await sleep(1200);
@@ -28,5 +28,18 @@ export default async (c) => {
   check('région suivante : même réglage 808', await J(ev, `const c = state.project.tracks[0].clips; return c.length === 2 && c[1].midi.snd && c[1].midi.snd.decay === 0.7`));
   await ev(`PulsePianoRoll.close(true)`); await sleep(300);
   await ev(`createMidiClip(1, 0)`); await sleep(1200);
-  check('pas de bouton 808 sur un piano', await J(ev, `const b = document.querySelector('.me-808'); return !b || b.style.display === 'none'`));
+  check('pas de bouton Réglages sur un piano', await J(ev, `const b = document.querySelector('.me-808'); return !b || b.style.display === 'none'`));
+  // le piano devient Synthé : bouton « Réglages Synthé », 12 curseurs, preset Pluck appliqué à la région
+  await ev(`(()=>{ const S = PulsePianoRoll._state(); S.notes.push({ s: 0, d: 1, p: 60, v: 100 }); const s = document.querySelector('.me-inst'); s.value = 'synth'; s.dispatchEvent(new Event('change')); })()`); await sleep(1000);
+  const sb = await J(ev, `const b = document.querySelector('.me-808'); return b && b.style.display !== 'none' ? b.textContent : null`);
+  check('bouton « Réglages Synthé »', sb === 'Réglages Synthé', String(sb));
+  await ev(`document.querySelector('.me-808').click()`); await sleep(300);
+  const sp = await J(ev, `const p = document.querySelector('.me-808-pop'); return p ? { n: p.querySelectorAll('input[type=range]').length, pre: [...p.querySelectorAll('.me-808-preset option')].map(o => o.textContent) } : null`);
+  check('fenêtre Synthé : 12 curseurs + presets', sp && sp.n === 12 && sp.pre.includes('Pluck trap'), JSON.stringify(sp));
+  if (process.env.SHOTS) await shot(process.env.SHOTS + '/synthe.jpg');
+  await ev(`(()=>{ const s = document.querySelector('.me-808-preset'); s.value = 'pluck'; s.dispatchEvent(new Event('change')); })()`); await sleep(1200);
+  const pm = await J(ev, `const m = state.project.tracks[1].clips[0].midi; return { inst: m.inst, cut: m.snd && m.snd.cutoff }`);
+  check('preset Pluck gardé dans la région', pm.inst === 'synth' && pm.cut === 900, JSON.stringify(pm));
+  await ev(`(()=>{ const r = document.querySelector('.me-808-pop input[data-k=cutoff]'); r.value = 1000; r.dispatchEvent(new Event('change')); })()`); await sleep(1200);
+  check('curseur Filtre au maximum = 14 kHz', await J(ev, `return state.project.tracks[1].clips[0].midi.snd.cutoff`) === 14000);
 };

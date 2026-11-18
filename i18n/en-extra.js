@@ -686,3 +686,8 @@ patterns.push(P('Cordes, harpe, flûte, cuivres, cloches, glockenspiel, vibrapho
 Object.assign(exact, { 'Réglages 808': '808 settings', 'Régler la 808 : longueur, punch, saturation, glisse, clic': 'Shape the 808: length, punch, saturation, glide, click',
   'Longueur': 'Length', 'Punch': 'Punch', 'Saturation': 'Saturation', 'Glisse': 'Glide', 'Clic': 'Click', 'Longue': 'Long', 'Courte qui claque': 'Short & punchy',
   'Saturée': 'Saturated', 'Glisse lente': 'Slow glide', 'Perso': 'Custom', 'Un réglage tout prêt': 'A ready-made setting' });
+// Synthé maison (18/11)
+Object.assign(exact, { 'Synthé': 'Synth', 'Réglages': 'Settings', 'Réglages Synthé': 'Synth settings', 'Régler le son de cet instrument (presets et curseurs)': 'Shape this instrument\'s sound (presets and sliders)',
+  'Forme': 'Shape', 'Voix': 'Voices', 'Désaccord': 'Detune', 'Sub': 'Sub', 'Filtre': 'Filter', 'Résonance': 'Resonance', 'Ouverture': 'Filter env', 'Retombée': 'Env decay',
+  'Attaque': 'Attack', 'Déclin': 'Decay', 'Tenue': 'Sustain', 'Relâchement': 'Release', 'Scie': 'Saw', 'Carré': 'Square', 'De base': 'Init',
+  'Pluck trap': 'Trap pluck', 'Lead': 'Lead', 'Nappe sombre': 'Dark pad', 'Basse Reese': 'Reese bass', 'Clochette': 'Little bell', 'Carré rétro': 'Retro square' });

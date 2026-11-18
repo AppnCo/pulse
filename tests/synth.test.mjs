@@ -51,4 +51,9 @@ ok('boucle', lp.length === 5 && lp[4].s === 8, `${lp.length} notes`);
   ok('808 par défaut inchangée', x0.every((v, i) => v === x1[i]), 'identique');
   for (const k of ['decay', 'punch', 'drive', 'glide', 'click']) { const x = rd({ [k]: S.S808_RANGE[k][1] }); let d = 0; for (let i = 0; i < x.length; i++) d += (x[i] - x0[i]) ** 2; ok('808 ' + k + ' change le son', d / e0 > 0.0002 && peak(x) <= 1, `écart ${(d / e0).toFixed(4)}, crête ${peak(x).toFixed(2)}`); }
 }
+for (const [k, pr] of Object.entries(S.SOUNDS.synth.presets)) { // synthé : chaque preset juste et sans saturer
+  const r = S.render({ inst: 'synth', snd: pr.snd, beats: 2, notes: [{ s: 0, d: 1.8, p: 57, v: 110 }] }, 120, sr);
+  const f = freqOf(r.channels[0], Math.round(0.25 * sr), Math.round(0.6 * sr)), want = S.hz(pr.snd.sub > 0.3 ? 45 : 57);   // sub fort : l'octave du dessous domine
+  ok('synthé ' + k, Math.abs(f - want) / want < 0.03 && peak(r.channels[0]) > 0.05 && peak(r.channels[0]) <= 1, `${f.toFixed(1)} Hz, crête ${peak(r.channels[0]).toFixed(2)}`);
+}
 process.exit(fail ? 1 : 0);

@@ -4189,6 +4189,6 @@ body.fx-drag-copy .insp-fx-row.fx-dragging::after { content: '+'; position: abso
 .me-808-head b { font-size: 13px; letter-spacing: .04em; }
 .me-808-head select { flex: 1; background: var(--bg-3); color: var(--text-1); border: 1px solid var(--border); border-radius: 6px; font: inherit; padding: 2px 4px; }
 .me-808-x { padding: 0 8px; }
-.me-808-row { display: grid; grid-template-columns: 74px 1fr 52px; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2, var(--text-1)); }
+.me-808-row { display: grid; grid-template-columns: 78px 1fr 60px; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2, var(--text-1)); }
 .me-808-row input { width: 100%; accent-color: var(--accent, #22D3EE); }
 .me-808-row em { font-style: normal; text-align: right; font-variant-numeric: tabular-nums; }
