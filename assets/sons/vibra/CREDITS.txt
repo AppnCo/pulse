@@ -1,0 +1,3 @@
+Échantillons : Versilian Community Sample Library (VCSL), Versilian Studios.
+Licence : CC0 1.0 (domaine public). https://github.com/sgossner/VCSL
+Recoupés, accordés et convertis pour Pulse.

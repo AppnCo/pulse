@@ -679,5 +679,5 @@ Object.assign(exact, { 'Piano à queue': 'Grand piano', 'Crédits': 'Credits',
 patterns.push(P('Piano à queue : § d\'Alexander Holm, licence Creative Commons BY 3.0', 'Grand piano: $1 by Alexander Holm, Creative Commons BY 3.0 licence'));
 // Instruments, 2e lot (18/11)
 Object.assign(exact, { 'Cordes': 'Strings', 'Chœur': 'Choir', 'Harpe': 'Harp', 'Cloches': 'Bells', 'Glockenspiel': 'Glockenspiel', 'Kalimba': 'Kalimba',
-  'Cordes, harpe, cloches, glockenspiel :': 'Strings, harp, bells, glockenspiel:', 'Versilian Studios': 'Versilian Studios', '(VSCO 2 CE, VCSL), domaine public CC0': '(VSCO 2 CE, VCSL), public domain CC0' });
-patterns.push(P('Cordes, harpe, cloches, glockenspiel : § (VSCO 2 CE, VCSL), domaine public CC0', 'Strings, harp, bells, glockenspiel: $1 (VSCO 2 CE, VCSL), public domain CC0'));
+  'Cordes, harpe, flûte, cuivres, cloches, glockenspiel, vibraphone :': 'Strings, harp, flute, brass, bells, glockenspiel, vibraphone:', 'Flûte': 'Flute', 'Cuivres': 'Brass', 'Vibraphone': 'Vibraphone', 'Versilian Studios': 'Versilian Studios', '(VSCO 2 CE, VCSL), domaine public CC0': '(VSCO 2 CE, VCSL), public domain CC0' });
+patterns.push(P('Cordes, harpe, flûte, cuivres, cloches, glockenspiel, vibraphone : § (VSCO 2 CE, VCSL), domaine public CC0', 'Strings, harp, flute, brass, bells, glockenspiel, vibraphone: $1 (VSCO 2 CE, VCSL), public domain CC0'));
