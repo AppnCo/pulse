@@ -56,4 +56,8 @@ for (const [k, pr] of Object.entries(S.SOUNDS.synth.presets)) { // synthé : cha
   const f = freqOf(r.channels[0], Math.round(0.25 * sr), Math.round(0.6 * sr)), want = S.hz(pr.snd.sub > 0.3 ? 45 : 57);   // sub fort : l'octave du dessous domine
   ok('synthé ' + k, Math.abs(f - want) / want < 0.03 && peak(r.channels[0]) > 0.05 && peak(r.channels[0]) <= 1, `${f.toFixed(1)} Hz, crête ${peak(r.channels[0]).toFixed(2)}`);
 }
+{ // Rhodes modélisé : frappé fort, le micro « grogne » (plus brillant à l'attaque) ; doux, il reste rond
+  const br = (v) => { const c = S.render({ inst: 'rhodes', beats: 2, notes: [{ s: 0, d: 1, p: 60, v }] }, 120, sr).channels[0]; let e = 0, d = 0; for (let k = 1; k < 0.2 * sr; k++) { e += c[k] * c[k]; d += (c[k] - c[k - 1]) ** 2; } return d / e; };
+  const a = br(35), b = br(127); ok('Rhodes plus brillant frappé fort', b > a * 1.15, `${a.toFixed(4)} → ${b.toFixed(4)}`);
+}
 process.exit(fail ? 1 : 0);

@@ -148,20 +148,28 @@
                 return Math.tanh(Math.sin(ph) * 1.9 * amp) * 0.55 * e;
             });
         } else if (inst === 'rhodes') {
-            // piano électrique à lames (tine) : FM 1:1 dont l'éclat dépend de la frappe, « cloche » de la lame à l'attaque,
-            // léger grain de micro (saturation paire) et trémolo stéréo des amplis de scène
-            const r = 0.25, n = on + Math.round(r * sr * 6), w = TAU * f / sr;
-            const idx = 0.5 + 2.2 * Math.pow(vel / 127, 2), tau = Math.max(0.9, 3.2 - (p - 40) * 0.035) * sr;
-            const bell = 0.12 * Math.pow(vel / 127, 1.5), wb = TAU * Math.min(f * 14.1, sr / 2.3) / sr;
-            const pan = Math.max(-0.6, Math.min(0.6, (p - 60) / 50)), tr = TAU * 4.2 / sr;
+            // piano électrique à lames, modélisé : la lame (tine) vibre sur ses modes propres (fondamentale, mode de flexion
+            // à ~6,3 ×, puis ~17,5 ×), la barre de tonalité couplée ajoute un léger battement ; le micro magnétique n'est pas
+            // linéaire : plus la frappe est forte, plus la lame s'en approche et plus le son « grogne » (harmoniques paires et impaires)
+            const r = 0.13, vh = vel / 127, n = on + Math.round(r * sr * 7);
+            const t1 = Math.max(0.7, 4.8 - (p - 40) * 0.055) * sr;
+            const M = [[1, 1, t1], [1.0013, 0.22, t1 * 1.5], [6.27, 0.13 * (0.4 + vh), 0.06 * sr], [17.55, 0.05 * vh, 0.012 * sr]]
+                .filter(([m]) => f * m < sr / 2.3).map(([m, a, tau]) => ({ c: 1, s: 0, cw: Math.cos(TAU * f * m / sr), sw: Math.sin(TAU * f * m / sr), a, d: Math.exp(-1 / tau), e: 1 }));
+            const drive = 0.35 + 2.1 * Math.pow(vh, 1.6), off = 0.32, n0 = Math.tanh(off), norm = 1 / Math.max(0.6, Math.tanh(drive + off) - n0);
+            const pan = Math.max(-0.6, Math.min(0.6, (p - 60) / 50)), tr = TAU * 4.2 / sr, lpA = 1 - Math.exp(-TAU * 5200 / sr);
             const end = Math.min(L.length, i0 + n);
+            let lp = 0, relE = 1;
+            const rr = Math.exp(-1 / (r * sr));
             for (let i = i0; i < end; i++) {
-                const k = i - i0, e = Math.exp(-k / tau), mi = idx * Math.exp(-k / (0.25 * sr)) + 0.25;
-                let v = Math.sin(w * k + mi * Math.sin(w * k)) * 0.34 + bell * Math.sin(wb * k) * Math.exp(-k / (0.02 * sr));
-                v = v + 0.12 * v * v;                        // grain du micro
-                v *= e * amp * Math.min(1, k / att) * rel(k, on, r, sr);
+                const k = i - i0;
+                let x = 0;
+                for (const m of M) { const c = m.c * m.cw - m.s * m.sw; m.s = m.s * m.cw + m.c * m.sw; m.c = c; m.e *= m.d; x += m.s * m.a * m.e; }
+                if (k > on) relE *= rr;   // étouffoir en feutre
+                let v = (Math.tanh(x * drive + off) - n0) * norm;
+                lp += (v - lp) * lpA; v = lp * 0.16 * Math.pow(vh, 0.7) * Math.min(1, k / att) * relE;
                 const t = 0.18 * Math.sin(tr * (i0 + k)), pp = Math.max(-1, Math.min(1, pan + t));
                 L[i] += v * Math.cos((pp + 1) * Math.PI / 4) * 1.4142; R[i] += v * Math.sin((pp + 1) * Math.PI / 4) * 1.4142;
+                if (relE < 1e-4) break;
             }
         } else if (inst === 'pad') {
             // nappe : 5 dents de scie désaccordées réparties en stéréo, filtre qui s'ouvre lentement, attaque et relâchement longs
@@ -227,12 +235,17 @@
             const r = 0.6, tau = Math.max(0.35, 1.6 - (p - 60) * 0.025) * sr, n = Math.min(Math.round(6 * sr), on + Math.round(r * sr * 6));
             const w1 = TAU * f / sr, w2 = TAU * Math.min(f * 5.93, sr / 2.3) / sr, w3 = TAU * Math.min(f * 2.01, sr / 2.3) / sr;
             const nz = rng(p * 977 + 3), bri = 0.25 + 0.5 * vel / 127;
+            // caisse de résonance en bois : deux résonances (air ~ 260 Hz, bois ~ 900 Hz) excitées par la lame et le pouce
+            const bq = (fc, Q) => { const w0 = TAU * fc / sr, al = Math.sin(w0) / (2 * Q), a0 = 1 + al; return { b0: al / a0, a1: -2 * Math.cos(w0) / a0, a2: (1 - al) / a0, z1: 0, z2: 0 }; };
+            const B = [bq(260, 6), bq(900, 4)];
             let cl = 0;
             put(L, R, i0, n, (p - 66) / 60, (k) => {
                 cl += (nz() - cl) * 0.35;
                 const v = Math.sin(w1 * k) * Math.exp(-k / tau) + bri * 0.5 * Math.sin(w2 * k) * Math.exp(-k / (0.045 * sr))
                     + 0.06 * Math.sin(w3 * k) * Math.exp(-k / (0.3 * sr)) + cl * 0.5 * Math.exp(-k / (0.0025 * sr));
-                return v * 0.42 * amp * Math.min(1, k / att) * (k <= on ? 1 : Math.exp(-(k - on) / (r * sr)));
+                let body = 0;
+                for (const q of B) { const y = q.b0 * v + q.z1; q.z1 = -q.a1 * y + q.z2; q.z2 = -q.b0 * v - q.a2 * y; body += y; }
+                return (v + body * 0.9) * 0.4 * amp * Math.min(1, k / att) * (k <= on ? 1 : Math.exp(-(k - on) / (r * sr)));
             });
         } else if (inst === 'bass') {
             const w = TAU * f / sr, r = 0.08, n = on + Math.round(r * sr * 6);

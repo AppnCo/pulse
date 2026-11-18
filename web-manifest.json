@@ -387,7 +387,7 @@
 "studio.html": "a37b8a3b8b0c333f08203dbdfec24a158e1ddd141c09a81c95a74564494ce9c1",
 "studio.js": "9be7e28f12ecf24cc1a75ba805c25a8f19be6e8e22fdaf6fe9d6ecfb202f9fdd",
 "styles.css": "9040ad9ca17969d48b7cc98c58afab3190dab1db6b986d245b71d0f9c438705c",
-"synth.js": "72af5060fcc6e73e13c5286ee6252df57af4aa4d7086833c83c85d151c682db5",
+"synth.js": "66a6597db209970dec2d7e3e2feb51f0e037bb3d6b75d3c8182ac43da6d64b39",
 "tempo.js": "1ad0200f61ad3db6f6f5c47500b5c5ff042a585607c713ca324f752d27e33ca3",
 "tempotrack.js": "795f2ba7a78743afc9877ec61d57af1b69ad971c74f3a80a2bbc0f7c74ac4026",
 "tune.js": "9dcaedfe7a315247a8a2e28780654f556579bbb384cff2e82cf0f9a1d3d76309",
@@ -395,5 +395,5 @@
 "vendor/lame.min.js": "15d285e2587b3bdbfd18a68de6ce07cc074f7480a82c3815da2dc1c348ec6df4",
 "warp.js": "209bb3114410db48c37af5bf718a4cd482fcb95cc5bbf7ae6f024e3420bf6f3e"
 },
-"version": "2026-11-18 17:14"
+"version": "2026-11-18 17:48"
 }
