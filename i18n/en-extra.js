@@ -677,3 +677,7 @@ Object.assign(exact, { 'Classique': 'Classic', 'Le kit de cette batterie': 'The 
 Object.assign(exact, { 'Piano à queue': 'Grand piano', 'Crédits': 'Credits',
   'Le piano à queue n\'a pas pu se charger (connexion ?) : piano de synthèse en attendant': 'The grand piano could not load (connection?): synth piano for now' });
 patterns.push(P('Piano à queue : § d\'Alexander Holm, licence Creative Commons BY 3.0', 'Grand piano: $1 by Alexander Holm, Creative Commons BY 3.0 licence'));
+// Instruments, 2e lot (18/11)
+Object.assign(exact, { 'Cordes': 'Strings', 'Chœur': 'Choir', 'Harpe': 'Harp', 'Cloches': 'Bells', 'Glockenspiel': 'Glockenspiel', 'Kalimba': 'Kalimba',
+  'Cordes, harpe, cloches, glockenspiel :': 'Strings, harp, bells, glockenspiel:', 'Versilian Studios': 'Versilian Studios', '(VSCO 2 CE, VCSL), domaine public CC0': '(VSCO 2 CE, VCSL), public domain CC0' });
+patterns.push(P('Cordes, harpe, cloches, glockenspiel : § (VSCO 2 CE, VCSL), domaine public CC0', 'Strings, harp, bells, glockenspiel: $1 (VSCO 2 CE, VCSL), public domain CC0'));

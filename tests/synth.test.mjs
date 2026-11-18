@@ -10,7 +10,7 @@ const freqOf = (x, a, b) => { // autocorrélation : plus fiable que les passages
   for (let i = 1; i < cs.length - 1; i++) if (cs[i] > cs[i - 1] && cs[i] >= cs[i + 1] && cs[i] > 0.85 * mx) { bl = lo + i; break; }
   return sr / bl; };
 const peak = (x) => { let m = 0; for (const v of x) m = Math.max(m, Math.abs(v)); return m; };
-for (const [inst, p] of [['piano', 57], ['keys', 57], ['bass808', 45], ['lead', 57], ['bass', 45], ['rhodes', 57], ['pad', 57]]) {
+for (const [inst, p] of [['piano', 57], ['keys', 57], ['bass808', 45], ['lead', 57], ['bass', 45], ['rhodes', 57], ['pad', 57], ['choeur', 57], ['kalimba', 69]]) {
   const r = S.render({ inst, beats: 2, notes: [{ s: 0, d: 1.8, p, v: 110 }] }, 120, sr);
   const f = freqOf(r.channels[0], Math.round(0.25 * sr), Math.round(0.8 * sr)), want = S.hz(p);
   ok(inst + ' hauteur', Math.abs(f - want) / want < 0.03, `${f.toFixed(1)} Hz (${want.toFixed(1)} attendu)`);

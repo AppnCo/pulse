@@ -30,7 +30,8 @@ Mix Bus 2
 New project
 Optique 2A
 Phaser
-Piano 1 — 2.00s @ 0:00.000
+Piano à queue 1 — 2.00s @ 0:00.000
+Piano à queue :
 Pick up where you left off
 Plaque 140
 Préampli 76V
@@ -39,6 +40,7 @@ PulseTune
 Rap Studio
 Recent projects
 Reverb
+Salamander Grand Piano
 Salle 80
 Simple Beat
 Simple setup: 1 vocal + 1 instrumental. Perfect for a quick first track.
@@ -51,6 +53,7 @@ The simple studio.
 Tracks
 Tranche E
 Vocal + Beat
+d'Alexander Holm, licence Creative Commons BY 3.0
 dB
 https://youtube.com/watch?v=…
 ii

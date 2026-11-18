@@ -11,6 +11,12 @@
         bass808:{ label: '808',       kind: 'keys' },
         rhodes: { label: 'Rhodes',    kind: 'keys' },
         pad:    { label: 'Pad',       kind: 'keys' },
+        cordes: { label: 'Cordes',    kind: 'keys', bank: 'cordes', fb: 'pad' },
+        choeur: { label: 'Chœur',     kind: 'keys' },
+        harpe:  { label: 'Harpe',     kind: 'keys', bank: 'harpe', fb: 'pluck' },
+        cloches:{ label: 'Cloches',   kind: 'keys', bank: 'cloches', fb: 'kalimba' },
+        glock:  { label: 'Glockenspiel', kind: 'keys', bank: 'glock', fb: 'kalimba' },
+        kalimba:{ label: 'Kalimba',   kind: 'keys' },
         bass:   { label: 'Basse',     kind: 'keys' },
         lead:   { label: 'Lead',      kind: 'keys' },
         pluck:  { label: 'Pizzicato', kind: 'keys' },
@@ -28,6 +34,7 @@
     const BANKS = {};
     function setBank(name, bank) { BANKS[name] = bank; }
     function hasBank(name) { return !!BANKS[name]; }
+    // banque = { sr, rel (s, relâchement), zones: [{ p, layers: [{ v, ch, ls?, le? }] }] } ; ls/le (échantillons) = boucle de tenue (cordes)
     function sampleVoice(L, R, bank, sr, i0, dur, p, vel) {
         let z = bank.zones[0];
         for (const q of bank.zones) if (Math.abs(q.p - p) < Math.abs(z.p - p)) z = q;
@@ -36,18 +43,28 @@
         let a = ls[0], b = ls[0], w = 0;
         if (vel <= ls[0].v) { a = b = ls[0]; } else if (vel >= ls[ls.length - 1].v) { a = b = ls[ls.length - 1]; }
         else for (let j = 0; j + 1 < ls.length; j++) if (vel >= ls[j].v && vel <= ls[j + 1].v) { a = ls[j]; b = ls[j + 1]; w = (vel - a.v) / (b.v - a.v); break; }
-        const ratio = Math.pow(2, (p - z.p) / 12) * bank.sr / sr, on = Math.round(dur * sr), rr = Math.exp(-1 / (0.12 * sr));
-        const len = Math.min(a.ch[0].length, b.ch[0].length), g = 0.9 * (0.7 + 0.3 * vel / 127);
+        const ratio = Math.pow(2, (p - z.p) / 12) * bank.sr / sr, on = Math.round(dur * sr), rr = Math.exp(-1 / ((bank.rel || 0.12) * sr));
+        const g = 0.9 * (0.7 + 0.3 * vel / 127), X = Math.round(0.25 * bank.sr);
+        // lecture d'une couche à la position x (échantillons de la banque) ; avec boucle : on replie x dans [ls, le[
+        // et on fond la fin de boucle dans ce qui précède son début (aucun clic, même si les deux bouts diffèrent un peu)
+        const rd = (A, x) => { const xi = x | 0, fr = x - xi; return A[xi] + (A[xi + 1] - A[xi]) * fr; };
+        const tap = (ly, c, x) => {
+            const A = ly.ch[c];
+            if (!ly.le) return rd(A, x);
+            const P = ly.le - ly.ls;
+            if (x >= ly.le) x = ly.ls + ((x - ly.le) % P);
+            if (x > ly.le - X) { const t = (x - (ly.le - X)) / X; return rd(A, x) * (1 - t) + rd(A, x - P) * t; }
+            return rd(A, x);
+        };
+        const len = Math.min(a.le ? Infinity : a.ch[0].length, b.le ? Infinity : b.ch[0].length);
         let relE = 1;
         for (let k = 0; i0 + k < L.length; k++) {
-            const x = k * ratio, xi = x | 0;
-            if (xi + 1 >= len || relE < 1e-4) break;
-            const fr = x - xi;
+            const x = k * ratio;
+            if (x + 2 >= len || relE < 1e-4) break;
             if (k > on) relE *= rr;   // touche relâchée : l'étouffoir coupe la note
             const e = relE * g;
             for (let c = 0; c < 2; c++) {
-                const A = a.ch[c], B = b.ch[c];
-                const va = A[xi] + (A[xi + 1] - A[xi]) * fr, vb = B[xi] + (B[xi + 1] - B[xi]) * fr;
+                const va = tap(a, c, x), vb = b === a ? va : tap(b, c, x);
                 (c ? R : L)[i0 + k] += (va + (vb - va) * w) * e;
             }
         }
@@ -76,7 +93,7 @@
         if (INSTRUMENTS[inst] && INSTRUMENTS[inst].bank) {
             const bank = BANKS[INSTRUMENTS[inst].bank];
             if (bank) return sampleVoice(L, R, bank, sr, i0, dur, p, vel);
-            inst = 'piano';   // banque pas encore chargée : piano de synthèse en attendant
+            inst = INSTRUMENTS[inst].fb || 'piano';   // banque pas encore chargée : son de synthèse voisin en attendant
         }
         if (inst === 'piano') {
             const tau = Math.max(0.25, 2.6 - (p - 36) * 0.03) * sr, r = 0.18;
@@ -161,6 +178,53 @@
                 lp[1][0] += (rr - lp[1][0]) * cut; lp[1][1] += (lp[1][0] - lp[1][1]) * cut;
                 L[i] += lp[0][1] * 0.16 * amp * env; R[i] += lp[1][1] * 0.16 * amp * env;
             }
+        } else if (inst === 'choeur') {
+            // chœur « Aah » : 6 voix (dents de scie adoucies, désaccordées, vibrato propre à chacune) passées dans
+            // les 3 formants de la voyelle « a » (filtres résonants), souffle léger, attaque et relâchement doux
+            const r = 0.9, a = 0.28 * sr, n = on + Math.round(r * sr * 5), NV = 6;
+            const nh = Math.max(1, Math.min(40, Math.floor(sr / 2.4 / f)));
+            const TL = 2048, tab = new Float32Array(TL + 1);
+            for (let x = 0; x <= TL; x++) { let sv = 0; for (let h = 1; h <= nh; h++) sv += Math.sin(TAU * h * x / TL) / h * (h < 3 ? 1 : 0.8); tab[x] = sv; }
+            const ph = [], det = [], vr = [], vp = [], pan = [];
+            for (let j = 0; j < NV; j++) { ph.push((j * 0.377 + p * 0.053) % 1); det.push((j - (NV - 1) / 2) * 0.0045); vr.push(TAU * (4.6 + j * 0.31) / sr); vp.push(j * 1.7); pan.push(j % 2 ? 0.75 : 0.25); }
+            // formants de « a » (un peu plus sombres dans le grave) : fréquence, largeur, gain
+            const F = [[730, 90, 1], [1090, 110, 0.5], [2440, 160, 0.22]].map(([fc, bw, gn]) => {
+                fc *= p < 55 ? 0.9 : 1;
+                const w0 = TAU * Math.min(fc, sr * 0.45) / sr, al = Math.sin(w0) * Math.sinh(Math.log(2) / 2 * (bw / fc) * w0 / Math.sin(w0));
+                const a0 = 1 + al; return { b0: al / a0 * gn, b2: -al / a0 * gn, a1: -2 * Math.cos(w0) / a0, a2: (1 - al) / a0, z: [[0, 0], [0, 0]] };
+            });
+            const nz = rng(p * 131 + 7), end = Math.min(L.length, i0 + n), g = 2.3 * amp;
+            for (let i = i0; i < end; i++) {
+                const k = i - i0, env = Math.min(1, k / a) * rel(k, on, r, sr), vib = Math.min(1, k / (0.6 * sr)) * 0.0035;
+                let l = 0, rr = 0;
+                for (let j = 0; j < NV; j++) {
+                    ph[j] = (ph[j] + f * (1 + det[j] + vib * Math.sin(vr[j] * k + vp[j])) / sr) % 1;
+                    const xf = ph[j] * TL, xi = xf | 0, sv = tab[xi] + (tab[xi + 1] - tab[xi]) * (xf - xi);
+                    l += sv * (1 - pan[j]); rr += sv * pan[j];
+                }
+                const br = nz() * 0.25;
+                let ol = 0, or = 0;
+                for (const q of F) {
+                    for (let c = 0; c < 2; c++) {
+                        const x = (c ? rr : l) * 0.2 + br, zz = q.z[c];
+                        const y = q.b0 * x + zz[0]; zz[0] = -q.a1 * y + zz[1]; zz[1] = q.b2 * x - q.a2 * y;
+                        if (c) or += y; else ol += y;
+                    }
+                }
+                L[i] += ol * g * env; R[i] += or * g * env;
+            }
+        } else if (inst === 'kalimba') {
+            // kalimba : lame pincée = fondamentale qui chante + mode aigu (~5,9 ×) très bref + petit clic de pouce
+            const r = 0.6, tau = Math.max(0.35, 1.6 - (p - 60) * 0.025) * sr, n = Math.min(Math.round(6 * sr), on + Math.round(r * sr * 6));
+            const w1 = TAU * f / sr, w2 = TAU * Math.min(f * 5.93, sr / 2.3) / sr, w3 = TAU * Math.min(f * 2.01, sr / 2.3) / sr;
+            const nz = rng(p * 977 + 3), bri = 0.25 + 0.5 * vel / 127;
+            let cl = 0;
+            put(L, R, i0, n, (p - 66) / 60, (k) => {
+                cl += (nz() - cl) * 0.35;
+                const v = Math.sin(w1 * k) * Math.exp(-k / tau) + bri * 0.5 * Math.sin(w2 * k) * Math.exp(-k / (0.045 * sr))
+                    + 0.06 * Math.sin(w3 * k) * Math.exp(-k / (0.3 * sr)) + cl * 0.5 * Math.exp(-k / (0.0025 * sr));
+                return v * 0.42 * amp * Math.min(1, k / att) * (k <= on ? 1 : Math.exp(-(k - on) / (r * sr)));
+            });
         } else if (inst === 'bass') {
             const w = TAU * f / sr, r = 0.08, n = on + Math.round(r * sr * 6);
             let lp = 0;

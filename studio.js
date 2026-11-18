@@ -4741,6 +4741,7 @@ function openSettings() {
             </div>
             <h4 class="set-title">Crédits</h4>
             <div class="set-row set-credits"><span>Piano à queue : <em>Salamander Grand Piano</em> d'Alexander Holm, licence Creative Commons BY 3.0</span></div>
+            <div class="set-row set-credits"><span>Cordes, harpe, cloches, glockenspiel : <em>Versilian Studios</em> (VSCO 2 CE, VCSL), domaine public CC0</span></div>
         </div>`;
     document.body.appendChild(modal);
     requestAnimationFrame(() => modal.classList.add('visible'));
@@ -7267,11 +7268,16 @@ const MIDI_INSTS = () => PulseSynth.INSTRUMENTS;
 // Instrument externe (VST3 / Audio Unit) d'une région : identifiant de l'instance, ou null
 const midiExtId = (midi) => (window.PulseExt && PulseExt.instOf) ? PulseExt.instOf(midi) : (midi && /^ext:/.test(midi.inst || '') ? midi.inst.slice(4) : null);
 const midiInstLabel = (inst) => /^ext:/.test(inst || '') ? ((window.PulseExt && PulseExt.nameOf(inst.slice(4))) || 'Instrument') : (MIDI_INSTS()[inst] || MIDI_INSTS().piano).label;
-// Banques d'échantillons des instruments (piano à queue : Salamander Grand Piano, A. Holm, CC BY 3.0) : 30 notes × 4 frappes,
+// Banques d'échantillons des instruments (piano à queue : Salamander Grand Piano, A. Holm, CC BY 3.0 : 30 notes × 4 frappes ; cordes, harpe, cloches, glockenspiel : Versilian, CC0),
 // chargées une fois (assets/sons/…, ~15 Mo) puis données au synthé. En attendant : son de synthèse, puis les régions sont recalculées.
 const SAMPLE_BANKS = {
     grand: { dir: 'assets/sons/piano/', vels: [4, 8, 12, 16],
-        notes: ['A0', 'C1', 'Ds1', 'Fs1', 'A1', 'C2', 'Ds2', 'Fs2', 'A2', 'C3', 'Ds3', 'Fs3', 'A3', 'C4', 'Ds4', 'Fs4', 'A4', 'C5', 'Ds5', 'Fs5', 'A5', 'C6', 'Ds6', 'Fs6', 'A6', 'C7', 'Ds7', 'Fs7', 'A7', 'C8'] }
+        notes: ['A0', 'C1', 'Ds1', 'Fs1', 'A1', 'C2', 'Ds2', 'Fs2', 'A2', 'C3', 'Ds3', 'Fs3', 'A3', 'C4', 'Ds4', 'Fs4', 'A4', 'C5', 'Ds5', 'Fs5', 'A5', 'C6', 'Ds6', 'Fs6', 'A6', 'C7', 'Ds7', 'Fs7', 'A7', 'C8'] },
+    // Cordes, harpe (VSCO 2 CE) ; cloches tubulaires, glockenspiel (VCSL) : Versilian Studios, CC0. [fichier, hauteur exacte, vélocité, début et fin de boucle (s)]
+    cordes: { dir: 'assets/sons/cordes/', rel: 0.35, files: [["36v55",35.99,55,2.1,6.73933],["36v110",36.01,110,2.55,6.75152],["40v110",39.93,110,2.0,6.32535],["40v55",39.96,55,1.6,6.79017],["43v55",42.96,55,2.55,5.70415],["43v110",42.99,110,2.2,6.53333],["47v110",46.99,110,2.0,6.43056],["47v55",47.01,55,2.55,5.60006],["50v110",49.96,110,2.25,6.40473],["50v55",50.06,55,2.5,6.47556],["53v110",52.97,110,1.6,6.31883],["53v55",53.01,55,2.5,5.90354],["57v55",57.0,55,2.55,6.17681],["57v110",57.01,110,2.55,6.1886],["59v110",58.94,110,2.25,5.77665],["59v55",59.03,55,2.0,5.70323],["62v55",61.99,55,2.0,6.19698],["62v110",61.99,110,2.45,6.05975],["66v110",65.97,110,2.05,6.20329],["66v55",65.98,55,1.65,5.67921],["69v110",68.98,110,2.05,5.60794],["69v55",69.0,55,2.25,5.61392],["72v110",71.96,110,1.9,5.641],["72v55",72.01,55,1.6,5.91215],["76v55",76.0,55,2.1,5.60052],["76v110",76.03,110,1.85,5.71992],["79v110",78.99,110,1.6,6.17019],["79v55",79.03,55,1.75,6.02885],["83v55",83.0,55,2.4,5.82487],["83v110",83.03,110,2.55,5.83312],["86v55",85.97,55,2.4,5.96948],["86v110",86.02,110,1.6,6.43623]] },
+    harpe: { dir: 'assets/sons/harpe/', rel: 0.9, files: [["28v100",27.77,100],["31v100",30.7,100],["35v100",34.84,100],["38v100",37.93,100],["41v100",40.9,100],["45v100",44.95,100],["48v100",47.97,100],["52v100",51.94,100],["55v100",54.91,100],["59v100",58.86,100],["62v100",61.87,100],["65v100",64.99,100],["69v100",68.89,100],["72v100",71.89,100],["76v100",75.88,100],["79v100",78.96,100],["83v100",82.91,100],["86v100",85.93,100],["89v100",88.94,100],["93v100",92.81,100],["95v100",94.9,100],["98v100",97.92,100],["101v100",100.7,100]] },
+    cloches: { dir: 'assets/sons/cloches/', rel: 1.6, files: [["60v115",60.04,115],["60v60",60.05,60],["62v60",62.03,60],["62v115",62.03,115],["64v60",64.06,60],["64v115",64.06,115],["65v60",65.06,60],["65v115",65.06,115],["67v60",67.04,60],["67v115",67.04,115],["69v60",69.03,60],["69v115",69.03,115],["71v60",71.09,60],["71v115",71.09,115],["72v60",72.07,60],["72v115",72.07,115],["74v60",74.08,60],["74v115",74.08,115],["76v60",76.13,60],["76v115",76.13,115],["77v60",77.07,60],["77v115",77.07,115]] },
+    glock: { dir: 'assets/sons/glock/', rel: 1.2, files: [["79v45",79.08,45],["79v85",79.08,85],["79v120",79.08,120],["84v45",84.12,45],["84v85",84.12,85],["84v120",84.12,120],["91v45",91.12,45],["91v85",91.12,85],["91v120",91.12,120],["96v45",96.15,45],["96v85",96.15,85],["96v120",96.15,120],["103v45",103.16,45],["103v85",103.16,85],["108v45",108.24,45],["108v85",108.24,85],["108v120",108.24,120]] }
 };
 const _bankLoad = {};
 function bankOf(inst) { const d = window.PulseSynth && PulseSynth.INSTRUMENTS[inst]; return d && d.bank && SAMPLE_BANKS[d.bank] ? d.bank : null; }
@@ -7280,13 +7286,23 @@ function ensureBank(name) {
     if (_bankLoad[name]) return _bankLoad[name];
     const def = SAMPLE_BANKS[name], ctx = PulseAudio.getContext();
     const midiOf = (n) => { const m = /^([A-G])(s?)(\d)$/.exec(n); return 12 * (+m[3] + 1) + { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 }[m[1]] + (m[2] ? 1 : 0); };
+    const load = async (f) => {
+        const r = await fetch(def.dir + f + '.m4a'); if (!r.ok) throw new Error('son introuvable : ' + f);
+        const ab = await ctx.decodeAudioData(await r.arrayBuffer());
+        return [ab.getChannelData(0), ab.getChannelData(ab.numberOfChannels > 1 ? 1 : 0)];
+    };
     _bankLoad[name] = (async () => {
-        const zones = await Promise.all(def.notes.map(async (n) => ({ p: midiOf(n), layers: await Promise.all(def.vels.map(async (v) => {
-            const r = await fetch(def.dir + n + 'v' + v + '.m4a'); if (!r.ok) throw new Error('son introuvable : ' + n);
-            const ab = await ctx.decodeAudioData(await r.arrayBuffer());
-            return { v: Math.round(v / 16 * 127), ch: [ab.getChannelData(0), ab.getChannelData(ab.numberOfChannels > 1 ? 1 : 0)] };
-        })) })));
-        PulseSynth.setBank(name, { sr: ctx.sampleRate, zones });
+        let zones;
+        if (def.files) {   // [fichier, hauteur, vélocité, boucle début, boucle fin] : couches regroupées par note
+            const by = {}, sr = ctx.sampleRate;
+            await Promise.all(def.files.map(async ([f, p, v, ls, le]) => {
+                const ch = await load(f), k = parseInt(f, 10), ly = { v, p, ch };
+                if (le) { ly.ls = Math.round(ls * sr); ly.le = Math.min(ch[0].length - 2, Math.round(le * sr)); }
+                (by[k] = by[k] || []).push(ly);
+            }));
+            zones = Object.values(by).map((ls) => ({ p: ls.reduce((a, l) => a + l.p, 0) / ls.length, layers: ls.sort((a, b) => a.v - b.v) }));
+        } else zones = await Promise.all(def.notes.map(async (n) => ({ p: midiOf(n), layers: await Promise.all(def.vels.map(async (v) => ({ v: Math.round(v / 16 * 127), ch: await load(n + 'v' + v) }))) })));
+        PulseSynth.setBank(name, { sr: ctx.sampleRate, rel: def.rel, zones });
         return true;
     })().catch((e) => { _bankLoad[name] = null; console.warn('banque', name, e); return false; });
     return _bankLoad[name];
