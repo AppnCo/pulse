@@ -74,7 +74,10 @@
         }
     }
     // Kits de la batterie (région.kit) : Classique (le son d'origine), Trap (808), Boom bap (poussiéreux, années 90)
-    const KITS = { classic: 'Classique', trap: 'Trap', boombap: 'Boom bap' };
+    const KITS = { classic: 'Classique', trap: 'Trap', boombap: 'Boom bap', drill: 'Drill', lofi: 'Lo-fi' };
+    // Drill et Lo-fi : les voix Trap / Boom bap retravaillées (accord, longueurs, couleur, humain) — mêmes réglages que la fenêtre
+    const KIT_DEF = { drill: { voice: 'trap', snd: { kt: -2, kd: 1.7, st: 3, sd: 0.75, hd: 0.7 } },
+                      lofi:  { voice: 'boombap', snd: { st: -1, sd: 1.15, tone: 3800, drive: 0.35, human: 0.3 } } };
 
     // Bruit reproductible : le même motif donne toujours exactement le même son
     function rng(seed) { let a = seed >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return (((t ^ (t >>> 14)) >>> 0) / 4294967296) * 2 - 1; }; }
@@ -82,7 +85,9 @@
     const TAU = Math.PI * 2;
 
     // Chaque voix ajoute son signal dans (L, R) à partir de l'échantillon i0, avec un gain g et un placement pan (-1…1)
+    let _lenScale = 1;   // longueur des pièces de batterie (réglage) : la durée calculée s'allonge avec les enveloppes
     function put(L, R, i0, n, pan, fn) {
+        n = Math.round(n * _lenScale);
         const gl = Math.cos((pan + 1) * Math.PI / 4), gr = Math.sin((pan + 1) * Math.PI / 4);
         const end = Math.min(L.length, i0 + n);
         for (let i = i0; i < end; i++) { const v = fn(i - i0); L[i] += v * gl * 1.4142; R[i] += v * gr * 1.4142; }
@@ -267,9 +272,22 @@
         return () => { let s = 0; for (let j = 0; j < 6; j++) { ph[j] = (ph[j] + fr[j] / sr) % 1; s += ph[j] < 0.5 ? 1 : -1; }
             s /= 6; a = 0.85 * (a + s - pa); pa = s; b = 0.85 * (b + a - pb); pb = a; return b; };
     }
-    function drumVoice(L, R, sr, i0, p, vel, kit) {
+    // P (réglages de la batterie) : accord (demi-tons, comme un échantillon qu'on transpose : hauteur et longueur ensemble)
+    // et longueur (les enveloppes s'allongent) du kick, de la caisse (avec clap et rim) et du charley
+    function drumVoice(L, R, sr, i0, p, vel, kit, P) {
+        if (P) {
+            const kick = p === 35 || p === 36, snare = p >= 37 && p <= 40, hat = p === 42 || p === 44 || p === 46;
+            const semi = kick ? P.kt : snare ? P.st : 0, len = kick ? P.kd : snare ? P.sd : hat ? P.hd : 1;
+            sr = sr / Math.pow(2, semi / 12);
+                _lenScale = Math.max(1, len);
+            try { return drumVoice1(L, R, sr, i0, p, vel, kit, len); } finally { _lenScale = 1; }
+        }
+        return drumVoice1(L, R, sr, i0, p, vel, kit, 1);
+    }
+    function drumVoice1(L, R, sr, i0, p, vel, kit, len) {
         const amp = Math.pow(vel / 127, 1.2), nz = rng(p * 104729 + i0);
-        const exp = (t, tau) => Math.exp(-t / tau);
+        const exp = len === 1 ? (t, tau) => Math.exp(-t / tau) : (t, tau) => Math.exp(-t / (tau * len));
+        if (KIT_DEF[kit]) kit = KIT_DEF[kit].voice;
         if (kit === 'trap' || kit === 'boombap') return kitVoice(L, R, sr, i0, p, amp, nz, exp, kit === 'trap');
         if (p === 36 || p === 35) {                       // kick : sinus qui tombe + petit clic
             let ph = 0;
@@ -402,6 +420,19 @@
                 carre:  { label: 'Carré rétro', snd: { wave: 1, voices: 1, detune: 0, cutoff: 6000, reso: 0, fenv: 0, att: 0.003, dec: 0.2, sus: 0.6, rel: 0.08 } }
             } }
     };
+    SOUNDS.drums = { label: 'Batterie', def: { kt: 0, kd: 1, st: 0, sd: 1, hd: 1, tone: 20000, drive: 0, human: 0 },
+        range: { kt: [-12, 12], kd: [0.3, 3], st: [-12, 12], sd: [0.3, 3], hd: [0.3, 3], tone: [800, 20000], drive: [0, 1], human: [0, 1] },
+        params: [['kt', 'Accord kick', 'st'], ['kd', 'Longueur kick', 'x'], ['st', 'Accord caisse', 'st'], ['sd', 'Longueur caisse', 'x'], ['hd', 'Longueur charley', 'x'],
+            ['tone', 'Couleur', 'hz'], ['drive', 'Saturation', '%'], ['human', 'Humain', '%']],
+        presets: { origine: { label: 'Son du kit', snd: {} }, tient: { label: 'Kick qui tient', snd: { kt: -3, kd: 2.2 } }, serre: { label: 'Tout serré', snd: { kd: 0.6, sd: 0.6, hd: 0.5 } },
+            poussiere: { label: 'Poussiéreux', snd: { tone: 3500, drive: 0.4, human: 0.3 } }, humain: { label: 'Joué à la main', snd: { human: 0.55 } }, cogne: { label: 'Ça cogne', snd: { drive: 0.7, kd: 1.3 } } } };
+    // réglages effectifs d'une région de batterie : ceux du kit (Drill, Lo-fi) puis ceux de la région par-dessus
+    function drumParams(kit, snd) {
+        const k = (KIT_DEF[kit] && KIT_DEF[kit].snd) || {}, r = sndOf('drums', snd), d = SOUNDS.drums.def;
+        if (!snd && !KIT_DEF[kit]) return null;
+        return { kt: r.kt + (k.kt || 0), st: r.st + (k.st || 0), kd: r.kd * (k.kd || 1), sd: r.sd * (k.sd || 1), hd: r.hd * (k.hd || 1),
+            tone: Math.min(r.tone, k.tone || d.tone), drive: Math.max(r.drive, k.drive || 0), human: Math.max(r.human, k.human || 0) };
+    }
     SOUNDS.synth.presets = Object.assign({ base: { label: 'De base', snd: {} } }, SOUNDS.synth.presets);
     function sndOf(inst, snd) {
         const d = SOUNDS[inst], o = {};
@@ -498,6 +529,7 @@
         const notes = (midi.notes || []).slice(0, MAX_NOTES);
         const swing = Math.max(0, Math.min(1, midi.swing || 0));
         const swingOf = (st) => { if (swing > 0) { const k = Math.round(st * 4); if (k % 2 === 1 && Math.abs(st * 4 - k) < 0.02) st += swing * (1 / 12); } return st; };
+        const DP = inst === 'drums' ? drumParams(midi.kit, midi.snd) : null;
         if (inst === 'bass808') { render808(L, R, sr, spb, notes.filter(nt => Math.round(swingOf(nt.s) * spb * sr) < n), swingOf, midi.snd); }
         else for (const nt of notes) {
             // Swing : un seizième sur deux glisse vers le triolet (100 % = triolet complet)
@@ -505,10 +537,21 @@
             if (swing > 0) { const k = Math.round(st * 4); if (k % 2 === 1 && Math.abs(st * 4 - k) < 0.02) st += swing * (1 / 12); }
             const i0 = Math.round(st * spb * sr);
             if (!(i0 >= 0) || i0 >= n) continue;
-            const vel = Math.max(1, Math.min(127, nt.v || 100));
-            if (inst === 'drums') drumVoice(L, R, sr, i0, nt.p, vel, midi.kit);
+            let vel = Math.max(1, Math.min(127, nt.v || 100));
+            if (inst === 'drums') {
+                let j0 = i0;
+                if (DP && DP.human > 0) {   // « Humain » : chaque coup un peu en avance ou en retard, plus ou moins fort (toujours pareil d'une écoute à l'autre)
+                    const hr = rng(Math.round(nt.s * 960) * 131 + nt.p);
+                    j0 = Math.max(0, i0 + Math.round(hr() * DP.human * 0.012 * sr)); vel = Math.max(1, Math.min(127, Math.round(vel * (1 + hr() * DP.human * 0.22))));
+                }
+                drumVoice(L, R, sr, j0, nt.p, vel, midi.kit, DP);
+            }
             else if (inst === 'synth') synthVoice(L, R, sr, i0, Math.max(0.02, nt.d * spb), nt.p, vel, midi.snd);
             else keysVoice(L, R, inst, sr, i0, Math.max(0.02, nt.d * spb), nt.p, vel);
+        }
+        if (DP && (DP.tone < 19999 || DP.drive > 0)) {   // couleur (passe-bas 2 pôles) et saturation de toute la batterie
+            const a = 1 - Math.exp(-TAU * DP.tone / sr), dv = 1 + DP.drive * 5, nm = Math.tanh(dv);
+            for (const C of [L, R]) { let z1 = 0, z2 = 0; for (let i = 0; i < n; i++) { let x = C[i]; if (DP.tone < 19999) { z1 += (x - z1) * a; z2 += (z1 - z2) * a; x = z2; } C[i] = DP.drive > 0 ? Math.tanh(x * dv) / nm : x; } }
         }
         // Soft-clip : jamais de saturation dure quand beaucoup de notes se superposent
         for (let i = 0; i < n; i++) { L[i] = Math.tanh(L[i] * 0.9); R[i] = Math.tanh(R[i] * 0.9); }

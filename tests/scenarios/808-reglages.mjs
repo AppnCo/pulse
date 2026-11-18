@@ -42,4 +42,21 @@ export default async (c) => {
   check('preset Pluck gardé dans la région', pm.inst === 'synth' && pm.cut === 900, JSON.stringify(pm));
   await ev(`(()=>{ const r = document.querySelector('.me-808-pop input[data-k=cutoff]'); r.value = 1000; r.dispatchEvent(new Event('change')); })()`); await sleep(1200);
   check('curseur Filtre au maximum = 14 kHz', await J(ev, `return state.project.tracks[1].clips[0].midi.snd.cutoff`) === 14000);
+  // batterie : bouton « Réglages Batterie », 8 curseurs ; preset « Kick qui tient » gardé et le son change ; accord en demi-tons entiers
+  await ev(`PulsePianoRoll.close(true)`); await sleep(300);
+  await ev(`(()=>{ state.project.tracks.push({ id: 'dr', name: 'Batterie', type: 'drums', midiInst: 'drums', color: '#F59E0B', clips: [], volume: 1, pan: 0 }); renderTimelineTracks(); })()`); await sleep(300);
+  await ev(`createMidiClip(2, 0)`); await sleep(1200);
+  await ev(`(()=>{ const S = PulsePianoRoll._state(); S.notes.push({ s: 0, d: 0.25, p: 36, v: 120 }, { s: 1, d: 0.25, p: 38, v: 110 }, { s: 0.5, d: 0.25, p: 42, v: 90 }); })()`);
+  const db = await J(ev, `const b = document.querySelector('.me-808'); return b && b.style.display !== 'none' ? b.textContent : null`);
+  check('bouton « Réglages Batterie »', db === 'Réglages Batterie', String(db));
+  await ev(`document.querySelector('.me-808').click()`); await sleep(300);
+  const dn = await J(ev, `const p = document.querySelector('.me-808-pop'); return p ? p.querySelectorAll('input[type=range]').length : 0`);
+  check('fenêtre Batterie : 8 curseurs', dn === 8, String(dn));
+  if (process.env.SHOTS) await shot(process.env.SHOTS + '/batterie.jpg');
+  await ev(`(()=>{ const s = document.querySelector('.me-808-preset'); s.value = 'tient'; s.dispatchEvent(new Event('change')); })()`); await sleep(1200);
+  const dm = await J(ev, `const m = state.project.tracks[2].clips[0].midi; const a = PulseSynth.render(m, 140, 44100).channels[0], b = PulseSynth.render(Object.assign({}, m, { snd: undefined }), 140, 44100).channels[0]; let d = 0, e = 0; for (let i = 0; i < a.length; i++) { d += (a[i] - b[i]) ** 2; e += b[i] ** 2; } return { snd: m.snd, kit: m.kit, r: d / e }`);
+  check('preset batterie gardé, le son change', dm.snd && dm.snd.kd === 2.2 && dm.r > 0.05, JSON.stringify(dm));
+  await ev(`(()=>{ const r = document.querySelector('.me-808-pop input[data-k=kt]'); r.value = 760; r.dispatchEvent(new Event('change')); })()`); await sleep(1200);
+  const kt = await J(ev, `return state.project.tracks[2].clips[0].midi.snd.kt`);
+  check('accord du kick en demi-tons entiers', Number.isInteger(kt) && kt > 0, String(kt));
 };

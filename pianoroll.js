@@ -92,7 +92,7 @@
     function close808() { const pn = document.querySelector('.me-808-pop'); if (pn) pn.remove(); }
     const UNIT = {
         s: (v) => v < 1 ? Math.round(v * 1000) + ' ms' : v.toFixed(1) + ' s', ms: (v) => Math.round(v * 1000) + ' ms', int: (v) => String(Math.round(v)), ct: (v) => Math.round(v) + ' ct',
-        hz: (v) => v >= 1000 ? (v / 1000).toFixed(1) + ' kHz' : Math.round(v) + ' Hz', oct: (v) => v.toFixed(1) + ' oct', wave: (v) => v < 0.05 ? 'Scie' : v > 0.95 ? 'Carré' : Math.round((1 - v) * 100) + ' / ' + Math.round(v * 100)
+        st: (v) => (v > 0 ? '+' : '') + Math.round(v) + ' ½ t', x: (v) => '× ' + v.toFixed(2), hz: (v) => v >= 1000 ? (v / 1000).toFixed(1) + ' kHz' : Math.round(v) + ' Hz', oct: (v) => v.toFixed(1) + ' oct', wave: (v) => v < 0.05 ? 'Scie' : v > 0.95 ? 'Carré' : Math.round((1 - v) * 100) + ' / ' + Math.round(v * 100)
     };
     function open808() {
         if (!el || document.querySelector('.me-808-pop')) { close808(); return; }
@@ -100,8 +100,8 @@
         const D = sd.def, RG = sd.range;
         const fmt = (k, u, v) => u === '%' ? Math.round((v - RG[k][0]) / (RG[k][1] - RG[k][0]) * 100) + ' %' : UNIT[u](v);
         // curseur 0…1000 ; fréquences et temps en échelle logarithmique (le réglage fin reste là où l'oreille l'entend)
-        const isLog = (k, u) => (u === 'hz' || u === 's') && RG[k][0] > 0;
-        const toV = (k, u, t) => { const [a, b] = RG[k]; let v = isLog(k, u) ? a * Math.pow(b / a, t / 1000) : a + (b - a) * t / 1000; return u === 'int' ? Math.round(v) : v; };
+        const isLog = (k, u) => (u === 'hz' || u === 's' || u === 'x') && RG[k][0] > 0;
+        const toV = (k, u, t) => { const [a, b] = RG[k]; let v = isLog(k, u) ? a * Math.pow(b / a, t / 1000) : a + (b - a) * t / 1000; return u === 'int' || u === 'st' ? Math.round(v) : v; };
         const toT = (k, u, v) => { const [a, b] = RG[k]; return Math.round(isLog(k, u) ? Math.log(v / a) / Math.log(b / a) * 1000 : (v - a) / (b - a) * 1000); };
         const cur = () => Object.assign({}, D, S.midi.snd || {});
         const pn = document.createElement('div'); pn.className = 'me-808-pop'; pn.dataset.inst = S.midi.inst;
@@ -120,7 +120,7 @@
         };
         paint();
         const br = el.querySelector('.me-808').getBoundingClientRect();
-        pn.style.top = Math.round(br.bottom + 6) + 'px'; pn.style.left = Math.round(Math.max(8, Math.min(innerWidth - 272, br.left))) + 'px';
+        pn.style.top = Math.round(br.bottom + 6) + 'px'; pn.style.left = Math.round(Math.max(8, Math.min(innerWidth - 312, br.left))) + 'px';
         document.body.appendChild(pn);
     }
     function build() {
@@ -133,7 +133,7 @@
             <div class="me-bar">
                 <span class="me-title"></span>
                 ${isDrums ? '' : `<div class="me-seg me-toolseg" role="group"><button data-tool="draw" data-tooltip="Crayon : un clic pose une note, glisser l'étire (touche 1)">Crayon</button><button data-tool="select" data-tooltip="Pointeur : glisser dans le vide = choisir plusieurs notes ; double-clic = poser une note (touche 2)">Pointeur</button><button data-tool="erase" data-tooltip="Gomme : clique ou glisse sur des notes pour les effacer (touche 3)">Gomme</button><button data-tool="cut" data-tooltip="Ciseaux : clique sur une note pour la couper en deux à cet endroit (touche 4)">Ciseaux</button></div>`}
-                ${isDrums ? `<select class="me-kit" data-tooltip="Le kit de cette batterie">${Object.entries(root.PulseSynth.KITS || {}).map(([k, v]) => `<option value="${k}" ${(S.midi.kit || 'classic') === k ? 'selected' : ''}>${v}</option>`).join('')}</select>` : `<select class="me-inst" data-tooltip="Le son de cette région">${insts.map(([k, v]) => `<option value="${k}" ${S.midi.inst === k ? 'selected' : ''}>${v.label}</option>`).join('')}${extOpts()}</select><button class="me-btn me-ext-open" style="display:none" data-tooltip="Ouvrir la fenêtre de l'instrument (choisir un son, le régler)">Réglages</button><button class="me-btn me-808" style="display:none" data-tooltip="Régler le son de cet instrument (presets et curseurs)">Réglages</button><button class="me-btn me-ext-redo" style="display:none" data-tooltip="Recalculer le son des régions après avoir changé le réglage de l'instrument">${typeof pIcon === 'function' ? pIcon('refresh') : '↻'}</button>`}
+                ${isDrums ? `<select class="me-kit" data-tooltip="Le kit de cette batterie">${Object.entries(root.PulseSynth.KITS || {}).map(([k, v]) => `<option value="${k}" ${(S.midi.kit || 'classic') === k ? 'selected' : ''}>${v}</option>`).join('')}</select><button class="me-btn me-808" style="display:none" data-tooltip="Régler la batterie : accord et longueur des pièces, couleur, saturation, jeu humain (par-dessus le son du kit)">Réglages</button>` : `<select class="me-inst" data-tooltip="Le son de cette région">${insts.map(([k, v]) => `<option value="${k}" ${S.midi.inst === k ? 'selected' : ''}>${v.label}</option>`).join('')}${extOpts()}</select><button class="me-btn me-ext-open" style="display:none" data-tooltip="Ouvrir la fenêtre de l'instrument (choisir un son, le régler)">Réglages</button><button class="me-btn me-808" style="display:none" data-tooltip="Régler le son de cet instrument (presets et curseurs)">Réglages</button><button class="me-btn me-ext-redo" style="display:none" data-tooltip="Recalculer le son des régions après avoir changé le réglage de l'instrument">${typeof pIcon === 'function' ? pIcon('refresh') : '↻'}</button>`}
                 ${isDrums ? `<div class="me-seg" role="group"><button data-view="steps" data-tooltip="Séquenceur de pas : une case = un coup">Pas</button><button data-view="roll" data-tooltip="Piano roll : placer les coups librement">Piano roll</button></div>` : ''}
                 <label class="me-lbl me-adv">Grille <select class="me-snap">${SNAPS.map(([n], i) => `<option value="${i}" ${i === S.snap ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
                 <label class="me-lbl me-steps-only me-adv">Pas <select class="me-div"><option value="4">1/16</option><option value="8">1/32</option><option value="3">1/8 triolet</option></select></label>

@@ -691,3 +691,8 @@ Object.assign(exact, { 'Synthé': 'Synth', 'Réglages': 'Settings', 'Réglages S
   'Forme': 'Shape', 'Voix': 'Voices', 'Désaccord': 'Detune', 'Sub': 'Sub', 'Filtre': 'Filter', 'Résonance': 'Resonance', 'Ouverture': 'Filter env', 'Retombée': 'Env decay',
   'Attaque': 'Attack', 'Déclin': 'Decay', 'Tenue': 'Sustain', 'Relâchement': 'Release', 'Scie': 'Saw', 'Carré': 'Square', 'De base': 'Init',
   'Pluck trap': 'Trap pluck', 'Lead': 'Lead', 'Nappe sombre': 'Dark pad', 'Basse Reese': 'Reese bass', 'Clochette': 'Little bell', 'Carré rétro': 'Retro square' });
+// Batterie réglable (18/11)
+Object.assign(exact, { 'Drill': 'Drill', 'Lo-fi': 'Lo-fi', 'Batterie': 'Drums', 'Réglages Batterie': 'Drum settings', 'Accord kick': 'Kick tune', 'Longueur kick': 'Kick length', 'Accord caisse': 'Snare tune',
+  'Longueur caisse': 'Snare length', 'Longueur charley': 'Hi-hat length', 'Couleur': 'Tone', 'Humain': 'Human', 'Son du kit': 'Kit sound', 'Kick qui tient': 'Long kick', 'Tout serré': 'All tight',
+  'Poussiéreux': 'Dusty', 'Joué à la main': 'Hand-played', 'Ça cogne': 'Hits hard',
+  'Régler la batterie : accord et longueur des pièces, couleur, saturation, jeu humain (par-dessus le son du kit)': 'Shape the drums: tune and length of each piece, tone, saturation, human feel (on top of the kit sound)' });

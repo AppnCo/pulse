@@ -8,7 +8,7 @@ export default async (c) => {
     { name: 'Piano', type: 'keys', midiInst: 'piano', color: '#22D3EE', clips: [] }] }, { mic: false });
   await ev(`createMidiClip(0, 0)`); await sleep(1200);
   const k0 = await J(ev, `const s = document.querySelector('.me-kit'); return { opts: s ? [...s.options].map(o => o.textContent) : null, v: s && s.value, kit: state.project.tracks[0].clips[0].midi.kit }`);
-  check('séquenceur de pas : choix du kit', k0.opts && k0.opts.join() === 'Classique,Trap,Boom bap', JSON.stringify(k0));
+  check('séquenceur de pas : choix du kit', k0.opts && k0.opts.join() === 'Classique,Trap,Boom bap,Drill,Lo-fi', JSON.stringify(k0));
   check('nouvelle région de batterie en Trap', k0.v === 'trap' && k0.kit === 'trap', JSON.stringify(k0));
   await ev(`(()=>{ const S = PulsePianoRoll._state(); S.notes.push({ s: 0, d: 0.25, p: 36, v: 110 }, { s: 1, d: 0.25, p: 38, v: 110 }); const s = document.querySelector('.me-kit'); s.value = 'boombap'; s.dispatchEvent(new Event('change')); })()`);
   await sleep(1200);
