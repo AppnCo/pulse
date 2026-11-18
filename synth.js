@@ -372,7 +372,24 @@
     }
 
     // 808 de la trap : une seule voix ; une note qui commence avant la fin de la précédente y GLISSE (portamento, 60 ms)
-    function render808(L, R, sr, spb, notes, swingOf) {
+    // Réglages de la 808 (région.snd) : queue (s), punch (chute de hauteur à l'attaque), saturation, glisse (s), clic d'attaque.
+    // Valeurs par défaut = la 808 d'origine, à l'échantillon près.
+    const S808 = { decay: 3.5, punch: 1.2, drive: 2.2, glide: 0.06, click: 0 };
+    const S808_RANGE = { decay: [0.2, 8], punch: [0, 4], drive: [1, 8], glide: [0, 0.4], click: [0, 1] };
+    const PRESETS_808 = {
+        classique: { label: 'Classique', snd: {} },
+        longue:    { label: 'Longue',    snd: { decay: 6, punch: 1, drive: 1.8 } },
+        courte:    { label: 'Courte qui claque', snd: { decay: 0.7, punch: 2.6, drive: 3, click: 0.5 } },
+        saturee:   { label: 'Saturée',   snd: { decay: 3, punch: 1.5, drive: 6.5, click: 0.2 } },
+        glisse:    { label: 'Glisse lente', snd: { decay: 4, glide: 0.22 } }
+    };
+    function s808(snd) {
+        const o = {};
+        for (const k in S808) { const v = snd && Number.isFinite(+snd[k]) ? +snd[k] : S808[k], [a, b] = S808_RANGE[k]; o[k] = Math.max(a, Math.min(b, v)); }
+        return o;
+    }
+    function render808(L, R, sr, spb, notes, swingOf, snd) {
+        const P = s808(snd);
         const ns = notes.map(nt => ({ s: swingOf(nt.s), d: Math.max(0.02, nt.d), p: nt.p, v: Math.max(1, Math.min(127, nt.v || 100)) })).sort((a, b) => a.s - b.s);
         let i = 0;
         while (i < ns.length) {
@@ -382,15 +399,17 @@
             const on = Math.round((endB - ph0.s) * spb * sr), r = 0.12, n = on + Math.round(r * sr * 5), amp = Math.pow(ph0.v / 127, 1.3);
             const starts = ns.slice(i, j + 1).map(x => ({ k: Math.round((x.s - ph0.s) * spb * sr), f: hz(x.p) }));
             let ph = 0, q = 0, from = starts[0].f, to = starts[0].f, kq = 0;
-            const end = Math.min(L.length, i0 + n), gl = 0.06 * sr;
+            const end = Math.min(L.length, i0 + n), gl = Math.max(1, P.glide * sr), nz = rng(ph0.p * 31 + 5);
+            let cl = 0;
             for (let x = i0; x < end; x++) {
                 const k = x - i0;
                 if (q + 1 < starts.length && k >= starts[q + 1].k) { q++; from = to; to = starts[q].f; kq = k; }
                 const g = Math.min(1, (k - kq) / gl), f = q === 0 ? to : from * Math.pow(to / from, g);
-                const t = k / sr, fr = f * (1 + 1.2 * Math.exp(-t / 0.03));
+                const t = k / sr, fr = f * (1 + P.punch * Math.exp(-t / 0.03));
                 ph += TAU * fr / sr;
-                const e = Math.min(1, k / (0.002 * sr)) * Math.exp(-t / 3.5) * rel(k, on, r, sr);
-                const v = Math.tanh(Math.sin(ph) * 2.2 * amp) * 0.6 * e;
+                const e = Math.min(1, k / (0.002 * sr)) * Math.exp(-t / P.decay) * rel(k, on, r, sr);
+                let v = Math.tanh(Math.sin(ph) * P.drive * amp) * 0.6 * e;
+                if (P.click > 0 && k < 0.02 * sr) { cl += (nz() - cl) * 0.5; v += P.click * amp * (cl * 0.5 + Math.sin(ph * 3) * 0.3) * Math.exp(-k / (0.004 * sr)); }
                 L[x] += v; R[x] += v;
             }
             i = j + 1;
@@ -407,7 +426,7 @@
         const notes = (midi.notes || []).slice(0, MAX_NOTES);
         const swing = Math.max(0, Math.min(1, midi.swing || 0));
         const swingOf = (st) => { if (swing > 0) { const k = Math.round(st * 4); if (k % 2 === 1 && Math.abs(st * 4 - k) < 0.02) st += swing * (1 / 12); } return st; };
-        if (inst === 'bass808') { render808(L, R, sr, spb, notes.filter(nt => Math.round(swingOf(nt.s) * spb * sr) < n), swingOf); }
+        if (inst === 'bass808') { render808(L, R, sr, spb, notes.filter(nt => Math.round(swingOf(nt.s) * spb * sr) < n), swingOf, midi.snd); }
         else for (const nt of notes) {
             // Swing : un seizième sur deux glisse vers le triolet (100 % = triolet complet)
             let st = nt.s;
@@ -424,9 +443,9 @@
     }
 
     // Une note seule, pour l'écouter quand on clique sur le clavier
-    function preview(inst, p, vel = 100, sr = 44100, kit) {
+    function preview(inst, p, vel = 100, sr = 44100, kit, snd) {
         const isDrums = inst === 'drums';
-        return render({ inst, kit, beats: isDrums ? 2 : 2.5, notes: [{ s: 0, d: isDrums ? 0.25 : 1, p, v: vel }] }, 120, sr);
+        return render({ inst, kit, snd, beats: isDrums ? 2 : 2.5, notes: [{ s: 0, d: isDrums ? 0.25 : 1, p, v: vel }] }, 120, sr);
     }
 
     // Boucle un motif sur plusieurs mesures : renvoie les notes répétées jusqu'à `beats`
@@ -439,5 +458,5 @@
         return out;
     }
 
-    root.PulseSynth = { INSTRUMENTS, KITS, DRUM_LANES, setBank, hasBank, render, preview, loopNotes, hz, MAX_NOTES };
+    root.PulseSynth = { INSTRUMENTS, KITS, S808, S808_RANGE, PRESETS_808, DRUM_LANES, setBank, hasBank, render, preview, loopNotes, hz, MAX_NOTES };
 })(typeof window !== 'undefined' ? window : globalThis);

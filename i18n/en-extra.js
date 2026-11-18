@@ -681,3 +681,8 @@ patterns.push(P('Piano à queue : § d\'Alexander Holm, licence Creative Commons
 Object.assign(exact, { 'Cordes': 'Strings', 'Chœur': 'Choir', 'Harpe': 'Harp', 'Cloches': 'Bells', 'Glockenspiel': 'Glockenspiel', 'Kalimba': 'Kalimba',
   'Cordes, harpe, flûte, cuivres, cloches, glockenspiel, vibraphone :': 'Strings, harp, flute, brass, bells, glockenspiel, vibraphone:', 'Flûte': 'Flute', 'Cuivres': 'Brass', 'Vibraphone': 'Vibraphone', 'Versilian Studios': 'Versilian Studios', '(VSCO 2 CE, VCSL), domaine public CC0': '(VSCO 2 CE, VCSL), public domain CC0' });
 patterns.push(P('Cordes, harpe, flûte, cuivres, cloches, glockenspiel, vibraphone : § (VSCO 2 CE, VCSL), domaine public CC0', 'Strings, harp, flute, brass, bells, glockenspiel, vibraphone: $1 (VSCO 2 CE, VCSL), public domain CC0'));
+
+// 808 réglable (18/11)
+Object.assign(exact, { 'Réglages 808': '808 settings', 'Régler la 808 : longueur, punch, saturation, glisse, clic': 'Shape the 808: length, punch, saturation, glide, click',
+  'Longueur': 'Length', 'Punch': 'Punch', 'Saturation': 'Saturation', 'Glisse': 'Glide', 'Clic': 'Click', 'Longue': 'Long', 'Courte qui claque': 'Short & punchy',
+  'Saturée': 'Saturated', 'Glisse lente': 'Slow glide', 'Perso': 'Custom', 'Un réglage tout prêt': 'A ready-made setting' });

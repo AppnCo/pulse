@@ -1445,7 +1445,19 @@
   "Cuivres": "Brass",
   "Vibraphone": "Vibraphone",
   "Versilian Studios": "Versilian Studios",
-  "(VSCO 2 CE, VCSL), domaine public CC0": "(VSCO 2 CE, VCSL), public domain CC0"
+  "(VSCO 2 CE, VCSL), domaine public CC0": "(VSCO 2 CE, VCSL), public domain CC0",
+  "Réglages 808": "808 settings",
+  "Régler la 808 : longueur, punch, saturation, glisse, clic": "Shape the 808: length, punch, saturation, glide, click",
+  "Longueur": "Length",
+  "Punch": "Punch",
+  "Glisse": "Glide",
+  "Clic": "Click",
+  "Longue": "Long",
+  "Courte qui claque": "Short & punchy",
+  "Saturée": "Saturated",
+  "Glisse lente": "Slow glide",
+  "Perso": "Custom",
+  "Un réglage tout prêt": "A ready-made setting"
  },
  "patterns": [
   [

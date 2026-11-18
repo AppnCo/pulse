@@ -43,4 +43,12 @@ ok('boucle', lp.length === 5 && lp[4].s === 8, `${lp.length} notes`);
   const sums = {};
   for (const kit of Object.keys(S.KITS)) { const r = S.render({ inst: 'drums', kit, beats: 4, notes }, 140, sr); sums[kit] = r.channels[0].reduce((a, v) => a + v * v, 0); ok('kit ' + kit, peak(r.channels[0]) > 0.3 && peak(r.channels[0]) <= 1 && r.channels[0].every(Number.isFinite), `crête ${peak(r.channels[0]).toFixed(2)}`); }
   ok('les kits sonnent différemment', new Set(Object.values(sums).map(x => x.toFixed(1))).size === Object.keys(S.KITS).length, JSON.stringify(Object.fromEntries(Object.entries(sums).map(([k, v]) => [k, +v.toFixed(1)])))); }
+
+{ // 808 réglable : par défaut = la 808 d'origine ; chaque réglage change le son et reste borné
+  const m = { inst: 'bass808', beats: 4, notes: [{ s: 0, d: 1.5, p: 36, v: 110 }, { s: 1, d: 1, p: 43, v: 110 }] };
+  const rd = (snd) => S.render({ ...m, snd }, 140, sr).channels[0];
+  const x0 = rd(undefined), x1 = rd({}); let e0 = 0; for (const v of x0) e0 += v * v;
+  ok('808 par défaut inchangée', x0.every((v, i) => v === x1[i]), 'identique');
+  for (const k of ['decay', 'punch', 'drive', 'glide', 'click']) { const x = rd({ [k]: S.S808_RANGE[k][1] }); let d = 0; for (let i = 0; i < x.length; i++) d += (x[i] - x0[i]) ** 2; ok('808 ' + k + ' change le son', d / e0 > 0.0002 && peak(x) <= 1, `écart ${(d / e0).toFixed(4)}, crête ${peak(x).toFixed(2)}`); }
+}
 process.exit(fail ? 1 : 0);

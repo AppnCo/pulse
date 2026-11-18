@@ -60,6 +60,7 @@
 
     function close(silent) {
         if (!el) return;
+        close808();
         flush();
         if (!el) return;   // la région a disparu pendant l'enregistrement final : l'éditeur s'est déjà fermé
         clearInterval(timer); cancelAnimationFrame(raf);
@@ -83,7 +84,35 @@
         const l = S.o.extInsts ? S.o.extInsts() : [];
         return cur + (l.length ? `<optgroup label="Instruments externes">${l.map(p => `<option value="extpick|${escH(p.path)}">${escH(p.vendor ? p.vendor + ' — ' : '')}${escH(p.name)}</option>`).join('')}</optgroup>` : '');
     }
-    function syncExtButtons() { if (!el) return; el.querySelectorAll('.me-ext-open, .me-ext-redo').forEach(b => { b.style.display = isExtInst() ? '' : 'none'; }); }
+    function syncExtButtons() { if (!el) return; el.querySelectorAll('.me-ext-open, .me-ext-redo').forEach(b => { b.style.display = isExtInst() ? '' : 'none'; });
+        const b8 = el.querySelector('.me-808'); if (b8) b8.style.display = S.midi.inst === 'bass808' ? '' : 'none';
+        if (S.midi.inst !== 'bass808') close808(); }
+    // Fenêtre « Réglages 808 » : un preset puis 5 curseurs ; chaque changement recalcule la région (annulable)
+    function close808() { const pn = document.querySelector('.me-808-pop'); if (pn) pn.remove(); }
+    function open808() {
+        if (!el || document.querySelector('.me-808-pop')) { close808(); return; }
+        const PS = root.PulseSynth, D = PS.S808, RG = PS.S808_RANGE;
+        const NAMES = { decay: ['Longueur', (v) => v.toFixed(1) + ' s'], punch: ['Punch', (v) => Math.round(v / 4 * 100) + ' %'], drive: ['Saturation', (v) => Math.round((v - 1) / 7 * 100) + ' %'],
+            glide: ['Glisse', (v) => Math.round(v * 1000) + ' ms'], click: ['Clic', (v) => Math.round(v * 100) + ' %'] };
+        const cur = () => Object.assign({}, D, S.midi.snd || {});
+        const pn = document.createElement('div'); pn.className = 'me-808-pop';
+        const rows = () => { const c = cur(); return Object.keys(NAMES).map((k) => `<label class="me-808-row"><span>${NAMES[k][0]}</span><input type="range" data-k="${k}" min="${RG[k][0]}" max="${RG[k][1]}" step="${(RG[k][1] - RG[k][0]) / 200}" value="${c[k]}"><em>${NAMES[k][1](c[k])}</em></label>`).join(''); };
+        const presetOf = () => { const c = cur(); for (const [id, pr] of Object.entries(PS.PRESETS_808)) { const t = Object.assign({}, D, pr.snd); if (Object.keys(D).every((k) => Math.abs(t[k] - c[k]) < 1e-6)) return id; } return ''; };
+        const paint = () => {
+            const pid = presetOf();
+            pn.innerHTML = `<div class="me-808-head"><b>808</b><select class="me-808-preset" data-tooltip="Un réglage tout prêt">${pid ? '' : '<option value="" selected>Perso</option>'}${Object.entries(PS.PRESETS_808).map(([id, pr]) => `<option value="${id}" ${id === pid ? 'selected' : ''}>${pr.label}</option>`).join('')}</select><button class="me-btn me-808-x" data-tooltip="Fermer">×</button></div>${rows()}`;
+            pn.querySelector('.me-808-x').onclick = close808;
+            pn.querySelector('.me-808-preset').onchange = (e) => { const pr = PS.PRESETS_808[e.target.value]; if (!pr) return; snapshot(); S.midi.snd = Object.assign({}, pr.snd); changed('inst'); paint(); };
+            pn.querySelectorAll('input[type=range]').forEach((r) => {
+                r.oninput = () => { r.nextElementSibling.textContent = NAMES[r.dataset.k][1](+r.value); };
+                r.onchange = () => { snapshot(); S.midi.snd = Object.assign({}, S.midi.snd || {}, { [r.dataset.k]: +r.value }); changed('inst'); paint(); };
+            });
+        };
+        paint();
+        const br = el.querySelector('.me-808').getBoundingClientRect();
+        pn.style.top = Math.round(br.bottom + 6) + 'px'; pn.style.left = Math.round(Math.max(8, Math.min(innerWidth - 272, br.left))) + 'px';
+        document.body.appendChild(pn);
+    }
     function build() {
         el = document.createElement('section');
         el.className = 'midi-editor';
@@ -94,7 +123,7 @@
             <div class="me-bar">
                 <span class="me-title"></span>
                 ${isDrums ? '' : `<div class="me-seg me-toolseg" role="group"><button data-tool="draw" data-tooltip="Crayon : un clic pose une note, glisser l'étire (touche 1)">Crayon</button><button data-tool="select" data-tooltip="Pointeur : glisser dans le vide = choisir plusieurs notes ; double-clic = poser une note (touche 2)">Pointeur</button><button data-tool="erase" data-tooltip="Gomme : clique ou glisse sur des notes pour les effacer (touche 3)">Gomme</button><button data-tool="cut" data-tooltip="Ciseaux : clique sur une note pour la couper en deux à cet endroit (touche 4)">Ciseaux</button></div>`}
-                ${isDrums ? `<select class="me-kit" data-tooltip="Le kit de cette batterie">${Object.entries(root.PulseSynth.KITS || {}).map(([k, v]) => `<option value="${k}" ${(S.midi.kit || 'classic') === k ? 'selected' : ''}>${v}</option>`).join('')}</select>` : `<select class="me-inst" data-tooltip="Le son de cette région">${insts.map(([k, v]) => `<option value="${k}" ${S.midi.inst === k ? 'selected' : ''}>${v.label}</option>`).join('')}${extOpts()}</select><button class="me-btn me-ext-open" style="display:none" data-tooltip="Ouvrir la fenêtre de l'instrument (choisir un son, le régler)">Réglages</button><button class="me-btn me-ext-redo" style="display:none" data-tooltip="Recalculer le son des régions après avoir changé le réglage de l'instrument">${typeof pIcon === 'function' ? pIcon('refresh') : '↻'}</button>`}
+                ${isDrums ? `<select class="me-kit" data-tooltip="Le kit de cette batterie">${Object.entries(root.PulseSynth.KITS || {}).map(([k, v]) => `<option value="${k}" ${(S.midi.kit || 'classic') === k ? 'selected' : ''}>${v}</option>`).join('')}</select>` : `<select class="me-inst" data-tooltip="Le son de cette région">${insts.map(([k, v]) => `<option value="${k}" ${S.midi.inst === k ? 'selected' : ''}>${v.label}</option>`).join('')}${extOpts()}</select><button class="me-btn me-ext-open" style="display:none" data-tooltip="Ouvrir la fenêtre de l'instrument (choisir un son, le régler)">Réglages</button><button class="me-btn me-808" style="display:none" data-tooltip="Régler la 808 : longueur, punch, saturation, glisse, clic">Réglages 808</button><button class="me-btn me-ext-redo" style="display:none" data-tooltip="Recalculer le son des régions après avoir changé le réglage de l'instrument">${typeof pIcon === 'function' ? pIcon('refresh') : '↻'}</button>`}
                 ${isDrums ? `<div class="me-seg" role="group"><button data-view="steps" data-tooltip="Séquenceur de pas : une case = un coup">Pas</button><button data-view="roll" data-tooltip="Piano roll : placer les coups librement">Piano roll</button></div>` : ''}
                 <label class="me-lbl me-adv">Grille <select class="me-snap">${SNAPS.map(([n], i) => `<option value="${i}" ${i === S.snap ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
                 <label class="me-lbl me-steps-only me-adv">Pas <select class="me-div"><option value="4">1/16</option><option value="8">1/32</option><option value="3">1/8 triolet</option></select></label>
@@ -173,6 +202,7 @@
         };
         // kit de la batterie (Classique, Trap, Boom bap) : la région est recalculée avec le nouveau son
         { const ks = q('.me-kit'); if (ks) ks.onchange = (e) => { snapshot(); S.midi.kit = e.target.value; changed('inst'); }; }
+        { const b8 = q('.me-808'); if (b8) b8.onclick = open808; }
         { const bo = q('.me-ext-open'), br = q('.me-ext-redo');
           if (bo) bo.onclick = () => { if (isExtInst() && S.o.onExtOpen) S.o.onExtOpen(S.midi.inst); };
           if (br) br.onclick = () => { if (isExtInst() && S.o.onExtRedo) S.o.onExtRedo(S.midi.inst); };
@@ -997,7 +1027,7 @@
     function restore(str) {
         const o = JSON.parse(str);
         const keep = S.midi.inst;
-        S.midi = Object.assign({}, S.midi, { beats: o.m.beats, inst: o.m.inst, kit: o.m.kit, swing: o.m.swing || 0 }); S.notes = S.midi.notes = o.notes; S.sel.clear();
+        S.midi = Object.assign({}, S.midi, { beats: o.m.beats, inst: o.m.inst, kit: o.m.kit, snd: o.m.snd, swing: o.m.swing || 0 }); S.notes = S.midi.notes = o.notes; S.sel.clear();
         changed('undo', true);
     }
     function undoEd() { if (!S.undo.length) { S.o.flash && S.o.flash('Rien à annuler dans cette région'); return; } S.redo.push(JSON.stringify({ m: S.midi, notes: S.notes })); restore(S.undo.pop()); }
@@ -1014,11 +1044,11 @@
         if (!S || !S.dirty) return;
         clearTimeout(S.t); S.dirty = false;
         const fromHistory = !!S.hist; S.hist = false;
-        S.o.onCommit(clone({ inst: S.midi.inst, ...(S.midi.kit ? { kit: S.midi.kit } : {}), beats: S.midi.beats, swing: S.midi.swing || 0, notes: S.notes.map(n => ({ s: n.s, d: n.d, p: n.p, v: n.v })) }), !S.committed, fromHistory);
+        S.o.onCommit(clone({ inst: S.midi.inst, ...(S.midi.kit ? { kit: S.midi.kit } : {}), ...(S.midi.snd ? { snd: S.midi.snd } : {}), beats: S.midi.beats, swing: S.midi.swing || 0, notes: S.notes.map(n => ({ s: n.s, d: n.d, p: n.p, v: n.v })) }), !S.committed, fromHistory);
         if (S) S.committed = true; // l'éditeur a pu se fermer pendant onCommit
     }
 
-    function audition(p, v = 100) { if (S && S.o.onPreview) S.o.onPreview(S.midi.inst, p, v, S.midi.kit); }
+    function audition(p, v = 100) { if (S && S.o.onPreview) S.o.onPreview(S.midi.inst, p, v, S.midi.kit, S.midi.snd); }
 
     function startLoop() {
         clearInterval(timer);
