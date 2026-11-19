@@ -4058,7 +4058,7 @@ body.fx-drag-copy .insp-fx-row.fx-dragging::after { content: '+'; position: abso
 .tp-notebar label { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; white-space: nowrap; margin: 0; }
 .tp-notebar input[type=range] { width: 84px !important; flex: none; margin: 0; accent-color: #A855F7; }
 .tp-notebar label span { min-width: 34px; font-variant-numeric: tabular-nums; color: #fff; }
-.tp-notebar button { margin-left: auto; flex: 0 0 auto; padding: 4px 10px; }
+.tp-notebar button { margin-left: auto; flex: 0 0 auto; }
 .tp-notebar button:disabled { opacity: .35; }
 .tune-panel.tp-graph .tp-trace { height: 320px; }
 .tune-panel.tp-graph .tp-trace canvas { height: calc(100% - 22px); }
@@ -4200,3 +4200,13 @@ body.fx-drag-copy .insp-fx-row.fx-dragging::after { content: '+'; position: abso
 .me-808-row { display: grid; grid-template-columns: 112px 1fr 60px; white-space: nowrap; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2, var(--text-1)); }
 .me-808-row input { width: 100%; accent-color: var(--accent, #22D3EE); }
 .me-808-row em { font-style: normal; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* PulseTune Graphique : barre (écouter, zoom, agrandir) + fenêtre agrandie */
+.tp-gbar { display: none; align-items: center; gap: 6px; margin: 10px 12px 0; }
+.tune-panel.tp-graph .tp-gbar { display: flex; }
+.tp-gbar .tp-g-sp { flex: 1; }
+.tp-gbar button { font-weight: 600; min-width: 30px; }
+.tp-gbar .tp-g-play.on { background: var(--violet-2, #A855F7); color: #fff; border-color: transparent; }
+.tune-panel.tp-graph .tp-gbar + .tp-trace { margin-top: 6px; }
+.tune-panel.tune-pro.tp-big { left: 16px !important; top: 16px !important; right: 16px; bottom: 16px; width: auto !important; max-height: none !important; display: flex; flex-direction: column; overflow-x: hidden; overflow-y: auto; }
+.tune-panel.tp-big.tp-graph .tp-trace { flex: 1 1 auto; height: auto; min-height: 320px; }

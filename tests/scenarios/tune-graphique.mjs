@@ -2,7 +2,7 @@
 import fs from 'fs';
 import { boot, J, instru, RAP } from './qa-lib.mjs';
 export default async (c) => {
-  const { ev, sleep, send, check } = c;
+  const { ev, sleep, send, check, shot } = c;
   const JA = (code) => ev(`(async()=>JSON.stringify(await (async()=>{${code}})()))()`).then(x => { try { return JSON.parse(x); } catch { return x; } });
   await boot(c, JSON.parse(JSON.stringify(RAP)), { mic: false });
   await instru(ev, 8, 0, 0); await sleep(300);
@@ -80,12 +80,45 @@ export default async (c) => {
   }
 
 
+
+  // barre : + / − / Tout voir, Écouter ce passage (boucle sur l'écran puis boucle d'avant rendue), Agrandir / Échap
+  {
+    const clk = (sel) => ev('document.querySelector(".tune-panel ' + sel + '").click()');
+    await clk('.tp-g-zi'); await sleep(150); let v = await J(ev, `const v=document.querySelector('.tune-panel')._trView; return {a:v.a,b:v.b}`);
+    check('bouton + : zoom ×2 au centre', Math.abs((v.b - v.a) - 0.5) < 1e-6 && Math.abs(v.a - 0.25) < 1e-6, JSON.stringify(v));
+    await clk('.tp-g-zo'); await clk('.tp-g-zi'); await clk('.tp-g-zi'); await clk('.tp-g-all'); await sleep(150);
+    v = await J(ev, `const v=document.querySelector('.tune-panel')._trView; return {a:v.a,b:v.b}`);
+    check('Tout voir : toute la prise', v.a === 0 && v.b === 1, JSON.stringify(v));
+    await clk('.tp-g-zi'); await sleep(150);
+    await ev(`state.loop={start:20,end:24}; state.looping=false;`);
+    await clk('.tp-g-play'); await sleep(900);
+    const pl = await J(ev, `return { playing: state.playing, loop: state.loop, looping: state.looping, ph: state.playhead, txt: document.querySelector('.tune-panel .tp-g-play').textContent }`);
+    check('Écouter ce passage : lecture en boucle sur la partie à l\'écran (~1,5 → 4,5 s)', pl.playing && pl.looping && pl.loop.start > 1.2 && pl.loop.start < 1.9 && pl.loop.end > 4.1 && pl.loop.end < 4.8 && /Arrêter/.test(pl.txt), JSON.stringify(pl));
+    await clk('.tp-g-play'); await sleep(500);
+    const st = await J(ev, `return { playing: state.playing, loop: state.loop, looping: state.looping }`);
+    check('2e clic : arrêt et boucle d\'avant rendue', !st.playing && st.loop.start === 20 && st.loop.end === 24 && st.looping === false, JSON.stringify(st));
+    await clk('.tp-g-big'); await sleep(300);
+    const bg = await J(ev, `const p=document.querySelector('.tune-panel'), r=p.getBoundingClientRect(), t=p.querySelector('.tp-trace').getBoundingClientRect(); return { big: p.classList.contains('tp-big'), w: r.width, iw: innerWidth, th: t.height, bottom: r.bottom, ih: innerHeight }`);
+    check('Agrandir : la fenêtre prend l\'écran, tracé plus haut, rien ne dépasse', bg.big && bg.w > bg.iw - 40 && bg.th > 330 && bg.bottom <= bg.ih, JSON.stringify(bg));
+    if (process.env.VISU_DIR) await shot(process.env.VISU_DIR + '/tune-big.jpg');
+    await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }); await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }); await sleep(200);
+    const es = await J(ev, `const p=document.querySelector('.tune-panel'); return { open: !!p, big: p && p.classList.contains('tp-big') }`);
+    check('Échap : la fenêtre revient à sa taille (et reste ouverte)', es.open && !es.big, JSON.stringify(es));
+    await clk('.tp-g-all');
+  }
   // tête de lecture : clic sur le fond = la lecture part d'ici ; la ligne suit state.playhead
   {
     const b = await J(ev, `const r=document.querySelector('.tune-panel .tp-trace canvas').getBoundingClientRect(); return {x:r.left+r.width*0.5,y:r.top+8}`);
     await mouse('mouseMoved', b.x, b.y, { buttons: 0 }); await mouse('mousePressed', b.x, b.y); await mouse('mouseReleased', b.x, b.y); await sleep(300);
     const ph = await J(ev, `return { ph: state.playhead, v: document.querySelector('.tune-panel')._trView.ph }`);
     check('clic sur le fond : la tête de lecture va au milieu de la voix (~3 s)', ph.ph > 2.5 && ph.ph < 3.5 && ph.v > 0, JSON.stringify(ph));
+  }
+
+  // Espace (après un clic dans le tracé) : lecture / arrêt
+  {
+    const sp = async () => { await send('Input.dispatchKeyEvent', { type: 'keyDown', key: ' ', code: 'Space', windowsVirtualKeyCode: 32, text: ' ' }); await send('Input.dispatchKeyEvent', { type: 'keyUp', key: ' ', code: 'Space', windowsVirtualKeyCode: 32 }); await sleep(600); return ev('state.playing'); };
+    const p1 = await sp(), p2 = await sp();
+    check('Espace dans PulseTune : lecture puis arrêt', p1 === true && p2 === false, JSON.stringify([p1, p2]));
   }
   if (process.env.VISU_DIR) { await mouse('mousePressed', (await geo(2)).x, (await geo(2)).y); await mouse('mouseReleased', (await geo(2)).x, (await geo(2)).y); await sleep(300); const b = await J(ev, `const r=document.querySelector('.tune-panel').getBoundingClientRect(); return {x:r.left,y:r.top,w:r.width,h:r.height}`); const shot = await send('Page.captureScreenshot', { format: 'png', clip: { x: b.x - 8, y: Math.max(0, b.y - 8), width: b.w + 16, height: Math.min(860, b.h + 16), scale: 1.5 } }); fs.writeFileSync(process.env.VISU_DIR + '/tune-graph-fin.png', Buffer.from(shot.result.data, 'base64')); }
 };

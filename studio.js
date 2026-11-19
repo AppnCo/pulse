@@ -6980,11 +6980,13 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false) {
             <div class="tp-side tp-rt">ÉCART<b class="tp-gap">—</b></div>
             <div class="tp-target"><b>—</b><span>note juste</span></div>
         </div>
+        <div class="tp-gbar"><button class="tp-btn tp-g-play" data-tooltip="Lire en boucle ce qui est à l'écran (Espace = lecture / arrêt)">▶ Écouter ce passage</button><span class="tp-g-sp"></span>
+            <button class="tp-btn tp-g-zo" data-tooltip="Dézoomer (⌘ + molette)">−</button><button class="tp-btn tp-g-zi" data-tooltip="Zoomer (⌘ + molette)">+</button><button class="tp-btn tp-g-all" data-tooltip="Voir toute la prise">Tout voir</button><button class="tp-btn tp-g-big" data-tooltip="Agrandir la fenêtre (Échap = revenir)">Agrandir</button></div>
         <div class="tp-trace" data-tooltip="Ce que la correction a fait sur la dernière prise : en gris ta voix, en violet la voix corrigée, les bandes = les notes permises"><canvas></canvas><span class="tp-trace-leg"><i class="g"></i>ta voix<i class="v"></i>corrigée</span><span class="tp-trace-empty">Le tracé de la correction s'affiche ici après la première prise corrigée</span><span class="tp-trace-help">Tirer = changer la note (⌥ = au cent) · clic = la régler · ⌥ + clic = couper · double-clic = auto · ⌘ + molette = zoom</span></div>
         <div class="tp-notebar"><b class="tp-nb-name"></b>
             <label data-tooltip="Vibrato de ta voix gardé sur cette note (0 = à plat, 100 = tout le vibrato)">Vibrato <input type="range" class="tp-nb-vib" min="0" max="100" step="1"><span class="tp-nb-vv"></span></label>
             <label data-tooltip="Vitesse de correction de cette note seulement (100 = collé à la note, robot)">Vitesse <input type="range" class="tp-nb-spd" min="0" max="100" step="1"><span class="tp-nb-sv"></span></label>
-            <button class="tp-nb-auto" data-tooltip="Cette note revient aux réglages de la piste (note, vibrato, vitesse)">Automatique</button></div>
+            <button class="tp-btn tp-nb-auto" data-tooltip="Cette note revient aux réglages de la piste (note, vibrato, vitesse)">Automatique</button></div>
         <div class="tp-knobs">${KNOBS.map(k => `<div class="tp-k" data-k="${k.key}"><span class="tp-lbl">${k.label}</span><div class="tp-knob fx-knob" tabindex="0" data-tooltip="Glisser vers le haut ou le bas · double-clic = ${k.def} %"></div><b class="tp-val"></b><em>${k.desc}</em></div>`).join('')}
             <input type="range" class="tune-strength" min="0" max="100" value="${K.strength}" hidden></div>
         <div class="tb-keys-wrap">
@@ -7218,6 +7220,32 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false) {
     nb.querySelector('.tp-nb-spd').addEventListener('change', (e) => setNote({ speed: +e.target.value / 100 }));
     nb.querySelector('.tp-nb-auto').addEventListener('click', () => setNote(null));
     document.addEventListener('pulse-tune-done', () => { if (panel.isConnected) showNoteBar(); });
+    // Barre du Graphique : écouter le passage à l'écran (boucle), zoom +/−, tout voir, agrandir
+    const zoomBy = (k) => { const w = trView.b - trView.a, c = trView.a + w / 2, nw = Math.max(0.004, Math.min(1, w * k)); setTrView(c - nw / 2, c + nw / 2); };
+    panel.querySelector('.tp-g-zi').addEventListener('click', () => zoomBy(0.5));
+    panel.querySelector('.tp-g-zo').addEventListener('click', () => zoomBy(2));
+    panel.querySelector('.tp-g-all').addEventListener('click', () => setTrView(0, 1));
+    const bigBtn = panel.querySelector('.tp-g-big');
+    const setBig = (on) => { panel.classList.toggle('tp-big', on); bigBtn.textContent = on ? 'Réduire' : 'Agrandir'; requestAnimationFrame(drawTrace); };
+    bigBtn.addEventListener('click', () => setBig(!panel.classList.contains('tp-big')));
+    const escBig = (e) => { if (!panel.isConnected) { document.removeEventListener('keydown', escBig, true); return; } if (e.key === 'Escape' && panel.classList.contains('tp-big')) { e.stopPropagation(); e.preventDefault(); setBig(false); } };
+    document.addEventListener('keydown', escBig, true);
+    const playBtn = panel.querySelector('.tp-g-play'); let prevLoop = null;
+    const syncPlayBtn = () => { const on = !!(prevLoop && state.playing); playBtn.classList.toggle('on', on); playBtn.textContent = on ? '■ Arrêter' : '▶ Écouter ce passage'; };
+    playBtn.addEventListener('click', async () => {
+        const c = traceClip(), tr = c && TUNE_TRACES.get(c.id); if (!tr || !trGeo) return;
+        if (prevLoop && state.playing) {   // 2e clic : on arrête et on rend la boucle d'avant
+            await togglePlay(); const p = prevLoop; prevLoop = null;
+            state.loop = p.loop; state.looping = p.looping; state.loopSkip = p.skip; renderLoopOverlay(); updateLoopButton(); syncPlayBtn(); return;
+        }
+        if (!prevLoop) prevLoop = { loop: state.loop ? { ...state.loop } : null, looping: state.looping, skip: state.loopSkip };
+        const a = Math.max(c.start, secOfFrame(c, tr, trGeo.i0)), b = Math.min(c.start + c.duration, secOfFrame(c, tr, trGeo.i1));
+        state.loop = { start: a, end: Math.max(a + 0.2, b) }; state.looping = true; state.loopSkip = false;
+        renderLoopOverlay(); updateLoopButton();
+        seekPlayhead(a); if (!state.playing) await togglePlay(); else refreshPlaybackSoon();
+        syncPlayBtn();
+    });
+    const loopWatch = setInterval(() => { if (!panel.isConnected) { clearInterval(loopWatch); return; } if (prevLoop && !state.playing) { const p = prevLoop; prevLoop = null; state.loop = p.loop; state.looping = p.looping; state.loopSkip = p.skip; renderLoopOverlay(); updateLoopButton(); syncPlayBtn(); } }, 400);
     trCv.addEventListener('dblclick', async (e) => {
         const hit = segAt(e); if (!hit || !hit.sg.forced) return;
         const t0 = hit.tr.t0 + hit.sg.i0 * hit.tr.hop, t1 = hit.tr.t0 + (hit.sg.i1 + 1) * hit.tr.hop;
