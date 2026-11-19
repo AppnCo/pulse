@@ -1,0 +1,23 @@
+<!doctype html><meta charset="utf-8"><title>selftest-banques</title><body style="margin:0;background:#111;color:#0f0;font:18px monospace"><pre id="o" style="position:fixed;z-index:9;top:60px;left:10px;background:#000c;padding:10px"></pre>
+<iframe id="f" src="studio.html" style="width:100vw;height:100vh;border:0"></iframe>
+<script>
+// Test de l'appli de bureau (WKWebView) : les banques d'échantillons m4a se décodent, et les sons tenus bouclent (pas de trou)
+const o=document.getElementById('o'); const log=t=>{ o.textContent+=t+'\n'; try{ window.__TAURI__.core.invoke('test_log',{text:t}); }catch{} };
+const f=document.getElementById('f'); const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+(async()=>{ try{
+  await sleep(2500); const w=f.contentWindow; await w.PulseAudio.init();
+  const names=Object.keys(w.eval('SAMPLE_BANKS')); let bad=0;
+  for(const n of names){ const t0=performance.now(); const ok=await w.ensureBank(n); if(!ok) bad++;
+    log('banque '+n+' : '+(ok?'OK':'ÉCHEC')+' en '+Math.round(performance.now()-t0)+' ms'); }
+  // sons tenus 12 s (cordes, chœur à part, flûte, cuivres) : le niveau ne doit jamais tomber dans la boucle
+  const sr=w.PulseAudio.getContext().sampleRate;
+  for(const [inst,p] of [['cordes',62],['flute',79],['cuivres',48],['cuivres',70]]){
+    if(!names.includes(inst)) continue;
+    const x=w.renderMidiBuffer({inst,beats:26,notes:[{s:0,d:24,p,v:90}]},120).getChannelData(0);
+    const W=Math.round(0.1*sr), r=[]; for(let a=Math.round(1.5*sr);a+W<11.5*sr;a+=W){ let e=0; for(let i=a;i<a+W;i++) e+=x[i]*x[i]; r.push(Math.sqrt(e/W)); }
+    const lo=Math.min(...r), hi=Math.max(...r), okL=lo>hi*0.3 && lo>0.01; if(!okL) bad++;
+    log('tenue '+inst+' : '+(okL?'OK':'TROU')+' (min '+lo.toFixed(4)+' / max '+hi.toFixed(4)+')'); }
+  log(bad?('RÉSULTAT : '+bad+' échec(s)'):'RÉSULTAT : tout bon');
+  log('FIN'); window.__TAURI__.core.invoke('test_exit');
+ }catch(e){ log('ERREUR '+String(e)+' | '+(e&&e.stack)); log('FIN'); } })();
+</script>

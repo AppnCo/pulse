@@ -276,26 +276,30 @@
         const alpha = alphaOf(tau);
         root = toMask(root);
         const N = f0.length, midi = new Float32Array(N), trend = new Float32Array(N), steady = new Float32Array(N);
+        // Notes posées à la main dans le graphique : [{ t0, t1 (secondes), note (demi-tons MIDI, décimales = cents),
+        //   vib (vibrato gardé 0–1, sinon celui du réglage), speed (vitesse 0–1, sinon celle du réglage) }] — elles passent avant la gamme.
+        // Deux notes à la main côte à côte restent deux notes (note coupée en deux).
+        const force = new Float32Array(N).fill(NaN), fIdx = new Int16Array(N).fill(-1), fVib = new Float32Array(N).fill(NaN), fAlpha = new Float32Array(N).fill(NaN);
+        (more.edits || []).forEach((e, k) => {
+            if (!e || !Number.isFinite(e.note)) return;
+            const a = Math.max(0, Math.round(e.t0 / HOP_SEC)), b = Math.min(N, Math.round(e.t1 / HOP_SEC));
+            const ev = Number.isFinite(e.vib) ? clamp01(e.vib) : NaN, ea = Number.isFinite(e.speed) ? alphaOf(Math.pow(1 - clamp01(e.speed), 2) * 0.25) : NaN;
+            for (let i = a; i < b; i++) { force[i] = e.note; fIdx[i] = k; fVib[i] = ev; fAlpha[i] = ea; }
+        });
+        const anyVib = vib > 0 || [...fVib].some(v => v > 0);
         for (let i = 0; i < N; i++) midi[i] = f0[i] > 0 ? hzToMidi(f0[i]) : 0;
         // Tendance de la note (moyenne sur ~150 ms) : ce qui dépasse autour, c'est le vibrato
         const TR = Math.round(0.075 / HOP_SEC), ST = Math.round(0.03 / HOP_SEC);
         const tmp = [];
         for (let i = 0; i < N; i++) {
             if (f0[i] <= 0) continue;
-            if (vib > 0) { let s = 0, k = 0; for (let j = i - TR; j <= i + TR; j++) if (j >= 0 && j < N && f0[j] > 0) { s += midi[j]; k++; } trend[i] = s / k; }
+            if (anyVib) { let s = 0, k = 0; for (let j = i - TR; j <= i + TR; j++) if (j >= 0 && j < N && f0[j] > 0) { s += midi[j]; k++; } trend[i] = s / k; }
             // Hauteur « posée » (médiane sur 60 ms) : c'est elle qui choisit la note, pas un écart d'un instant
             tmp.length = 0;
             for (let j = i - ST; j <= i + ST; j++) if (j >= 0 && j < N && f0[j] > 0) tmp.push(midi[j]);
             tmp.sort((p, q) => p - q); steady[i] = tmp[tmp.length >> 1];
         }
         const GAP = Math.round(0.06 / HOP_SEC);   // au-delà de 60 ms sans note, c'est une nouvelle note : la correction repart de zéro
-        // Notes posées à la main dans le graphique : [{ t0, t1 (secondes), note (demi-tons MIDI) }] — elles passent avant la gamme
-        const force = new Float32Array(N).fill(NaN);
-        for (const e of (more.edits || [])) {
-            if (!e || !Number.isFinite(e.note)) continue;
-            const a = Math.max(0, Math.round(e.t0 / HOP_SEC)), b = Math.min(N, Math.round(e.t1 / HOP_SEC));
-            for (let i = a; i < b; i++) force[i] = e.note;
-        }
         // Les notes trouvées (un bloc par note tenue) : pour le graphique
         const notes = []; let seg = null;
         const closeSeg = () => { if (seg) { notes.push(seg); seg = null; } };
@@ -304,7 +308,8 @@
             if (f0[i] <= 0) { ratio[i] = 1; gap++; if (gap > GAP) { held = 0; lastTarget = null; closeSeg(); } continue; }
             if (gap > GAP) cur = 0;
             gap = 0;
-            const m = midi[i], base = vib > 0 ? trend[i] : m, pick = vib > 0 ? trend[i] : steady[i];
+            const vi = fVib[i] === fVib[i] ? fVib[i] : vib;
+            const m = midi[i], base = vi > 0 ? trend[i] : m, pick = vib > 0 ? trend[i] : steady[i];
             // Hystérésis : on ne change de note cible que si on s'en éloigne franchement (évite le gargouillis)
             let target = snapMidi(pick, root);
             if (lastTarget !== null && target !== lastTarget && Math.abs(pick - lastTarget) < 0.62 && snapMidi(lastTarget, root) === lastTarget) target = lastTarget;
@@ -312,13 +317,13 @@
             if (forced) target = force[i];
             held = target === lastTarget ? held + 1 : 0;
             lastTarget = target;
-            if (seg && seg.note === target && seg.forced === forced) seg.i1 = i; else { closeSeg(); seg = { i0: i, i1: i, note: target, forced }; }
+            if (seg && seg.note === target && seg.forced === forced && seg.e === fIdx[i]) seg.i1 = i; else { closeSeg(); seg = { i0: i, i1: i, note: target, forced, e: fIdx[i] }; }
             // Vibrato : la note visée suit le vibrato de la voix (0 = corrigé à plat comme avant, 1 = gardé entier)
-            let want = target + vib * (m - base) - m;          // demi-tons
+            let want = target + vi * (m - base) - m;          // demi-tons
             // Souplesse : loin de la note (plus d'un demi-ton près), on laisse la voix libre
             if (flex > 0 && !forced) { const d = Math.abs(target - base), win = 0.5 * (1 - flex) + 0.02; if (d > win) want *= Math.max(0, 1 - (d - win) / 0.15); }
             // Humain : plus la note dure, plus la correction ralentit (jusqu'à +0,35 s de glissement)
-            const a = human > 0 ? alphaOf(tau + human * 0.35 * Math.min(1, held * HOP_SEC / 0.4)) : alpha;
+            const a = fAlpha[i] === fAlpha[i] ? fAlpha[i] : human > 0 ? alphaOf(tau + human * 0.35 * Math.min(1, held * HOP_SEC / 0.4)) : alpha;
             cur += (want - cur) * a;
             ratio[i] = Math.pow(2, cur / 12);
             sumAbs += Math.abs(cur); voiced++;

@@ -4052,6 +4052,14 @@ body.fx-drag-copy .insp-fx-row.fx-dragging::after { content: '+'; position: abso
 
 .tp-trace-help { display: none; position: absolute; left: 10px; right: 10px; bottom: 5px; font-size: 10px; color: #8a7cab; pointer-events: none; text-align: center; }
 .tune-panel.tp-graph .tp-trace.has .tp-trace-help { display: block; }
+.tp-notebar { display: none; align-items: center; gap: 12px; margin: 0 12px 6px; padding: 7px 12px; border-radius: 10px; background: rgba(124,58,237,.12); border: 1px solid rgba(168,85,247,.28); font-size: 11px; color: #cbbfe6; }
+.tune-panel.tp-graph .tp-notebar.on { display: flex; }
+.tp-notebar b { flex: 0 0 auto; color: #fff; font-size: 12px; min-width: 56px; white-space: nowrap; }
+.tp-notebar label { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; white-space: nowrap; margin: 0; }
+.tp-notebar input[type=range] { width: 84px !important; flex: none; margin: 0; accent-color: #A855F7; }
+.tp-notebar label span { min-width: 34px; font-variant-numeric: tabular-nums; color: #fff; }
+.tp-notebar button { margin-left: auto; flex: 0 0 auto; padding: 4px 10px; }
+.tp-notebar button:disabled { opacity: .35; }
 .tune-panel.tp-graph .tp-trace { height: 320px; }
 .tune-panel.tp-graph .tp-trace canvas { height: calc(100% - 22px); }
 .tp-trace-help { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

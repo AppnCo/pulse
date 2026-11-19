@@ -4,6 +4,8 @@ export const DETECT = `(()=>{
   const out = [], W = innerWidth, H = innerHeight;
   const vis = (e) => { const s = getComputedStyle(e); if (s.visibility === 'hidden' || s.display === 'none' || +s.opacity === 0) return false; const r = e.getBoundingClientRect(); return r.width > 2 && r.height > 2; };
   const name = (e) => { let s = e.tagName.toLowerCase(); if (e.id) s += '#' + e.id; const c = [...e.classList].slice(0, 2).join('.'); if (c) s += '.' + c; const p = e.parentElement; if (p && !e.id) { const pc = [...p.classList].slice(0, 1).join('.'); if (pc) s = p.tagName.toLowerCase() + '.' + pc + ' > ' + s; } return s; };
+  const cut = (e, tr, x, y) => { for (let a = e.parentElement; a && a !== document.body; a = a.parentElement) { const as = getComputedStyle(a); if (as.overflowX === 'visible' && as.overflowY === 'visible') continue; const ar = a.getBoundingClientRect(); if ((x != null && (x < ar.left || x > ar.right || y < ar.top || y > ar.bottom)) || tr.left < ar.left - 1 || tr.right > ar.right + 1 || tr.top < ar.top - 1 || tr.bottom > ar.bottom + 1) return true; } return false; };
+  const sticky = (t) => { for (let a = t; a && a !== document.body; a = a.parentElement) if (getComputedStyle(a).position === 'sticky') return true; return false; };
   const seen = new Set();
   const add = (k, e, txt, info) => { const key = k + name(e) + txt; if (seen.has(key)) return; seen.add(key); out.push(k + ' | ' + name(e) + ' | « ' + txt.slice(0, 40) + ' »' + (info ? ' | ' + info : '')); };
   const all = document.querySelectorAll('body *');
@@ -26,7 +28,7 @@ export const DETECT = `(()=>{
     if (t0.width > 0 && /^(BUTTON|A)$/.test(e.tagName) && rg0.getClientRects().length > 1 && s.textOverflow !== 'ellipsis' && !e.closest('.ctx-item,.help,.modal-body')) add('SUR 2 LIGNES', e, own, Math.round(r.width) + ' px de large');
     if (t0.width > 0 && s.textOverflow !== 'ellipsis' && s.display !== 'inline' && (t0.right > r.right + 3 || t0.left < r.left - 3)) add('DÉBORDE', e, own, 'texte ' + Math.round(t0.width) + ' px, case ' + Math.round(r.width) + ' px');
     // 2. texte qui sort de l'écran
-    if (t0.right > W + 1 || (t0.left < -1 && t0.width)) add('HORS ÉCRAN', e, own, Math.round(t0.left) + '→' + Math.round(t0.right));
+    if ((t0.right > W + 1 || (t0.left < -1 && t0.width)) && !cut(e, t0)) add('HORS ÉCRAN', e, own, Math.round(t0.left) + '→' + Math.round(t0.right));
     // 3. texte recouvert par un autre élément (on sonde le début, le milieu et la fin du texte)
     const tn = [...e.childNodes].find(n => n.nodeType === 3 && n.textContent.trim()); if (!tn) continue;
     const rg = document.createRange(); rg.selectNodeContents(tn); const tr = rg.getBoundingClientRect();
@@ -41,7 +43,7 @@ export const DETECT = `(()=>{
       // bruit : poignées invisibles (séparateurs à tirer), zone de fondu voulue au-dessus du nom de région,
       // texte déjà masqué à cet endroit par une zone qui défile (il n'est pas visible, rien n'est recouvert)
       if (/resize/.test(getComputedStyle(t).cursor) || t.closest('.clip-fade-zone')) continue;
-      { let hid = false; for (let a = e.parentElement; a && a !== document.body; a = a.parentElement) { const as = getComputedStyle(a); if (as.overflowX === 'visible' && as.overflowY === 'visible') continue; const ar = a.getBoundingClientRect(); if (x < ar.left || x > ar.right || y < ar.top || y > ar.bottom) { hid = true; break; } } if (hid) continue; }
+      if (cut(e, tr, x, y) || sticky(t)) continue;
       if (e.closest('#flash')) continue;
       { const FL = '.mixer,.fx-panel,.track-ctx-menu,.ctx-subpanel,[class*=modal],[class*=overlay],.plug-win,.pianoroll,.midi-editor'; const lt = t.closest(FL); if (lt && lt !== e.closest(FL)) continue; }
       if (t.closest('svg') && t.closest('svg') === e.closest('svg')) continue;

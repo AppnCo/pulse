@@ -115,6 +115,17 @@ ok('notes au clavier', Math.abs(cents(m9, 261.63)) < 12, `sortie ${m9.toFixed(1)
   const drift = Float32Array.from({ length: N }, (_, i) => hz(69 + 0.3 * i / N));
   const dRobot = outMidi(drift, T.correctionCurve(drift, all, 1).ratio)[N - 1] - 69, dHuman = outMidi(drift, T.correctionCurve(drift, all, 1, { human: 1 }).ratio)[N - 1] - 69;
   ok('Humain : la note tenue garde un peu de sa vie', dHuman > dRobot + 0.005, `fin de note : ${dRobot.toFixed(3)} (sans) → ${dHuman.toFixed(3)} demi-ton (avec)`);
+  // Graphique : réglages note par note (cents, vibrato gardé, vitesse) et note coupée en deux
+  const T3 = N * 0.005;
+  const fine = outMidi(off, T.correctionCurve(off, all, 1, { edits: [{ t0: 0, t1: T3, note: 69.25 }] }).ratio)[N - 1];
+  ok('Note à la main en cents : La + 25 cents tenu', Math.abs(fine - 69.25) < 0.01, fine.toFixed(3));
+  const vKept = sd(outMidi(vib, T.correctionCurve(vib, all, 1, { edits: [{ t0: 0, t1: T3, note: 69, vib: 1 }] }).ratio));
+  ok('Vibrato gardé sur une seule note (réglage général à 0)', vKept > 0.2, vKept.toFixed(3));
+  const at = (more, k) => outMidi(off, T.correctionCurve(off, all, 1, more).ratio)[k];
+  const slow = at({ edits: [{ t0: 0, t1: T3, note: 69, speed: 0.2 }] }, 20), fast = at({ edits: [{ t0: 0, t1: T3, note: 69 }] }, 20);
+  ok('Vitesse lente sur une note : la correction met plus de temps', Math.abs(slow - 69) > Math.abs(fast - 69) + 0.05, `après 100 ms : ${slow.toFixed(3)} (lente) / ${fast.toFixed(3)}`);
+  const cut = T.correctionCurve(off, all, 1, { edits: [{ t0: 0, t1: 1.5, note: 69 }, { t0: 1.5, t1: T3, note: 69 }] }).notes.filter(s => s.i1 - s.i0 > 8);
+  ok('Note coupée en deux : deux blocs', cut.length === 2, JSON.stringify(cut.map(s => [s.i0, s.i1])));
   // Type de voix : une voix grave (65 Hz) n'est trouvée qu'en « Grave »
   const low = voice(() => 65, 1);
   const fMid = median(await T.trackPitch(low, sr, null, 'mid')), fLow = median(await T.trackPitch(low, sr, null, 'low'));
