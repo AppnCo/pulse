@@ -6922,7 +6922,7 @@ function holdKeyNote(pc, oct = 0) {
 }
 function playKeyNote(pc) { pianoVoice(pc); }
 
-function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false) {
+function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false, dock = false) {
     closeTransientPanels();
     const trk = state.project.tracks[trackIdx];
     // Mode « piste » : l'Auto-Tune est un effet de la piste, il corrige toutes ses prises (et les nouvelles)
@@ -6940,7 +6940,8 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false) {
     const BLACK = [1, 3, 6, 8, 10], WHITE = [0, 2, 4, 5, 7, 9, 11];
     const blackLeft = { 1: 1, 3: 2, 6: 4, 8: 5, 10: 6 }; // après quelle touche blanche
     // Déjà ouvert (mode piste) : on le ramène devant
-    if (trackMode) { const open = findPlugWin(trk, 'tune'); if (open) { plugFront(open); return; } }
+    if (trackMode) { const open = findPlugWin(trk, 'tune'); if (open) { if (!!dock === open.classList.contains('tp-dock')) { plugFront(open); return; } open.remove(); } }
+    if (dock) document.querySelectorAll('.tune-panel.tp-dock').forEach(p => p.remove());
     const isOn = () => trackMode ? !!(trk.autotune && trk.autotune.on) : !!clip.tune;
     const saved = (trackMode ? trk.autotune : clip.tune) || {};
     // PulseTune (planche « Pro » du 22/10) : 4 boutons, valeurs 0 à 100
@@ -6981,7 +6982,7 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false) {
             <div class="tp-target"><b>—</b><span>note juste</span></div>
         </div>
         <div class="tp-gbar"><button class="tp-btn tp-g-play" data-tooltip="Lire en boucle ce qui est à l'écran (Espace = lecture / arrêt)">▶ Écouter ce passage</button><span class="tp-g-sp"></span>
-            <button class="tp-btn tp-g-zo" data-tooltip="Dézoomer (⌘ + molette)">−</button><button class="tp-btn tp-g-zi" data-tooltip="Zoomer (⌘ + molette)">+</button><button class="tp-btn tp-g-all" data-tooltip="Voir toute la prise">Tout voir</button><button class="tp-btn tp-g-big" data-tooltip="Agrandir la fenêtre (Échap = revenir)">Agrandir</button></div>
+            <button class="tp-btn tp-g-zo" data-tooltip="Dézoomer (⌘ + molette)">−</button><button class="tp-btn tp-g-zi" data-tooltip="Zoomer (⌘ + molette)">+</button><button class="tp-btn tp-g-all" data-tooltip="Voir toute la prise">Tout voir</button><button class="tp-btn tp-g-big" data-tooltip="Agrandir la fenêtre (Échap = revenir)">Agrandir</button><button class="tp-btn tp-g-dock" data-tooltip="${dock ? 'Remettre en fenêtre' : 'Ouvrir en bas, sous les pistes, aligné avec le morceau (comme l\'éditeur de notes)'}">${dock ? 'Fenêtre' : 'En bas'}</button></div>
         <div class="tp-trace" data-tooltip="Ce que la correction a fait sur la dernière prise : en gris ta voix, en violet la voix corrigée, les bandes = les notes permises"><canvas></canvas><span class="tp-trace-leg"><i class="g"></i>ta voix<i class="v"></i>corrigée</span><span class="tp-trace-empty">Le tracé de la correction s'affiche ici après la première prise corrigée</span><span class="tp-trace-help">Tirer = changer la note (⌥ = au cent) · clic = la régler · ⌥ + clic = couper · double-clic = auto · ⌘ + molette = zoom</span></div>
         <div class="tp-notebar"><b class="tp-nb-name"></b>
             <label data-tooltip="Vibrato de ta voix gardé sur cette note (0 = à plat, 100 = tout le vibrato)">Vibrato <input type="range" class="tp-nb-vib" min="0" max="100" step="1"><span class="tp-nb-vv"></span></label>
@@ -7007,8 +7008,15 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false) {
     panel.style.left = Math.max(8, Math.min(window.innerWidth - panel.offsetWidth - 8, x)) + 'px';
     panel.style.top = Math.max(8, Math.min(window.innerHeight - panel.offsetHeight - 8, y)) + 'px';
     if (trackMode) makePlugWindow(panel, trk, 'tune', trackIdx);
+    // Éditeur de hauteur en bas (même place que l'éditeur de notes) : toute la largeur, les pistes remontent au-dessus
+    if (dock) {
+        panel.classList.add('tp-dock');
+        if (window.PulsePianoRoll && PulsePianoRoll.isOpen()) PulsePianoRoll.close();
+        document.body.classList.add('midi-open', 'tune-docked');
+        const setH = () => document.documentElement.style.setProperty('--midi-h', panel.offsetHeight + 'px'); setH(); requestAnimationFrame(setH);
+    }
     // une fois dessinée (polices, clavier) : la fenêtre tient dans l'écran, bas compris
-    requestAnimationFrame(() => { const r = panel.getBoundingClientRect(); if (r.bottom > window.innerHeight - 8) panel.style.top = Math.max(8, window.innerHeight - r.height - 8) + 'px'; });
+    if (!dock) requestAnimationFrame(() => { const r = panel.getBoundingClientRect(); if (r.bottom > window.innerHeight - 8) panel.style.top = Math.max(8, window.innerHeight - r.height - 8) + 'px'; });
     const status = panel.querySelector('.tune-status');
     const chroma = () => !!mask && mask.every(Boolean);
     const paint = () => {
@@ -7114,14 +7122,32 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false) {
     const NN = PulseTune.NOTE_NAMES;
     // Tracé de la dernière correction (piste : la prise corrigée la plus récente)
     const trEl = panel.querySelector('.tp-trace'), trCv = trEl.querySelector('canvas');
-    const traceClip = () => trackMode ? [...((state.project.tracks[trackIdx] || {}).clips || [])].reverse().find(c => TUNE_TRACES.has(c.id)) : (clip && TUNE_TRACES.has(clip.id) ? clip : null);
+    const traceClip = () => {
+        if (!trackMode) return clip && TUNE_TRACES.has(clip.id) ? clip : null;
+        const cs = (state.project.tracks[trackIdx] || {}).clips || [], sc = state.selectedClip;
+        const chosen = sc && sc.trackIdx === trackIdx ? cs[sc.clipIdx] : null;   // la région choisie sur la piste passe d'abord
+        if (chosen && TUNE_TRACES.has(chosen.id)) return chosen;
+        return [...cs].reverse().find(c => TUNE_TRACES.has(c.id));
+    };
+    // projet rouvert : le tracé n'est pas gardé dans le projet → on réanalyse la prise une fois (même réglage, même résultat)
+    const reAnalyzed = new Set();
+    const ensureTrace = () => {
+        if (!panel.classList.contains('tp-graph') || _tuneBusy) return;
+        const cs = trackMode ? ((state.project.tracks[trackIdx] || {}).clips || []) : (clip ? [clip] : []), sc = state.selectedClip;
+        const want = (trackMode && sc && sc.trackIdx === trackIdx ? cs[sc.clipIdx] : null) || [...cs].reverse().find(c => c.tune);
+        if (!want || !want.tune || TUNE_TRACES.has(want.id) || reAnalyzed.has(want.id)) return;
+        reAnalyzed.add(want.id);
+        const a = trackMode ? trk.autotune : want.tune; if (!a) return;
+        applyTune(want, { ...tuneOpts(a), noUndo: true });
+    };
     const drawTrace = () => {
         if (!panel.isConnected) { document.removeEventListener('pulse-tune-done', drawTrace); return; }
-        const c = traceClip(); let ok = false;
+        ensureTrace(); const c = traceClip(); let ok = false;
         const tr = c ? TUNE_TRACES.get(c.id) : null;
         // prise longue : on ouvre sur les 12 premières secondes (lisible), puis zoom / défilement à la main
         const vid = (c && c.tune && c.tune.src) || (c && c.id);   // même prise d'origine : on garde le zoom après une correction
         if (tr && trView.id !== vid) { trView.id = vid; trView.selI = -1; const f0 = tr.f0; let a = 0, b = f0.length - 1; while (a < b && !(f0[a] > 0)) a++; while (b > a && !(f0[b] > 0)) b--; const dur = (b - a) * (tr.hop || 0.005); trView.a = 0; trView.b = dur > 15 ? 12 / dur : 1; }
+        if (c && tr) trView.toSec = (f) => secOfFrame(c, tr, f);
         try { ok = drawTuneTrace(trCv, tr, mask, panel.classList.contains('tp-graph'), trDrag, panel.classList.contains('tp-graph') ? trView : null); } catch (e) { console.warn(e); }
         trGeo = ok || null;
         trEl.classList.toggle('has', !!ok);
@@ -7228,6 +7254,7 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false) {
     const bigBtn = panel.querySelector('.tp-g-big');
     const setBig = (on) => { panel.classList.toggle('tp-big', on); bigBtn.textContent = on ? 'Réduire' : 'Agrandir'; requestAnimationFrame(drawTrace); };
     bigBtn.addEventListener('click', () => setBig(!panel.classList.contains('tp-big')));
+    panel.querySelector('.tp-g-dock').addEventListener('click', () => { panel.remove(); undock(); openTunePanel(trackIdx, clipIdx, dock ? Math.max(40, window.innerWidth / 2 - 310) : x, dock ? 60 : y, trackMode, !dock); });
     const escBig = (e) => { if (!panel.isConnected) { document.removeEventListener('keydown', escBig, true); return; } if (e.key === 'Escape' && panel.classList.contains('tp-big')) { e.stopPropagation(); e.preventDefault(); setBig(false); } };
     document.addEventListener('keydown', escBig, true);
     const playBtn = panel.querySelector('.tp-g-play'); let prevLoop = null;
@@ -7260,9 +7287,11 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false) {
         requestAnimationFrame(drawTrace);
     };
     panel.querySelectorAll('.tp-view button').forEach(b => b.addEventListener('click', () => setView(b.dataset.view)));
-    { let v = 'auto'; try { v = localStorage.getItem('pulse_tune_view') === 'graph' ? 'graph' : 'auto'; } catch {} setView(v, false); }
+    { let v = 'auto'; try { v = localStorage.getItem('pulse_tune_view') === 'graph' ? 'graph' : 'auto'; } catch {} setView(dock ? 'graph' : v, false); }
+    const undock = () => { if (!dock || document.querySelector('.tune-panel.tp-dock')) return; document.body.classList.remove('tune-docked'); if (!(window.PulsePianoRoll && PulsePianoRoll.isOpen())) document.body.classList.remove('midi-open'); };
     const live = (ts) => {
-        if (!panel.isConnected) return;
+        if (!panel.isConnected) { undock(); return; }
+        if (dock && window.PulsePianoRoll && PulsePianoRoll.isOpen()) { panel.remove(); undock(); return; }   // l'éditeur de notes prend la place
         if (panel.classList.contains('tp-graph') && trGeo) {
             const c = traceClip(), tr = c && TUNE_TRACES.get(c.id);
             if (tr) {
@@ -8175,6 +8204,21 @@ function drawTuneTrace(cv, tr, mask, blocks = false, drag = null, view = null) {
         g.fillStyle = ok ? 'rgba(168,85,247,.10)' : 'rgba(255,255,255,.015)';
         g.fillRect(0, Y(n) - rowH / 2 + 0.5, W, rowH - 1);
         if (ok && rowH >= 9) { g.fillStyle = 'rgba(200,180,240,.55)'; g.font = '600 8.5px -apple-system, system-ui, sans-serif'; g.fillText(PulseTune.NOTE_NAMES[((n % 12) + 12) % 12], 4, Y(n) + 3); }
+    }
+    // règle du morceau (mesures / temps) : la voix se lit avec l'instru
+    if (view && view.toSec && typeof beatAtSec === 'function') {
+        const s0 = view.toSec(i0), s1 = view.toSec(i1), b0 = Math.ceil(beatAtSec(Math.max(0, s0)) - 1e-6), b1 = Math.floor(beatAtSec(Math.max(0, s1))), per = bpb();
+        const pxB = W / Math.max(1e-6, beatAtSec(Math.max(0, s1)) - beatAtSec(Math.max(0, s0)));
+        const every = pxB * per >= 34 ? 1 : pxB * per * 2 >= 34 ? 2 : pxB * per * 4 >= 34 ? 4 : 8;
+        g.font = '600 8.5px -apple-system, system-ui, sans-serif';
+        for (let b = Math.max(0, b0); b <= b1 && b - b0 < 4000; b++) {
+            const bar = Math.floor(b / per), isBar = b % per === 0;
+            if (!isBar && pxB < 14) continue;
+            if (isBar && bar % every) continue;
+            const f = i0 + (secAtBeat(b) - s0) / Math.max(1e-6, s1 - s0) * (i1 - i0), px = Math.round(X(f)) + 0.5;
+            g.fillStyle = isBar ? 'rgba(255,255,255,.13)' : 'rgba(255,255,255,.05)'; g.fillRect(px, 0, 1, H);
+            if (isBar) { g.fillStyle = 'rgba(220,205,250,.7)'; g.fillText(String(bar + 1), px + 3, 10); }
+        }
     }
     const line = (get, color, width, glow) => {
         g.beginPath(); let pen = false, lastPx = -9;
@@ -14178,6 +14222,7 @@ function openClipContextMenu(x, y, trackIdx, clipIdx) {
         clip.midi ? { label: '⬇ Exporter en fichier .mid', action: () => exportMidiClip(trackIdx, clipIdx) } : null,
         clip.midi && clip.midi.pid ? { label: 'Rendre cette région indépendante', action: () => { pushUndo(); delete clip.midi.pid; renderTimelineTracks(); saveProject(); flash('Cette région n\'est plus liée aux autres'); } } : null,
         (!clip.midi && String(clip.id || '').startsWith('rec_')) ? { label: '🎙 Refaire cette prise', action: () => redoTake(trackIdx, clipIdx) } : null,
+        (!clip.midi && clip.tune) ? { label: 'Éditeur de hauteur (en bas)', action: () => { state.selectedClip = { trackIdx, clipIdx }; const tt = state.project.tracks[trackIdx]; openTunePanel(trackIdx, tt.autotune && tt.autotune.on ? -1 : clipIdx, 0, 0, !!(tt.autotune && tt.autotune.on), true); } } : null,
         { label: 'Renommer',        action: () => startClipRename(trackIdx, clipIdx) },
         { sep: true },
         { label: 'Édition', children: [

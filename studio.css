@@ -4210,3 +4210,11 @@ body.fx-drag-copy .insp-fx-row.fx-dragging::after { content: '+'; position: abso
 .tune-panel.tp-graph .tp-gbar + .tp-trace { margin-top: 6px; }
 .tune-panel.tune-pro.tp-big { left: 16px !important; top: 16px !important; right: 16px; bottom: 16px; width: auto !important; max-height: none !important; display: flex; flex-direction: column; overflow-x: hidden; overflow-y: auto; }
 .tune-panel.tp-big.tp-graph .tp-trace { flex: 1 1 auto; height: auto; min-height: 320px; }
+
+/* Éditeur de hauteur en bas (PulseTune Graphique ancré, même place que l'éditeur de notes) */
+.tune-panel.tune-pro.tp-dock { left: 0 !important; right: 0; top: auto !important; bottom: 0; width: auto !important; height: clamp(340px, 46vh, 460px); border-radius: 0; border-left: 0; border-right: 0; border-bottom: 0; z-index: 18; display: flex; flex-direction: column; box-shadow: 0 -16px 40px -20px rgba(0,0,0,.6); }
+.tune-panel.tp-dock .tp-view, .tune-panel.tp-dock .tb-keys-wrap, .tune-panel.tp-dock .tb-foot, .tune-panel.tp-dock .tp-g-big, .tune-panel.tp-dock .tune-scale { display: none !important; }
+.tune-panel.tp-dock .tp-bar { padding-top: 4px; padding-bottom: 4px; }
+.tune-panel.tp-dock .tp-gbar { margin-top: 4px; }
+.tune-panel.tp-dock.tp-graph .tp-trace { flex: 1 1 auto; height: auto; min-height: 120px; margin-bottom: 8px; }
+.tune-panel.tp-dock .tp-notebar { margin-bottom: 8px; }
