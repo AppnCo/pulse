@@ -160,13 +160,16 @@ function anaWindow(t, fx, title, W, H, anchorEl, trackIdx, pw, skin = 'noir') {
     // juste assez pour qu'elle tienne en entier (la façade garde ses proportions), puis on la recale
     const fit = () => {
         const max = window.innerHeight - 16; let h = panel.offsetHeight;
-        if (h > max) {
+        // plusieurs passes : en rétrécissant, l'en-tête et la ligne du bas peuvent passer sur 2 lignes (la fenêtre regrandit)
+        for (let k = 0; k < 4 && h > max; k++) {
             const face = svg.getBoundingClientRect().height, chrome = h - face, w = parseFloat(panel.style.width) || pw;
             if (face > 0 && max - chrome > 120) { panel.style.width = Math.max(240, Math.floor(w * (max - chrome) / face)) + 'px'; if (parseFloat(panel.style.width) < 640) panel.classList.add('ana-narrow'); h = panel.offsetHeight; }
         }
         const t = parseFloat(panel.style.top) || 0; if (t + h > window.innerHeight - 8) panel.style.top = Math.max(8, window.innerHeight - h - 8) + 'px';
     };
     fit(); requestAnimationFrame(fit);
+    // la façade grandit encore après coup (réglages, images) : on recale à chaque changement de taille
+    if (window.ResizeObserver) { let busy = false; new ResizeObserver(() => { if (busy) return; busy = true; fit(); busy = false; }).observe(panel); }
     return { panel, svg };
 }
 

@@ -37,9 +37,13 @@ export const DETECT = `(()=>{
       const x = vr.l + (vr.r - vr.l) * fx; if (x < 0 || x > W) continue;
       const t = document.elementFromPoint(x, y);
       if (!t || t === e || e.contains(t) || t.contains(e)) continue;
-      if (t.closest('.db-tip,.tooltip,[class*=tooltip],.flash,.toast')) continue;
+      if (t.closest('.db-tip,.tooltip,[class*=tooltip],.flash,.toast') || e.closest('.float-tip')) continue;
+      // bruit : poignées invisibles (séparateurs à tirer), zone de fondu voulue au-dessus du nom de région,
+      // texte déjà masqué à cet endroit par une zone qui défile (il n'est pas visible, rien n'est recouvert)
+      if (/resize/.test(getComputedStyle(t).cursor) || t.closest('.clip-fade-zone')) continue;
+      { let hid = false; for (let a = e.parentElement; a && a !== document.body; a = a.parentElement) { const as = getComputedStyle(a); if (as.overflowX === 'visible' && as.overflowY === 'visible') continue; const ar = a.getBoundingClientRect(); if (x < ar.left || x > ar.right || y < ar.top || y > ar.bottom) { hid = true; break; } } if (hid) continue; }
       if (e.closest('#flash')) continue;
-      { const FL = '.fx-panel,.track-ctx-menu,.ctx-subpanel,[class*=modal],[class*=overlay],.plug-win,.pianoroll,.midi-editor'; const lt = t.closest(FL); if (lt && lt !== e.closest(FL)) continue; }
+      { const FL = '.mixer,.fx-panel,.track-ctx-menu,.ctx-subpanel,[class*=modal],[class*=overlay],.plug-win,.pianoroll,.midi-editor'; const lt = t.closest(FL); if (lt && lt !== e.closest(FL)) continue; }
       if (t.closest('svg') && t.closest('svg') === e.closest('svg')) continue;
       { const ts0 = getComputedStyle(t); const bg = ts0.backgroundColor; const plain = (!bg || bg === 'transparent' || /rgba\([^)]*,\s*0\)$/.test(bg)) && ts0.backgroundImage === 'none' && !ts0.borderTopWidth.startsWith('1') && ![...t.childNodes].some(n => n.nodeType === 3 && n.textContent.trim()) && !['svg','img','canvas','rect','path'].includes(t.tagName.toLowerCase()); if (plain) continue; }
       const ts = getComputedStyle(t); if (ts.pointerEvents === 'none') continue;
