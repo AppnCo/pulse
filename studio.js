@@ -7127,6 +7127,9 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false) {
     // Graphique : tirer un bloc = poser la note à la main (par demi-ton) ; double-clic = revenir à la correction automatique
     let trGeo = null, trDrag = null; const trView = { id: null, a: 0, b: 1 }; panel._trView = trView;
     // Graphique : molette / pavé = défiler dans le temps, ⌘ (ou pincer) + molette = zoom autour de la souris
+    // trame de la prise affichée ↔ seconde du morceau
+    const frameOfSec = (c, tr, sec) => ((c.offset || 0) + sec - c.start - tr.t0) / (tr.hop || 0.005);
+    const secOfFrame = (c, tr, f) => c.start + tr.t0 + f * (tr.hop || 0.005) - (c.offset || 0);
     const setTrView = (a, b) => { const w = Math.max(0.004, Math.min(1, b - a)); a = Math.max(0, Math.min(1 - w, a)); trView.a = a; trView.b = a + w; drawTrace(); };
     trCv.addEventListener('wheel', (e) => {
         if (!trGeo || !panel.classList.contains('tp-graph')) return;
@@ -7148,10 +7151,13 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false) {
     trCv.addEventListener('mousedown', (e) => {
         if (e.button !== 0) return; const hit = segAt(e);
         // fond (hors des notes) tiré à gauche / à droite = faire défiler la prise quand on est zoomé
-        if (!hit) { if (!trGeo || !panel.classList.contains('tp-graph') || trView.b - trView.a > 0.999) return; e.preventDefault();
-            const x0 = e.clientX, a0 = trView.a, w = trView.b - trView.a, W = trCv.getBoundingClientRect().width; trCv.style.cursor = 'grabbing';
-            const mv = (ev) => setTrView(a0 - (ev.clientX - x0) / W * w, a0 - (ev.clientX - x0) / W * w + w);
-            const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); trCv.style.cursor = 'default'; };
+        if (!hit) { if (!trGeo || !panel.classList.contains('tp-graph')) return; e.preventDefault();
+            const x0 = e.clientX, a0 = trView.a, w = trView.b - trView.a, r = trCv.getBoundingClientRect(), W = r.width, zoomed = w < 0.999; let moved = false;
+            const mv = (ev) => { if (!zoomed || (!moved && Math.abs(ev.clientX - x0) < 3)) return; moved = true; trCv.style.cursor = 'grabbing'; setTrView(a0 - (ev.clientX - x0) / W * w, a0 - (ev.clientX - x0) / W * w + w); };
+            const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); trCv.style.cursor = 'default';
+                if (moved) return;
+                const c = traceClip(), tr = c && TUNE_TRACES.get(c.id); if (!tr) return;   // clic sur le fond : la lecture part d'ici
+                seekPlayhead(Math.max(c.start, secOfFrame(c, tr, trGeo.i0 + (x0 - r.left) / W * (trGeo.i1 - trGeo.i0)))); };
             document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up); return; }
         e.preventDefault();
         const y0 = e.clientY, x0 = e.clientX, n0 = hit.sg.note, row = trGeo.rowH, keyOf = (n) => { const r = Math.round(n); return [((r % 12) + 12) % 12, Math.floor(r / 12) - 5]; };
@@ -7229,6 +7235,18 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false) {
     { let v = 'auto'; try { v = localStorage.getItem('pulse_tune_view') === 'graph' ? 'graph' : 'auto'; } catch {} setView(v, false); }
     const live = (ts) => {
         if (!panel.isConnected) return;
+        if (panel.classList.contains('tp-graph') && trGeo) {
+            const c = traceClip(), tr = c && TUNE_TRACES.get(c.id);
+            if (tr) {
+                const f = frameOfSec(c, tr, state.playhead || 0), ph = f >= trGeo.I0 && f <= trGeo.I1 ? f : -1;
+                if (Math.abs(ph - (trView.ph ?? -1)) > 0.4) {
+                    trView.ph = ph;
+                    const span = trGeo.I1 - trGeo.I0, w = trView.b - trView.a, fr = (ph - trGeo.I0) / span;
+                    if (state.playing && ph >= 0 && w < 0.999 && (fr > trView.b || fr < trView.a)) setTrView(fr - 0.05 * w, fr + 0.95 * w);   // la vue tourne la page
+                    else drawTrace();
+                }
+            }
+        }
         if (ts - lastT > 60) {
             lastT = ts;
             const an = (state.playing || state.recording) && PulseAudio.getTrackAnalyser ? PulseAudio.getTrackAnalyser(trackIdx) : null;
@@ -8150,6 +8168,8 @@ function drawTuneTrace(cv, tr, mask, blocks = false, drag = null, view = null) {
         const ct = Math.round((note - Math.round(note)) * 100), lab = PulseTune.NOTE_NAMES[((Math.round(note) % 12) + 12) % 12] + (ct ? (ct > 0 ? ' +' : ' ') + ct : '');
         if (w > 22 && h >= 9) { g.fillStyle = '#fff'; g.font = '700 9px -apple-system, system-ui, sans-serif'; g.fillText(lab, Math.max(x, 0) + 5, y + h / 2 + 3); }
     }
+    // tête de lecture (Graphique) : ligne blanche à l'endroit joué
+    if (view && view.ph >= i0 && view.ph <= i1) { const px = X(view.ph); g.fillStyle = 'rgba(255,255,255,.85)'; g.fillRect(Math.round(px), 0, 1.5, H); g.beginPath(); g.moveTo(px - 4, 0); g.lineTo(px + 5.5, 0); g.lineTo(px + 0.75, 6); g.closePath(); g.fill(); }
     // zoomé : petite barre en bas qui montre la partie visible de la prise
     if (view && (view.b - view.a) < 0.999) { const bx = view.a * W, bw = Math.max(18, (view.b - view.a) * W); g.fillStyle = 'rgba(255,255,255,.06)'; g.fillRect(0, H - 4, W, 4); g.fillStyle = 'rgba(192,132,252,.7)'; g.fillRect(bx, H - 4, bw, 4); }
     line((i) => mid(f0[i]), 'rgba(255,255,255,.38)', 1.1);

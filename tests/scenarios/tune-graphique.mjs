@@ -79,5 +79,13 @@ export default async (c) => {
     check('⌥ + glisser : note posée au cent près (Do + ~30 ct)', r4.some(n => n > 60.2 && n < 60.4), JSON.stringify(r4));
   }
 
+
+  // tête de lecture : clic sur le fond = la lecture part d'ici ; la ligne suit state.playhead
+  {
+    const b = await J(ev, `const r=document.querySelector('.tune-panel .tp-trace canvas').getBoundingClientRect(); return {x:r.left+r.width*0.5,y:r.top+8}`);
+    await mouse('mouseMoved', b.x, b.y, { buttons: 0 }); await mouse('mousePressed', b.x, b.y); await mouse('mouseReleased', b.x, b.y); await sleep(300);
+    const ph = await J(ev, `return { ph: state.playhead, v: document.querySelector('.tune-panel')._trView.ph }`);
+    check('clic sur le fond : la tête de lecture va au milieu de la voix (~3 s)', ph.ph > 2.5 && ph.ph < 3.5 && ph.v > 0, JSON.stringify(ph));
+  }
   if (process.env.VISU_DIR) { await mouse('mousePressed', (await geo(2)).x, (await geo(2)).y); await mouse('mouseReleased', (await geo(2)).x, (await geo(2)).y); await sleep(300); const b = await J(ev, `const r=document.querySelector('.tune-panel').getBoundingClientRect(); return {x:r.left,y:r.top,w:r.width,h:r.height}`); const shot = await send('Page.captureScreenshot', { format: 'png', clip: { x: b.x - 8, y: Math.max(0, b.y - 8), width: b.w + 16, height: Math.min(860, b.h + 16), scale: 1.5 } }); fs.writeFileSync(process.env.VISU_DIR + '/tune-graph-fin.png', Buffer.from(shot.result.data, 'base64')); }
 };
