@@ -4232,3 +4232,6 @@ body.fx-drag-copy .insp-fx-row.fx-dragging::after { content: '+'; position: abso
 
 /* PulseTune : le Graphique a la main sur les raccourcis (après un clic dedans) */
 .tune-panel.tp-focus .tp-trace { border-color: rgba(192,132,252,.6); }
+
+.tune-panel .tune-live { display: inline-flex; align-items: center; gap: 6px; margin-left: 14px; }
+.tune-panel .tune-live.off { opacity: .45; }

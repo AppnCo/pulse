@@ -4,6 +4,7 @@ pub mod ext;
 pub mod file;
 pub mod fx;
 pub mod horizon;
+pub mod livetune;
 pub mod model;
 pub mod monitor;
 pub mod pitch;

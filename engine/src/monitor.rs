@@ -48,14 +48,14 @@ impl Ring {
 
 /// Tranche de la piste écoutée, appliquée au retour : ses effets, son volume et son pan (comme dans le mix),
 /// et ses envois de reverb / écho (on s'entend avec sa reverb pendant la prise, comme dans Logic).
-pub struct Strip { chain: Option<crate::fx::FxChain>, vol: f32, pan: f64, sends: Vec<MonSend> }
+pub struct Strip { chain: Option<crate::fx::FxChain>, vol: f32, pan: f64, sends: Vec<MonSend>, tune: Option<crate::livetune::LiveTune> }
 /// Un envoi de la piste écoutée : niveau, avant / après le fader, son effet et ses tampons (alloués à l'avance)
 struct MonSend { level: f32, pre: bool, fx: crate::fx::SendFx, l: Vec<f32>, r: Vec<f32> }
 const MAX_BLOCK: usize = 1024;
 
 impl Strip {
     /// Retour sec (aucune piste donnée) : la voix telle quelle des deux côtés
-    pub fn dry() -> Self { Self { chain: None, vol: 1.0, pan: f64::NAN, sends: Vec::new() } }
+    pub fn dry() -> Self { Self { chain: None, vol: 1.0, pan: f64::NAN, sends: Vec::new(), tune: None } }
     /// `json` = { "track": piste du projet, "bpm": tempo } ; `sr` = fréquence du retour
     pub fn from_json(json: &str, sr: f64) -> Result<Self, String> {
         #[derive(serde::Deserialize)]
@@ -77,7 +77,13 @@ impl Strip {
                 })
             })
             .collect();
-        Ok(Self { chain: if chain.is_empty() { None } else { Some(chain) }, vol, pan, sends })
+        // PulseTune en direct : la voix corrigée dans le casque (quelques ms), la prise reste brute
+        let tune = m.track.autotune.as_ref().filter(|a| a.on && a.live).map(|a| {
+            let mut mask = [true; 12];
+            if let Some(n) = &a.notes { if n.len() == 12 { for (i, v) in n.iter().enumerate() { mask[i] = *v; } } }
+            crate::livetune::LiveTune::new(sr, mask, a.strength.unwrap_or(0.85))
+        });
+        Ok(Self { chain: if chain.is_empty() { None } else { Some(chain) }, vol, pan, sends, tune })
     }
     /// `l` = voix (mono) en entrée ; ressort `l` / `r` prêts à jouer (volume, pan et envois compris)
     fn process(&mut self, l: &mut [f32], r: &mut [f32]) -> (f32, f32) {
@@ -100,6 +106,7 @@ impl Strip {
     }
     fn strip(&mut self, l: &mut [f32], r: &mut [f32]) -> (f32, f32) {
         if self.pan.is_nan() { r.copy_from_slice(l); return (1.0, 1.0); }
+        if let Some(t) = self.tune.as_mut() { t.process(l); }
         let stereo = match self.chain.as_mut() {
             Some(c) => { r.iter_mut().for_each(|x| *x = 0.0); c.process(l, r, true); c.outputs_stereo() }
             None => false,
@@ -491,6 +498,27 @@ mod tests {
         assert!(sec < 1e-6, "sans envoi : pas de traîne ({sec})");
         assert!(mouille > 0.01, "avec envoi : la reverb traîne ({mouille})");
         assert!(coupe < 1e-6, "envoi coupé : rien ({coupe})");
+    }
+
+    #[test]
+    fn pulsetune_en_direct_dans_le_casque() {
+        // voix La + 40 cents dans le retour d'une piste avec PulseTune « Entendre corrigé » : le casque entend un La juste ;
+        // sans « live », la voix passe telle quelle
+        let sr = 48000.0;
+        let f = 440.0 * 2f64.powf(0.4 / 12.0);
+        let mut ph = 0.0f64;
+        let mut voice = || { ph += 2.0 * std::f64::consts::PI * f / sr; let mut s = 0.0; for h in 1..=8 { s += (h as f64 * ph).sin() / h as f64; } (0.3 * s) as f32 };
+        let pitch = |x: &[f32]| { let (lo, hi) = (40usize, 600usize); let mut best = (0usize, f64::MIN); for l in lo..hi { let mut c = 0.0; for i in 0..x.len() - l { c += x[i] as f64 * x[i + l] as f64; } if c > best.1 { best = (l, c); } }
+            let c = |l: usize| { let mut c = 0.0; for i in 0..x.len() - l { c += x[i] as f64 * x[i + l] as f64; } c }; let (a, b, cc) = (c(best.0 - 1), c(best.0), c(best.0 + 1)); sr / (best.0 as f64 + 0.5 * (a - cc) / (a - 2.0 * b + cc)) };
+        for (live, want) in [(true, 440.0), (false, f)] {
+            let r = Ring::new(65536);
+            let mut st = OutState::new(1.0, true);
+            st.set_strip(Strip::from_json(&format!(r#"{{"track":{{"name":"V","autotune":{{"on":true,"live":{live},"strength":1}}}},"bpm":120}}"#), sr).unwrap());
+            let mut got = Vec::new();
+            for _ in 0..(sr as usize / 128) { for _ in 0..128 { r.push(voice()); } let mut out = vec![0.0f32; 2 * 128]; fill_output(&r, &mut out, 2, 1.0, 64, &mut st); got.extend(out.iter().step_by(2)); }
+            let p = pitch(&got[got.len() - 2400..]);
+            assert!(1200.0 * (p / want).log2() < 8.0 && 1200.0 * (p / want).log2() > -8.0, "live={live} : {p:.2} Hz (attendu {want:.2})");
+        }
     }
 
     #[test]

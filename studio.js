@@ -1135,6 +1135,9 @@ function nativeMonitorTrackJson() {
     if (!t) return '';
     const track = { name: t.name || '', effects: t.effects || [], effectParams: t.effectParams || {}, fxOrder: t.fxOrder || [], volume: t.volume == null ? 100 : t.volume, pan: t.pan || 0,
         sends: t.sends || {}, preSends: t.preSends || {} };
+    // PulseTune « Entendre corrigé » : la voix corrigée dans le casque (moteur natif, quelques ms), la prise reste brute
+    const at = t.autotune;
+    if (at && at.on && at.live) { const nn = at.notes || (state.project.key && state.project.key.notes) || null; track.autotune = { on: true, live: true, notes: nn ? nn.map(Boolean) : null, strength: at.strength ?? 0.85 }; }
     const bpm = typeof tempoVaries === 'function' && tempoVaries() ? bpmAtSec(Math.max(0, state.playhead || 0)) : state.project.bpm;
     // ses envois (reverb, écho) : on s'entend avec pendant la prise, comme dans Logic
     const sends = (Array.isArray(state.project.sends) ? state.project.sends : []).filter(sd => (track.sends[sd.id] || 0) > 0);
@@ -6999,7 +7002,7 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false, dock = false)
             <div class="tune-hint">Joue au clavier de l'ordi (<kbd>A</kbd> <kbd>W</kbd> <kbd>S</kbd> <kbd>E</kbd> <kbd>D</kbd> <kbd>F</kbd> <kbd>T</kbd> <kbd>G</kbd> <kbd>Y</kbd> <kbd>H</kbd> <kbd>U</kbd> <kbd>J</kbd>, <kbd>Z</kbd> / <kbd>X</kbd> = octave) ou à la souris · <kbd>⌘</kbd> + clic : retirer / remettre la note, pour toutes les octaves</div>
         </div>
         <div class="fx-panel-footer tb-foot">
-            ${trackMode ? '<label class="tune-all" data-tooltip="Copie ce réglage sur toutes les pistes qui ont PulseTune allumé"><input type="checkbox" class="tune-all-box"> Même réglage partout</label>' : '<span></span>'}
+            ${trackMode ? '<label class="tune-all" data-tooltip="Copie ce réglage sur toutes les pistes qui ont PulseTune allumé"><input type="checkbox" class="tune-all-box"> Même réglage partout</label><label class="tune-live" data-tooltip="Pendant la prise, tu t\'entends déjà corrigé dans le casque (quelques ms de retard, appli Mac / PC). La prise enregistrée reste brute et se corrige proprement après."><input type="checkbox" class="tune-live-box"> Entendre corrigé</label>' : '<span></span>'}
             <div class="tune-quick"><button class="tune-help-btn" data-tooltip="Aide : jouer et choisir les notes au clavier">?</button><button data-q="all">Toutes les notes</button></div>
         </div>`;
     document.body.appendChild(panel);
@@ -7345,6 +7348,19 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false, dock = false)
     nb.querySelector('.tp-nb-auto').addEventListener('click', () => setNote(null));
     document.addEventListener('pulse-tune-done', () => { if (panel.isConnected) showNoteBar(); });
     if (dock) requestAnimationFrame(showNoteBar);
+    // « Entendre corrigé » : PulseTune dans le retour casque natif (moteur de l'appli), la prise reste brute
+    { const lb = panel.querySelector('.tune-live-box');
+      if (lb && trackMode) {
+        const nativeOk = !!(window.PulseNative && PulseNative.available && PulseNative.monitor);
+        lb.checked = !!(trk.autotune && trk.autotune.live);
+        if (!nativeOk) { lb.disabled = true; lb.closest('label').classList.add('off'); lb.closest('label').setAttribute('data-tooltip', 'S\'entendre corrigé pendant la prise : dans l\'appli Mac / PC seulement (retour casque direct)'); }
+        lb.addEventListener('change', () => {
+            if (!trk.autotune) return;
+            pushUndo(); trk.autotune.live = lb.checked; saveProject();
+            if (typeof syncNativeMonitorTrack === 'function') syncNativeMonitorTrack();
+            flash(lb.checked ? 'PulseTune dans le casque : tu t\'entends corrigé pendant la prise (≈ 4 ms de retard, la prise reste brute)' : 'Retour casque sans correction');
+        });
+      } }
     // Barre du Graphique : écouter le passage à l'écran (boucle), zoom +/−, tout voir, agrandir
     const zoomBy = (k) => graphZoom(k, 0.5);
     panel.querySelector('.tp-g-zi').addEventListener('click', () => zoomBy(0.5));

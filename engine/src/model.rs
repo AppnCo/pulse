@@ -116,6 +116,19 @@ pub struct Track {
     pub automation: Automation,
     /// Piste gelée : son rendu (régions + effets, avant le fader) joué à la place (voir render::with_frozen)
     pub frozen: Option<Frozen>,
+    /// PulseTune de la piste : `live` = on s'entend corrigé dans le casque pendant la prise (retour natif)
+    pub autotune: Option<AutoTuneCfg>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AutoTuneCfg {
+    pub on: bool,
+    pub live: bool,
+    /// 12 notes permises (Do → Si) ; absent = toutes
+    pub notes: Option<Vec<bool>>,
+    /// Vitesse 0–1
+    pub strength: Option<f64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
