@@ -31,6 +31,7 @@ export const DETECT = `(()=>{
     if ((t0.right > W + 1 || (t0.left < -1 && t0.width)) && !cut(e, t0)) add('HORS ÉCRAN', e, own, Math.round(t0.left) + '→' + Math.round(t0.right));
     // 3. texte recouvert par un autre élément (on sonde le début, le milieu et la fin du texte)
     const tn = [...e.childNodes].find(n => n.nodeType === 3 && n.textContent.trim()); if (!tn) continue;
+    if (s.pointerEvents === 'none') continue;   // texte « traversé » par la souris : le sondage tombe forcément sur ce qui est dessous (pas un recouvrement)
     const rg = document.createRange(); rg.selectNodeContents(tn); const tr = rg.getBoundingClientRect();
     if (tr.width < 4) continue;
     const vr = { l: Math.max(tr.left, r.left), r: Math.min(tr.right, r.right) };

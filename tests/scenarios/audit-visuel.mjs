@@ -61,5 +61,16 @@ export default async (c) => {
   // piano roll
   await ev(`(()=>{ const t={name:'Piano',type:'keys',color:'#22D3EE',volume:100,clips:[{start:0,duration:2,midi:{inst:'piano',beats:4,notes:[{s:0,d:1,p:60,v:100}],bpm:120}}]}; state.project.tracks.push(t); renderAll(); openMidiEditor(state.project.tracks.length-1,0,true); })()`);
   await L('12 piano roll');
+  // PulseTune : Réglages, Graphique (note choisie), agrandi, en bas (voix d'essai corrigée)
+  await ev(`(async()=>{ try { PulsePianoRoll.close(); } catch {} const ctx=await PulseAudio.init(), sr=ctx.sampleRate, n=sr*6, b=ctx.createBuffer(1,n,sr), d=b.getChannelData(0); let ph=0; const mel=[60.3,62.4,63.2,67.35,65.3,63.4,62.2,60.4];
+    for(let i=0;i<n;i++){ const t=i/sr, k=Math.min(7,Math.floor(t/0.75)), u=t/0.75-k, f=440*Math.pow(2,(mel[k]+0.2*Math.sin(2*Math.PI*5.5*t)-69)/12); ph+=2*Math.PI*f/sr; let s=0; for(let h=1;h<=10;h++) s+=Math.sin(h*ph)/(h*(1+Math.abs(h*f-700)/900)); d[i]=0.35*(u>0.9?0:1)*Math.min(1,u*30)*s; }
+    PulseAudio.registerBuffer('voixvisu', b); const t=state.project.tracks[2]; t.clips=[{id:'voixvisu',name:'Voix',start:0,duration:6,offset:0}];
+    t.autotune={on:true,notes:[1,0,1,1,0,1,0,1,1,0,1,0].map(Boolean),source:'clavier',tonic:0,minor:true,strength:0.85}; await tuneWholeTrack(2); })()`); await sleep(2500);
+  await ev(`localStorage.setItem('pulse_tune_view','auto'); document.querySelectorAll('.tune-panel').forEach(p=>p.remove()); openTunePanel(2,-1,300,60,true)`); await L('13 PulseTune réglages');
+  await ev(`document.querySelector('.tune-panel .tp-view button[data-view=graph]').click()`); await sleep(300);
+  await ev(`(()=>{ const p=document.querySelector('.tune-panel'); p._trView.selI = 150; document.dispatchEvent(new CustomEvent('pulse-tune-done')); })()`); await L('13 PulseTune graphique');
+  await ev(`document.querySelector('.tune-panel .tp-g-big').click()`); await L('13 PulseTune graphique agrandi');
+  await ev(`document.querySelector('.tune-panel .tp-g-big').click(); document.querySelector('.tune-panel .tp-g-dock').click()`); await sleep(400); await L('13 PulseTune en bas');
+  await ev(`document.querySelectorAll('.tune-panel').forEach(p=>p.remove())`);
   console.log('=== TOTAL défauts relevés : ' + total);
 };
