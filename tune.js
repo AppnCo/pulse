@@ -438,6 +438,8 @@
         // opts.notes (12 cases, choisies au clavier ou lues sur l'instru) passe avant tout
         const root = opts.notes ? null : (opts.root === 'auto' || opts.root === undefined ? detectKey(f0) : opts.root);
         const { ratio, notes, voicedPct, avgCents } = correctionCurve(f0, opts.notes || root, opts.strength ?? 1, { human: opts.human, flex: opts.flex, vibrato: opts.vibrato, edits: opts.edits });
+        // opts.shift : transposition en demi-tons par-dessus la correction (banc de comparaison, harmonies)
+        if (opts.shift) { const k = Math.pow(2, opts.shift / 12); for (let i = 0; i < ratio.length; i++) if (f0[i] > 0) ratio[i] *= k; }
         const pm = pitchMarks(mono, sr, f0);
         const out = [];
         for (let c = 0; c < channels.length; c++) {
