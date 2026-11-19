@@ -4218,3 +4218,12 @@ body.fx-drag-copy .insp-fx-row.fx-dragging::after { content: '+'; position: abso
 .tune-panel.tp-dock .tp-gbar { margin-top: 4px; }
 .tune-panel.tp-dock.tp-graph .tp-trace { flex: 1 1 auto; height: auto; min-height: 120px; margin-bottom: 8px; }
 .tune-panel.tp-dock .tp-notebar { margin-bottom: 8px; }
+
+/* en bas : réglages de la note choisie empilés dans la colonne de gauche */
+.tune-panel.tp-dock .tp-notebar { position: absolute; margin: 0; flex-direction: column; align-items: stretch; gap: 10px; padding: 12px; overflow: auto; }
+.tune-panel.tp-dock .tp-notebar b { font-size: 14px; white-space: normal; }
+.tune-panel.tp-dock .tp-notebar label { display: grid; grid-template-columns: 1fr auto; row-gap: 4px; }
+.tune-panel.tp-dock .tp-notebar label input[type=range] { grid-column: 1 / -1; grid-row: 2; width: 100% !important; }
+.tune-panel.tp-dock .tp-notebar button { margin-left: 0; }
+.tune-panel.tp-dock .tp-notebar.empty b { font-size: 11px; font-weight: 500; color: #9A8CB8; }
+.tune-panel.tp-dock .tp-notebar.empty label, .tune-panel.tp-dock .tp-notebar.empty button { display: none; }

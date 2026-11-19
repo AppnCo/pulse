@@ -30,6 +30,17 @@ export default async (c) => {
     await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: b.x, y: b.y, deltaX: 0, deltaY: -150, modifiers: 4 }); await sleep(500); }
   const B = await al();
   check('⌘ + molette en bas : la timeline zoome et le tracé reste calé', B.pps > A.pps * 1.5 && Math.abs(B.xg - B.xt) < 3, JSON.stringify(B));
+  // réglages de la note dans la colonne de gauche (sous la liste des pistes)
+  const nbGeo = () => J(ev, `const b=document.querySelector('.tune-panel .tp-notebar'), r=b.getBoundingClientRect(), tl=document.querySelector('.timeline').getBoundingClientRect(), cv=document.querySelector('.tune-panel .tp-trace canvas').getBoundingClientRect(); return { on: b.classList.contains('on'), empty: b.classList.contains('empty'), txt: b.querySelector('.tp-nb-name').textContent, l: r.left, r: r.right, top: r.top, tl: tl.left, ct: cv.top, vis: getComputedStyle(b.querySelector('.tp-nb-vib')).display }`);
+  let N = await nbGeo();
+  check('en bas : colonne de gauche « Clique une note pour la régler »', N.on && N.empty && /Clique/.test(N.txt) && N.r <= N.tl && N.l < 20, JSON.stringify(N));
+  await clk('.tp-g-all'); await sleep(500);
+  { const p = await J(ev, `const tr=TUNE_TRACES.get(state.project.tracks[2].clips[0].id), sg=tr.notes.filter(s=>s.i1-s.i0>=8)[1], v=document.querySelector('.tune-panel')._trView, f0=tr.f0; let I0=0,I1=f0.length-1; while(!(f0[I0]>0))I0++; while(!(f0[I1]>0))I1--; const sp=I1-I0, i0=I0+v.a*sp, i1=I0+v.b*sp, cv=document.querySelector('.tune-panel .tp-trace canvas'), r=cv.getBoundingClientRect();
+      const mid=(hz)=>69+12*Math.log2(hz/440); const vals=[]; for(let i=I0;i<=I1;i+=2) if(f0[i]>0) vals.push(mid(f0[i])); vals.sort((a,b)=>a-b); let lo=Math.floor(vals[Math.floor(vals.length*0.02)]-1.5), hi=Math.ceil(vals[Math.floor(vals.length*0.98)]+1.5); for(const s of tr.notes){lo=Math.min(lo,s.note-2);hi=Math.max(hi,s.note+2);} if(hi-lo<7){const c=(hi+lo)/2;lo=Math.floor(c-3.5);hi=lo+7;}
+      return { x: r.left+((sg.i0+sg.i1)/2-i0)/(i1-i0)*r.width, y: r.top+cv.clientHeight-(sg.note-lo)/(hi-lo)*cv.clientHeight }`);
+    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: p.x, y: p.y, button: 'left', buttons: 1, clickCount: 1 }); await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: p.x, y: p.y, button: 'left', buttons: 0, clickCount: 1 }); await sleep(300); }
+  N = await nbGeo();
+  check('clic sur une note : ses réglages s\'affichent à gauche (Ré, Vibrato, Vitesse)', N.on && !N.empty && /^D/.test(N.txt) && N.vis !== 'none' && N.r <= N.tl, JSON.stringify(N));
   if (process.env.SHOTS) await shot(process.env.SHOTS + '/tune-bas.jpg');
   // projet rouvert : plus de tracé en mémoire → réanalyse toute seule
   await ev(`(()=>{ TUNE_TRACES.clear(); document.querySelectorAll('.tune-panel').forEach(p=>p.remove()); openTunePanel(2,-1,0,0,true,true); })()`);

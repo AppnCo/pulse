@@ -7175,6 +7175,9 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false, dock = false)
         const tl = document.querySelector('.timeline'); if (!tl || !tr) return;
         const r = tl.getBoundingClientRect(), pr = panel.getBoundingClientRect();
         trEl.style.marginLeft = Math.max(0, r.left - pr.left) + 'px'; trEl.style.marginRight = Math.max(0, pr.right - r.right) + 'px';
+        // réglages de la note choisie : dans la colonne de gauche, sous la liste des pistes
+        const tr2 = trEl.getBoundingClientRect(), nb2 = panel.querySelector('.tp-notebar');
+        if (nb2) { nb2.style.left = '12px'; nb2.style.top = (tr2.top - pr.top) + 'px'; nb2.style.width = Math.max(150, r.left - pr.left - 24) + 'px'; nb2.style.maxHeight = tr2.height + 'px'; }
         const f0 = tr.f0; let I0 = 0, I1 = f0.length - 1; while (I0 < I1 && !(f0[I0] > 0)) I0++; while (I1 > I0 && !(f0[I1] > 0)) I1--;
         const s0 = tl.scrollLeft / state.pxPerSecond, s1 = (tl.scrollLeft + tl.clientWidth) / state.pxPerSecond, span = Math.max(1, I1 - I0);
         trView.a = (frameOfSec(c, tr, s0) - I0) / span; trView.b = (frameOfSec(c, tr, s1) - I0) / span; trView.free = true;
@@ -7246,7 +7249,8 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false, dock = false)
     const nb = panel.querySelector('.tp-notebar');
     const selHit = () => { const c = traceClip(), tr = c && TUNE_TRACES.get(c.id); if (!tr || !(trView.selI >= 0)) return null; const k = (tr.notes || []).findIndex(sg => sg.i1 - sg.i0 >= 8 && trView.selI >= sg.i0 - 1 && trView.selI <= sg.i1 + 1); return k < 0 ? null : { c, tr, sg: tr.notes[k], t0: tr.t0 + tr.notes[k].i0 * tr.hop, t1: tr.t0 + (tr.notes[k].i1 + 1) * tr.hop }; };
     const showNoteBar = () => {
-        const h = selHit(); nb.classList.toggle('on', !!h); if (!h) return;
+        const h = selHit(); nb.classList.toggle('on', !!h || dock); nb.classList.toggle('empty', !h);
+        if (!h) { if (dock) nb.querySelector('.tp-nb-name').textContent = 'Clique une note pour la régler'; return; }
         const a = trackMode ? trk.autotune : settings(), ed = editsOf(h.c).find(x => x.t0 < h.t1 - 0.01 && x.t1 > h.t0 + 0.01) || {};
         const ct = Math.round((h.sg.note - Math.round(h.sg.note)) * 100);
         nb.querySelector('.tp-nb-name').textContent = NN[((Math.round(h.sg.note) % 12) + 12) % 12] + (ct ? (ct > 0 ? ' +' : ' ') + ct + ' ct' : '') + (h.sg.forced ? ' · à la main' : '');
@@ -7267,6 +7271,7 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false, dock = false)
     nb.querySelector('.tp-nb-spd').addEventListener('change', (e) => setNote({ speed: +e.target.value / 100 }));
     nb.querySelector('.tp-nb-auto').addEventListener('click', () => setNote(null));
     document.addEventListener('pulse-tune-done', () => { if (panel.isConnected) showNoteBar(); });
+    if (dock) requestAnimationFrame(showNoteBar);
     // Barre du Graphique : écouter le passage à l'écran (boucle), zoom +/−, tout voir, agrandir
     const zoomBy = (k) => { const w = trView.b - trView.a, c = trView.a + w / 2, nw = Math.max(0.004, Math.min(1, w * k)); setTrView(c - nw / 2, c + nw / 2); };
     panel.querySelector('.tp-g-zi').addEventListener('click', () => zoomBy(0.5));
