@@ -171,4 +171,21 @@ ok('notes au clavier', Math.abs(cents(m9, 261.63)) < 12, `sortie ${m9.toFixed(1)
   let dd = 0, pp = 0; for (let i = 0; i < n; i++) { dd += (st.channels[0][i] - 2 * st.channels[1][i]) ** 2; pp += st.channels[0][i] ** 2; }
   ok('stéréo en phase', 10 * Math.log10(dd / pp + 1e-20) < -60, `écart ${(10 * Math.log10(dd / pp + 1e-20)).toFixed(0)} dB`);
 }
+// --- Déplacer une note dans le temps : La (0–1 s), silence, Si (1,4–2,4 s) ; on avance le Si de 150 ms
+{
+  const sec = 3, n = sr * sec, x = new Float32Array(n); let ph = 0;
+  for (let i = 0; i < n; i++) { const t = i / sr, on = (t < 1) || (t >= 1.4 && t < 2.4), f = t < 1.2 ? 220 : 246.94; ph += 2 * Math.PI * f / sr; if (!on) continue;
+    const env = Math.min(1, (t < 1.2 ? t : t - 1.4) * 40, ((t < 1.2 ? 1 : 2.4) - t) * 40); let v = 0; for (let h = 1; h <= 10; h++) v += Math.sin(h * ph) / (h * (1 + Math.abs(h * f - 700) / 900)); x[i] = 0.35 * env * v; }
+  const res = await T.process([x], sr, { root: -1, strength: 1, moves: [{ t0: 1.4, t1: 2.4, d: -0.15 }] });
+  const y = res.channels[0], on = (z) => { for (let i = Math.round(1.05 * sr); i < n; i++) if (Math.abs(z[i]) > 0.05) return i / sr; return 0; };
+  ok('Note déplacée : le Si commence 150 ms plus tôt', Math.abs(on(y) - 1.25) < 0.02, `début ${on(x).toFixed(3)} s → ${on(y).toFixed(3)} s`);
+  const y0 = (await T.process([x], sr, { root: -1, strength: 1 })).channels[0];
+  let same = 0; for (let i = 0; i < Math.round(0.9 * sr); i++) same = Math.max(same, Math.abs(y[i] - y0[i]));
+  ok('Note déplacée : le La d\'avant ne bouge pas', same < 0.02, same.toFixed(4));
+  const fB = median(await T.trackPitch(y.subarray(Math.round(1.4 * sr), Math.round(2.1 * sr)), sr));
+  ok('Note déplacée : elle chante toujours un Si', Math.abs(cents(fB, 246.94)) < 15, fB.toFixed(1) + ' Hz');
+  const jump = (z, a, b) => { let m = 0; for (let i = a + 1; i < b; i++) m = Math.max(m, Math.abs(z[i] - z[i - 1])); return m; };
+  ok('Note déplacée : pas de clic', jump(y, Math.round(1.1 * sr), Math.round(2.6 * sr)) < 1.6 * jump(x, Math.round(1.3 * sr), Math.round(2.5 * sr)), jump(y, Math.round(1.1 * sr), Math.round(2.6 * sr)).toFixed(3) + ' / ' + jump(x, Math.round(1.3 * sr), Math.round(2.5 * sr)).toFixed(3));
+  ok('Sans déplacement : pas de carte de temps', !(await T.process([x], sr, { root: -1, strength: 1 })).warp, '');
+}
 process.exit(fail ? 1 : 0);

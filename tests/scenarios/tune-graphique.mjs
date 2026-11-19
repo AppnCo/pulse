@@ -182,5 +182,23 @@ export default async (c) => {
     const gone = await ev(`!(state.project.tracks[2].clips[0].tune.edits||[]).some(x=>x.curve)`);
     check('double-clic sur la courbe : retour à l\'automatique', gone === true, String(gone));
   }
+
+  // à l'horizontale : la 5e note (Fa) glisse de +0,1 s dans le temps ; double-clic = elle revient à sa place
+  {
+    await ev(`(()=>{ const v=document.querySelector('.tune-panel')._trView; v.a=0; v.b=1; v.vspan=0; v.selI=-1; document.dispatchEvent(new CustomEvent('pulse-tune-done')); })()`); await sleep(200);
+    const onset = async () => JA(`const cl=state.project.tracks[2].clips[0], b=PulseAudio.getBuffer(cl.id); const f=await PulseTune.trackPitch(b.getChannelData(0), b.sampleRate); for(let i=Math.round(2.9/0.005); i<f.length; i++) if(f[i]>0 && Math.round(69+12*Math.log2(f[i]/440))===65) return i*0.005; return 0;`);
+    const before = await onset();
+    const g4 = await geo(4), dx = await J(ev, `const r=document.querySelector('.tune-panel .tp-trace canvas').getBoundingClientRect(), tr=TUNE_TRACES.get(state.project.tracks[2].clips[0].id), f0=tr.f0; let i0=0,i1=f0.length-1; while(!(f0[i0]>0))i0++; while(!(f0[i1]>0))i1--; return 0.1/tr.hop/(i1-i0)*r.width`);
+    await mouse('mouseMoved', g4.x, g4.y, { buttons: 0 }); await mouse('mousePressed', g4.x, g4.y);
+    for (let k = 1; k <= 8; k++) { await mouse('mouseMoved', g4.x + dx * k / 8, g4.y); await sleep(20); }
+    await mouse('mouseReleased', g4.x + dx, g4.y); await sleep(1800);
+    const mv = await J(ev, `return state.project.tracks[2].clips[0].tune.moves || []`), after = await onset();
+    check('↔ : la note glisse de +0,1 s (gardée sur le clip, le son suit)', mv.length === 1 && Math.abs(mv[0].d - 0.1) < 0.02 && Math.abs(after - before - 0.1) < 0.03, JSON.stringify({ mv, before, after }));
+    const g4b = await J(ev, `const p=document.querySelector('.tune-panel'), cv=p.querySelector('.tp-trace canvas'), r=cv.getBoundingClientRect(), tr=TUNE_TRACES.get(state.project.tracks[2].clips[0].id), sg=tr.notes.filter(s=>s.i1-s.i0>=8)[4], f0=tr.f0, wp=tuneWarp(tr); let i0=0,i1=f0.length-1; while(!(f0[i0]>0))i0++; while(!(f0[i1]>0))i1--; return { x: r.left+((wp.fw(sg.i0)+wp.fw(sg.i1))/2-i0)/(i1-i0)*r.width }`);
+    await mouse('mousePressed', g4b.x, g4.y, { clickCount: 1 }); await mouse('mouseReleased', g4b.x, g4.y, { clickCount: 1 });
+    await mouse('mousePressed', g4b.x, g4.y, { clickCount: 2 }); await mouse('mouseReleased', g4b.x, g4.y, { clickCount: 2 }); await sleep(1800);
+    const back = await J(ev, `return state.project.tracks[2].clips[0].tune.moves || []`), at2 = await onset();
+    check('double-clic : la note revient à sa place', back.length === 0 && Math.abs(at2 - before) < 0.02, JSON.stringify({ back, at2, before }));
+  }
   if (process.env.VISU_DIR) { await mouse('mousePressed', (await geo(2)).x, (await geo(2)).y); await mouse('mouseReleased', (await geo(2)).x, (await geo(2)).y); await sleep(300); const b = await J(ev, `const r=document.querySelector('.tune-panel').getBoundingClientRect(); return {x:r.left,y:r.top,w:r.width,h:r.height}`); const shot = await send('Page.captureScreenshot', { format: 'png', clip: { x: b.x - 8, y: Math.max(0, b.y - 8), width: b.w + 16, height: Math.min(860, b.h + 16), scale: 1.5 } }); fs.writeFileSync(process.env.VISU_DIR + '/tune-graph-fin.png', Buffer.from(shot.result.data, 'base64')); }
 };

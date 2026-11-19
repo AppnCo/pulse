@@ -396,7 +396,26 @@
         return { marks, voiced };
     }
 
-    function psola(x, sr, f0, ratio, pm) {
+    // Déplacement de notes dans le temps : moves = [{ t0, t1, d }] (secondes) → la note [t0, t1] glisse de d ;
+    // seules les 0,3 s de part et d'autre s'étirent / se tassent. Rend { fwd (entrée → sortie), inv (sortie → entrée), slope } en échantillons.
+    const MOVE_PAD = 0.3, MOVE_MAX = 0.25;
+    function buildWarp(moves, n, sr) {
+        const ms = (moves || []).filter(m => m && Number.isFinite(m.d) && Math.abs(m.d) > 0.0005 && m.t1 > m.t0).map(m => ({ a: m.t0 * sr, b: m.t1 * sr, d: Math.max(-MOVE_MAX, Math.min(MOVE_MAX, m.d)) * sr })).sort((p, q) => p.a - q.a);
+        if (!ms.length) return null;
+        const pin = [[0, 0]];
+        const push = (i, o) => { const l = pin[pin.length - 1]; if (i > l[0] + 1 && o > l[1] + 1) pin.push([i, o]); };
+        ms.forEach((m, k) => {
+            const prevB = k ? ms[k - 1].b : 0, nextA = k + 1 < ms.length ? ms[k + 1].a : n;
+            const L = Math.max(prevB + (k ? 1 : 0), m.a - MOVE_PAD * sr), R = Math.min(nextA - 1, m.b + MOVE_PAD * sr);
+            push(L, L); push(m.a, m.a + m.d); push(m.b, m.b + m.d); push(R, R);
+        });
+        push(n, n);
+        const map = (v, from, to) => { let k = 1; while (k < pin.length - 1 && pin[k][from] < v) k++; const p = pin[k - 1], q = pin[k]; const u = q[from] > p[from] ? (v - p[from]) / (q[from] - p[from]) : 0; return p[to] + (q[to] - p[to]) * u; };
+        const slope = (o) => { let k = 1; while (k < pin.length - 1 && pin[k][1] < o) k++; const p = pin[k - 1], q = pin[k]; return q[1] > p[1] ? (q[0] - p[0]) / (q[1] - p[1]) : 1; };
+        return { fwd: (v) => map(v, 0, 1), inv: (v) => map(v, 1, 0), slope, pins: pin };
+    }
+
+    function psola(x, sr, f0, ratio, pm, W = null) {
         const n = x.length;
         const y = new Float32Array(n);
         const hopS = HOP_SEC * sr;
@@ -415,10 +434,13 @@
         for (let i = 0; i < Math.min(n, marks[0]); i++) y[i] = x[i];
         let first = true;
         while (ts < n && a < M) {
-            while (a + 1 < M && Math.abs(marks[a + 1] - ts) < Math.abs(marks[a] - ts)) a++;
+            const pin = W ? W.inv(ts) : ts;   // notes déplacées : on lit la voix d'origine à l'endroit correspondant
+            while (a + 1 < M && Math.abs(marks[a + 1] - pin) < Math.abs(marks[a] - pin)) a++;
             let r = 1, center = Math.round(ts);
-            if (voiced[a]) r = Math.max(0.5, Math.min(2, ratioAt(ts)));
-            else { center = marks[a]; }     // souffle, consonne : remis exactement à sa place, sans y toucher
+            // zone étirée / tassée autour d'une note déplacée : souffle et consonnes rejoués période par période (sinon trous)
+            const stretched = W && Math.abs(W.slope(ts) - 1) > 0.01;
+            if (voiced[a]) r = Math.max(0.5, Math.min(2, ratioAt(pin)));
+            else if (!stretched) { center = W ? Math.round(W.fwd(marks[a])) : marks[a]; }     // souffle, consonne : remis exactement à sa place, sans y toucher
             const m = marks[a], Tl = left(a), Tr = right(a);
             const g = r > 1 ? 1 / r : 1;    // plus de recouvrement quand on monte → on compense le volume
             const k0 = first ? 0 : -Tl; first = false;
@@ -429,7 +451,8 @@
                 y[di] += x[si] * w * g;
             }
             if (voiced[a]) ts += Tr / r;
-            else { ts = a + 1 < M ? marks[a + 1] : n; }
+            else if (stretched) ts += Tr;
+            else { ts = a + 1 < M ? (W ? W.fwd(marks[a + 1]) : marks[a + 1]) : n; }
         }
         return y;
     }
@@ -450,13 +473,16 @@
         // opts.shift : transposition en demi-tons par-dessus la correction (banc de comparaison, harmonies)
         if (opts.shift) { const k = Math.pow(2, opts.shift / 12); for (let i = 0; i < ratio.length; i++) if (f0[i] > 0) ratio[i] *= k; }
         const pm = pitchMarks(mono, sr, f0);
+        const W = buildWarp(opts.moves, n, sr);
         const out = [];
         for (let c = 0; c < channels.length; c++) {
-            out.push(psola(channels[c], sr, f0, ratio, pm));
+            out.push(psola(channels[c], sr, f0, ratio, pm, W));
             if (onProgress) onProgress(0.7 + 0.3 * (c + 1) / channels.length);
             await tick();
         }
-        return { channels: out, root, voicedPct, avgCents, f0, ratio, notes, hop: HOP_SEC };
+        // déplacements, en trames de mesure (entrée → sortie), pour dessiner les notes à leur nouvelle place
+        const warp = W ? W.pins.map(([i, o]) => [i / sr / HOP_SEC, o / sr / HOP_SEC]) : null;
+        return { channels: out, root, voicedPct, avgCents, f0, ratio, notes, hop: HOP_SEC, warp };
     }
 
     root.PulseTune = { process, trackPitch, detectKey, detectKeyFromMusic, chroma, toMask, scaleName, correctionCurve, psola, pitchMarks, keyLabel, keyName, NOTE_NAMES };
