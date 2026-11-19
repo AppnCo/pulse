@@ -385,7 +385,7 @@
 "script.js": "db3e98a56222a9e7297b9764201671e632aeaf9e22acaf311b56c3b9be541390",
 "studio.css": "b0a51c6fa83b4c1dcbf530f764abce720b9003c65e2a80bd5f1cf59560b17e7a",
 "studio.html": "a37b8a3b8b0c333f08203dbdfec24a158e1ddd141c09a81c95a74564494ce9c1",
-"studio.js": "6dc9e9102c4cf01d8a2a1cbec2d72b834682ffbf894a12bf97cbd555fbec7e0f",
+"studio.js": "a54a30ccb44efcdda5eacc7ea561fdeb5afb6817dbc35b457f1f8df5b8e7e0d9",
 "styles.css": "9040ad9ca17969d48b7cc98c58afab3190dab1db6b986d245b71d0f9c438705c",
 "synth.js": "66a6597db209970dec2d7e3e2feb51f0e037bb3d6b75d3c8182ac43da6d64b39",
 "tempo.js": "1ad0200f61ad3db6f6f5c47500b5c5ff042a585607c713ca324f752d27e33ca3",
@@ -395,5 +395,5 @@
 "vendor/lame.min.js": "15d285e2587b3bdbfd18a68de6ce07cc074f7480a82c3815da2dc1c348ec6df4",
 "warp.js": "209bb3114410db48c37af5bf718a4cd482fcb95cc5bbf7ae6f024e3420bf6f3e"
 },
-"version": "2026-11-19 20:28"
+"version": "2026-11-19 20:32"
 }

@@ -20,6 +20,16 @@ export default async (c) => {
   check('« En bas » : éditeur ancré sous les pistes, toute la largeur, Graphique', d.dock && d.graph && d.open && d.l === 0 && Math.abs(d.w - d.iw) < 2 && Math.abs(d.b - d.ih) < 2 && d.th > 120 && parseFloat(d.pad) > 200 && d.n === 1, JSON.stringify(d));
   const rg = await J(ev, `const v=document.querySelector('.tune-panel')._trView, c=state.project.tracks[2].clips[0], tr=TUNE_TRACES.get(c.id); let i=0; while(!(tr.f0[i]>0)) i++; return { has: typeof v.toSec==='function', s: v.toSec(i), want: c.start + tr.t0 + i*tr.hop - (c.offset||0) }`);
   check('règle du morceau : les trames tombent au bon endroit du morceau', rg.has && Math.abs(rg.s - rg.want) < 1e-6 && rg.s >= 0 && rg.s < 1, JSON.stringify(rg));
+  // calé sur les pistes : une seconde du morceau tombe au même x dans le tracé et dans la timeline ; ⌘ + molette zoome la timeline
+  const al = async () => J(ev, `const p=document.querySelector('.tune-panel'), v=p._trView, cv=p.querySelector('.tp-trace canvas').getBoundingClientRect(), tl=document.querySelector('.timeline'), tr=TUNE_TRACES.get(state.project.tracks[2].clips[0].id), c=state.project.tracks[2].clips[0];
+    const f0=tr.f0; let I0=0,I1=f0.length-1; while(!(f0[I0]>0))I0++; while(!(f0[I1]>0))I1--; const sp=I1-I0, i0=I0+v.a*sp, i1=I0+v.b*sp, t=1.0, f=((c.offset||0)+t-c.start-tr.t0)/tr.hop;
+    return { xg: cv.left+(f-i0)/(i1-i0)*cv.width, xt: tl.getBoundingClientRect().left + t*state.pxPerSecond - tl.scrollLeft, pps: state.pxPerSecond }`);
+  let A = await al();
+  check('calé sur les pistes : 1 s du morceau au même endroit (tracé / timeline)', Math.abs(A.xg - A.xt) < 3, JSON.stringify(A));
+  { const b = await J(ev, `const r=document.querySelector('.tune-panel .tp-trace canvas').getBoundingClientRect(); return {x:r.left+120,y:r.top+r.height/2}`);
+    await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: b.x, y: b.y, deltaX: 0, deltaY: -150, modifiers: 4 }); await sleep(500); }
+  const B = await al();
+  check('⌘ + molette en bas : la timeline zoome et le tracé reste calé', B.pps > A.pps * 1.5 && Math.abs(B.xg - B.xt) < 3, JSON.stringify(B));
   if (process.env.SHOTS) await shot(process.env.SHOTS + '/tune-bas.jpg');
   // projet rouvert : plus de tracé en mémoire → réanalyse toute seule
   await ev(`(()=>{ TUNE_TRACES.clear(); document.querySelectorAll('.tune-panel').forEach(p=>p.remove()); openTunePanel(2,-1,0,0,true,true); })()`);
