@@ -8301,7 +8301,7 @@ function drawTuneTrace(cv, tr, mask, blocks = false, drag = null, view = null) {
         const ok = !mask || mask[((n % 12) + 12) % 12];
         g.fillStyle = ok ? 'rgba(168,85,247,.10)' : 'rgba(255,255,255,.015)';
         g.fillRect(0, Y(n) - rowH / 2 + 0.5, W, rowH - 1);
-        if (ok && rowH >= 9) { g.fillStyle = 'rgba(200,180,240,.55)'; g.font = '600 8.5px -apple-system, system-ui, sans-serif'; g.fillText(PulseTune.NOTE_NAMES[((n % 12) + 12) % 12], 4, Y(n) + 3); }
+        if (ok && rowH >= 9 && Y(n) - 4 > (view && view.toSec ? 13 : 0) && Y(n) + 4 < H) { g.fillStyle = 'rgba(200,180,240,.55)'; g.font = '600 8.5px -apple-system, system-ui, sans-serif'; g.fillText(PulseTune.NOTE_NAMES[((n % 12) + 12) % 12], 4, Y(n) + 3); }
     }
     // règle du morceau (mesures / temps) : la voix se lit avec l'instru
     if (view && view.toSec && typeof beatAtSec === 'function') {
@@ -8315,7 +8315,7 @@ function drawTuneTrace(cv, tr, mask, blocks = false, drag = null, view = null) {
             if (isBar && bar % every) continue;
             const f = i0 + (secAtBeat(b) - s0) / Math.max(1e-6, s1 - s0) * (i1 - i0), px = Math.round(X(f)) + 0.5;
             g.fillStyle = isBar ? 'rgba(255,255,255,.13)' : 'rgba(255,255,255,.05)'; g.fillRect(px, 0, 1, H);
-            if (isBar) { g.fillStyle = 'rgba(220,205,250,.7)'; g.fillText(String(bar + 1), px + 3, 10); }
+            if (isBar && px > 26) { g.fillStyle = 'rgba(220,205,250,.7)'; g.fillText(String(bar + 1), px + 3, 10); }
         }
     }
     const line = (get, color, width, glow) => {
