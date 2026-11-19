@@ -29,7 +29,7 @@ export default async (c) => {
   { const b = await J(ev, `const r=document.querySelector('.tune-panel .tp-trace canvas').getBoundingClientRect(); return {x:r.left+120,y:r.top+r.height/2}`);
     await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: b.x, y: b.y, deltaX: 0, deltaY: -150, modifiers: 4 }); await sleep(500); }
   const B = await al();
-  check('⌘ + molette en bas : la timeline zoome et le tracé reste calé', B.pps > A.pps * 1.5 && Math.abs(B.xg - B.xt) < 3, JSON.stringify(B));
+  check('⌘ + molette en bas : la timeline zoome et le tracé reste calé', B.pps > A.pps * 1.1 && Math.abs(B.xg - B.xt) < 3, JSON.stringify(B));
   // réglages de la note dans la colonne de gauche (sous la liste des pistes)
   const nbGeo = () => J(ev, `const b=document.querySelector('.tune-panel .tp-notebar'), r=b.getBoundingClientRect(), tl=document.querySelector('.timeline').getBoundingClientRect(), cv=document.querySelector('.tune-panel .tp-trace canvas').getBoundingClientRect(); return { on: b.classList.contains('on'), empty: b.classList.contains('empty'), txt: b.querySelector('.tp-nb-name').textContent, l: r.left, r: r.right, top: r.top, tl: tl.left, ct: cv.top, vis: getComputedStyle(b.querySelector('.tp-nb-vib')).display }`);
   let N = await nbGeo();

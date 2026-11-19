@@ -47,13 +47,14 @@ export default async (c) => {
   // zoom (⌘ + molette) autour de la souris puis défilement (molette), et le glisser d'une note marche encore zoomé
   {
     const b = await J(ev, `const r=document.querySelector('.tune-panel .tp-trace canvas').getBoundingClientRect(); return {x:r.left+r.width/2,y:r.top+r.height/2}`);
+    await ev('state.baseCleared = true');   // pas de curseur posé : le zoom se fait autour de la souris (comme sur les pistes)
     await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: b.x, y: b.y, deltaX: 0, deltaY: -120, modifiers: 4 }); await sleep(200);
     const z = await J(ev, `const v=document.querySelector('.tune-panel')._trView; return {a:v.a,b:v.b}`);
-    check('⌘ + molette : zoom autour de la souris', z.b - z.a < 0.5 && z.a > 0.15 && z.b < 0.85, JSON.stringify(z));
-    await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: b.x, y: b.y, deltaX: 0, deltaY: 200 }); await sleep(200);
+    check('⌘ + molette : zoom autour de la souris (un cran = ×1,15, comme les pistes)', z.b - z.a < 0.9 && Math.abs((z.a + z.b) / 2 - 0.5) < 0.02, JSON.stringify(z));
+    await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: b.x, y: b.y, deltaX: 40, deltaY: 0 }); await sleep(200);
     const z2 = await J(ev, `const v=document.querySelector('.tune-panel')._trView; return {a:v.a,b:v.b}`);
-    check('molette : la vue défile dans le temps, même largeur', z2.a > z.a + 0.02 && Math.abs((z2.b - z2.a) - (z.b - z.a)) < 1e-6, JSON.stringify(z2));
-    await ev(`(()=>{ const v=document.querySelector('.tune-panel')._trView; v.a=0; v.b=1; document.dispatchEvent(new CustomEvent('pulse-tune-done')); })()`); await sleep(200);
+    check('molette horizontale : la vue défile dans le temps, même largeur', z2.a > z.a + 0.02 && Math.abs((z2.b - z2.a) - (z.b - z.a)) < 1e-6, JSON.stringify(z2));
+    await ev(`(()=>{ const v=document.querySelector('.tune-panel')._trView; v.a=0; v.b=1; v.vspan=0; document.dispatchEvent(new CustomEvent('pulse-tune-done')); })()`); await sleep(200);
   }
 
   // clic = choisir la note → barre de réglages ; vibrato de cette note seulement
@@ -84,6 +85,7 @@ export default async (c) => {
   // barre : + / − / Tout voir, Écouter ce passage (boucle sur l'écran puis boucle d'avant rendue), Agrandir / Échap
   {
     const clk = (sel) => ev('document.querySelector(".tune-panel ' + sel + '").click()');
+    await ev('state.baseCleared = true');
     await clk('.tp-g-zi'); await sleep(150); let v = await J(ev, `const v=document.querySelector('.tune-panel')._trView; return {a:v.a,b:v.b}`);
     check('bouton + : zoom ×2 au centre', Math.abs((v.b - v.a) - 0.5) < 1e-6 && Math.abs(v.a - 0.25) < 1e-6, JSON.stringify(v));
     await clk('.tp-g-zo'); await clk('.tp-g-zi'); await clk('.tp-g-zi'); await clk('.tp-g-all'); await sleep(150);
@@ -105,6 +107,44 @@ export default async (c) => {
     const es = await J(ev, `const p=document.querySelector('.tune-panel'); return { open: !!p, big: p && p.classList.contains('tp-big') }`);
     check('Échap : la fenêtre revient à sa taille (et reste ouverte)', es.open && !es.big, JSON.stringify(es));
     await clk('.tp-g-all');
+  }
+
+  // mêmes gestes que les pistes, après un clic dans le Graphique : E / Z, ⇧F, molette = haut / bas, ⌥ + molette = zoom vertical, ↑ / ↓ = note choisie
+  {
+    const key = async (k, code, mods = 0) => { await send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, code, modifiers: mods, windowsVirtualKeyCode: k.length === 1 ? k.toUpperCase().charCodeAt(0) : (code === 'ArrowUp' ? 38 : 40) }); await send('Input.dispatchKeyEvent', { type: 'keyUp', key: k, code, modifiers: mods }); await sleep(250); };
+    const V = () => J(ev, `const v=document.querySelector('.tune-panel')._trView; return {a:v.a,b:v.b,vspan:v.vspan||0,vlo:v.vlo||0}`);
+    const b = await J(ev, `const r=document.querySelector('.tune-panel .tp-trace canvas').getBoundingClientRect(); return {x:r.left+r.width*0.5,y:r.top+8,cx:r.left+r.width/2,cy:r.top+r.height/2}`);
+    await mouse('mouseMoved', b.x, b.y, { buttons: 0 }); await mouse('mousePressed', b.x, b.y); await mouse('mouseReleased', b.x, b.y); await sleep(200);
+    const foc = await ev(`document.querySelector('.tune-panel').classList.contains('tp-focus')`);
+    await key('e', 'KeyE'); let v = await V();
+    check('clic dans le Graphique puis E : c\'est le tracé qui zoome', foc === true && v.b - v.a < 0.85, JSON.stringify({ foc, v }));
+    const tlz = await ev('state.pxPerSecond');
+    await key('z', 'KeyZ'); await key('z', 'KeyZ'); let v2 = await V();
+    check('Z : le tracé dézoome (les pistes ne bougent pas)', v2.b - v2.a > v.b - v.a && (await ev('state.pxPerSecond')) === tlz, JSON.stringify(v2));
+    await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: b.cx, y: b.cy, deltaX: 0, deltaY: 120 }); await sleep(250); v = await V();
+    check('molette : on descend dans les notes (fenêtre de hauteur à la main)', v.vspan > 0, JSON.stringify(v));
+    const vs = v.vspan; await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: b.cx, y: b.cy, deltaX: 0, deltaY: -150, modifiers: 1 }); await sleep(250); v = await V();
+    check('⌥ + molette : zoom vertical (moins de demi-tons à l\'écran)', v.vspan > 0 && v.vspan < vs, JSON.stringify({ avant: vs, apres: v.vspan }));
+    await key('F', 'KeyF', 8); v = await V();
+    check('⇧F : tout voir (temps et hauteur automatique)', v.a === 0 && v.b === 1 && v.vspan === 0, JSON.stringify(v));
+    // clic dans la timeline : le logiciel reprend la main (E zoome les pistes)
+    const tb = await J(ev, `const r=document.querySelector('.timeline').getBoundingClientRect(); return {x:r.right-60,y:r.bottom-60}`);
+    await mouse('mousePressed', tb.x, tb.y); await mouse('mouseReleased', tb.x, tb.y); await sleep(200);
+    const z0 = await ev('state.pxPerSecond'); await key('e', 'KeyE'); const z1 = await ev('state.pxPerSecond');
+    check('clic sur la timeline puis E : ce sont les pistes qui zooment', z1 > z0 && !(await ev(`document.querySelector('.tune-panel').classList.contains('tp-focus')`)), JSON.stringify({ z0, z1 }));
+    // appui sur une note : on entend sa voix (lecture de la prise corrigée)
+    await ev(`(()=>{ window.__starts=0; const o=AudioBufferSourceNode.prototype.start; AudioBufferSourceNode.prototype.start=function(...a){ if (this.buffer && this.buffer.duration > 3) window.__starts++; return o.apply(this,a); }; })()`);
+    const g2 = await geo(1);
+    await mouse('mouseMoved', g2.x, g2.y, { buttons: 0 }); await mouse('mousePressed', g2.x, g2.y); await sleep(300);
+    const st = await ev('window.__starts'); await mouse('mouseReleased', g2.x, g2.y); await sleep(200);
+    check('appui sur une note : sa voix se fait entendre', st >= 1, String(st));
+    // ↑ : la note choisie monte d'un demi-ton (Ré → Ré#)
+    await key('ArrowUp', 'ArrowUp'); await sleep(1800);
+    const up = await J(ev, `const tr=TUNE_TRACES.get(state.project.tracks[2].clips[0].id); return tr.notes.filter(s=>s.i1-s.i0>=8).map(s=>s.note)`);
+    check('↑ : la note choisie monte d\'un demi-ton (Ré → Ré#)', up[1] === 63, JSON.stringify(up));
+    await key('Backspace', 'Backspace'); await sleep(1800);
+    const back = await J(ev, `const tr=TUNE_TRACES.get(state.project.tracks[2].clips[0].id); return tr.notes.filter(s=>s.i1-s.i0>=8).map(s=>s.note)`);
+    check('Effacer : la note revient à l\'automatique (Ré)', back[1] === 62, JSON.stringify(back));
   }
   // tête de lecture : clic sur le fond = la lecture part d'ici ; la ligne suit state.playhead
   {

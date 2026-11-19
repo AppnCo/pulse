@@ -7154,7 +7154,8 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false, dock = false)
         trEl.classList.toggle('has', !!ok);
     };
     // Graphique : tirer un bloc = poser la note à la main (par demi-ton) ; double-clic = revenir à la correction automatique
-    let trGeo = null, trDrag = null; const trView = { id: null, a: 0, b: 1 }; panel._trView = trView;
+    // à l'ouverture, PulseTune a la main sur le clavier
+    let trGeo = null, trDrag = null, graphFocus = true, panelFocus = true; const trView = { id: null, a: 0, b: 1 }; panel._trView = trView;
     // Graphique : molette / pavé = défiler dans le temps, ⌘ (ou pincer) + molette = zoom autour de la souris
     // trame de la prise affichée ↔ seconde du morceau
     const frameOfSec = (c, tr, sec) => ((c.offset || 0) + sec - c.start - tr.t0) / (tr.hop || 0.005);
@@ -7183,12 +7184,32 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false, dock = false)
         trView.a = (frameOfSec(c, tr, s0) - I0) / span; trView.b = (frameOfSec(c, tr, s1) - I0) / span; trView.free = true;
         tlSig = tl.scrollLeft + '|' + state.pxPerSecond + '|' + tl.clientWidth;
     };
+    // Zoom du tracé comme celui des pistes : curseur posé (ou lecture) = zoom centré sur lui, sinon autour de la souris
+    const graphZoom = (f, mx) => {
+        if (!trGeo) return;
+        if (dock) { const tl = document.querySelector('.timeline'); if (!tl) return; const zt = zoomTarget(); setZoom(state.pxPerSecond / f, zt.sec, zt.center); return; }
+        const w = trView.b - trView.a, nw = Math.max(0.004, Math.min(1, w * f)), span = Math.max(1, trGeo.I1 - trGeo.I0);
+        const hasBase = state.playing || state.recording || !state.baseCleared, phF = trView.ph >= 0 ? (trView.ph - trGeo.I0) / span : -1;
+        if (hasBase && phF >= 0 && phF <= 1) { setTrView(phF - nw / 2, phF + nw / 2); return; }
+        const fx = mx == null ? 0.5 : mx, at = trView.a + fx * w; setTrView(at - fx * nw, at - fx * nw + nw);
+    };
+    // Zoom vertical (hauteur des lignes de notes) et défilement haut / bas dans les notes
+    const vZoom = (f) => { if (!trGeo) return; const span = trGeo.hi - trGeo.lo, c = (trGeo.hi + trGeo.lo) / 2, ns = Math.max(5, Math.min(48, span * f)); trView.vlo = c - ns / 2; trView.vspan = ns; drawTrace(); };
+    const vScroll = (d) => { if (!trGeo) return; trView.vlo = trGeo.lo + d; trView.vspan = trGeo.hi - trGeo.lo; drawTrace(); };
+    let _gz = 1, _gzRaf = 0, _gzX = null;
     trCv.addEventListener('wheel', (e) => {
         if (!trGeo || !panel.classList.contains('tp-graph')) return;
         e.preventDefault();
-        const r = trCv.getBoundingClientRect(), fx = (e.clientX - r.left) / r.width, w = trView.b - trView.a, at = trView.a + fx * w;
-        if (e.ctrlKey || e.metaKey) { const nw = Math.max(0.004, Math.min(1, w * Math.exp(e.deltaY * 0.01))); setTrView(at - fx * nw, at - fx * nw + nw); }
-        else { const d = (Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY) / r.width * w; setTrView(trView.a + d, trView.b + d); }
+        const r = trCv.getBoundingClientRect();
+        if (e.metaKey || e.ctrlKey) {   // ⌘ + molette : zoom (comme les pistes)
+            _gz *= Math.pow(1.15, Math.max(-1, Math.min(1, e.deltaY / 100))); _gzX = (e.clientX - r.left) / r.width;
+            if (!_gzRaf) _gzRaf = requestAnimationFrame(() => { const f = _gz; _gz = 1; _gzRaf = 0; if (f !== 1) graphZoom(f, _gzX); });
+            return;
+        }
+        if (e.altKey) { vZoom(Math.pow(1.1, Math.max(-1, Math.min(1, e.deltaY / 100)))); return; }   // ⌥ + molette : zoom vertical
+        const dx = e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX, dy = e.shiftKey ? 0 : e.deltaY;
+        if (dx) { if (dock) { const tl = document.querySelector('.timeline'); if (tl) tl.scrollLeft += dx; } else { const w = trView.b - trView.a, d = dx / r.width * w; setTrView(trView.a + d, trView.b + d); } }
+        if (dy && trGeo) vScroll(-dy / Math.max(6, trGeo.rowH) * 0.5);   // molette : on monte / descend dans les notes
     }, { passive: false });
     const segAt = (e) => {
         const c = traceClip(), tr = c && TUNE_TRACES.get(c.id); if (!tr || !trGeo || !panel.classList.contains('tp-graph')) return null;
@@ -7196,6 +7217,18 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false, dock = false)
         const fi = G.i0 + x / G.W * (G.i1 - G.i0), m = G.lo + (G.H - y) / G.H * (G.hi - G.lo);
         const k = (tr.notes || []).findIndex(sg => sg.i1 - sg.i0 >= 8 && fi >= sg.i0 - 1 && fi <= sg.i1 + 1 && Math.abs(m - sg.note) < 0.75);
         return k < 0 ? null : { c, tr, k, sg: tr.notes[k] };
+    };
+    const playNoteVoice = (hit) => {
+        try {
+            const buf = PulseAudio.getBuffer(hit.c.id), ctx = PulseAudio.getContext(); if (!buf || !ctx) return null;
+            if (ctx.state === 'suspended') ctx.resume();
+            const t0 = hit.tr.t0 + hit.sg.i0 * hit.tr.hop, t1 = hit.tr.t0 + (hit.sg.i1 + 1) * hit.tr.hop;
+            const src = ctx.createBufferSource(), g = ctx.createGain(), now = ctx.currentTime;
+            src.buffer = buf; g.gain.setValueAtTime(0, now); g.gain.linearRampToValueAtTime(0.9, now + 0.01);
+            src.connect(g); g.connect(ctx.destination); src.start(now, Math.max(0, t0 - 0.01), Math.max(0.05, t1 - t0 + 0.02));
+            let done = false; src.onended = () => { done = true; };
+            return () => { if (done) return; done = true; const n = ctx.currentTime; g.gain.cancelScheduledValues(n); g.gain.setValueAtTime(g.gain.value, n); g.gain.linearRampToValueAtTime(0, n + 0.03); try { src.stop(n + 0.04); } catch {} };
+        } catch (err) { console.warn(err); return null; }
     };
     const editsOf = (c) => ((c.tune && c.tune.edits) || []).map(e => ({ ...e }));
     const retune = async (c, edits) => { pushUndo(); await applyTune(c, { ...tuneOpts(trackMode ? trk.autotune : settings()), edits, noUndo: true }); };
@@ -7215,9 +7248,11 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false, dock = false)
         const y0 = e.clientY, x0 = e.clientX, n0 = hit.sg.note, row = trGeo.rowH, keyOf = (n) => { const r = Math.round(n); return [((r % 12) + 12) % 12, Math.floor(r / 12) - 5]; };
         let rel = null, moved = false;
         trDrag = { k: hit.k, note: n0 };
+        graphFocus = true;
+        let stopVoice = e.altKey ? null : playNoteVoice(hit);
         const mv = (ev) => {
             if (!moved && Math.abs(ev.clientY - y0) < 3) return;
-            if (!moved) { moved = true; rel = holdKeyNote(...keyOf(n0)); }
+            if (!moved) { moved = true; stopVoice && stopVoice(); stopVoice = null; rel = holdKeyNote(...keyOf(n0)); }
             const raw = n0 + (y0 - ev.clientY) / Math.max(6, row), n = ev.altKey ? Math.round(raw * 100) / 100 : Math.round(raw);
             if (n === trDrag.note) return;
             const kOld = keyOf(trDrag.note).join(); trDrag.note = n;
@@ -7225,7 +7260,7 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false, dock = false)
             drawTrace();
         };
         const up = async (ev) => {
-            document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); rel && rel();
+            document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); rel && rel(); stopVoice && stopVoice();
             const n = trDrag.note; trDrag = null;
             const t0 = hit.tr.t0 + hit.sg.i0 * hit.tr.hop, t1 = hit.tr.t0 + (hit.sg.i1 + 1) * hit.tr.hop;
             const old = editsOf(hit.c).find(x => x.t0 < t1 - 0.01 && x.t1 > t0 + 0.01) || {};
@@ -7273,10 +7308,10 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false, dock = false)
     document.addEventListener('pulse-tune-done', () => { if (panel.isConnected) showNoteBar(); });
     if (dock) requestAnimationFrame(showNoteBar);
     // Barre du Graphique : écouter le passage à l'écran (boucle), zoom +/−, tout voir, agrandir
-    const zoomBy = (k) => { const w = trView.b - trView.a, c = trView.a + w / 2, nw = Math.max(0.004, Math.min(1, w * k)); setTrView(c - nw / 2, c + nw / 2); };
+    const zoomBy = (k) => graphZoom(k, 0.5);
     panel.querySelector('.tp-g-zi').addEventListener('click', () => zoomBy(0.5));
     panel.querySelector('.tp-g-zo').addEventListener('click', () => zoomBy(2));
-    panel.querySelector('.tp-g-all').addEventListener('click', () => setTrView(0, 1));
+    panel.querySelector('.tp-g-all').addEventListener('click', () => { trView.vspan = 0; setTrView(0, 1); });
     const bigBtn = panel.querySelector('.tp-g-big');
     const setBig = (on) => { panel.classList.toggle('tp-big', on); bigBtn.textContent = on ? 'Réduire' : 'Agrandir'; requestAnimationFrame(drawTrace); };
     bigBtn.addEventListener('click', () => setBig(!panel.classList.contains('tp-big')));
@@ -7305,6 +7340,39 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false, dock = false)
         await retune(hit.c, editsOf(hit.c).filter(x => x.t1 <= t0 + 0.01 || x.t0 >= t1 - 0.01));
     });
     document.addEventListener('pulse-tune-done', drawTrace); requestAnimationFrame(drawTrace);
+    const focusWatch = (e) => { if (!panel.isConnected) { document.removeEventListener('mousedown', focusWatch, true); return; } panelFocus = panel.contains(e.target); graphFocus = panelFocus && panel.classList.contains('tp-graph'); panel.classList.toggle('tp-focus', graphFocus); };
+    document.addEventListener('mousedown', focusWatch, true);
+    const graphKeys = async (e) => {
+        if (!panel.isConnected) { window.removeEventListener('keydown', graphKeys, true); return; }
+        if (!graphFocus || !panel.classList.contains('tp-graph') || !trGeo) return;
+        if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable)) return;
+        const k = (e.key || '').toLowerCase(), mod = e.metaKey || e.ctrlKey, w = trView.b - trView.a;
+        const r = trCv.getBoundingClientRect(), mx = (_lastMouse.x - r.left) / r.width, fx = mx >= 0 && mx <= 1 && _lastMouse.y >= r.top && _lastMouse.y <= r.bottom ? mx : 0.5;
+        const zoom = (f) => graphZoom(f, fx);
+        const eat = () => { e.preventDefault(); e.stopPropagation(); };
+        // E / Z = zoom (comme sur les pistes), autour de la souris si elle est sur le tracé
+        if (!dock && k === 'e' && !mod && !e.altKey) { eat(); zoom(1 / 1.25); return; }
+        if (!dock && k === 'z' && !mod && !e.altKey) { eat(); zoom(1.25); return; }
+        // ⌘↓ / ⌘↑ = zoom vertical (comme la hauteur des pistes)
+        if (mod && !e.altKey && !e.shiftKey && (e.code === 'ArrowUp' || e.code === 'ArrowDown')) { eat(); vZoom(e.code === 'ArrowDown' ? 1 / 1.2 : 1.2); return; }
+        // ⇧F / ⌘⇧F = tout voir
+        if (k === 'f' && e.shiftKey && !e.altKey) { eat(); trView.vspan = 0; setTrView(0, 1); return; }
+        const h = typeof selHit === 'function' ? selHit() : null;
+        // Échap = plus de note choisie
+        if (e.key === 'Escape' && h && !panel.classList.contains('tp-big')) { eat(); trView.selI = -1; showNoteBar(); drawTrace(); return; }
+        // ↑ / ↓ = la note choisie monte / descend d'un demi-ton (⌥ = 10 cents), au lieu de changer de piste
+        if ((e.code === 'ArrowUp' || e.code === 'ArrowDown') && h && !mod) {
+            eat(); const step = (e.code === 'ArrowUp' ? 1 : -1) * (e.altKey ? 0.1 : 1);
+            const n = Math.round((h.sg.note + step) * 100) / 100, kk = [((Math.round(n) % 12) + 12) % 12, Math.floor(Math.round(n) / 12) - 5];
+            const relK = holdKeyNote(...kk); setTimeout(relK, 350);
+            const ed = editsOf(h.c).find(x => x.t0 < h.t1 - 0.01 && x.t1 > h.t0 + 0.01) || {};
+            await retune(h.c, [...editsOf(h.c).filter(x => x.t1 <= h.t0 + 0.01 || x.t0 >= h.t1 - 0.01), { ...ed, t0: h.t0, t1: h.t1, note: n }]);
+            return;
+        }
+        // Effacer = la note choisie revient à l'automatique
+        if ((e.key === 'Backspace' || e.key === 'Delete') && h && h.sg.forced) { eat(); await setNote(null); return; }
+    };
+    window.addEventListener('keydown', graphKeys, true);
     // Deux vues, comme deux pages du même plugin : Réglages (cadrans) et Graphique (le tracé en grand)
     const setView = (v, keep = true) => {
         panel.classList.toggle('tp-graph', v === 'graph');
@@ -7391,6 +7459,8 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false, dock = false)
         const onDown = (e) => {
             if (!panel.isConnected) { cleanup(); return; }
             if (e.metaKey || e.ctrlKey || e.altKey) return;
+            // clavier musical : seulement dans la vue Réglages (où est le piano) et après un clic dans PulseTune ; sinon les touches sont au logiciel
+            if (!panelFocus || dock || panel.classList.contains('tp-graph')) return;
             if (e.target && e.target.closest && e.target.closest('input, textarea, select, [contenteditable]')) return;
             const k = phys(e);
             if (k === 'z' || k === 'x') { e.preventDefault(); e.stopImmediatePropagation(); if (!e.repeat) oct = Math.max(-2, Math.min(2, oct + (k === 'x' ? 1 : -1))); return; }
@@ -8225,8 +8295,9 @@ function drawTuneTrace(cv, tr, mask, blocks = false, drag = null, view = null) {
     for (const s of (tr.notes || [])) { lo = Math.min(lo, s.note - 2); hi = Math.max(hi, s.note + 2); }
     if (drag) { lo = Math.min(lo, drag.note - 2); hi = Math.max(hi, drag.note + 2); }
     if (hi - lo < 7) { const c = (hi + lo) / 2; lo = Math.floor(c - 3.5); hi = lo + 7; }
+    if (view && view.vspan > 0) { lo = view.vlo; hi = view.vlo + view.vspan; }
     const X = (i) => (i - i0) / (i1 - i0) * W, Y = (m) => H - (m - lo) / (hi - lo) * H, rowH = H / (hi - lo);
-    for (let n = lo; n <= hi; n++) {
+    for (let n = Math.ceil(lo - 0.5); n <= Math.floor(hi + 0.5); n++) {
         const ok = !mask || mask[((n % 12) + 12) % 12];
         g.fillStyle = ok ? 'rgba(168,85,247,.10)' : 'rgba(255,255,255,.015)';
         g.fillRect(0, Y(n) - rowH / 2 + 0.5, W, rowH - 1);
