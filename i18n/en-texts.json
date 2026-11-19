@@ -1268,6 +1268,8 @@
   "En bas": "Bottom",
   "Éditeur de hauteur (en bas)": "Pitch editor (bottom)",
   "Clique une note pour la régler": "Click a note to adjust it",
+  "Crayon : dessine la hauteur à main levée (⇧ = par demi-tons) · double-clic sur une courbe = automatique": "Pencil: draw the pitch freehand (⇧ = by semitones) · double-click a curve = automatic",
+  "courbe": "curve",
   "Trop près du bord de la note pour la couper": "Too close to the edge of the note to split it",
   "Automatique": "Automatic",
   " · à la main": " · by hand",

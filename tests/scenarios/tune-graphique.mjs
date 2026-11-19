@@ -160,5 +160,27 @@ export default async (c) => {
     const p1 = await sp(), p2 = await sp();
     check('Espace dans PulseTune : lecture puis arrêt', p1 === true && p2 === false, JSON.stringify([p1, p2]));
   }
+
+  // Crayon : on dessine un glissé Ré → Mi sur la 2e note ; la voix le suit ; double-clic = automatique
+  {
+    await ev(`(()=>{ const v=document.querySelector('.tune-panel')._trView; v.a=0; v.b=1; v.vspan=0; v.selI=-1; document.dispatchEvent(new CustomEvent('pulse-tune-done')); })()`); await sleep(200);
+    await ev(`document.querySelector('.tune-panel .tp-g-pen').click()`);
+    const g1 = await geo(1);
+    const segX = await J(ev, `const p=document.querySelector('.tune-panel'), cv=p.querySelector('.tp-trace canvas'), r=cv.getBoundingClientRect(), tr=TUNE_TRACES.get(state.project.tracks[2].clips[0].id), sg=tr.notes.filter(s=>s.i1-s.i0>=8)[1], f0=tr.f0; let i0=0,i1=f0.length-1; while(!(f0[i0]>0))i0++; while(!(f0[i1]>0))i1--; return { a: r.left+(sg.i0+4-i0)/(i1-i0)*r.width, b: r.left+(sg.i1-4-i0)/(i1-i0)*r.width }`);
+    await mouse('mouseMoved', segX.a, g1.y, { buttons: 0 }); await mouse('mousePressed', segX.a, g1.y);
+    for (let k = 1; k <= 12; k++) { await mouse('mouseMoved', segX.a + (segX.b - segX.a) * k / 12, g1.y - g1.row * 2 * k / 12); await sleep(15); }
+    await mouse('mouseReleased', segX.b, g1.y - g1.row * 2); await sleep(1800);
+    await ev(`document.querySelector('.tune-panel .tp-g-pen').click()`);
+    const cr = await JA(`const cl=state.project.tracks[2].clips[0], e=(cl.tune.edits||[]).find(x=>x.curve); const b=PulseAudio.getBuffer(cl.id); const f=await PulseTune.trackPitch(b.getChannelData(0), b.sampleRate);
+      const at=(t)=>{ const v=[]; for(let i=Math.round((t-0.04)/0.005); i<Math.round((t+0.04)/0.005); i++) if(f[i]>0) v.push(69+12*Math.log2(f[i]/440)); v.sort((a,b)=>a-b); return v[v.length>>1]; };
+      return { has: !!e, n: e ? e.curve.length : 0, a: e ? at(e.t0+0.05) : 0, z: e ? at(e.t1-0.06) : 0 }`);
+    if (process.env.VISU_DIR) { const b = await J(ev, `const r=document.querySelector('.tune-panel .tp-trace').getBoundingClientRect(); return {x:r.left,y:r.top,w:r.width,h:r.height}`); const sh = await send('Page.captureScreenshot', { format: 'png', clip: { x: b.x, y: b.y, width: b.w, height: b.h, scale: 1.5 } }); fs.writeFileSync(process.env.VISU_DIR + '/tune-crayon.png', Buffer.from(sh.result.data, 'base64')); }
+    check('Crayon : courbe dessinée, la voix glisse de Ré vers Mi', cr.has && cr.n > 5 && Math.abs(cr.a - 62) < 0.4 && Math.abs(cr.z - 64) < 0.4, JSON.stringify(cr));
+    const gc = await geo(1);
+    await mouse('mousePressed', gc.x, gc.y - gc.row, { clickCount: 1 }); await mouse('mouseReleased', gc.x, gc.y - gc.row, { clickCount: 1 });
+    await mouse('mousePressed', gc.x, gc.y - gc.row, { clickCount: 2 }); await mouse('mouseReleased', gc.x, gc.y - gc.row, { clickCount: 2 }); await sleep(1800);
+    const gone = await ev(`!(state.project.tracks[2].clips[0].tune.edits||[]).some(x=>x.curve)`);
+    check('double-clic sur la courbe : retour à l\'automatique', gone === true, String(gone));
+  }
   if (process.env.VISU_DIR) { await mouse('mousePressed', (await geo(2)).x, (await geo(2)).y); await mouse('mouseReleased', (await geo(2)).x, (await geo(2)).y); await sleep(300); const b = await J(ev, `const r=document.querySelector('.tune-panel').getBoundingClientRect(); return {x:r.left,y:r.top,w:r.width,h:r.height}`); const shot = await send('Page.captureScreenshot', { format: 'png', clip: { x: b.x - 8, y: Math.max(0, b.y - 8), width: b.w + 16, height: Math.min(860, b.h + 16), scale: 1.5 } }); fs.writeFileSync(process.env.VISU_DIR + '/tune-graph-fin.png', Buffer.from(shot.result.data, 'base64')); }
 };

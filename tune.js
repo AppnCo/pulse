@@ -279,12 +279,20 @@
         // Notes posées à la main dans le graphique : [{ t0, t1 (secondes), note (demi-tons MIDI, décimales = cents),
         //   vib (vibrato gardé 0–1, sinon celui du réglage), speed (vitesse 0–1, sinon celle du réglage) }] — elles passent avant la gamme.
         // Deux notes à la main côte à côte restent deux notes (note coupée en deux).
+        // curve : [[t (s), note], …] = courbe dessinée au crayon (suivie telle quelle : pas de vibrato, vitesse maximale sauf réglage)
         const force = new Float32Array(N).fill(NaN), fIdx = new Int16Array(N).fill(-1), fVib = new Float32Array(N).fill(NaN), fAlpha = new Float32Array(N).fill(NaN);
+        const isCurve = [];
         (more.edits || []).forEach((e, k) => {
             if (!e || !Number.isFinite(e.note)) return;
             const a = Math.max(0, Math.round(e.t0 / HOP_SEC)), b = Math.min(N, Math.round(e.t1 / HOP_SEC));
-            const ev = Number.isFinite(e.vib) ? clamp01(e.vib) : NaN, ea = Number.isFinite(e.speed) ? alphaOf(Math.pow(1 - clamp01(e.speed), 2) * 0.25) : NaN;
-            for (let i = a; i < b; i++) { force[i] = e.note; fIdx[i] = k; fVib[i] = ev; fAlpha[i] = ea; }
+            const cv = Array.isArray(e.curve) && e.curve.length > 1 ? e.curve : null; isCurve[k] = !!cv;
+            const ev = Number.isFinite(e.vib) ? clamp01(e.vib) : cv ? 0 : NaN, ea = Number.isFinite(e.speed) ? alphaOf(Math.pow(1 - clamp01(e.speed), 2) * 0.25) : cv ? 1 : NaN;
+            let j = 0;
+            for (let i = a; i < b; i++) {
+                let nt = e.note;
+                if (cv) { const t = i * HOP_SEC; while (j < cv.length - 2 && cv[j + 1][0] < t) j++; const [ta, na] = cv[j], [tb, nb] = cv[j + 1]; const u = tb > ta ? Math.max(0, Math.min(1, (t - ta) / (tb - ta))) : 0; nt = na + (nb - na) * u; }
+                force[i] = nt; fIdx[i] = k; fVib[i] = ev; fAlpha[i] = ea;
+            }
         });
         const anyVib = vib > 0 || [...fVib].some(v => v > 0);
         for (let i = 0; i < N; i++) midi[i] = f0[i] > 0 ? hzToMidi(f0[i]) : 0;
@@ -317,7 +325,8 @@
             if (forced) target = force[i];
             held = target === lastTarget ? held + 1 : 0;
             lastTarget = target;
-            if (seg && seg.note === target && seg.forced === forced && seg.e === fIdx[i]) seg.i1 = i; else { closeSeg(); seg = { i0: i, i1: i, note: target, forced, e: fIdx[i] }; }
+            const inCurve = forced && isCurve[fIdx[i]];
+            if (seg && seg.forced === forced && seg.e === fIdx[i] && (inCurve || seg.note === target)) seg.i1 = i; else { closeSeg(); seg = { i0: i, i1: i, note: inCurve ? Math.round(target) : target, forced, e: fIdx[i], curve: inCurve }; }
             // Vibrato : la note visée suit le vibrato de la voix (0 = corrigé à plat comme avant, 1 = gardé entier)
             let want = target + vi * (m - base) - m;          // demi-tons
             // Souplesse : loin de la note (plus d'un demi-ton près), on laisse la voix libre

@@ -6982,6 +6982,7 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false, dock = false)
             <div class="tp-target"><b>—</b><span>note juste</span></div>
         </div>
         <div class="tp-gbar"><button class="tp-btn tp-g-play" data-tooltip="Lire en boucle ce qui est à l'écran (Espace = lecture / arrêt)">▶ Écouter ce passage</button><span class="tp-g-sp"></span>
+            <button class="tp-btn tp-g-pen" data-tooltip="Crayon : dessine la hauteur à main levée (⇧ = par demi-tons) · double-clic sur une courbe = automatique">Crayon</button>
             <button class="tp-btn tp-g-zo" data-tooltip="Dézoomer (⌘ + molette)">−</button><button class="tp-btn tp-g-zi" data-tooltip="Zoomer (⌘ + molette)">+</button><button class="tp-btn tp-g-all" data-tooltip="Voir toute la prise">Tout voir</button><button class="tp-btn tp-g-big" data-tooltip="Agrandir la fenêtre (Échap = revenir)">Agrandir</button><button class="tp-btn tp-g-dock" data-tooltip="${dock ? 'Remettre en fenêtre' : 'Ouvrir en bas, sous les pistes, aligné avec le morceau (comme l\'éditeur de notes)'}">${dock ? 'Fenêtre' : 'En bas'}</button></div>
         <div class="tp-trace" data-tooltip="Ce que la correction a fait sur la dernière prise : en gris ta voix, en violet la voix corrigée, les bandes = les notes permises"><canvas></canvas><span class="tp-trace-leg"><i class="g"></i>ta voix<i class="v"></i>corrigée</span><span class="tp-trace-empty">Le tracé de la correction s'affiche ici après la première prise corrigée</span><span class="tp-trace-help">Tirer = changer la note (⌥ = au cent) · clic = la régler · ⌥ + clic = couper · double-clic = auto · ⌘ + molette = zoom</span></div>
         <div class="tp-notebar"><b class="tp-nb-name"></b>
@@ -7215,7 +7216,7 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false, dock = false)
         const c = traceClip(), tr = c && TUNE_TRACES.get(c.id); if (!tr || !trGeo || !panel.classList.contains('tp-graph')) return null;
         const r = trCv.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top, G = trGeo;
         const fi = G.i0 + x / G.W * (G.i1 - G.i0), m = G.lo + (G.H - y) / G.H * (G.hi - G.lo);
-        const k = (tr.notes || []).findIndex(sg => sg.i1 - sg.i0 >= 8 && fi >= sg.i0 - 1 && fi <= sg.i1 + 1 && Math.abs(m - sg.note) < 0.75);
+        const k = (tr.notes || []).findIndex(sg => sg.i1 - sg.i0 >= 8 && fi >= sg.i0 - 1 && fi <= sg.i1 + 1 && Math.abs(m - sg.note) < (sg.curve ? 1.5 : 0.75));
         return k < 0 ? null : { c, tr, k, sg: tr.notes[k] };
     };
     const playNoteVoice = (hit) => {
@@ -7230,11 +7231,33 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false, dock = false)
             return () => { if (done) return; done = true; const n = ctx.currentTime; g.gain.cancelScheduledValues(n); g.gain.setValueAtTime(g.gain.value, n); g.gain.linearRampToValueAtTime(0, n + 0.03); try { src.stop(n + 0.04); } catch {} };
         } catch (err) { console.warn(err); return null; }
     };
+    // Crayon : on dessine la hauteur voulue de gauche à droite ; au relâché, la voix suit la courbe (⇧ = marches de demi-ton)
+    let penOn = false;
+    const penDraw = (e) => {
+        const c = traceClip(), tr = c && TUNE_TRACES.get(c.id); if (!tr) return;
+        const r = trCv.getBoundingClientRect(), G = trGeo, pts = new Map();
+        const at = (ev) => { const fi = G.i0 + (ev.clientX - r.left) / G.W * (G.i1 - G.i0), m = G.lo + (G.H - (ev.clientY - r.top)) / G.H * (G.hi - G.lo); return [Math.round(fi), ev.shiftKey ? Math.round(m) : Math.round(m * 100) / 100]; };
+        let last = null;
+        const add = (ev) => { const [f, m] = at(ev); if (last && Math.abs(f - last[0]) > 1) { const st = Math.sign(f - last[0]); for (let k = last[0] + st; k !== f; k += st) pts.set(k, last[1] + (m - last[1]) * (k - last[0]) / (f - last[0])); } pts.set(f, m); last = [f, m]; trView.pen = [...pts.entries()].sort((a, b) => a[0] - b[0]); drawTrace(); };
+        add(e);
+        const mv = (ev) => add(ev);
+        const up = async () => {
+            document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up);
+            const pen = trView.pen || []; trView.pen = null;
+            if (pen.length < 6) { drawTrace(); return; }
+            const step = Math.max(1, Math.round(pen.length / 200)), curve = pen.filter((_, k) => k % step === 0 || k === pen.length - 1).map(([f, m]) => [tr.t0 + f * tr.hop, m]);
+            const t0 = curve[0][0], t1 = curve[curve.length - 1][0] + tr.hop, mean = curve.reduce((a, p) => a + p[1], 0) / curve.length;
+            await retune(c, [...editsOf(c).filter(x => x.t1 <= t0 + 0.01 || x.t0 >= t1 - 0.01), { t0, t1, note: Math.round(mean), curve }]);
+        };
+        document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
+    };
     const editsOf = (c) => ((c.tune && c.tune.edits) || []).map(e => ({ ...e }));
     const retune = async (c, edits) => { pushUndo(); await applyTune(c, { ...tuneOpts(trackMode ? trk.autotune : settings()), edits, noUndo: true }); };
-    trCv.addEventListener('mousemove', (e) => { if (!trDrag) trCv.style.cursor = segAt(e) ? 'ns-resize' : 'default'; });
+    trCv.addEventListener('mousemove', (e) => { if (!trDrag) trCv.style.cursor = penOn ? 'crosshair' : segAt(e) ? 'ns-resize' : 'default'; });
     trCv.addEventListener('mousedown', (e) => {
-        if (e.button !== 0) return; const hit = segAt(e);
+        if (e.button !== 0) return;
+        if (penOn && trGeo && panel.classList.contains('tp-graph')) { e.preventDefault(); penDraw(e); return; }
+        const hit = segAt(e);
         // fond (hors des notes) tiré à gauche / à droite = faire défiler la prise quand on est zoomé
         if (!hit) { if (!trGeo || !panel.classList.contains('tp-graph')) return; e.preventDefault();
             const x0 = e.clientX, a0 = trView.a, w = trView.b - trView.a, r = trCv.getBoundingClientRect(), W = r.width, zoomed = dock || w < 0.999; let moved = false;
@@ -7310,6 +7333,8 @@ function openTunePanel(trackIdx, clipIdx, x, y, trackMode = false, dock = false)
     // Barre du Graphique : écouter le passage à l'écran (boucle), zoom +/−, tout voir, agrandir
     const zoomBy = (k) => graphZoom(k, 0.5);
     panel.querySelector('.tp-g-zi').addEventListener('click', () => zoomBy(0.5));
+    const penBtn = panel.querySelector('.tp-g-pen');
+    penBtn.addEventListener('click', () => { penOn = !penOn; penBtn.classList.toggle('on', penOn); trCv.style.cursor = penOn ? 'crosshair' : 'default'; });
     panel.querySelector('.tp-g-zo').addEventListener('click', () => zoomBy(2));
     panel.querySelector('.tp-g-all').addEventListener('click', () => { trView.vspan = 0; setTrView(0, 1); });
     const bigBtn = panel.querySelector('.tp-g-big');
@@ -8206,7 +8231,7 @@ async function applyTune(clip, opts) {
         // Notes posées à la main dans le graphique : gardées d'une correction à l'autre (sauf si on en donne de nouvelles)
         const edits = opts.edits !== undefined ? opts.edits : ((clip.tune && clip.tune.edits) || []);
         const t0s = a / sr;
-        opts = { ...opts, edits: edits.map(e => ({ ...e, t0: e.t0 - t0s, t1: e.t1 - t0s })) };
+        opts = { ...opts, edits: edits.map(e => ({ ...e, t0: e.t0 - t0s, t1: e.t1 - t0s, ...(e.curve ? { curve: e.curve.map(([t, n]) => [t - t0s, n]) } : {}) })) };
         const res = await PulseTune.process(slices, sr, opts, (p) => {
             const step = Math.floor(p * 4);
             if (step > lastStep) { lastStep = step; flash(`🎤 Auto-Tune en cours… ${Math.min(99, Math.round(p * 100))} %`); }
@@ -8331,6 +8356,14 @@ function drawTuneTrace(cv, tr, mask, blocks = false, drag = null, view = null) {
     if (blocks) for (const [k, sg] of (tr.notes || []).entries()) {
         if (sg.i1 - sg.i0 < 8 || sg.i1 < i0 || sg.i0 > i1) continue;
         const moving = drag && drag.k === k, note = moving ? drag.note : sg.note, chosen = view && view.selI >= sg.i0 && view.selI <= sg.i1;
+        if (sg.curve && !moving) {   // courbe au crayon : pas de bloc, un liseré pointillé sous la ligne violette
+            let mn = 1e9, mx = -1e9; for (let i = sg.i0; i <= sg.i1; i++) if (f0[i] > 0) { const m = mid(f0[i] * ratio[i]); mn = Math.min(mn, m); mx = Math.max(mx, m); }
+            if (mn > mx) { mn = mx = note; }
+            const x = X(sg.i0), w = Math.max(4, X(sg.i1) - x), yt = Y(mx) - rowH * 0.45, yb = Y(mn) + rowH * 0.45;
+            g.setLineDash([3, 3]); g.strokeStyle = chosen ? '#fff' : 'rgba(233,184,255,.7)'; g.lineWidth = chosen ? 1.6 : 1; g.strokeRect(x, yt, w, yb - yt); g.setLineDash([]);
+            if (w > 40) { g.fillStyle = '#fff'; g.font = '700 9px -apple-system, system-ui, sans-serif'; g.fillText('courbe', Math.max(x, 0) + 5, yt - 3); }
+            continue;
+        }
         const x = X(sg.i0), w = Math.max(4, X(sg.i1) - x), h = Math.min(18, Math.max(6, rowH * 0.78)), y = Y(note) - h / 2;
         g.beginPath(); if (g.roundRect) g.roundRect(x, y, w, h, Math.min(5, h / 2)); else g.rect(x, y, w, h);
         g.fillStyle = moving ? 'rgba(233,184,255,.55)' : sg.forced ? 'rgba(192,132,252,.5)' : 'rgba(124,58,237,.34)'; g.fill();
@@ -8338,6 +8371,8 @@ function drawTuneTrace(cv, tr, mask, blocks = false, drag = null, view = null) {
         const ct = Math.round((note - Math.round(note)) * 100), lab = PulseTune.NOTE_NAMES[((Math.round(note) % 12) + 12) % 12] + (ct ? (ct > 0 ? ' +' : ' ') + ct : '');
         if (w > 22 && h >= 9) { g.fillStyle = '#fff'; g.font = '700 9px -apple-system, system-ui, sans-serif'; g.fillText(lab, Math.max(x, 0) + 5, y + h / 2 + 3); }
     }
+    // crayon : la courbe en train d'être dessinée
+    if (view && view.pen && view.pen.length > 1) { g.beginPath(); view.pen.forEach(([f, m], k) => { const x = X(f), y = Y(m); if (k) g.lineTo(x, y); else g.moveTo(x, y); }); g.strokeStyle = '#fff'; g.lineWidth = 2.2; g.shadowColor = '#E9B8FF'; g.shadowBlur = 8; g.stroke(); g.shadowBlur = 0; }
     // tête de lecture (Graphique) : ligne blanche à l'endroit joué
     if (view && view.ph >= i0 && view.ph <= i1) { const px = X(view.ph); g.fillStyle = 'rgba(255,255,255,.85)'; g.fillRect(Math.round(px), 0, 1.5, H); g.beginPath(); g.moveTo(px - 4, 0); g.lineTo(px + 5.5, 0); g.lineTo(px + 0.75, 6); g.closePath(); g.fill(); }
     // zoomé : petite barre en bas qui montre la partie visible de la prise

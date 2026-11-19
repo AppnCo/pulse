@@ -4208,7 +4208,7 @@ body.fx-drag-copy .insp-fx-row.fx-dragging::after { content: '+'; position: abso
 .tune-panel.tp-graph .tp-gbar { display: flex; }
 .tp-gbar .tp-g-sp { flex: 1; }
 .tp-gbar button { font-weight: 600; min-width: 30px; }
-.tp-gbar .tp-g-play.on { background: var(--violet-2, #A855F7); color: #fff; border-color: transparent; }
+.tp-gbar .tp-g-pen.on, .tp-gbar .tp-g-play.on { background: var(--violet-2, #A855F7); color: #fff; border-color: transparent; }
 .tune-panel.tp-graph .tp-gbar + .tp-trace { margin-top: 6px; }
 .tune-panel.tune-pro.tp-big { left: 16px !important; top: 16px !important; right: 16px; bottom: 16px; width: auto !important; max-height: none !important; display: flex; flex-direction: column; overflow-x: hidden; overflow-y: auto; }
 .tune-panel.tp-big.tp-graph .tp-trace { flex: 1 1 auto; height: auto; min-height: 320px; }

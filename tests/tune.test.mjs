@@ -126,6 +126,10 @@ ok('notes au clavier', Math.abs(cents(m9, 261.63)) < 12, `sortie ${m9.toFixed(1)
   ok('Vitesse lente sur une note : la correction met plus de temps', Math.abs(slow - 69) > Math.abs(fast - 69) + 0.05, `après 100 ms : ${slow.toFixed(3)} (lente) / ${fast.toFixed(3)}`);
   const cut = T.correctionCurve(off, all, 1, { edits: [{ t0: 0, t1: 1.5, note: 69 }, { t0: 1.5, t1: T3, note: 69 }] }).notes.filter(s => s.i1 - s.i0 > 8);
   ok('Note coupée en deux : deux blocs', cut.length === 2, JSON.stringify(cut.map(s => [s.i0, s.i1])));
+  // Crayon : une courbe dessinée (La → Si en glissé sur 3 s) est suivie telle quelle, en un seul bloc
+  const crv = T.correctionCurve(off, all, 1, { edits: [{ t0: 0, t1: T3, note: 70, curve: [[0, 69], [T3, 71]] }] });
+  const om = outMidi(off, crv.ratio), mid = om[N >> 1], end = om[N - 2];
+  ok('Crayon : la voix suit la courbe dessinée (glissé La → Si)', Math.abs(mid - 70) < 0.05 && Math.abs(end - 71) < 0.05 && crv.notes.filter(s => s.i1 - s.i0 > 8).length === 1, `milieu ${mid.toFixed(3)}, fin ${end.toFixed(3)}, blocs ${crv.notes.length}`);
   // Type de voix : une voix grave (65 Hz) n'est trouvée qu'en « Grave »
   const low = voice(() => 65, 1);
   const fMid = median(await T.trackPitch(low, sr, null, 'mid')), fLow = median(await T.trackPitch(low, sr, null, 'low'));
