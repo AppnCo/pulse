@@ -4235,3 +4235,11 @@ body.fx-drag-copy .insp-fx-row.fx-dragging::after { content: '+'; position: abso
 
 .tune-panel .tune-live { display: inline-flex; align-items: center; gap: 6px; margin-left: 14px; }
 .tune-panel .tune-live.off { opacity: .45; }
+
+/* Vocodeur : le bouton Note ne sert qu’en note fixe */
+.voc-panel .pk.voc-off { opacity: .35; }
+.voc-panel { width: 900px; max-width: calc(100vw - 16px); }
+.voc-panel .voc-svg { display: block; width: 100%; height: auto; }
+.voc-panel .voc-fp { position: relative; left: auto; bottom: auto; margin: 0 12px 12px; align-items: center; justify-content: center; flex-wrap: wrap; }
+.voc-panel .voc-fp .ms-stys { justify-content: center; max-width: 250px; }
+.voc-knobs { display: grid; grid-template-columns: repeat(4, auto); gap: 4px 6px; align-items: end; justify-items: center; }

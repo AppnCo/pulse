@@ -2251,6 +2251,58 @@ window.PulseAudio = (function() {
                 f[i] = sinc * (0.42 + 0.5 * Math.cos(Math.PI * k / (h + 1)) + 0.08 * Math.cos(2 * Math.PI * k / (h + 1))); sum += f[i]; }
             for (let i = 0; i <= 2 * h; i++) f[i] /= sum; return f; };
         const pow2 = (n) => { let p = 1; while (p < n) p *= 2; return p; };
+        // FFT complexe en place (radix 2) — même calcul que Fft dans pitch.rs
+        class PitchFft {
+            constructor(n) { this.n = n; const b = Math.log2(n); this.cs = new Float64Array(n / 2); this.sn = new Float64Array(n / 2); this.rev = new Uint32Array(n);
+                for (let k = 0; k < n / 2; k++) { this.cs[k] = Math.cos(2 * Math.PI * k / n); this.sn[k] = -Math.sin(2 * Math.PI * k / n); }
+                for (let i = 0; i < n; i++) { let r = 0; for (let j = 0; j < b; j++) r |= ((i >> j) & 1) << (b - 1 - j); this.rev[i] = r; } }
+            run(re, im) {
+                const n = this.n;
+                for (let i = 0; i < n; i++) { const j = this.rev[i]; if (j > i) { let t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; } }
+                for (let len = 2; len <= n; len *= 2) { const st = n / len, hl = len / 2;
+                    for (let b = 0; b < n; b += len) for (let k = 0; k < hl; k++) { const c = this.cs[k * st], s = this.sn[k * st], i = b + k, j = i + hl;
+                        const tr = re[j] * c - im[j] * s, ti = re[j] * s + im[j] * c; re[j] = re[i] - tr; im[j] = im[i] - ti; re[i] += tr; im[i] += ti; } }
+            }
+        }
+        // Formant : déplace l'enveloppe spectrale (lissée par cepstre), harmoniques intactes. Retard n. Même calcul que Formant (pitch.rs).
+        class PitchFormant {
+            constructor(sr) { const n = sr > 50000 ? 4096 : 2048; this.n = n; this.hop = n / 4; this.lift = Math.max(8, Math.round(40 / 48000 * sr)); this.fft = new PitchFft(n);
+                this.win = new Float64Array(n); for (let i = 0; i < n; i++) this.win[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / n);
+                const z = () => new Float64Array(n); this.inp = [z(), z()]; this.ola = [new Float64Array(2 * n), new Float64Array(2 * n)]; this.cnt = 0;
+                this.re = [z(), z()]; this.im = [z(), z()]; this.cr = z(); this.ci = z(); this.env = new Float64Array(n / 2 + 1); }
+            tick(x, nc, fr) {
+                const n = this.n, m2 = 2 * n - 1, wi = this.cnt % n;
+                for (let ch = 0; ch < nc; ch++) this.inp[ch][wi] = x[ch];
+                this.cnt++;
+                if (this.cnt % this.hop === 0) this.frame(nc, fr);
+                const o = this.cnt - 1 - n;
+                for (let ch = 0; ch < nc; ch++) { if (this.cnt < n + 1) { x[ch] = 0; continue; } const j = o & m2; x[ch] = this.ola[ch][j]; this.ola[ch][j] = 0; }
+            }
+            frame(nc, fr) {
+                const n = this.n, m2 = 2 * n - 1, h = n / 2, g = 1 / 1.5, same = Math.abs(fr - 1) < 1e-6, w = this.win;
+                for (let ch = 0; ch < nc; ch++) for (let i = 0; i < n; i++) {
+                    const t = this.cnt - n + i, v = (t < 0 ? 0 : this.inp[ch][t % n]) * w[i];
+                    if (same) { if (t >= 0) this.ola[ch][t & m2] += v * w[i] * g; continue; }
+                    this.re[ch][i] = v; this.im[ch][i] = 0;
+                }
+                if (same) return;
+                for (let ch = 0; ch < nc; ch++) this.fft.run(this.re[ch], this.im[ch]);
+                const cr = this.cr, ci = this.ci, env = this.env;
+                for (let k = 0; k <= h; k++) { let p = 0; for (let ch = 0; ch < nc; ch++) p += this.re[ch][k] * this.re[ch][k] + this.im[ch][k] * this.im[ch][k];
+                    const a = Math.log(Math.max(Math.sqrt(p / nc), 1e-9)); cr[k] = a; ci[k] = 0; if (k > 0 && k < h) { cr[n - k] = a; ci[n - k] = 0; } }
+                this.fft.run(cr, ci);
+                const l = Math.min(this.lift, h);
+                for (let i = 0; i < n; i++) { ci[i] = 0; cr[i] = i < l || i > n - l ? cr[i] / n : 0; }
+                this.fft.run(cr, ci);
+                for (let k = 0; k <= h; k++) env[k] = cr[k];
+                const cap = Math.log(8);
+                for (let k = 0; k <= h; k++) { const x = k / fr; let e; if (x >= h) e = env[h]; else { const i = Math.floor(x), f = x - i; e = env[i] + (env[i + 1] - env[i]) * f; }
+                    const gk = Math.exp(Math.min(e - env[k], cap));
+                    for (let ch = 0; ch < nc; ch++) { this.re[ch][k] *= gk; this.im[ch][k] *= gk; if (k > 0 && k < h) { this.re[ch][n - k] *= gk; this.im[ch][n - k] *= gk; } } }
+                for (let ch = 0; ch < nc; ch++) { const re = this.re[ch], im = this.im[ch]; for (let i = 0; i < n; i++) im[i] = -im[i]; this.fft.run(re, im);
+                    for (let i = 0; i < n; i++) { const t = this.cnt - n + i; if (t >= 0) this.ola[ch][t & m2] += re[i] / n * w[i] * g; } }
+            }
+        }
         class PulsePitch extends AudioWorkletProcessor {
             constructor(o) {
                 super();
@@ -2258,7 +2310,7 @@ window.PulseAudio = (function() {
                 this.tmaxD = Math.ceil(sd / 70); this.tminD = Math.max(2, Math.floor(sd / 1000));
                 this.winD = 2 * this.tmaxD + 32; this.dla = this.winD * PITCH_DS / 2;
                 this.tmax = Math.ceil(sr / 70); this.g = Math.round(0.025 * sr);
-                this.lat = this.g + this.dla + Math.ceil(1.3 * this.tmax) + 16;
+                this.latP = this.g + this.dla + Math.ceil(1.3 * this.tmax) + 16; this.form = new PitchFormant(sr); this.lat = this.latP + this.form.n; this.wet = [0, 0];
                 this.nb = pow2(4 * this.lat); this.nbd = pow2(this.nb / PITCH_DS); this.unv = Math.round(0.005 * sr);
                 this.buf = [new Float64Array(this.nb), new Float64Array(this.nb)]; this.bufl = [new Float64Array(this.nb), new Float64Array(this.nb)]; this.cut = PITCH_SPLIT; this.fir = pitchFir(sr, PITCH_SPLIT); this.hmk = [];
                 this.yh = [new Float64Array(this.nb), new Float64Array(this.nb)]; this.wsh = new Float64Array(this.nb); this.mono = new Float64Array(this.nb);
@@ -2270,8 +2322,9 @@ window.PulseAudio = (function() {
                 this.mixK = 1 - Math.exp(-1 / (0.01 * sr));
                 this.ratio = 1; this.fratio = 1;
                 this.set(p.semi ?? 0, p.formant ?? 0, p.mix ?? 100);
-                this.mix = this.mixTo; this.act = this.actTo();
+                this.mix = this.mixTo; this.act = this.actTo(); this.pact = this.pactTo();
             }
+            pactTo() { return Math.abs(this.ratio - 1) < 1e-9 ? 0 : 1; }
             set(semi, form, mix) {
                 if (semi !== undefined) this.ratio = Math.pow(2, Math.max(-12, Math.min(12, semi)) / 12);
                 if (form !== undefined) this.fratio = Math.pow(2, Math.max(-12, Math.min(12, form)) / 12);
@@ -2320,38 +2373,46 @@ window.PulseAudio = (function() {
                         const lo = Math.trunc(pos - 0.3 * t), hi = Math.trunc(pos + 0.3 * t);
                         let pk = Math.max(lo, 0), best = -Infinity;
                         const pm = this.mk[this.mk.length - 1];
+                        const cv = [];
                         if (pm && pm.voiced) {
                             const n = t;
                             for (let k = Math.max(lo, 0); k <= hi; k++) { let c = 0, ea = 1e-12, eb = 1e-12;
                                 for (let j = -Math.trunc(n / 2); j < Math.trunc(n / 2); j += 2) { const a = this.at(this.mono, pm.pos + j), b = this.at(this.mono, k + j); c += a * b; ea += a * a; eb += b * b; }
-                                const v = c / Math.sqrt(ea * eb); if (v > best) { best = v; pk = k; } }
+                                const v = c / Math.sqrt(ea * eb); cv.push(v); if (v > best) { best = v; pk = k; } }
                         } else for (let k = Math.max(lo, 0); k <= hi; k++) { const v = Math.abs(this.at(this.mono, k)); if (v > best) { best = v; pk = k; } }
-                        if (this.mk.length && pk <= this.mk[this.mk.length - 1].pos) pk = Math.trunc(pos);
-                        this.mk.push({ pos: pk, t, voiced: true }); this.hmk.push({ pos: pk, t }); this.nextMark = pk + t;
-                    } else { this.mk.push({ pos: Math.trunc(pos), t, voiced: false }); this.hmk.push({ pos: Math.trunc(pos), t }); this.nextMark = pos + t; }
+                        // position affinée (sommet de la corrélation) ; la période d'avant = l'écart réel entre les repères
+                        let pf = pk; const j = pk - Math.max(lo, 0);
+                        if (j >= 1 && j + 1 < cv.length) { const a = cv[j - 1], b = cv[j], c = cv[j + 1], den = a - 2 * b + c; if (den < -1e-12) pf += Math.max(-0.5, Math.min(0.5, 0.5 * (a - c) / den)); }
+                        if (this.mk.length && pk <= this.mk[this.mk.length - 1].pos) { pk = Math.trunc(pos); pf = pk; }
+                        const per8 = Math.max(per, 8);
+                        for (const L of [this.mk[this.mk.length - 1], this.hmk[this.hmk.length - 1]]) if (L && L.voiced) { const d = pf - L.pf; if (d > 0.7 * L.p && d < 1.3 * L.p) L.p = d; }
+                        this.mk.push({ pos: pk, t, voiced: true, p: per8, pf }); this.hmk.push({ pos: pk, t, voiced: true, p: per8, pf }); this.nextMark = pk + t;
+                    } else { const pf = Math.floor(pos); this.mk.push({ pos: Math.trunc(pos), t, voiced: false, p: t, pf }); this.hmk.push({ pos: Math.trunc(pos), t, voiced: false, p: t, pf }); this.nextMark = pos + t; }
                 }
-                const o = this.w - 1 - this.lat;
+                const o = this.w - 1 - this.latP;
                 while (this.ts <= o + this.g && this.mk.length) {
                     while (this.mk.length > 1 && Math.abs(this.mk[1].pos - this.ts) <= Math.abs(this.mk[0].pos - this.ts)) this.mk.shift();
-                    const mk = this.mk[0], rr = mk.voiced ? this.ratio : 1, fr = this.fratio, q = 1 / rr;
-                    const ext = (!mk.voiced ? 1 : q <= 1.4 ? q : Math.max(0.65, 1.4 - (q - 1.4) * 2)) * Math.max(fr, 1);
-                    const l = Math.min(Math.max(Math.floor(mk.t * ext / fr), 1), this.g), c = Math.round(this.ts), fl = rr * fr < 1 ? rr * fr : 1;
-                    for (let k = -l; k <= l; k++) {
+                    const mk = this.mk[0], rr = mk.voiced ? this.ratio : 1, q = 1 / rr;
+                    const ext = !mk.voiced ? 1 : q <= 1.4 ? q : Math.max(0.65, 1.4 - (q - 1.4) * 2);
+                    // grain posé à la fraction d'échantillon près ; le formant se fait après (filtre d'enveloppe)
+                    const l = Math.min(Math.max(Math.floor(mk.t * ext), 1), this.g), c = Math.floor(this.ts), fc = this.ts - c, fl = rr < 1 ? rr : 1;
+                    for (let k = -l; k <= l + 1; k++) {
                         const di = c + k; if (di < 0) continue;
-                        const si = mk.pos + k * fr; if (si < 0 || si >= this.w - 1) continue;
-                        const i0 = Math.floor(si), f = si - i0, wv = 0.5 + 0.5 * Math.cos(Math.PI * k / l), dj = di & nb1;
+                        const u = k - fc; if (Math.abs(u) >= l) continue;
+                        const si = mk.pf + u; if (si < 0 || si >= this.w - 1) continue;
+                        const i0 = Math.floor(si), f = si - i0, wv = 0.5 + 0.5 * Math.cos(Math.PI * u / l), dj = di & nb1;
                         for (let ch = 0; ch < 2; ch++) { const a = this.bufl[ch][i0 & nb1], b = this.bufl[ch][(i0 + 1) & nb1]; this.y[ch][dj] += (a + (b - a) * f) * wv; }
                         this.wsum[dj] += wv; this.floor[dj] = fl;
                     }
-                    this.ts += mk.t / rr;
+                    this.ts += mk.p / rr;
                 }
-                // souffle aigu : un grain par repère, à sa place (note inchangée, formant appliqué), sans trou
+                // souffle aigu : un grain par repère, à sa place (note inchangée), sans trou
                 let hi0 = 0;
                 while (hi0 < this.hmk.length && this.hmk[hi0].pos <= o + this.g) {
-                    const m = this.hmk[hi0++], fr = this.fratio, l = Math.min(Math.max(Math.trunc(m.t * Math.max(fr, 1) / fr), 1), this.g);
+                    const m = this.hmk[hi0++], l = Math.min(Math.max(m.t, 1), this.g);
                     for (let k = -l; k <= l; k++) {
                         const di = m.pos + k; if (di < 0) continue;
-                        const si = m.pos + k * fr; if (si < 0) continue;
+                        const si = m.pos + k; if (si < 0) continue;
                         const i0 = Math.floor(si), f = si - i0, wv = 0.5 + 0.5 * Math.cos(Math.PI * k / l), dj = di & nb1, j0 = i0 & nb1, j1 = (i0 + 1) & nb1;
                         for (let ch = 0; ch < 2; ch++) { const a = this.buf[ch][j0] - this.bufl[ch][j0], b = this.buf[ch][j1] - this.bufl[ch][j1]; this.yh[ch][dj] += (a + (b - a) * f) * wv; }
                         this.wsh[dj] += wv;
@@ -2360,9 +2421,15 @@ window.PulseAudio = (function() {
                 if (hi0) this.hmk.splice(0, hi0);
                 this.mix += (this.mixTo - this.mix) * this.mixK;
                 const at = this.actTo(); this.act += (at - this.act) * this.mixK; if (Math.abs(this.act - at) < 1e-7) this.act = at;
-                if (o < 0) { for (let ch = 0; ch < out.length; ch++) out[ch][i] = 0; return; }
-                const oj = o & nb1, den = Math.max(this.wsum[oj], this.floor[oj]);
-                for (let ch = 0; ch < out.length; ch++) { const wet = this.y[ch][oj] / den + this.yh[ch][oj] / Math.max(this.wsh[oj], 1e-3), dry = this.buf[ch][oj]; out[ch][i] = dry + (wet - dry) * this.mix * this.act; }
+                const pt = this.pactTo(); this.pact += (pt - this.pact) * this.mixK; if (Math.abs(this.pact - pt) < 1e-7) this.pact = pt;
+                const wet = this.wet, oj = Math.max(o, 0) & nb1; wet[0] = 0; wet[1] = 0;
+                if (o >= 0) { const den = Math.max(this.wsum[oj], this.floor[oj]);
+                    for (let ch = 0; ch < nc; ch++) { const g = this.y[ch][oj] / den + this.yh[ch][oj] / Math.max(this.wsh[oj], 1e-3), d = this.buf[ch][oj]; wet[ch] = d + (g - d) * this.pact; } }
+                // formant (retard fixe form.n), puis mélange avec le son d'origine au même retard
+                this.form.tick(wet, Math.min(nc, 2), this.fratio);
+                const od = this.w - 1 - this.lat;
+                for (let ch = 0; ch < out.length; ch++) { if (od < 0) { out[ch][i] = 0; continue; } const dry = this.buf[ch][od & nb1]; out[ch][i] = dry + (wet[Math.min(ch, 1)] - dry) * this.mix * this.act; }
+                if (o < 0) return;
                 this.y[0][oj] = 0; this.y[1][oj] = 0; this.wsum[oj] = 0; this.floor[oj] = 1; this.yh[0][oj] = 0; this.yh[1][oj] = 0; this.wsh[oj] = 0;
             }
             process(inputs, outputs) {
@@ -2372,6 +2439,99 @@ window.PulseAudio = (function() {
             }
         }
         registerProcessor('pulse-pitch', pulseAuto(PulsePitch, (s, v) => s.set(v.semi, v.formant, v.mix)));
+        // Vocodeur : la voix « parle » à travers un synthé qui suit sa note (ou une note fixe, en accord au choix).
+        // Même calcul que engine/src/vocoder.rs (Vocoder::tick) — voir les explications là-bas. Aucun retard.
+        const VOC_CHORDS = [[0], [-12, 0], [0, 7], [0, 3, 7], [0, 3, 7, 10]];
+        const vocBp = (sr, f, bw) => { const w = 2 * Math.PI * f / sr, s = Math.sin(w), c = Math.cos(w), al = s * Math.sinh(Math.log(2) / 2 * bw * w / s), a0 = 1 + al;
+            return { b0: al / a0, b2: -al / a0, a1: -2 * c / a0, a2: (1 - al) / a0 }; };
+        const vocBpRun = (q, z, x) => { const y = q.b0 * x + z[0]; z[0] = -q.a1 * y + z[1]; z[1] = q.b2 * x - q.a2 * y; return y; };
+        class PulseVocoder extends AudioWorkletProcessor {
+            constructor(o) {
+                super();
+                const p = (o && o.processorOptions) || {}, sr = sampleRate, sd = sr / 4;
+                this.tmaxD = Math.ceil(sd / 70); this.tminD = Math.max(2, Math.floor(sd / 800)); this.winD = 2 * this.tmaxD + 32;
+                this.ds = new Float64Array(this.winD); this.dwin = new Float64Array(this.winD); this.diff = new Float64Array(this.tmaxD + 1); this.acc = 0; this.w = 0;
+                this.p = { mode: p.mode ?? 0, note: p.note ?? 48, chord: p.chord ?? 0, bands: p.bands ?? 20, formant: p.formant ?? 0, speed: p.speed ?? 50, air: p.air ?? 40, tone: p.tone ?? 10, mix: p.mix ?? 100 };
+                const w = 2 * Math.PI * 6000 / sr, s = Math.sin(w), c = Math.cos(w), al = s / (2 * Math.SQRT1_2), a0 = 1 + al;
+                this.hp = [(1 + c) / 2 / a0, -(1 + c) / a0, (1 + c) / 2 / a0, -2 * c / a0, (1 - al) / a0]; this.hz = [[0, 0], [0, 0]];
+                this.n = 0; this.cform = NaN;
+                this.cur = this.p.note; this.target = this.p.note; this.glide = 1 - Math.exp(-1 / (0.03 * sr)); this.ph = [0, 0.25, 0.5, 0.75]; this.seed = 22222;
+                this.crel = 1 - Math.exp(-1 / (0.05 * sr)); this.mixK = 1 - Math.exp(-1 / (0.01 * sr));
+                this.set();
+                this.mix = Math.max(0, Math.min(100, this.p.mix)) / 100;
+            }
+            set() {
+                const p = this.p, sr = sampleRate, n = Math.max(8, Math.min(32, Math.round(p.bands)));
+                if (n !== this.n) {
+                    this.n = n; const hi = Math.min(8000, 0.42 * sr), r = Math.pow(hi / 120, 1 / (n - 1));
+                    this.fc = []; for (let i = 0; i < n; i++) this.fc.push(120 * Math.pow(r, i));
+                    this.bw = Math.log2(r); this.mq = this.fc.map(f => vocBp(sr, f, this.bw));
+                    this.mz = this.fc.map(() => [[0, 0], [0, 0]]); this.cz = this.fc.map(() => [[0, 0], [0, 0]]);
+                    this.env = new Float64Array(n); this.cenv = new Float64Array(n); this.cform = NaN;
+                }
+                const fm = Math.max(-12, Math.min(12, p.formant));
+                if (fm !== this.cform) { this.cform = fm; const k = Math.pow(2, fm / 12), top = 0.45 * sr; this.cq = this.fc.map(f => vocBp(sr, Math.min(f * k, top), this.bw)); }
+                const s = Math.max(0, Math.min(100, p.speed)) / 100;
+                this.att = 1 - Math.exp(-1 / ((0.02 - 0.018 * s) * sr)); this.rel = 1 - Math.exp(-1 / ((0.2 - 0.19 * s) * sr));
+                if (p.mode >= 0.5) this.target = Math.max(24, Math.min(84, p.note));
+            }
+            track() {
+                const wd = this.winD, nd = Math.floor(this.w / 4), dw = this.dwin, df = this.diff; let e = 0;
+                for (let j = 0; j < wd; j++) { const k = nd - wd + j, v = k < 0 ? 0 : this.ds[k % wd]; dw[j] = v; e += v * v; }
+                if (Math.sqrt(e / wd) < 0.004) return null;
+                const ww = wd - this.tmaxD;
+                for (let t = 0; t <= this.tmaxD; t++) { let s = 0; for (let j = 0; j < ww; j++) { const d = dw[j] - dw[j + t]; s += d * d; } df[t] = s; }
+                let cs = 0; df[0] = 1;
+                for (let t = 1; t <= this.tmaxD; t++) { cs += df[t]; df[t] = cs > 1e-12 ? df[t] * t / cs : 1; }
+                const tm = this.tmaxD; let t = this.tminD;
+                while (t < tm && df[t] >= 0.15) t++;
+                if (t >= tm) return null;
+                while (t + 1 < tm && df[t + 1] < df[t]) t++;
+                const den = 2 * (df[t - 1] - 2 * df[t] + df[t + 1]);
+                const b = t + (Math.abs(den) > 1e-12 ? (df[t - 1] - df[t + 1]) / den : 0), f = sampleRate / (b * 4);
+                return Math.round(69 + 12 * Math.log2(f / 440));
+            }
+            process(inputs, outputs) {
+                const inp = inputs[0], out = outputs[0], n = out[0].length, ni = inp ? inp.length : 0, p = this.p, sr = sampleRate;
+                const ch = VOC_CHORDS[Math.min(Math.round(p.chord), VOC_CHORDS.length - 1)], nv = Math.sqrt(ch.length);
+                const tone = Math.max(0, Math.min(100, p.tone)) / 100, air = Math.max(0, Math.min(100, p.air)) / 100, mixTo = Math.max(0, Math.min(100, p.mix)) / 100, hp = this.hp;
+                for (let i = 0; i < n; i++) {
+                    const xl = ni ? inp[0][i] : 0, xr = ni > 1 ? inp[1][i] : xl, m = ni > 1 ? 0.5 * (xl + xr) : xl;
+                    this.acc += m; this.w++;
+                    if (this.w % 4 === 0) { this.ds[(this.w / 4 - 1) % this.winD] = this.acc / 4; this.acc = 0; }
+                    if (p.mode < 0.5 && this.w % 256 === 0) { const t = this.track(); if (t !== null) this.target = t; }
+                    this.cur += (this.target - this.cur) * this.glide;
+                    let saw = 0;
+                    for (let v = 0; v < ch.length; v++) {
+                        const f = 440 * Math.pow(2, (this.cur + ch[v] - 69) / 12), dt = Math.min(f / sr, 0.45);
+                        let ph = this.ph[v] + dt; if (ph >= 1) ph -= 1; this.ph[v] = ph;
+                        let s = 2 * ph - 1;
+                        if (ph < dt) { const t = ph / dt; s -= t + t - t * t - 1; } else if (ph > 1 - dt) { const t = (ph - 1) / dt; s -= t * t + t + t + 1; }
+                        saw += s;
+                    }
+                    saw /= nv;
+                    this.seed = (Math.imul(this.seed, 1664525) + 1013904223) >>> 0;
+                    const car = saw * (1 - tone) + (this.seed / 4294967296 * 2 - 1) * tone;
+                    let o = 0;
+                    for (let b = 0; b < this.n; b++) {
+                        const mz = this.mz[b], cz = this.cz[b], mq = this.mq[b], cq = this.cq[b];
+                        const a = vocBpRun(mq, mz[1], vocBpRun(mq, mz[0], m)), c = vocBpRun(cq, cz[1], vocBpRun(cq, cz[0], car));
+                        const ra = Math.abs(a), e = this.env[b];
+                        this.env[b] = e + (ra - e) * (ra > e ? this.att : this.rel);
+                        const ce = this.cenv[b]; this.cenv[b] = ce + (Math.abs(c) - ce) * this.crel;
+                        o += c * this.env[b] / (this.cenv[b] + 1e-3);
+                    }
+                    let h = m;
+                    for (let k = 0; k < 2; k++) { const z = this.hz[k], y = hp[0] * h + z[0]; z[0] = hp[1] * h - hp[3] * y + z[1]; z[1] = hp[2] * h - hp[4] * y; h = y; }
+                    const wet = o + h * air;
+                    this.mix += (mixTo - this.mix) * this.mixK;
+                    out[0][i] = xl + (wet - xl) * this.mix;
+                    if (out.length > 1) out[1][i] = xr + (wet - xr) * this.mix;
+                }
+                return true;
+            }
+        }
+        registerProcessor('pulse-vocoder', pulseAuto(PulseVocoder, (s, v) => { let ch = false; for (const k in v) if (k in s.p && s.p[k] !== v[k]) { s.p[k] = v[k]; ch = true; } if (ch) s.set(); }));
 
         // Limiteur de sécurité du master : ne touche à rien sous -1 dB, retient seulement les crêtes qui satureraient.
         // Il « voit venir » la crête 1,5 ms à l'avance, donc il baisse en douceur au lieu d'écraser.
@@ -2626,7 +2786,7 @@ window.PulseAudio = (function() {
 
     // Exemplaire d'un effet : « comp#2 » → type « comp » (même calcul que fx_type dans model.rs)
     const fxType = (id) => String(id).split('#')[0];
-    const FX_CHAIN = ['pitch', 'filter', 'pre73', 'prev76', 'stripe', 'gate', 'eq', 'eqp1', 'horizon', 'souffle', 'eq550', 'massif', 'tape', 'eclat', 'sat', 'msat', 'crush', 'deess', 'fet76', 'opto2a', 'l670', 'dtr', 'comp25', 'comp', 'mband', 'bus33', 'busg', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'dim', 'doubler', 'slapback', 'master', 'limit', 'delay', 'techo', 'h910', 'plate', 'hall80', 'reverb']; // ordre habituel des effets
+    const FX_CHAIN = ['pitch', 'vocoder', 'filter', 'pre73', 'prev76', 'stripe', 'gate', 'eq', 'eqp1', 'horizon', 'souffle', 'eq550', 'massif', 'tape', 'eclat', 'sat', 'msat', 'crush', 'deess', 'fet76', 'opto2a', 'l670', 'dtr', 'comp25', 'comp', 'mband', 'bus33', 'busg', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'dim', 'doubler', 'slapback', 'master', 'limit', 'delay', 'techo', 'h910', 'plate', 'hall80', 'reverb']; // ordre habituel des effets
     const SEND_REVERB_TRIM = 1 / 3; // la reverb seule sort 3 fois trop fort par rapport au son direct : on la ramène à niveau
 
     // Paliers de tempo [{ sec, bpm }] quand le tempo change en cours de morceau (sinon null) — Project::tempo_segments côté Rust
@@ -3555,7 +3715,8 @@ window.PulseAudio = (function() {
     // d'autant, la voix retombe pile en place (compensation comme dans Logic). Même calcul dans render.rs (with_track_delays, pitch_on).
     function pitchLatency(sr) {
         const sd = sr / 4, tmaxD = Math.ceil(sd / 70), winD = 2 * tmaxD + 32;
-        return Math.round(0.025 * sr) + winD * 2 + Math.ceil(1.3 * Math.ceil(sr / 70)) + 16;
+        // grains + filtre de formant (fenêtre de 2048, 4096 au-delà de 50 kHz)
+        return Math.round(0.025 * sr) + winD * 2 + Math.ceil(1.3 * Math.ceil(sr / 70)) + 16 + (sr > 50000 ? 4096 : 2048);
     }
     // Retard total (secondes) d'une liste d'effets : chaque Pitch actif (« pitch », « pitch#2 »…) et chaque machine Analogique
     // (suréchantillonnage, 31 échantillons). Même calcul que fx_latency (render.rs).
@@ -4616,6 +4777,12 @@ window.PulseAudio = (function() {
             if (!enabled.includes('dim') || !fxReady.has(actx)) return;
             connect(liveReg('dim', new AudioWorkletNode(actx, 'pulse-dim', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCountMode: 'max',
                 processorOptions: { kind: 'dim', ...(params.dim || {}), ...autoAll('dim') } })));
+        };
+        // Vocodeur : sortie stéréo (le synthé au milieu), aucun retard
+        B.vocoder = () => {
+            if (!enabled.includes('vocoder') || !fxReady.has(actx)) return;
+            connect(liveReg('vocoder', new AudioWorkletNode(actx, 'pulse-vocoder', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCountMode: 'max',
+                processorOptions: { kind: 'vocoder', ...(params.vocoder || {}), ...autoAll('vocoder') } })));
         };
         // Harmoniseur 910 : deux voix (gauche, droite) même pour une piste mono
         B.h910 = () => {

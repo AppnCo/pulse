@@ -183,6 +183,7 @@ pub struct EffectParams {
     pub techo: Option<TapeEchoJson>,
     pub hall80: Option<Hall80Json>,
     pub h910: Option<H910Json>,
+    pub vocoder: Option<VocoderJson>,
     pub dim: Option<DimJson>,
     pub prev76: Option<PreV76Json>,
     pub eclat: Option<EclatJson>,
@@ -331,6 +332,11 @@ pub struct PreV76Json { pub gain: Option<f64>, pub output: Option<f64>, pub lowc
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 pub struct DimJson { pub mode: Option<f64>, pub mix: Option<f64>, pub width: Option<f64>, pub variant: Option<f64> }
+
+/// Vocodeur : mode (0 suit la voix · 1 note fixe), note (MIDI), chord (0–4), bands (8–32), formant (dt), speed, air, tone, mix (0–100)
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct VocoderJson { pub mode: Option<f64>, pub note: Option<f64>, pub chord: Option<f64>, pub bands: Option<f64>, pub formant: Option<f64>, pub speed: Option<f64>, pub air: Option<f64>, pub tone: Option<f64>, pub mix: Option<f64> }
 
 /// Harmoniseur 910 : pitchL / pitchR (demi-tons), delay (ms), feedback (%), mix (%), variant (0 910 · 1 949)
 #[derive(Debug, Clone, Deserialize, Default)]

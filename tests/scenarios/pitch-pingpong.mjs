@@ -13,9 +13,13 @@ export default async (c) => {
     return { l:Array.from(ab.getChannelData(0).slice(0,sr)), r:Array.from(ab.getChannelData(1).slice(0,sr)) };
   })()`);
   // Pitch « voix fidèle » : il travaille sur les harmoniques (comme une voix) → son riche à 220 Hz, période par autocorrélation
-  const freq = (s) => { const lo = 48, hi = 720, n = 4096, a = 12000; let best = lo, bv = -Infinity;
-    for (let t = lo; t < hi; t++) { let c = 0, e = 0; for (let i = 0; i < n; i++) { c += s[a + i] * s[a + i + t]; e += s[a + i + t] * s[a + i + t]; } const v = c / Math.sqrt(e + 1e-12); if (v > bv * 1.05) { bv = v; best = t; } }
-    return 48000 / best; };
+  // corrélation normalisée ; la plus petite période qui atteint 90 % du maximum (sinon un écho infime à l'octave en dessous
+  // — −57 dB — pouvait faire choisir la période double)
+  const freq = (s) => { const lo = 48, hi = 720, n = 4096, a = 12000, vs = [];
+    for (let t = lo; t < hi; t++) { let c = 0, ea = 1e-12, eb = 1e-12; for (let i = 0; i < n; i++) { c += s[a + i] * s[a + i + t]; ea += s[a + i] * s[a + i]; eb += s[a + i + t] * s[a + i + t]; } vs.push(c / Math.sqrt(ea * eb)); }
+    const mx = Math.max(...vs); let k = vs.findIndex(v => v >= 0.9 * mx);
+    while (k + 1 < vs.length && vs[k + 1] > vs[k]) k++;
+    return 48000 / (lo + k); };
   const SAW = '(((n*220/sr)%1)-0.5)*0.5';
   const base = freq((await render('pitch', { pitch: { semi: 0 } }, SAW)).l);   // référence sans transposition
   for (const semi of [12, -12, 5]) {

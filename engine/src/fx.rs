@@ -1702,6 +1702,7 @@ pub struct Chain {
     techo: Option<(crate::analog::TapeEcho, crate::analog::TapeEchoParams)>,
     hall80: Option<(crate::analog::Hall80, crate::analog::Hall80Params)>,
     h910: Option<(crate::analog::H910, crate::analog::H910Params)>,
+    vocoder: Option<crate::vocoder::Vocoder>,
     dim: Option<(crate::analog::Dim, crate::analog::DimParams)>,
     prev76: Option<(crate::analog::PreV76, crate::analog::PreV76Params)>,
     eclat: Option<(crate::analog::Eclat, crate::analog::EclatParams)>,
@@ -1853,6 +1854,9 @@ fn auto_range(fx: &str, key: &str) -> Option<(f64, f64, bool)> {
         ("h910", "delay") => (0.0, 120.0, false),
         ("h910", "feedback") => (0.0, 90.0, false),
         ("h910", "mix") => (0.0, 100.0, false),
+        ("vocoder", "formant") => (-12.0, 12.0, false),
+        ("vocoder", "note") => (24.0, 84.0, false),
+        ("vocoder", "speed") | ("vocoder", "air") | ("vocoder", "tone") | ("vocoder", "mix") => (0.0, 100.0, false),
         ("dim", "mix") => (0.0, 100.0, false),
         ("dim", "width") => (0.0, 150.0, false),
         ("prev76", "gain") => (0.0, 36.0, false),
@@ -2204,13 +2208,14 @@ impl Chain {
         let plate = has("plate").then(|| { let p = crate::analog::PlateParams::from(&effect_params.plate.clone().unwrap_or_default()); (crate::analog::Plate::new(&p, sr), p) });
         let techo = has("techo").then(|| { let p = crate::analog::TapeEchoParams::from(&effect_params.techo.clone().unwrap_or_default()); (crate::analog::TapeEcho::new(&p, sr), p) });
         let hall80 = has("hall80").then(|| { let p = crate::analog::Hall80Params::from(&effect_params.hall80.clone().unwrap_or_default()); (crate::analog::Hall80::new(&p, sr), p) });
+        let vocoder = has("vocoder").then(|| crate::vocoder::Vocoder::new(&crate::vocoder::VocoderParams::from(&effect_params.vocoder.clone().unwrap_or_default()), sr));
         let h910 = has("h910").then(|| { let p = crate::analog::H910Params::from(&effect_params.h910.clone().unwrap_or_default()); (crate::analog::H910::new(&p, sr), p) });
         let dim = has("dim").then(|| { let p = crate::analog::DimParams::from(&effect_params.dim.clone().unwrap_or_default()); (crate::analog::Dim::new(&p, sr), p) });
         let prev76 = has("prev76").then(|| { let p = crate::analog::PreV76Params::from(&effect_params.prev76.clone().unwrap_or_default()); (crate::analog::PreV76::new(&p, sr), p) });
         let eclat = has("eclat").then(|| { let p = crate::analog::EclatParams::from(&effect_params.eclat.clone().unwrap_or_default()); (crate::analog::Eclat::new(&p, sr), p) });
         let souffle = has("souffle").then(|| { let p = crate::analog::SouffleParams::from(&effect_params.souffle.clone().unwrap_or_default()); (crate::analog::Souffle::new(&p, sr), p) });
         let comp_p = effect_params.comp.clone().unwrap_or_default();
-        Self { cut, filters, dyn_eq, sat, gate, crush, util, width, modfx, deess, deess2, mband, msat, comp, master, limit, delay, reverb, pitch, fet76, pre73, opto2a, eqp1, busg, tape, l670, dtr, stripe, eq550, comp25, bus33, massif, horizon, plate, techo, hall80, h910, dim, prev76, eclat, souffle, order: Stage::DEFAULT.to_vec(),
+        Self { cut, filters, dyn_eq, sat, gate, crush, util, width, modfx, deess, deess2, mband, msat, comp, master, limit, delay, reverb, pitch, fet76, pre73, opto2a, eqp1, busg, tape, l670, dtr, stripe, eq550, comp25, bus33, massif, horizon, plate, techo, hall80, h910, vocoder, dim, prev76, eclat, souffle, order: Stage::DEFAULT.to_vec(),
             mixes: Self::mixes_of(effect_params), dry_lines: Self::dry_lines_of(effects),
             auto: Vec::new(), auto_from: 0.0, pos: 0, tempo: Vec::new(), tempo_i: 0, sr, comp_p, reverb_p: effect_params.reverb.clone().unwrap_or_default(), delay_p: effect_params.delay.clone().unwrap_or_default(), bpm0: bpm, eq_bands, eq_out, eq_fade: None, cut_p, cut_fade: None, cut_kinds, names: effects.to_vec(), deess_freq: de.freq.unwrap_or(5500.0) }
     }
@@ -2372,6 +2377,7 @@ impl Chain {
             ("techo", k) => if let Some((m, p)) = &mut self.techo { if p.set_key(k, v) { m.set(p); } },
             ("hall80", k) => if let Some((m, p)) = &mut self.hall80 { if p.set_key(k, v) { m.set(p); } },
             ("h910", k) => if let Some((m, p)) = &mut self.h910 { if p.set_key(k, v) { m.set(p); } },
+            ("vocoder", k) => if let Some(m) = &mut self.vocoder { m.set_key(k, v); },
             ("dim", k) => if let Some((m, p)) = &mut self.dim { if p.set_key(k, v) { m.set(p); } },
             ("prev76", k) => if let Some((m, p)) = &mut self.prev76 { if p.set_key(k, v) { m.set(p); } },
             ("eclat", k) => if let Some((m, p)) = &mut self.eclat { if p.set_key(k, v) { m.set(p); } },
@@ -2460,11 +2466,11 @@ impl Chain {
         if m.gate.is_none() && m.deess.is_none() && m.mband.is_none() && m.limit.is_none() { None } else { Some(m) }
     }
     pub fn is_empty(&self) -> bool {
-        self.cut.is_empty() && self.filters.is_empty() && self.dyn_eq.is_empty() && self.sat.is_none() && self.gate.is_none() && self.crush.is_none() && self.util.is_none() && self.width.is_none() && self.modfx.is_empty() && self.deess.is_none() && self.deess2.is_none() && self.mband.is_none() && self.msat.is_none() && self.comp.is_none() && self.master.is_none() && self.limit.is_none() && self.delay.is_none() && self.reverb.is_none() && self.pitch.is_none() && self.fet76.is_none() && self.pre73.is_none() && self.opto2a.is_none() && self.eqp1.is_none() && self.busg.is_none() && self.souffle.is_none() && self.eclat.is_none() && self.prev76.is_none() && self.dim.is_none() && self.h910.is_none() && self.hall80.is_none() && self.techo.is_none() && self.plate.is_none() && self.horizon.is_none() && self.massif.is_none() && self.bus33.is_none() && self.comp25.is_none() && self.eq550.is_none() && self.stripe.is_none() && self.dtr.is_none() && self.tape.is_none() && self.l670.is_none()
+        self.cut.is_empty() && self.filters.is_empty() && self.dyn_eq.is_empty() && self.sat.is_none() && self.gate.is_none() && self.crush.is_none() && self.util.is_none() && self.width.is_none() && self.modfx.is_empty() && self.deess.is_none() && self.deess2.is_none() && self.mband.is_none() && self.msat.is_none() && self.comp.is_none() && self.master.is_none() && self.limit.is_none() && self.delay.is_none() && self.reverb.is_none() && self.pitch.is_none() && self.fet76.is_none() && self.pre73.is_none() && self.opto2a.is_none() && self.eqp1.is_none() && self.busg.is_none() && self.souffle.is_none() && self.eclat.is_none() && self.prev76.is_none() && self.dim.is_none() && self.h910.is_none() && self.vocoder.is_none() && self.hall80.is_none() && self.techo.is_none() && self.plate.is_none() && self.horizon.is_none() && self.massif.is_none() && self.bus33.is_none() && self.comp25.is_none() && self.eq550.is_none() && self.stripe.is_none() && self.dtr.is_none() && self.tape.is_none() && self.l670.is_none()
     }
     /// Une piste avec reverb sort toujours en stéréo, même si ses sons sont mono.
     pub fn makes_stereo(&self) -> bool {
-        self.reverb.is_some() || self.master.is_some() || self.limit.is_some() || self.plate.is_some() || self.techo.is_some() || self.hall80.is_some() || self.h910.is_some() || self.dim.is_some()
+        self.reverb.is_some() || self.master.is_some() || self.limit.is_some() || self.plate.is_some() || self.techo.is_some() || self.hall80.is_some() || self.h910.is_some() || self.vocoder.is_some() || self.dim.is_some()
     }
     /// La sortie est en stéréo même pour une entrée mono (reverb, écho ping-pong…), comme les worklets à 2 canaux du navigateur
     pub fn outputs_stereo(&self) -> bool {
@@ -2487,7 +2493,7 @@ impl Chain {
             Stage::EqP1 => self.eqp1.is_some(), Stage::Dtr => self.dtr.is_some(), Stage::StripE => self.stripe.is_some(),
             Stage::Eq550 => self.eq550.is_some(), Stage::Comp25 => self.comp25.is_some(), Stage::Bus33 => self.bus33.is_some(),
             Stage::Massif => self.massif.is_some(), Stage::Horizon => self.horizon.is_some(), Stage::Plate => self.plate.is_some(),
-            Stage::TapeEcho => self.techo.is_some(), Stage::Hall80 => self.hall80.is_some(), Stage::H910 => self.h910.is_some(),
+            Stage::TapeEcho => self.techo.is_some(), Stage::Hall80 => self.hall80.is_some(), Stage::H910 => self.h910.is_some(), Stage::Vocoder => self.vocoder.is_some(),
             Stage::Dim => self.dim.is_some(), Stage::PreV76 => self.prev76.is_some(), Stage::Eclat => self.eclat.is_some(),
             Stage::Souffle => self.souffle.is_some(), Stage::BusG => self.busg.is_some(), Stage::Tape => self.tape.is_some(),
             Stage::L670 => self.l670.is_some(),
@@ -2676,6 +2682,9 @@ impl Chain {
                     Stage::H910 => {
                         if let Some((m, _)) = &mut self.h910 { m.tick(&mut x, nc); nc = 2; }
                     }
+                    Stage::Vocoder => {
+                        if let Some(m) = &mut self.vocoder { m.tick(&mut x, nc); nc = 2; }
+                    }
                     Stage::Dim => {
                         if let Some((m, _)) = &mut self.dim { m.tick(&mut x, nc); nc = 2; }
                     }
@@ -2755,6 +2764,7 @@ enum Stage {
     PreV76,
     Dim,
     H910,
+    Vocoder,
     Hall80,
     TapeEcho,
     Plate,
@@ -2770,7 +2780,7 @@ enum Stage {
 }
 
 impl Stage {
-    const DEFAULT: [Stage; 44] = [Stage::Pitch, Stage::Filter, Stage::Pre73, Stage::PreV76, Stage::StripE, Stage::Gate, Stage::Eq, Stage::EqP1, Stage::Horizon, Stage::Souffle, Stage::Eq550, Stage::Massif, Stage::Tape, Stage::Eclat, Stage::Sat, Stage::Msat, Stage::Crush, Stage::Deess, Stage::Fet76, Stage::Opto2A, Stage::L670, Stage::Dtr, Stage::Comp25, Stage::Comp, Stage::Mband, Stage::Bus33, Stage::BusG, Stage::Util, Stage::Width, Stage::Tremolo, Stage::Phaser, Stage::Flanger, Stage::Chorus, Stage::Dim, Stage::Doubler, Stage::Slapback, Stage::Master, Stage::Limit, Stage::Delay, Stage::TapeEcho, Stage::H910, Stage::Plate, Stage::Hall80, Stage::Reverb];
+    const DEFAULT: [Stage; 45] = [Stage::Pitch, Stage::Vocoder, Stage::Filter, Stage::Pre73, Stage::PreV76, Stage::StripE, Stage::Gate, Stage::Eq, Stage::EqP1, Stage::Horizon, Stage::Souffle, Stage::Eq550, Stage::Massif, Stage::Tape, Stage::Eclat, Stage::Sat, Stage::Msat, Stage::Crush, Stage::Deess, Stage::Fet76, Stage::Opto2A, Stage::L670, Stage::Dtr, Stage::Comp25, Stage::Comp, Stage::Mband, Stage::Bus33, Stage::BusG, Stage::Util, Stage::Width, Stage::Tremolo, Stage::Phaser, Stage::Flanger, Stage::Chorus, Stage::Dim, Stage::Doubler, Stage::Slapback, Stage::Master, Stage::Limit, Stage::Delay, Stage::TapeEcho, Stage::H910, Stage::Plate, Stage::Hall80, Stage::Reverb];
     fn parse(name: &str) -> Option<Stage> {
         Some(match name {
             "filter" => Stage::Filter,
@@ -2805,6 +2815,7 @@ impl Stage {
             "prev76" => Stage::PreV76,
             "dim" => Stage::Dim,
             "h910" => Stage::H910,
+            "vocoder" => Stage::Vocoder,
             "hall80" => Stage::Hall80,
             "techo" => Stage::TapeEcho,
             "plate" => Stage::Plate,
@@ -3120,7 +3131,7 @@ impl FxChain {
             for id in &ids {
                 let one = params.instance(id);
                 macro_rules! take { ($($f:ident),*) => { $( if one.$f.is_some() { ep.$f = one.$f; } )* } }
-                take!(filter, gate, chorus, flanger, phaser, tremolo, doubler, slapback, crush, util, width, eq, sat, deess, comp, mband, msat, reverb, delay, master, limit, pitch, fet76, pre73, opto2a, eqp1, busg, tape, l670, dtr, stripe, eq550, comp25, bus33, massif, horizon, plate, techo, hall80, h910, dim, prev76, eclat, souffle);
+                take!(filter, gate, chorus, flanger, phaser, tremolo, doubler, slapback, crush, util, width, eq, sat, deess, comp, mband, msat, reverb, delay, master, limit, pitch, fet76, pre73, opto2a, eqp1, busg, tape, l670, dtr, stripe, eq550, comp25, bus33, massif, horizon, plate, techo, hall80, h910, vocoder, dim, prev76, eclat, souffle);
             }
             let types: Vec<String> = ids.iter().map(|i| crate::model::fx_type(i).to_owned()).collect();
             (Chain::new(&types, &ep, sr, bpm, ceiling_db).with_order(&types), ids)

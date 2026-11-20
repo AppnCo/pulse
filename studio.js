@@ -2397,8 +2397,8 @@ function migrateProject() {
 
 // === Tranche à gauche (inspecteur) : la piste sélectionnée et, à sa droite, là où elle sort ===
 // Évite d'ouvrir le mixer pour voir les effets d'une piste ou régler son volume.
-const FX_NAMES = { msat: 'Saturation multibande', mband: 'Multibande', pitch: 'Pitch', crush: 'Bitcrusher', util: 'Utilitaire', width: 'Largeur', tremolo: 'Trémolo', phaser: 'Phaser', flanger: 'Flanger', chorus: 'Chorus', doubler: 'Doubleur', slapback: 'Slapback', filter: 'Filtre', gate: 'Gate', eq: 'EQ', sat: 'Saturation', deess: 'De-esser', comp: 'Compresseur', master: 'Finition', limit: 'Limiteur', delay: 'Écho', reverb: 'Reverb', fet76: 'Éclair 76', pre73: 'Pulse 73', opto2a: 'Optique 2A', eqp1: 'Égaliseur P1', busg: 'Bus G', tape: 'Bande 80', l670: 'Lampe 670', dtr: 'Détresse', stripe: 'Tranche E', eq550: 'EQ 550', comp25: 'Comp 25', bus33: 'Bus 33', massif: 'EQ Massif', horizon: 'EQ Horizon', plate: 'Plaque 140', techo: 'Écho à bande', hall80: 'Salle 80', h910: 'Harmoniseur 910', dim: 'Dimension', prev76: 'Préampli 76V', eclat: 'Éclat', souffle: 'Souffle' };
-const FX_ORDER = ['pitch', 'filter', 'pre73', 'prev76', 'stripe', 'gate', 'eq', 'eqp1', 'horizon', 'souffle', 'eq550', 'massif', 'tape', 'eclat', 'sat', 'msat', 'crush', 'deess', 'fet76', 'opto2a', 'l670', 'dtr', 'comp25', 'comp', 'mband', 'bus33', 'busg', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'dim', 'doubler', 'slapback', 'master', 'limit', 'delay', 'techo', 'h910', 'plate', 'hall80', 'reverb'];
+const FX_NAMES = { vocoder: 'Vocodeur', msat: 'Saturation multibande', mband: 'Multibande', pitch: 'Pitch', crush: 'Bitcrusher', util: 'Utilitaire', width: 'Largeur', tremolo: 'Trémolo', phaser: 'Phaser', flanger: 'Flanger', chorus: 'Chorus', doubler: 'Doubleur', slapback: 'Slapback', filter: 'Filtre', gate: 'Gate', eq: 'EQ', sat: 'Saturation', deess: 'De-esser', comp: 'Compresseur', master: 'Finition', limit: 'Limiteur', delay: 'Écho', reverb: 'Reverb', fet76: 'Éclair 76', pre73: 'Pulse 73', opto2a: 'Optique 2A', eqp1: 'Égaliseur P1', busg: 'Bus G', tape: 'Bande 80', l670: 'Lampe 670', dtr: 'Détresse', stripe: 'Tranche E', eq550: 'EQ 550', comp25: 'Comp 25', bus33: 'Bus 33', massif: 'EQ Massif', horizon: 'EQ Horizon', plate: 'Plaque 140', techo: 'Écho à bande', hall80: 'Salle 80', h910: 'Harmoniseur 910', dim: 'Dimension', prev76: 'Préampli 76V', eclat: 'Éclat', souffle: 'Souffle' };
+const FX_ORDER = ['pitch', 'vocoder', 'filter', 'pre73', 'prev76', 'stripe', 'gate', 'eq', 'eqp1', 'horizon', 'souffle', 'eq550', 'massif', 'tape', 'eclat', 'sat', 'msat', 'crush', 'deess', 'fet76', 'opto2a', 'l670', 'dtr', 'comp25', 'comp', 'mband', 'bus33', 'busg', 'util', 'width', 'tremolo', 'phaser', 'flanger', 'chorus', 'dim', 'doubler', 'slapback', 'master', 'limit', 'delay', 'techo', 'h910', 'plate', 'hall80', 'reverb'];
 // V (comme Logic) : cache toutes les fenêtres de plugins ouvertes, puis les remontre au même endroit
 function togglePlugWindows() {
     const open = [...document.querySelectorAll('.fx-panel.plug-win')].filter(w => w.style.display !== 'none');
@@ -3336,7 +3336,7 @@ function openOutputMenu(anchor, kind, x, idx) {
 // Effets qu'on peut poser sur une piste ou un bus (chacun a son panneau)
 const ADD_FX_CHOICES = [['crush', 'Bitcrusher (son lo-fi)'], ['util', 'Utilitaire (gain, mono, phase)'], ['width', 'Largeur stéréo'],
     ['tremolo', 'Trémolo (volume qui pulse)'], ['phaser', 'Phaser'], ['flanger', 'Flanger'], ['chorus', 'Chorus'],
-    ['doubler', 'Doubleur de voix'], ['slapback', 'Slapback (écho court)'], ['gate', 'Gate (coupe le bruit entre les phrases)'], ['filter', 'Filtre (coupe-bas / coupe-haut)'], ['eq', 'EQ'], ['comp', 'Compresseur'], ['mband', 'Multibande'], ['deess', 'De-esser'], ['sat', 'Saturation'], ['msat', 'Saturation multibande'], ['delay', 'Écho'], ['reverb', 'Reverb'],
+    ['doubler', 'Doubleur de voix'], ['vocoder', 'Vocodeur (la voix parle à travers un synthé)'], ['slapback', 'Slapback (écho court)'], ['gate', 'Gate (coupe le bruit entre les phrases)'], ['filter', 'Filtre (coupe-bas / coupe-haut)'], ['eq', 'EQ'], ['comp', 'Compresseur'], ['mband', 'Multibande'], ['deess', 'De-esser'], ['sat', 'Saturation'], ['msat', 'Saturation multibande'], ['delay', 'Écho'], ['reverb', 'Reverb'],
     ['fet76', 'Éclair 76 (compresseur FET)'], ['pre73', 'Pulse 73 (préampli + EQ de console)'], ['opto2a', 'Optique 2A (compresseur optique à lampes)'], ['eqp1', 'Égaliseur P1 (égaliseur passif à lampes)'], ['busg', 'Bus G (compresseur de bus de console)'], ['tape', 'Bande 80 (magnétophone à bande)'], ['l670', 'Lampe 670 (compresseur à lampes variable-mu)'], ['dtr', 'Détresse (compresseur à tout faire)'], ['stripe', 'Tranche E (voie de console complète)'], ['eq550', 'EQ 550 (égaliseur à crans)'], ['comp25', 'Comp 25 (compresseur de bus américain)'], ['bus33', 'Bus 33 (compresseur-limiteur de bus)'], ['massif', 'EQ Massif (égaliseur à lampes de mastering)'], ['horizon', 'EQ Horizon (égaliseur de mastering : Terre, Ciel, Caractère)'], ['plate', 'Plaque 140 (réverbe à plaque)'], ['techo', 'Écho à bande (trois têtes et ressort)'], ['hall80', 'Salle 80 (réverbe numérique des années 80)'], ['h910', 'Harmoniseur 910 (transpositeur à deux voix)'], ['dim', 'Dimension (chorus d\'espace)'], ['prev76', 'Préampli 76V (préampli à lampes)'], ['eclat', 'Éclat (exciteur : détails et air)'], ['souffle', 'Souffle (air dynamique)']];
 // Rangés par catégorie comme dans Logic (voir PLUGINS-CATALOGUE.md) : un nouvel effet = une ligne dans sa catégorie
 const ADD_FX_CATEGORIES = [
@@ -3344,7 +3344,7 @@ const ADD_FX_CATEGORIES = [
     ['Égaliseur et filtre', ['eq', 'horizon', 'souffle', 'filter']],
     ['Distorsion', ['sat', 'msat', 'crush']],
     ['Mouvement', ['chorus', 'flanger', 'phaser', 'tremolo']],
-    ['Voix et hauteur', ['pitch', 'doubler']],
+    ['Voix et hauteur', ['pitch', 'vocoder', 'doubler']],
     ['Écho et espace', ['delay', 'slapback', 'reverb']],
     ['Stéréo', ['width']],
     ['Utilitaires', ['util']]
@@ -3380,10 +3380,11 @@ const FX_DESC = { msat: 'chaleur et grain par zone : des graves ronds, des médi
     souffle: 'ajoute de l\'air et de la présence sans durcir : se retient sur les « s »',
     prev76: 'le préampli tout à lampes des années 50 : grave épais, aigus ronds, Radio pour le son « poste »',
     dim: 'élargit la voix ou le synthé sans qu\'on entende la modulation, et reste juste en mono',
+    vocoder: 'la voix parle à travers un synthé : robot rap sur une note, robot chanté qui suit ta voix, chœur en accord',
     h910: 'le transpositeur des années 70 : doublage large (Micro), quintes, octaves, répétitions qui montent',
     hall80: 'la grande réverbe numérique des années 80 : queue douce et vivante, graves qui tiennent',
     techo: 'l\'écho à bande : répétitions qui saturent et dérivent, vitesse qui pleure, ressort' };
-const FX_WORDS = { msat: 'saturation multiband multibande saturn distortion drive chaleur tape tube', mband: 'multiband multibande compressor dynamic dynamique', pitch: 'pitch shift hauteur transpose alterboy grave aigu', comp: 'compressor compression dynamique', deess: 'deesser sibilance', gate: 'noise gate bruit', eq: 'equalizer egaliseur', filter: 'hpf lpf high pass low pass coupe-bas coupe-haut',
+const FX_WORDS = { vocoder: 'vocoder vocodeur robot talkbox synthe synth voix chœur choeur', msat: 'saturation multiband multibande saturn distortion drive chaleur tape tube', mband: 'multiband multibande compressor dynamic dynamique', pitch: 'pitch shift hauteur transpose alterboy grave aigu', comp: 'compressor compression dynamique', deess: 'deesser sibilance', gate: 'noise gate bruit', eq: 'equalizer egaliseur', filter: 'hpf lpf high pass low pass coupe-bas coupe-haut',
     sat: 'saturation distortion saturator drive', crush: 'bitcrusher lofi', delay: 'delay echo', reverb: 'reverb reverberation', slapback: 'slap delay echo',
     chorus: 'modulation', flanger: 'modulation', phaser: 'modulation', tremolo: 'modulation', doubler: 'doubler double', width: 'stereo imager', util: 'utility gain mono phase', tune: 'autotune pitch justesse',
     fet76: 'analogique 1176 fet compressor compresseur limiting vintage', pre73: 'analogique 1073 preamp preampli console eq neve vintage', opto2a: 'analogique la2a la-2a opto optical leveling amplifier tube lampe compresseur teletronix', eqp1: 'analogique pultec eqp1a eqp-1a passive eq egaliseur lampe tube', busg: 'analogique ssl g bus compressor glue colle console mix bus', tape: 'analogique tape bande magneto studer ampex atr cassette lofi saturation wow flutter', l670: 'analogique fairchild 670 660 variable mu tube lampe compresseur mastering', dtr: 'analogique distressor empirical labs el8 compresseur nuke distorsion deesser', stripe: 'analogique ssl e channel strip console tranche voie eq gate compresseur 4000', eq550: 'analogique api 550 550a eq egaliseur crans 500 series', comp25: 'analogique api 2500 bus compressor thrust compresseur', bus33: 'analogique neve 33609 diode bridge bus compressor limiter limiteur', massif: 'analogique manley massive passive eq egaliseur mastering lampe tube air', horizon: 'eq egaliseur mastering air earth eiosis aireq slate terre ciel mid side centre cotes', plate: 'analogique emt 140 plate reverb reverbe plaque', eclat: 'analogique exciter exciteur dolby 361 type a fg-36a slate air brillance voix souffle hiss', souffle: 'fresh air slate air exciter exciteur brillance presence aigus', prev76: 'analogique v76 telefunken preamp preampli lampe tube vintage radio broadcast', dim: 'analogique dimension d sdd-320 roland juno chorus ensemble bbd stereo largeur wide', h910: 'analogique eventide h910 h949 harmonizer harmoniseur pitch shift micro doubleur doubling octave', hall80: 'analogique lexicon 224 480 hall salle reverb reverbe numerique digital 80s chamber concert', techo: 'analogique space echo re-201 roland tape delay echo bande ressort spring dub' };
@@ -3406,6 +3407,7 @@ const FX_START = {
     prev76: { gain: 12, output: -12, lowcut: -1, soft: -1, variant: 0 },
     dim: { mode: 1, mix: 100, width: 100, variant: 0 },
     h910: { pitchL: 0.09, pitchR: -0.09, delay: 12, feedback: 0, mix: 35, variant: 0 },
+    vocoder: { mode: 0, note: 48, chord: 0, bands: 20, formant: 0, speed: 50, air: 40, tone: 10, mix: 100 },
     hall80: { decay: 2.5, pre: 30, size: 100, bass: 1.2, xover: 400, treble: 6000, diffusion: 70, spin: 40, width: 100, mix: 25, variant: 0 },
     techo: { mode: 1, rate: 1, intensity: 40, bass: 0, treble: 0, echo: 40, spring: 0, input: 0, wow: 50 },
     plate: { decay: 2, pre: 20, bright: 60, lowcut: 100, width: 100, mix: 25, variant: 0 },
@@ -11279,6 +11281,116 @@ function openPitchPanel(trackIdx, anchorEl) {
     makePlugWindow(panel, t, 'pitch', trackIdx);
 }
 
+// Vocodeur : la voix parle à travers un synthé. En haut, le banc de bandes (la voix à gauche → le synthé à droite, décalé
+// par le formant) et le clavier qui montre la ou les notes jouées ; en bas, le mode (suit ta voix / note fixe), l'accord,
+// des préréglages et les boutons. Réglages : mode, note, chord, bands, formant, speed, air, tone, mix.
+const VOC_CHORDS_UI = [['Seule', [0]], ['Octave', [-12, 0]], ['Quinte', [0, 7]], ['Mineur', [0, 3, 7]], ['Mineur 7', [0, 3, 7, 10]]];
+const VOC_LOOKS = [['Robot rap', { mode: 1, note: 48, chord: 0, bands: 20, formant: 0, speed: 60, air: 40, tone: 10 }],
+    ['Robot chanté', { mode: 0, chord: 0, bands: 24, formant: 0, speed: 55, air: 45, tone: 8 }],
+    ['Chœur', { mode: 0, chord: 4, bands: 20, formant: 1, speed: 45, air: 35, tone: 12 }],
+    ['Voix grave', { mode: 0, chord: 1, bands: 24, formant: -4, speed: 50, air: 30, tone: 6 }],
+    ['Talkbox', { mode: 0, chord: 0, bands: 32, formant: 0, speed: 85, air: 25, tone: 0 }],
+    ['Radio', { mode: 1, note: 52, chord: 0, bands: 10, formant: 2, speed: 70, air: 20, tone: 25 }]];
+const VOC_NOTE_NAMES = ['Do', 'Do♯', 'Ré', 'Ré♯', 'Mi', 'Fa', 'Fa♯', 'Sol', 'Sol♯', 'La', 'La♯', 'Si'];
+const vocNoteName = (n) => VOC_NOTE_NAMES[((Math.round(n) % 12) + 12) % 12] + (Math.floor(Math.round(n) / 12) - 1);
+function openVocoderPanel(trackIdx, anchorEl) {
+    closeTransientPanels();
+    const t = typeof trackIdx === 'number' ? state.project.tracks[trackIdx] : trackIdx;
+    if (!t) return;
+    const already = findPlugWin(t, 'vocoder');
+    if (already) { plugFront(already); return; }
+    t.effectParams = t.effectParams || {};
+    if (!t.effectParams.vocoder) t.effectParams.vocoder = JSON.parse(JSON.stringify(FX_START.vocoder));
+    const P = () => t.effectParams.vocoder;
+    const D = FX_START.vocoder;
+    const g = (k) => P()[k] ?? D[k];
+    const W = 900, H = 300;
+    let undoArmed = false;
+    const arm = () => { if (!undoArmed) { pushUndo(); undoArmed = true; } };
+    const finish = () => { t.effects = t.effects || []; if (!t.effects.includes('vocoder')) t.effects.push('vocoder'); refreshPlaybackSoon(); saveProject(); undoArmed = false; };
+    const step = (fn) => { pushUndo(); fn(); finish(); };
+    const panel = document.createElement('div');
+    panel.className = 'fx-panel lim-panel voc-panel';
+    panel.innerHTML = `
+        <div class="fx-panel-header">
+            <label class="fx-bypass-label fx-power" data-tooltip="Allumer ou éteindre l'effet"><input type="checkbox" class="fx-bypass" ${t.effects?.includes('vocoder') ? 'checked' : ''}><span class="fx-power-btn">⏻</span></label>
+            <span class="fx-title lim-title">Vocodeur <i>— ${esc(t.name || '')}</i></span>
+            <button class="fx-panel-close">×</button>
+        </div>
+        <div class="lim-face"><svg class="lim-svg voc-svg" viewBox="0 0 ${W} ${H}"></svg><div class="lim-fp voc-fp"></div></div>
+        <div class="lim-sb"><span>Chante ou rappe : le synthé prend tes mots · Note fixe = robot sur une seule note</span><span class="lim-spacer"></span><span class="voc-sum">—</span></div>`;
+    document.body.appendChild(panel);
+    const svg = panel.querySelector('.voc-svg'), fp = panel.querySelector('.voc-fp');
+    const knobs = {};
+    const draw = () => {
+        const on = (t.effects || []).includes('vocoder');
+        const n = Math.max(8, Math.min(32, Math.round(g('bands')))), fm = g('formant'), k = Math.pow(2, fm / 12);
+        const fx = (f) => 40 + (W - 80) * Math.log(f / 80) / Math.log(12000 / 80);
+        const r = Math.pow(8000 / 120, 1 / (n - 1));
+        let s = `<defs><linearGradient id="vocg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#F472B6"/><stop offset="1" stop-color="#7C3AED"/></linearGradient></defs>`;
+        // échelle des fréquences
+        [100, 200, 500, 1000, 2000, 5000, 10000].forEach(f => { const x = fx(f); s += `<line x1="${x.toFixed(1)}" y1="20" x2="${x.toFixed(1)}" y2="150" stroke="#ffffff14"/><text x="${x.toFixed(1)}" y="166" class="lim-txt" text-anchor="middle">${f >= 1000 ? f / 1000 + ' k' : f}</text>`; });
+        // bandes : voix (traits fins) → synthé (barres, décalées par le formant) ; une forme de voix « a » pour la hauteur
+        for (let i = 0; i < n; i++) {
+            const f = 120 * Math.pow(r, i), fc = Math.min(f * k, 0.45 * 48000), x0 = fx(f), x1 = fx(fc);
+            const amp = Math.exp(-Math.pow(Math.log(f / 700) / 0.9, 2)) * 0.8 + Math.exp(-Math.pow(Math.log(f / 2600) / 0.6, 2)) * 0.45 + 0.12;
+            const h = 120 * amp, bw = Math.max(4, (W - 80) / (n * 1.6));
+            s += `<line x1="${x0.toFixed(1)}" y1="150" x2="${x0.toFixed(1)}" y2="${(150 - h).toFixed(1)}" stroke="#93C5FD" stroke-width="1.5" opacity=".55"/>`;
+            if (Math.abs(x1 - x0) > 1) s += `<line x1="${x0.toFixed(1)}" y1="${(150 - h).toFixed(1)}" x2="${x1.toFixed(1)}" y2="${(150 - h).toFixed(1)}" stroke="#FCD34D" stroke-width="1" opacity=".5"/>`;
+            s += `<rect x="${(x1 - bw / 2).toFixed(1)}" y="${(150 - h).toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="url(#vocg)" opacity="${on ? 0.85 : 0.35}"/>`;
+        }
+        // clavier : deux octaves autour de la note
+        const mode = g('mode') >= 0.5, base = mode ? Math.round(g('note')) : 48, ch = (VOC_CHORDS_UI[Math.round(g('chord'))] || VOC_CHORDS_UI[0])[1];
+        const lit = new Set(ch.map(c => base + c)), k0 = 36, kw = (W - 80) / 36, ky = 196;
+        const black = [1, 3, 6, 8, 10];
+        let wi = 0; const wx = {};
+        for (let m = k0; m < k0 + 61; m++) if (!black.includes(m % 12)) { wx[m] = 40 + wi * (W - 80) / 36; wi++; if (wi > 35) break; }
+        Object.entries(wx).forEach(([m, x]) => { const on2 = lit.has(+m); s += `<rect x="${x.toFixed(1)}" y="${ky}" width="${(kw - 2).toFixed(1)}" height="58" rx="3" fill="${on2 ? '#F472B6' : '#e9e4f5'}" ${on2 ? 'style="filter:drop-shadow(0 0 6px #F472B6)"' : ''}/>`; });
+        Object.entries(wx).forEach(([m, x]) => { const b = +m + 1; if (black.includes(b % 12) && wx[b + 1] !== undefined) { const on2 = lit.has(b); s += `<rect x="${(x + kw * 0.62).toFixed(1)}" y="${ky}" width="${(kw * 0.7).toFixed(1)}" height="36" rx="2" fill="${on2 ? '#F472B6' : '#1c1630'}"/>`; } });
+        s += `<text x="${W / 2}" y="${ky + 82}" class="sat-big" text-anchor="middle">${mode ? 'Note fixe : ' + ch.map(c => vocNoteName(base + c)).join(' · ') : 'Le synthé suit ta voix' + (ch.length > 1 ? ' (' + VOC_CHORDS_UI[Math.round(g('chord'))][0].toLowerCase() + ')' : '')}</text>`;
+        svg.innerHTML = s;
+        panel.querySelector('.voc-sum').textContent = `${n} bandes · formant ${fm > 0 ? '+' : ''}${String(Math.round(fm * 10) / 10).replace('.', ',')}`;
+        panel.querySelectorAll('.voc-mode').forEach(b => b.classList.toggle('on', (+b.dataset.v >= 0.5) === mode));
+        panel.querySelectorAll('.voc-chord').forEach(b => b.classList.toggle('on', +b.dataset.v === Math.round(g('chord'))));
+        if (knobs.note) knobs.note.el.classList.toggle('voc-off', !mode);
+    };
+    const buildFp = () => {
+        fp.innerHTML = '';
+        const c0 = document.createElement('div'); c0.className = 'lim-col';
+        c0.innerHTML = `<span class="lim-t">Note du synthé</span><div class="ms-stys"><button class="ms-sty voc-mode" data-v="0">Suit ta voix</button><button class="ms-sty voc-mode" data-v="1">Note fixe</button></div>
+            <span class="lim-t">Accord</span><div class="ms-stys">${VOC_CHORDS_UI.map(([nm], i) => `<button class="ms-sty voc-chord" data-v="${i}">${nm}</button>`).join('')}</div>
+            <span class="lim-t">Préréglages</span><div class="ms-stys">${VOC_LOOKS.map(([nm], i) => `<button class="ms-sty voc-look" data-i="${i}">${nm}</button>`).join('')}</div>`;
+        fp.appendChild(c0);
+        c0.querySelectorAll('.voc-mode').forEach(b => b.addEventListener('click', () => step(() => { P().mode = +b.dataset.v; draw(); })));
+        c0.querySelectorAll('.voc-chord').forEach(b => b.addEventListener('click', () => step(() => { P().chord = +b.dataset.v; draw(); })));
+        c0.querySelectorAll('.voc-look').forEach(b => b.addEventListener('click', () => step(() => { Object.assign(P(), VOC_LOOKS[+b.dataset.i][1]); buildFp(); draw(); })));
+        const sep = document.createElement('div'); sep.className = 'lim-sep'; fp.appendChild(sep);
+        const kh = document.createElement('div'); kh.className = 'voc-knobs'; fp.appendChild(kh);
+        const kn = (key, label, min, max, fmt, stepv = 1) => { knobs[key] = proKnob(kh, { key, label, min, max, val: g(key), fmt, onEnd: finish,
+            onChange: (v) => { arm(); P()[key] = Math.round(v / stepv) * stepv; draw(); autoTouch(t, 'fx:vocoder:' + key); } }); };
+        kn('note', 'Note', 24, 84, (v) => vocNoteName(v));
+        kn('bands', 'Bandes', 8, 32, (v) => Math.round(v));
+        kn('formant', 'Formant', -12, 12, (v) => (v > 0 ? '+' : '') + (Math.round(v * 10) / 10).toString().replace('.', ','), 0.1);
+        kn('speed', 'Réactivité', 0, 100, (v) => Math.round(v) + ' %');
+        kn('air', 'Air (les « s »)', 0, 100, (v) => Math.round(v) + ' %');
+        kn('tone', 'Souffle', 0, 100, (v) => Math.round(v) + ' %');
+        kn('mix', 'Mélange', 0, 100, (v) => Math.round(v) + ' %');
+    };
+    panel.querySelector('.fx-panel-close').addEventListener('click', () => panel.remove());
+    panel.querySelector('.fx-bypass').addEventListener('change', (e) => {
+        pushUndo(); t.effects = t.effects || [];
+        setFxOn(t, 'vocoder', e.target.checked);
+        refreshPlaybackSoon(); saveProject(); refreshStrips(); draw();
+    });
+    buildFp(); draw();
+    const rect = (anchorEl && anchorEl.getBoundingClientRect) ? anchorEl.getBoundingClientRect() : { left: 80, right: 80, top: 80 };
+    const pw = Math.min(900, window.innerWidth - 16);
+    let left = rect.right + 8; if (left + pw > window.innerWidth) left = Math.max(8, rect.left - pw - 8);
+    panel.style.left = Math.max(8, Math.min(left, window.innerWidth - pw - 8)) + 'px';
+    panel.style.top = Math.max(8, Math.min(rect.top - 20, window.innerHeight - panel.offsetHeight - 8)) + 'px';
+    makePlugWindow(panel, t, 'vocoder', trackIdx);
+}
+
 // Modulations (Chorus, Flanger, Phaser, Trémolo) : un écran animé commun, esprit pédales d'effet.
 // En haut l'oscillation (sa vitesse et sa profondeur se voient), en dessous ce que l'effet fait au son
 // (voix décalées, peigne qui glisse, creux qui balaient, volume qui pulse). Mêmes réglages qu'avant : le son ne change pas.
@@ -11776,6 +11888,14 @@ const FX_PANEL_DEFS = {
         { key: 'mix',   label: 'Mélange', unit: '%', min: 0, max: 100, def: 100, step: 1 },
         { key: 'width', label: 'Largeur', unit: '%', min: 0, max: 150, def: 100, step: 1 }
     ],
+    vocoder: [
+        { key: 'note',    label: 'Note',       unit: '',    min: 24, max: 84, def: 48, step: 1 },
+        { key: 'formant', label: 'Formant',    unit: ' dt', min: -12, max: 12, def: 0, step: 0.1 },
+        { key: 'speed',   label: 'Réactivité', unit: '%',   min: 0, max: 100, def: 50, step: 1 },
+        { key: 'air',     label: 'Air',        unit: '%',   min: 0, max: 100, def: 40, step: 1 },
+        { key: 'tone',    label: 'Souffle',    unit: '%',   min: 0, max: 100, def: 10, step: 1 },
+        { key: 'mix',     label: 'Mélange',    unit: '%',   min: 0, max: 100, def: 100, step: 1 }
+    ],
     h910: [
         { key: 'pitchL',   label: 'Transposition G', unit: ' dt', min: -12, max: 12, def: 0.09, step: 0.01 },
         { key: 'pitchR',   label: 'Transposition D', unit: ' dt', min: -12, max: 12, def: -0.09, step: 0.01 },
@@ -11947,6 +12067,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
     if (fxName === 'plate') return openPlatePanel(trackIdx, anchorEl);
     if (fxName === 'hall80') return openHall80Panel(trackIdx, anchorEl);
     if (fxName === 'h910') return openH910Panel(trackIdx, anchorEl);
+    if (fxName === 'vocoder') return openVocoderPanel(trackIdx, anchorEl);
     if (fxName === 'dim') return openDimPanel(trackIdx, anchorEl);
     if (fxName === 'prev76') return openPreV76Panel(trackIdx, anchorEl);
     if (fxName === 'eclat') return openEclatPanel(trackIdx, anchorEl);
