@@ -2559,7 +2559,9 @@ window.PulseAudio = (function() {
                 // Style : 0 Transparent (comme avant) · 1 Doux (réduction lissée en deux étages, relâchement ×2,2) · 2 Franc (attaque serrée, relâchement ×0,45)
                 this.sty = p.style === 1 ? 1 : p.style === 2 ? 2 : 0;
                 this.rm = [1, 2.2, 0.45][this.sty];
-                this.att = 1 - Math.exp(-[4, 8, 10][this.sty] / Math.max(1, this.L - (this.tp ? 8 : 0)));
+                // Réduction voulue des L+1 derniers échantillons → minimum, puis moyenne glissante (rampe finie avant la crête) — comme fx.rs
+                this.tq = new Float64Array(this.L + 1).fill(1); this.tqi = 0;
+                this.mq = new Float64Array(this.sty === 2 ? Math.max(1, (this.L - (this.tp ? 8 : 0)) >> 1) : this.L - (this.tp ? 8 : 0)).fill(1); this.mqi = 0;
                 this.rel = 1 - Math.exp(-1 / (Math.max(1, Math.min(2000, p.release ?? 120)) * this.rm / 1000 * sampleRate));
                 this.hist = [new Float64Array(16), new Float64Array(16)];
                 this.live = !!p.live; this.cnt = 0; this.mIn = 0; this.mOut = 0; this.mGr = 1;
@@ -2583,11 +2585,13 @@ window.PulseAudio = (function() {
                     }
                     if (pk > this.mIn) this.mIn = pk;
                     this.env = pk > this.env ? pk : this.env + (pk - this.env) * this.rel;
-                    const target = this.env > this.thr ? this.thr / this.env : 1;
-                    if (this.sty === 1) {   // Doux : deux étages en série, la réduction arrive et repart sans à-coup
-                        this.gain1 += (target - this.gain1) * (target < this.gain1 ? this.att : this.rel);
-                        this.gain += (this.gain1 - this.gain) * (this.gain1 < this.gain ? this.att : this.rel);
-                    } else this.gain += (target - this.gain) * (target < this.gain ? this.att : this.rel);
+                    let target = this.env > this.thr ? this.thr / this.env : 1;
+                    if (this.sty === 1) { this.gain1 = target < this.gain1 ? target : this.gain1 + (target - this.gain1) * this.rel; target = this.gain1; }   // Doux : repart en deux étages
+                    const tq = this.tq, mq = this.mq; tq[this.tqi] = target; if (++this.tqi >= tq.length) this.tqi = 0;
+                    let m = 1; for (let k = 0; k < tq.length; k++) if (tq[k] < m) m = tq[k];
+                    mq[this.mqi] = m; if (++this.mqi >= mq.length) this.mqi = 0;
+                    let sm = 0; for (let k = 0; k < mq.length; k++) sm += mq[k]; sm /= mq.length;
+                    this.gain = sm > this.gain ? this.gain + (sm - this.gain) * this.rel : sm;   // second étage de relâchement (la descente reste la rampe)
                     if (this.gain < this.mGr) this.mGr = this.gain;
                     for (let ch = 0; ch < nc; ch++) {
                         let y = out[ch][i] * this.gain;

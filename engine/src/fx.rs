@@ -2876,8 +2876,13 @@ pub struct Limiter {
     gain1: f64,
     sty: u8,
     rm: f64,
-    att: f64,
     rel: f64,
+    /// Réduction voulue des L+1 derniers échantillons (on en garde le minimum : chaque crête est vue pendant toute l'anticipation),
+    /// puis moyenne glissante sur `mq` (rampe douce, finie AVANT que la crête sorte : plus rien à écrêter)
+    tq: Vec<f64>,
+    tqi: usize,
+    mq: Vec<f64>,
+    mqi: usize,
     /// afficheur : crête d'entrée, crête de sortie, gain (min) depuis la dernière lecture
     m_in: f64,
     m_out: f64,
@@ -2903,7 +2908,9 @@ impl Limiter {
         // Style : 0 Transparent · 1 Doux (deux étages, relâchement ×2,2) · 2 Franc (attaque serrée, relâchement ×0,45) — comme le worklet
         let sty = match p.style.unwrap_or(0.0).round() as i64 { 1 => 1u8, 2 => 2u8, _ => 0u8 };
         let rm = [1.0, 2.2, 0.45][sty as usize];
-        let an = [4.0, 8.0, 10.0][sty as usize];
+        // rampe d'attaque : toute l'anticipation (Transparent, Doux), la moitié (Franc) ; sans les 8 échantillons du pic réel,
+        // qui arrive détecté 8 échantillons en retard
+        let ramp = if sty == 2 { (base / 2).max(1) } else { base };
         Self {
             thr: 10f64.powf(p.ceiling.unwrap_or(ceiling_db) / 20.0).min(1.0),
             g: 10f64.powf(p.gain.unwrap_or(0.0) / 20.0),
@@ -2917,7 +2924,10 @@ impl Limiter {
             gain1: 1.0,
             sty,
             rm,
-            att: 1.0 - (-an / base as f64).exp(),
+            tq: vec![1.0; l + 1],
+            tqi: 0,
+            mq: vec![1.0; ramp],
+            mqi: 0,
             rel: 1.0 - (-1.0 / (p.release.unwrap_or(120.0).clamp(1.0, 2000.0) * rm / 1000.0 * sr)).exp(),
             m_in: 0.0, m_out: 0.0, m_gr: 1.0,
             glide: Glide::new(sr),
@@ -2944,6 +2954,7 @@ impl Limiter {
         n.env = self.env;
         n.gain = self.gain;
         n.gain1 = self.gain1;
+        if n.tq.len() == self.tq.len() && n.mq.len() == self.mq.len() { n.tq = std::mem::take(&mut self.tq); n.tqi = self.tqi; n.mq = std::mem::take(&mut self.mq); n.mqi = self.mqi; }
         n.m_in = self.m_in; n.m_out = self.m_out; n.m_gr = self.m_gr;
         if n.tp == self.tp { n.hist = self.hist; }
         if n.buf[0].len() == self.buf[0].len() { n.buf = std::mem::take(&mut self.buf); n.i = self.i; }
@@ -2972,14 +2983,20 @@ impl Limiter {
         self.buf[1][self.i] = x[1];
         self.i = (self.i + 1) % self.buf[0].len();
         self.env = if pk > self.env { pk } else { self.env + (pk - self.env) * self.rel };
-        let target = if self.env > self.thr { self.thr / self.env } else { 1.0 };
+        let mut target = if self.env > self.thr { self.thr / self.env } else { 1.0 };
         if self.sty == 1 {
-            // Doux : deux étages en série, la réduction arrive et repart sans à-coup
-            self.gain1 += (target - self.gain1) * if target < self.gain1 { self.att } else { self.rel };
-            self.gain += (self.gain1 - self.gain) * if self.gain1 < self.gain { self.att } else { self.rel };
-        } else {
-            self.gain += (target - self.gain) * if target < self.gain { self.att } else { self.rel };
+            // Doux : la réduction repart en deux étages (sans à-coup)
+            self.gain1 = if target < self.gain1 { target } else { self.gain1 + (target - self.gain1) * self.rel };
+            target = self.gain1;
         }
+        self.tq[self.tqi] = target;
+        self.tqi = (self.tqi + 1) % self.tq.len();
+        let m = self.tq.iter().fold(1.0f64, |a, &b| a.min(b));
+        self.mq[self.mqi] = m;
+        self.mqi = (self.mqi + 1) % self.mq.len();
+        let g = self.mq.iter().sum::<f64>() / self.mq.len() as f64;
+        // second étage de relâchement (la descente, elle, reste celle de la rampe : jamais en retard sur une crête)
+        self.gain = if g > self.gain { self.gain + (g - self.gain) * self.rel } else { g };
         x[0] = (d[0] * self.gain).clamp(-self.thr, self.thr);
         x[1] = (d[1] * self.gain).clamp(-self.thr, self.thr);
         if pk > self.m_in { self.m_in = pk; }

@@ -540,11 +540,11 @@ mod tests {
         let l = run("deess", r#"{"thr":-40,"range":12}"#, r#"{"fx:deess:thr":{"points":[{"t":0,"v":1},{"t":1,"v":1},{"t":1.01,"v":0}]}}"#);
         near(rms(&l, 0.2, 0.8), 0.316891); near(rms(&l, 1.2, 1.8), 0.30316);
         let l = run("limit", r#"{"ceiling":-1,"release":120}"#, r#"{"fx:limit:ceiling":{"points":[{"t":0,"v":1},{"t":1,"v":1},{"t":1.01,"v":0.5}]}}"#);
-        near(rms(&l, 0.2, 0.8), 0.448215); near(rms(&l, 1.2, 1.8), 0.266919);
+        near(rms(&l, 0.2, 0.8), 0.448215); near(rms(&l, 1.2, 1.8), 0.266244);
         let l = run("limit", r#"{"ceiling":-6,"release":120}"#, &format!(r#"{{"fx:limit:release":{up}}}"#));
-        near(rms(&l, 0.2, 0.8), 0.282765); near(rms(&l, 1.2, 1.8), 0.265037);
+        near(rms(&l, 0.2, 0.8), 0.271336); near(rms(&l, 1.2, 1.8), 0.265037);
         let l = run("limit", r#"{"ceiling":-3}"#, &format!(r#"{{"fx:limit:gain":{up}}}"#));
-        near(rms(&l, 0.2, 0.8), 0.377228); near(rms(&l, 1.2, 1.8), 0.377038);
+        near(rms(&l, 0.2, 0.8), 0.376225); near(rms(&l, 1.2, 1.8), 0.376079);
         let lim = r#"{"points":[{"t":0,"v":0.3},{"t":2,"v":0.6}]}"#;
         let l = run("mband", r#"{"bands":[{"lo":200,"hi":2000,"thr":-40,"range":-12}]}"#, &format!(r#"{{"fx:mband:b0-lo":{lim},"fx:mband:b0-hi":{up}}}"#));
         near(rms(&l, 0.2, 0.8), 0.266145); near(rms(&l, 1.2, 1.8), 0.29527);
@@ -1385,7 +1385,7 @@ mod tests {
         let base = r#""gain":6,"ceiling":-3,"release":120"#;
         let got = [run(&format!("{{{base}}}")), run(&format!("{{{base},\"style\":1}}")), run(&format!("{{{base},\"style\":2}}"))];
         println!("limiteur styles : {got:.2?}");
-        let want = [[-6.01, -30.79, -25.09, 0.708], [-6.01, -31.12, -30.58, 0.708], [-6.01, -29.54, -23.30, 0.708]];
+        let want = [[-6.01, -30.83, -25.13, 0.708], [-6.01, -31.11, -30.59, 0.708], [-6.01, -29.69, -23.31, 0.708]];
         for (g, w) in got.iter().zip(want.iter()) {
             for k in 0..3 { assert!((g[k] - w[k]).abs() < 0.1, "limiteur style : {g:?} (navigateur {w:?})"); }
             assert!((g[3] - w[3]).abs() < 0.005, "crête : {g:?} (navigateur {w:?})");
