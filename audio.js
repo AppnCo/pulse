@@ -2089,7 +2089,7 @@ window.PulseAudio = (function() {
                 this.rmsC = 1 - Math.exp(-1 / (0.005 * sampleRate));      // détection en valeur moyenne (Opto, Bus) sur 5 ms
                 this.slowC = 1 - Math.exp(-1 / (1.0 * sampleRate));       // Opto : la cellule « se charge » en 1 s
                 this.relSlow = 1 - Math.exp(-1 / (Math.max(0.005, (p.release ?? 50) / 1000) * 4 * sampleRate));
-                this.dcC = 1 - Math.exp(-1 / (0.05 * sampleRate));
+                this.dcC = 1 - Math.exp(-1 / (0.05 * sampleRate)); this.wp = [0, 0];
                 // Propre : maintien des crêtes du détecteur (12 ms) — le gain ne suit plus chaque arche d'une basse
                 // (3e harmonique à 60 Hz : −18 / −36 dB → sous −97 dB). Même calcul que Compressor dans engine/src/fx.rs
                 this.holdN = this.mode === 0 ? Math.round(0.012 * sampleRate) : 0;
@@ -2139,7 +2139,9 @@ window.PulseAudio = (function() {
                         const x = inp[ch][i];
                         let w = x * gr;
                         if (m === 1) { const e = 0.12 * w * w / (1 + w * w); this.dc[ch] += (e - this.dc[ch]) * this.dcC; w += e - this.dc[ch]; }
-                        else if (m >= 2) w -= h3 * w * w * w / (1 + w * w);
+                        else if (m >= 2) { const wp = this.wp[ch], d = w - wp, S = v => 0.5 * (v * v - Math.log1p(v * v)); let r;
+                            if (Math.abs(d) < 1e-5) { const u = 0.5 * (w + wp); r = u * u * u / (1 + u * u); } else r = (S(w) - S(wp)) / d;
+                            this.wp[ch] = w; w -= h3 * r; }
                         out[ch][i] = (1 - this.mix) * x + this.mix * w;
                     }
                 }

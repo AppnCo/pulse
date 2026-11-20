@@ -947,6 +947,18 @@ pub struct Compressor {
     sc: [[f64; 2]; 2],
     /// Réduction maximale (dB)
     range: f64,
+    /// FET / Bus : dernier échantillon avant saturation (anti-repliement par primitive, voir `fet_res`)
+    wp: [f64; 2],
+}
+
+/// Part ajoutée par la saturation FET/Bus (w³/(1+w²)), moyennée entre deux échantillons par sa primitive :
+/// les harmoniques au-delà de 24 kHz ne retombent plus en souffle métallique dans les aigus. Le son direct, lui, n'est pas filtré.
+#[inline]
+fn fet_res(w: f64, wp: f64) -> f64 {
+    let d = w - wp;
+    if d.abs() < 1e-5 { let u = 0.5 * (w + wp); return u * u * u / (1.0 + u * u); }
+    let s = |v: f64| 0.5 * (v * v - (v * v).ln_1p());
+    (s(w) - s(wp)) / d
 }
 
 impl Compressor {
@@ -960,6 +972,7 @@ impl Compressor {
         n.penv = self.penv;
         n.hcnt = self.hcnt;
         n.sc = self.sc;
+        n.wp = self.wp;
         let (mix, makeup) = (n.mix, n.makeup);
         n.mix = self.mix;
         n.makeup = self.makeup;
@@ -1008,6 +1021,7 @@ impl Compressor {
             peak_in: 0.0,
             sc_c: { let f = p.sc_hp.unwrap_or(20.0); if f > 21.0 { 1.0 - (-2.0 * std::f64::consts::PI * f.min(500.0) / sr).exp() } else { 0.0 } },
             sc: [[0.0; 2]; 2],
+            wp: [0.0; 2],
             range: { let r = p.range.unwrap_or(40.0); if r >= 40.0 { 1e9 } else { r.max(0.0) } },
         }
     }
@@ -1060,7 +1074,9 @@ impl Compressor {
                 w += e - self.dc[ch];
             } else if m >= 2 {
                 // FET / Bus : harmonique 3 (impaire), plus forte quand le FET compresse fort
-                w -= h3 * w * w * w / (1.0 + w * w);
+                let r = fet_res(w, self.wp[ch]);
+                self.wp[ch] = w;
+                w -= h3 * r;
             }
             *v = (1.0 - self.mix) * *v + self.mix * w;
         }
