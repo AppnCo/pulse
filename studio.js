@@ -12128,7 +12128,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
             <input class="fx-preset-name" type="text" maxlength="28" placeholder="Nom du préréglage, puis Entrée" hidden>
         </div>
         <div class="fx-face">
-        ${fxName === 'comp' ? `<div class="scr-col"><div class="rv-eq-head"><b>Niveau et réduction</b><span class="cm-read"></span></div><div class="cm-host"><canvas class="cm-hist"></canvas><div class="cm-gr"><i></i><span>RÉD.</span></div></div></div><div class="scr-col"><div class="rv-eq-head"><b class="cm-vtitle">Courbe</b></div><div class="fx-viz"></div></div>` : ''}
+        ${fxName === 'comp' ? `<div class="scr-col"><div class="rv-eq-head"><b>Niveau et réduction</b><span class="cm-read"></span></div><div class="cm-host"><canvas class="cm-hist"></canvas><div class="cm-big"><b>0.0</b><span>dB de réduction</span></div><div class="cm-gr"><i></i><span>RÉD.</span></div></div><svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><linearGradient id="pulseRingGrad" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#7C3AED"/><stop offset=".6" stop-color="#C084FC"/><stop offset="1" stop-color="#F472B6"/></linearGradient></defs></svg></div><div class="scr-col"><div class="rv-eq-head"><b class="cm-vtitle">Courbe</b></div><div class="fx-viz"></div></div>` : ''}
         ${fxName === 'delay' || fxName === 'reverb' ? `<div class="scr-col"><div class="rv-eq-head"><b>${fxName === 'delay' ? 'Répétitions' : 'Queue de la reverb'}</b></div><div class="fx-viz fx-viz-wide"></div></div>` : ''}
         ${fxName === 'reverb' || fxName === 'delay' ? `<div class="rv-eq"><div class="rv-eq-head"><b>${fxName === 'delay' ? 'EQ de l\'écho' : 'EQ de la reverb'}</b><span class="rv-eq-read"></span><button class="rv-eq-btn rv-eq-add" data-tooltip="Pose un point au milieu (ou double-clic sur la courbe)">+ Point</button><button class="rv-eq-btn rv-eq-big" data-tooltip="Agrandir l'EQ sur toute la largeur (re-clic : taille normale)">Agrandir</button><button class="rv-eq-clear rv-eq-wipe" data-tooltip="${fxName === 'delay' ? 'Retirer tous les points de l\'EQ de l\'écho' : 'Retirer tous les points de l\'EQ de la reverb'}">Effacer</button></div><div class="rv-eq-host"></div><div class="rv-eq-detail" hidden></div></div>` : ''}
         <div class="fx-main">
@@ -12281,7 +12281,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
         // Écran qui défile (Compresseur) : niveau d'entrée (gris), ce qui sort (violet), réduction (rose, depuis le haut), seuil en pointillés
         const hist = panel.querySelector('.cm-hist'), HN = 300, hIn = new Float32Array(HN).fill(-90), hGr = new Float32Array(HN);
         let hAny = false, hIdx = 0, hShown = -1, grNow = 0;
-        const grBar = panel.querySelector('.cm-gr i'), readEl = panel.querySelector('.cm-read');
+        const grBar = panel.querySelector('.cm-gr i'), readEl = panel.querySelector('.cm-read'), bigEl = panel.querySelector('.cm-big b');
         const drawHist = () => {
             const playing = (state.playing || state.recording) && t.effects && t.effects.includes('comp');
             const key = fxKeyOf(trackIdx, t);
@@ -12293,6 +12293,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
             } else grNow *= 0.85;
             if (grBar) grBar.style.height = Math.min(100, grNow / 24 * 100).toFixed(1) + '%';
             if (readEl) readEl.textContent = grNow > 0.05 ? `− ${grNow.toFixed(1)} dB` : '';
+            if (bigEl) { bigEl.textContent = (grNow > 0.05 ? '−' : '') + grNow.toFixed(1); bigEl.parentNode.classList.toggle('on', grNow > 0.05); }
             const W = hist.clientWidth, H = hist.clientHeight; if (!W || !H) return;
             const dpr = window.devicePixelRatio || 1;
             if (hist.width !== Math.round(W * dpr)) { hist.width = Math.round(W * dpr); hist.height = Math.round(H * dpr); hShown = -1; }
@@ -12303,7 +12304,9 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
             const sk = skinOf(), ink = sk === 'O' ? '58,44,80' : sk === 'F' ? '58,18,5' : '255,255,255', light = sk === 'O' || sk === 'F';
             const LO = -48, y = (db) => Math.max(0, Math.min(H, (-db / -LO) * H)), x = (i) => i / (HN - 1) * W;
             g.font = '9px -apple-system, sans-serif'; g.fillStyle = `rgba(${ink},.4)`; g.strokeStyle = `rgba(${ink},.1)`; g.lineWidth = 1;
-            for (let d = -12; d > LO; d -= 12) { g.beginPath(); g.moveTo(0, y(d) + .5); g.lineTo(W, y(d) + .5); g.stroke(); g.fillText(d + ' dB', 4, y(d) - 3); }
+            for (let d = -12; d > LO; d -= 12) { g.beginPath(); g.moveTo(0, y(d) + .5); g.lineTo(W, y(d) + .5); g.stroke(); g.fillText(d + ' dB', 6, y(d) - 4); }
+            // repères de temps : une ligne par seconde (~60 images), qui défilent avec le son
+            g.strokeStyle = `rgba(${ink},.045)`; for (let k = (HN - hIdx % 60) % 60; k < HN; k += 60) { g.beginPath(); g.moveTo(x(k) + .5, 0); g.lineTo(x(k) + .5, H); g.stroke(); }
             if (!hAny) { g.fillStyle = `rgba(${ink},.5)`; g.font = '12px -apple-system, sans-serif'; g.textAlign = 'center'; g.fillText('Lance la lecture : le son défile ici', W / 2, H * 0.82); g.textAlign = 'start'; }
             else {
                 const at = (k) => (hIdx + k) % HN;
@@ -12313,7 +12316,8 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
                     g.lineTo(W, H); g.closePath(); g.fillStyle = fill; g.fill();
                     if (stroke) { g.beginPath(); for (let k = 0; k < HN; k++) { const yy = y(val(at(k))); k ? g.lineTo(x(k), yy) : g.moveTo(0, yy); } g.strokeStyle = stroke; g.lineWidth = 1.2; g.stroke(); }
                 };
-                area((i) => hIn[i], `rgba(${ink},${light ? .12 : .09})`, `rgba(${ink},.35)`);
+                const ig = g.createLinearGradient(0, 0, 0, H); ig.addColorStop(0, `rgba(${ink},${light ? .2 : .16})`); ig.addColorStop(1, `rgba(${ink},.02)`);
+                area((i) => hIn[i], ig, `rgba(${ink},.4)`);
                 const og = g.createLinearGradient(0, 0, 0, H); og.addColorStop(0, light ? `rgba(${ink},.55)` : sk === 'U' ? 'rgba(147,197,253,.7)' : 'rgba(192,132,252,.75)'); og.addColorStop(1, light ? `rgba(${ink},.2)` : sk === 'U' ? 'rgba(59,130,246,.25)' : 'rgba(124,58,237,.25)');
                 area((i) => hIn[i] - hGr[i], og, null);
                 // réduction : depuis le haut, 0 à 24 dB sur toute la hauteur

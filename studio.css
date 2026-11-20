@@ -4291,3 +4291,55 @@ body.fx-drag-copy .insp-fx-row.fx-dragging::after { content: '+'; position: abso
 .fx-pro.fx-comp.skin-S .vu-num, .fx-pro.fx-comp.skin-S .vu-title { fill: rgba(255,255,255,.7); }
 .fx-pro.fx-comp.skin-S .vu-tick.hot, .fx-pro.fx-comp.skin-S .vu-arc.hot { stroke: #F472B6; }
 .fx-pro.fx-comp.skin-S .vu-num.hot { fill: #F472B6; }
+
+/* === Compresseur — finition « studio moderne » (20/11 soir) === */
+.fx-panel.fx-pro.fx-comp { border-radius: 18px; box-shadow: 0 30px 80px #000c, 0 0 0 1px rgba(168,85,247,.18), inset 0 1px 0 rgba(255,255,255,.06); }
+.fx-pro.fx-comp .fx-face { grid-template-columns: 1.55fr 1fr; gap: 0 14px; padding: 14px 16px 0; }
+.fx-pro.fx-comp .rv-eq-head { margin-bottom: 8px; }
+.fx-pro.fx-comp .rv-eq-head b { font-size: 10px; letter-spacing: .16em; text-transform: uppercase; font-weight: 700; color: rgba(233,213,255,.55); }
+.fx-pro.fx-comp .cm-host { height: 196px; }
+.fx-pro.fx-comp.skin-S .fx-viz .viz-svg { height: 196px; }
+.fx-pro.fx-comp:not(.skin-S) .fx-viz .viz-svg { height: 196px; }
+.fx-pro.fx-comp .cm-read { display: none; }
+.fx-pro.fx-comp .cm-big { position: absolute; top: 10px; right: 34px; text-align: right; pointer-events: none; opacity: .35; transition: opacity .2s; }
+.fx-pro.fx-comp .cm-big.on { opacity: 1; }
+.fx-pro.fx-comp .cm-big b { display: block; font-size: 30px; line-height: 1; font-weight: 800; letter-spacing: -.02em; font-variant-numeric: tabular-nums; color: #fff; text-shadow: 0 0 18px rgba(244,114,182,.55); }
+.fx-pro.fx-comp .cm-big span { font-size: 9px; letter-spacing: .14em; text-transform: uppercase; color: rgba(255,255,255,.5); }
+.fx-pro.fx-comp.skin-O .cm-big b, .fx-pro.fx-comp.skin-F .cm-big b { color: #1a0a04; text-shadow: none; }
+.fx-pro.fx-comp.skin-O .cm-big span, .fx-pro.fx-comp.skin-F .cm-big span { color: rgba(26,10,4,.6); }
+.fx-pro.fx-comp .cm-gr { width: 10px; border-radius: 6px; }
+.fx-pro.fx-comp .cm-gr span { display: none; }
+
+/* Propre : verre sombre, lumière violette → rose */
+.fx-pro.fx-comp.skin-S .fx-face { background: radial-gradient(120% 90% at 20% -10%, rgba(124,58,237,.28), transparent 55%), radial-gradient(90% 80% at 100% 0%, rgba(244,114,182,.14), transparent 60%), linear-gradient(180deg, #120b1d, #08050d); }
+.fx-pro.fx-comp.skin-S .cm-hist, .fx-pro.fx-comp.skin-S .fx-viz .viz-svg { border-radius: 16px; border: 1px solid rgba(192,132,252,.22);
+  background: linear-gradient(180deg, rgba(255,255,255,.035), rgba(255,255,255,0) 30%), linear-gradient(#0a0612, #110a1c);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.07), inset 0 -30px 60px rgba(124,58,237,.10), 0 10px 30px rgba(0,0,0,.45); }
+.fx-pro.fx-comp.skin-S .fx-viz .viz-note { margin-top: 10px; font-size: 11px; letter-spacing: .02em; }
+.fx-pro.fx-comp.skin-S .fx-main { border-radius: 22px; padding: 14px 18px 10px; margin: 14px 0 16px;
+  background: linear-gradient(180deg, rgba(255,255,255,.055), rgba(255,255,255,.015)); border: 1px solid rgba(255,255,255,.09);
+  box-shadow: 0 18px 50px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.08); }
+.fx-pro.fx-comp.skin-S .fx-knob svg { width: 80px; height: 80px; }
+.fx-pro.fx-comp.skin-S .fx-row.fx-adv .fx-knob svg { width: 64px; height: 64px; }
+.fx-pro.fx-comp.skin-S .fx-row:not(.fx-wide) { width: 96px; }
+.fx-pro.fx-comp.skin-S:not(.simple) .fx-row:not(.fx-wide) { width: 80px; }
+.fx-pro.fx-comp.skin-S .ring-knob path + path { stroke: url(#pulseRingGrad); stroke-width: 5; filter: drop-shadow(0 0 6px rgba(192,132,252,.7)); }
+.fx-pro.fx-comp.skin-S .ring-knob path:first-child { stroke: rgba(255,255,255,.07); stroke-width: 5; }
+.fx-pro.fx-comp.skin-S .ring-knob circle { fill: url(#pulseCapGrad); fill: #160e22; stroke: rgba(255,255,255,.14); filter: drop-shadow(0 4px 8px rgba(0,0,0,.6)); }
+.fx-pro.fx-comp.skin-S .fx-row .fx-label { font-size: 9.5px; letter-spacing: .16em; color: rgba(233,213,255,.6); font-weight: 700; }
+.fx-pro.fx-comp.skin-S .fx-val { font-size: 13px; font-weight: 700; letter-spacing: .01em; font-variant-numeric: tabular-nums; }
+/* sélecteur de caractère : grandes pastilles */
+.fx-pro.fx-comp.skin-S .fx-row[data-key="mode"] .fx-seg { background: rgba(0,0,0,.35); border: 1px solid rgba(255,255,255,.08); border-radius: 999px; padding: 3px; gap: 2px; }
+.fx-pro.fx-comp.skin-S .fx-row[data-key="mode"] .fx-seg button { font-size: 12px; padding: 6px 16px; border-radius: 999px; color: rgba(233,213,255,.6); letter-spacing: .03em; }
+.fx-pro.fx-comp.skin-S .fx-row[data-key="mode"] .fx-seg button.on { color: #fff; background: linear-gradient(135deg, #7C3AED, #C026D3); box-shadow: 0 4px 16px rgba(192,38,211,.45), inset 0 1px 0 rgba(255,255,255,.25); }
+.fx-pro.fx-comp.skin-S .fx-row[data-key="mode"] .fx-label { font-size: 9.5px; letter-spacing: .16em; }
+/* barre d'outils en pastilles */
+.fx-pro.fx-comp .fx-toolbar .fx-seg, .fx-pro.fx-comp .fx-autogain, .fx-pro.fx-comp .fx-view { border-radius: 999px; }
+.fx-pro.fx-comp .fx-toolbar .fx-seg button { border-radius: 999px; padding: 4px 12px; }
+.fx-pro.fx-comp .fx-autogain, .fx-pro.fx-comp .fx-view { padding: 5px 14px; font-size: 11px; letter-spacing: .02em; }
+.fx-pro.fx-comp .fx-presets-bar .fx-preset { border-radius: 10px; }
+.fx-pro.fx-comp .fx-meter i { width: 6px; border-radius: 4px; }
+.fx-pro.fx-comp .cm-big { top: 10px; right: 30px; padding: 7px 12px 6px; border-radius: 12px; background: rgba(8,5,14,.62); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border: 1px solid rgba(255,255,255,.08); box-shadow: 0 6px 18px rgba(0,0,0,.4); }
+.fx-pro.fx-comp .cm-big b { font-size: 26px; }
+.fx-pro.fx-comp.skin-O .cm-big, .fx-pro.fx-comp.skin-F .cm-big { background: rgba(255,255,255,.4); border-color: rgba(0,0,0,.12); }
+.fx-pro.fx-comp.skin-U .cm-big { background: rgba(5,10,40,.6); }
