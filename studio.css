@@ -4243,3 +4243,25 @@ body.fx-drag-copy .insp-fx-row.fx-dragging::after { content: '+'; position: abso
 .voc-panel .voc-fp { position: relative; left: auto; bottom: auto; margin: 0 12px 12px; align-items: center; justify-content: center; flex-wrap: wrap; }
 .voc-panel .voc-fp .ms-stys { justify-content: center; max-width: 250px; }
 .voc-knobs { display: grid; grid-template-columns: repeat(4, auto); gap: 4px 6px; align-items: end; justify-items: center; }
+
+/* Compresseur — façade écran moderne (20/11) : écran qui défile + courbe sombre, boutons plats lumineux */
+.fx-pro.fx-comp .cm-host { position: relative; display: flex; gap: 8px; height: 168px; }
+.fx-pro.fx-comp .cm-hist { flex: 1; min-width: 0; height: 100%; border-radius: 14px; border: 1px solid rgba(168,85,247,.22); box-shadow: inset 0 2px 14px #000a; background: linear-gradient(#0b0712, #120b1f); }
+.fx-pro.fx-comp .cm-gr { width: 16px; border-radius: 8px; background: #0b0712; border: 1px solid rgba(255,255,255,.08); position: relative; overflow: hidden; }
+.fx-pro.fx-comp .cm-gr i { position: absolute; left: 0; right: 0; top: 0; height: 0; background: linear-gradient(#F472B6, #A855F7); box-shadow: 0 0 10px #F472B6; transition: height .05s linear; }
+.fx-pro.fx-comp .cm-gr span { position: absolute; bottom: 4px; left: 0; right: 0; text-align: center; font-size: 7px; letter-spacing: .5px; color: rgba(255,255,255,.4); writing-mode: vertical-rl; transform: rotate(180deg); }
+.fx-pro.fx-comp .cm-read { margin-left: auto; font-variant-numeric: tabular-nums; color: #F472B6; font-weight: 700; font-size: 12px; }
+.fx-pro.fx-comp .fx-viz { padding: 0; }
+.fx-pro.fx-comp .fx-viz .viz-svg { width: 100%; height: 168px; border-radius: 14px; border: 1px solid rgba(168,85,247,.22); box-shadow: inset 0 2px 14px #000a; background: linear-gradient(#0b0712, #120b1f); }
+.fx-pro.fx-comp .fx-viz .viz-box { fill: none; stroke: rgba(255,255,255,.08); }
+.fx-pro.fx-comp .fx-viz .viz-grid { stroke: rgba(255,255,255,.10); stroke-dasharray: 3 3; }
+.fx-pro.fx-comp .fx-viz .viz-fill { fill: rgba(168,85,247,.16); }
+.fx-pro.fx-comp .fx-viz .viz-line { stroke: #C084FC; stroke-width: 2.4; fill: none; filter: drop-shadow(0 0 4px #A855F7aa); }
+.fx-pro.fx-comp .fx-viz .viz-txt { fill: rgba(255,255,255,.35); }
+.fx-pro.fx-comp .fx-viz .viz-pt { fill: #fff; stroke: #A855F7; stroke-width: 2.5; }
+.fx-pro.fx-comp .fx-viz .viz-note { color: rgba(255,255,255,.5); font-size: 11.5px; margin-top: 6px; text-align: center; }
+.fx-pro.fx-comp .fx-viz .viz-note b { color: #F472B6; }
+.fx-pro.fx-comp .fx-in-row { display: none; }
+.fx-pro.fx-comp .fx-panel-body.fx-knobs { width: 760px; }
+.fx-pro.fx-comp .fx-row:not(.fx-wide) { width: 78px; }
+.fx-pro.fx-comp .fx-row .fx-label { font-size: 9.5px; letter-spacing: .6px; white-space: nowrap; overflow: visible; text-overflow: clip; max-width: none; }

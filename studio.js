@@ -12097,12 +12097,13 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
     let advanced = false;
     try { advanced = localStorage.getItem('pulse_fx_adv') === '1'; } catch {}
     const cat = (ADD_FX_CATEGORIES.find(c => c[1].includes(fxName)) || ['Effet'])[0];
-    panel.className = 'fx-panel fx-pro' + (hasAdv && !advanced ? ' simple' : '') + (fxName === 'delay' || fxName === 'reverb' ? ' fx-wideface fx-screen' : '');
+    panel.className = 'fx-panel fx-pro' + (hasAdv && !advanced ? ' simple' : '') + (fxName === 'delay' || fxName === 'reverb' ? ' fx-wideface fx-screen' : '') + (fxName === 'comp' ? ' fx-wideface fx-screen fx-comp' : '');
     panel.style.setProperty('--fx-accent', FX_CAT_COLORS[cat] || 'var(--violet-2)');
     const valOf = (d) => d.virt ? d.virt.get(params) : params[d.key] !== undefined ? params[d.key] : d.def;
     // Façade : seul le compresseur change d'habillage selon son caractère (Propre reste net, numérique)
     const SCREEN = fxName === 'delay' || fxName === 'reverb';   // écran plein + panneau flottant (gamme Digital)
-    const skinOf = () => fxName === 'comp' ? (FX_SKINS[Math.round((t.effectParams.comp || {}).mode || 0)] || 'P') : SCREEN ? 'S' : 'P';
+    // Compresseur : façade « écran » moderne pour les 4 caractères (retour Ridwane 20/11 : l'ancienne faisait amateur)
+    const skinOf = () => fxName === 'comp' || SCREEN ? 'S' : 'P';
     panel.innerHTML = `
         <div class="fx-panel-header">
             <label class="fx-bypass-label fx-power" data-tooltip="Allumer ou éteindre l'effet">
@@ -12126,7 +12127,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
             <input class="fx-preset-name" type="text" maxlength="28" placeholder="Nom du préréglage, puis Entrée" hidden>
         </div>
         <div class="fx-face">
-        ${fxName === 'comp' ? '<div class="fx-viz"></div>' : ''}
+        ${fxName === 'comp' ? `<div class="scr-col"><div class="rv-eq-head"><b>Niveau et réduction</b><span class="cm-read"></span></div><div class="cm-host"><canvas class="cm-hist"></canvas><div class="cm-gr"><i></i><span>RÉD.</span></div></div></div><div class="scr-col"><div class="rv-eq-head"><b>Courbe</b></div><div class="fx-viz"></div></div>` : ''}
         ${fxName === 'delay' || fxName === 'reverb' ? `<div class="scr-col"><div class="rv-eq-head"><b>${fxName === 'delay' ? 'Répétitions' : 'Queue de la reverb'}</b></div><div class="fx-viz fx-viz-wide"></div></div>` : ''}
         ${fxName === 'reverb' || fxName === 'delay' ? `<div class="rv-eq"><div class="rv-eq-head"><b>${fxName === 'delay' ? 'EQ de l\'écho' : 'EQ de la reverb'}</b><span class="rv-eq-read"></span><button class="rv-eq-btn rv-eq-add" data-tooltip="Pose un point au milieu (ou double-clic sur la courbe)">+ Point</button><button class="rv-eq-btn rv-eq-big" data-tooltip="Agrandir l'EQ sur toute la largeur (re-clic : taille normale)">Agrandir</button><button class="rv-eq-clear rv-eq-wipe" data-tooltip="${fxName === 'delay' ? 'Retirer tous les points de l\'EQ de l\'écho' : 'Retirer tous les points de l\'EQ de la reverb'}">Effacer</button></div><div class="rv-eq-host"></div><div class="rv-eq-detail" hidden></div></div>` : ''}
         <div class="fx-main">
@@ -12204,7 +12205,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
     try { zoom = FX_SIZES.includes(+localStorage.getItem('pulse_fx_size')) ? +localStorage.getItem('pulse_fx_size') : 1; } catch {}
     const rect = anchorEl.getBoundingClientRect();
     // taille de base plus grande pour le Compresseur (retour terrain 11/11 : l'ancien 125 % devient son 100 %)
-    const BASE = fxName === 'comp' ? 1.25 : 1;
+    const BASE = 1;
     const fits = (z) => panel.offsetWidth * z * BASE <= window.innerWidth - 16 && panel.offsetHeight * z * BASE <= window.innerHeight - 16;
     // Agrandi avec « zoom » (et non une transformation) : la fenêtre est redessinée à sa vraie taille, donc nette
     // (une transformation faisait agrandir une image à 100 % par la carte graphique du Mac : flou).
@@ -12275,6 +12276,52 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
             try { localStorage.setItem('pulse_comp_view', analog ? 'analog' : 'curve'); } catch {}
             drawViz();
         });
+        // Écran qui défile (Compresseur) : niveau d'entrée (gris), ce qui sort (violet), réduction (rose, depuis le haut), seuil en pointillés
+        const hist = panel.querySelector('.cm-hist'), HN = 300, hIn = new Float32Array(HN).fill(-90), hGr = new Float32Array(HN);
+        let hAny = false, hIdx = 0, hShown = -1, grNow = 0;
+        const grBar = panel.querySelector('.cm-gr i'), readEl = panel.querySelector('.cm-read');
+        const drawHist = () => {
+            const playing = (state.playing || state.recording) && t.effects && t.effects.includes('comp');
+            const key = fxKeyOf(trackIdx, t);
+            const inDb = playing && PulseAudio.getCompInput ? PulseAudio.getCompInput(key) : null;
+            const gr = playing && PulseAudio.getCompReduction ? PulseAudio.getCompReduction(key) : null;
+            if (inDb !== null || gr !== null) {
+                hIn[hIdx] = inDb !== null ? inDb : -90; hGr[hIdx] = Math.max(0, gr || 0); hIdx = (hIdx + 1) % HN; hAny = true;
+                grNow += ((gr || 0) - grNow) * ((gr || 0) > grNow ? 0.5 : 0.15);
+            } else grNow *= 0.85;
+            if (grBar) grBar.style.height = Math.min(100, grNow / 24 * 100).toFixed(1) + '%';
+            if (readEl) readEl.textContent = grNow > 0.05 ? `− ${grNow.toFixed(1)} dB` : '';
+            const W = hist.clientWidth, H = hist.clientHeight; if (!W || !H) return;
+            const dpr = window.devicePixelRatio || 1;
+            if (hist.width !== Math.round(W * dpr)) { hist.width = Math.round(W * dpr); hist.height = Math.round(H * dpr); hShown = -1; }
+            const th = curP().threshold, sig = hIdx + ':' + th + ':' + hAny;
+            if (sig === hShown && !playing) return; hShown = sig;
+            const g = hist.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+            const LO = -48, y = (db) => Math.max(0, Math.min(H, (-db / -LO) * H)), x = (i) => i / (HN - 1) * W;
+            g.font = '9px -apple-system, sans-serif'; g.fillStyle = 'rgba(255,255,255,.28)'; g.strokeStyle = 'rgba(255,255,255,.06)'; g.lineWidth = 1;
+            for (let d = -12; d > LO; d -= 12) { g.beginPath(); g.moveTo(0, y(d) + .5); g.lineTo(W, y(d) + .5); g.stroke(); g.fillText(d + ' dB', 4, y(d) - 3); }
+            if (!hAny) { g.fillStyle = 'rgba(255,255,255,.35)'; g.font = '12px -apple-system, sans-serif'; g.textAlign = 'center'; g.fillText('Lance la lecture : le son défile ici', W / 2, H * 0.82); g.textAlign = 'start'; }
+            else {
+                const at = (k) => (hIdx + k) % HN;
+                const area = (val, fill, stroke) => {
+                    g.beginPath(); g.moveTo(0, H);
+                    for (let k = 0; k < HN; k++) g.lineTo(x(k), y(val(at(k))));
+                    g.lineTo(W, H); g.closePath(); g.fillStyle = fill; g.fill();
+                    if (stroke) { g.beginPath(); for (let k = 0; k < HN; k++) { const yy = y(val(at(k))); k ? g.lineTo(x(k), yy) : g.moveTo(0, yy); } g.strokeStyle = stroke; g.lineWidth = 1.2; g.stroke(); }
+                };
+                area((i) => hIn[i], 'rgba(255,255,255,.09)', 'rgba(255,255,255,.30)');
+                const og = g.createLinearGradient(0, 0, 0, H); og.addColorStop(0, 'rgba(192,132,252,.75)'); og.addColorStop(1, 'rgba(124,58,237,.25)');
+                area((i) => hIn[i] - hGr[i], og, null);
+                // réduction : depuis le haut, 0 à 24 dB sur toute la hauteur
+                g.beginPath(); g.moveTo(0, 0);
+                for (let k = 0; k < HN; k++) g.lineTo(x(k), Math.min(H, hGr[at(k)] / 24 * H));
+                g.lineTo(W, 0); g.closePath(); g.fillStyle = 'rgba(244,114,182,.16)'; g.fill();
+                g.beginPath(); for (let k = 0; k < HN; k++) { const yy = Math.min(H, hGr[at(k)] / 24 * H); k ? g.lineTo(x(k), yy) : g.moveTo(0, yy); }
+                g.strokeStyle = '#F472B6'; g.lineWidth = 2; g.shadowColor = '#F472B6'; g.shadowBlur = 6; g.stroke(); g.shadowBlur = 0;
+            }
+            g.setLineDash([5, 4]); g.strokeStyle = 'rgba(250,204,21,.75)'; g.lineWidth = 1.2; g.beginPath(); g.moveTo(0, y(th) + .5); g.lineTo(W, y(th) + .5); g.stroke(); g.setLineDash([]);
+            g.fillStyle = 'rgba(250,204,21,.9)'; g.textAlign = 'right'; g.fillText('seuil ' + Math.round(th) + ' dB', W - 6, y(th) - 4); g.textAlign = 'start';
+        };
         // Aiguille : réduction estimée d'après le niveau du son après compression (même courbe que le réglage)
         let buf = null, liveIn = null;
         const tick = () => {
@@ -12298,6 +12345,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
                     void red;
                 }
             }
+            if (hist) drawHist();
             if (analog) {
                 let target = 0;
                 // La vraie réduction, envoyée par le compresseur lui-même ; à défaut, une estimation d'après le son qui sort
