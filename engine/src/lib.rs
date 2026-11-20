@@ -1844,8 +1844,8 @@ mod tests {
         let n = SR as usize * 3;
         let saw = Media::from([("a".to_owned(), Source::new(SR, vec![(0..n).map(|i| if i < SR as usize { 0.0 } else { (((i as f64 * 220.0 / SR as f64) % 1.0) * 0.6 - 0.3) as f32 }).collect()]))]);
         let rms = |x: &[f32], a: f64, z: f64| { let (a, z) = ((a * SR as f64).round() as usize, (z * SR as f64).round() as usize); (x[a..z].iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / (z - a) as f64).sqrt() };
-        for (pp, want) in [(r#"{}"#, [0.141002, 0.16833, 0.036353]), (r#"{"mode":1,"note":45,"chord":3,"formant":-3,"air":60}"#, [0.179915, 0.172827, 0.037224]),
-            (r#"{"chord":4,"bands":12,"formant":5,"speed":90,"tone":40,"mix":70}"#, [0.120244, 0.123644, 0.046514])] {
+        for (pp, want) in [(r#"{}"#, [0.136869, 0.16422, 0.035532]), (r#"{"mode":1,"note":45,"chord":3,"formant":-3,"air":60}"#, [0.195779, 0.17344, 0.037984]),
+            (r#"{"chord":4,"bands":12,"formant":5,"speed":90,"tone":40,"mix":70}"#, [0.116057, 0.122901, 0.045434])] {
             let t = format!(r#"{{"volume":100,"clips":[{{"id":"a","start":0,"duration":3,"offset":0}}],"effects":["vocoder"],"effectParams":{{"vocoder":{pp}}}}}"#);
             let p = Project { tracks: vec![serde_json::from_str(&t).unwrap()], ..Default::default() };
             let l = render(&p, &saw, &RenderOptions { only_track: Some(0), ..opts() }).0;

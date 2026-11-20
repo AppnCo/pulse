@@ -2459,7 +2459,7 @@ window.PulseAudio = (function() {
                 this.n = 0; this.cform = NaN;
                 this.cur = this.p.note; this.target = this.p.note; this.glide = 1 - Math.exp(-1 / (0.03 * sr)); this.ph = [0, 0.25, 0.5, 0.75]; this.seed = 22222;
                 this.crel = 1 - Math.exp(-1 / (0.05 * sr)); this.mixK = 1 - Math.exp(-1 / (0.01 * sr));
-                this.lin = 0; this.lout = 0; this.lk = 1 - Math.exp(-1 / (0.4 * sr));   // volume calé sur la voix (voir vocoder.rs)
+                this.lin = 0; this.lout = 0; this.lk = 1 - Math.exp(-1 / (0.4 * sr)); this.lg = 1; this.lgk = 1 - Math.exp(-1 / (0.2 * sr));   // volume calé sur la voix (voir vocoder.rs)
                 this.set();
                 this.mix = Math.max(0, Math.min(100, this.p.mix)) / 100;
             }
@@ -2525,7 +2525,8 @@ window.PulseAudio = (function() {
                         o += c * this.env[b] / (this.cenv[b] + 1e-3);
                     }
                     if (m * m > 1e-8 || this.lin > 1e-7) { this.lin += (m * m - this.lin) * this.lk; this.lout += (o * o - this.lout) * this.lk; }
-                    o *= Math.max(0.25, Math.min(4, Math.sqrt((this.lin + 1e-9) / (this.lout + 1e-9))));
+                    if (this.lin > 1e-7) this.lg += (Math.max(0.25, Math.min(4, Math.sqrt((this.lin + 1e-9) / (this.lout + 1e-9)))) - this.lg) * this.lgk;
+                    o *= this.lg;
                     let h = m;
                     for (let k = 0; k < 2; k++) { const z = this.hz[k], y = hp[0] * h + z[0]; z[0] = hp[1] * h - hp[3] * y + z[1]; z[1] = hp[2] * h - hp[4] * y; h = y; }
                     const wet = o + h * air;

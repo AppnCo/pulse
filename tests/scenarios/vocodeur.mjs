@@ -1,8 +1,8 @@
 // Vocodeur : mêmes chiffres que le moteur Rust (vocodeur_comme_le_navigateur), dans la liste des effets, sa fenêtre s'ouvre,
 // les boutons changent les réglages et le son. Son riche à 220 Hz qui commence à 1 s.
 import { boot } from './qa-lib.mjs';
-const CASES = [[{}, [0.141002, 0.16833, 0.036353]], [{ mode: 1, note: 45, chord: 3, formant: -3, air: 60 }, [0.179915, 0.172827, 0.037224]],
-  [{ chord: 4, bands: 12, formant: 5, speed: 90, tone: 40, mix: 70 }, [0.120244, 0.123644, 0.046514]]];
+const CASES = [[{}, [0.136869, 0.16422, 0.035532]], [{ mode: 1, note: 45, chord: 3, formant: -3, air: 60 }, [0.195779, 0.17344, 0.037984]],
+  [{ chord: 4, bands: 12, formant: 5, speed: 90, tone: 40, mix: 70 }, [0.116057, 0.122901, 0.045434]]];
 export default async (c) => {
   const { ev, check, sleep } = c;
   await boot(c, { id: 'vc1', name: 'VC', bpm: 120, sends: [], tracks: [{ name: 'V', type: 'audio', color: '#A855F7', volume: 100, clips: [] }] }, { mic: false });

@@ -121,6 +121,9 @@ pub struct Vocoder {
     lin: f64,
     lout: f64,
     lk: f64,
+    /// gain appliqué : glisse (0,2 s) vers le rapport mesuré, part de 1 → pas de coup de volume au départ
+    lg: f64,
+    lgk: f64,
 }
 
 impl Vocoder {
@@ -135,7 +138,7 @@ impl Vocoder {
             ds: vec![0.0; win_d], acc: 0.0, w: 0, win_d, tmin_d, tmax_d, dwin: vec![0.0; win_d], diff: vec![0.0; tmax_d + 1],
             cur: p.note, target: p.note, glide: 1.0 - (-1.0 / (0.03 * sr)).exp(), ph: [0.0, 0.25, 0.5, 0.75], seed: 22222,
             att: 0.0, rel: 0.0, crel: 1.0 - (-1.0 / (0.05 * sr)).exp(), mix: 1.0, mix_k: 1.0 - (-1.0 / (0.01 * sr)).exp(),
-            lin: 0.0, lout: 0.0, lk: 1.0 - (-1.0 / (0.4 * sr)).exp(),
+            lin: 0.0, lout: 0.0, lk: 1.0 - (-1.0 / (0.4 * sr)).exp(), lg: 1.0, lgk: 1.0 - (-1.0 / (0.2 * sr)).exp(),
         };
         s.set(p);
         s.mix = s.p.mix.clamp(0.0, 100.0) / 100.0;
@@ -248,7 +251,8 @@ impl Vocoder {
             out += c * self.env[i] / (self.cenv[i] + 1e-3);
         }
         if m * m > 1e-8 || self.lin > 1e-7 { self.lin += (m * m - self.lin) * self.lk; self.lout += (out * out - self.lout) * self.lk; }
-        out *= ((self.lin + 1e-9) / (self.lout + 1e-9)).sqrt().clamp(0.25, 4.0);
+        if self.lin > 1e-7 { self.lg += (((self.lin + 1e-9) / (self.lout + 1e-9)).sqrt().clamp(0.25, 4.0) - self.lg) * self.lgk; }
+        out *= self.lg;
         // 4. air : l'aigu de la voix
         let hp = &self.hp;
         let mut h = m;
