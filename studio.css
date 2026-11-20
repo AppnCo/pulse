@@ -4251,17 +4251,43 @@ body.fx-drag-copy .insp-fx-row.fx-dragging::after { content: '+'; position: abso
 .fx-pro.fx-comp .cm-gr i { position: absolute; left: 0; right: 0; top: 0; height: 0; background: linear-gradient(#F472B6, #A855F7); box-shadow: 0 0 10px #F472B6; transition: height .05s linear; }
 .fx-pro.fx-comp .cm-gr span { position: absolute; bottom: 4px; left: 0; right: 0; text-align: center; font-size: 7px; letter-spacing: .5px; color: rgba(255,255,255,.4); writing-mode: vertical-rl; transform: rotate(180deg); }
 .fx-pro.fx-comp .cm-read { margin-left: auto; font-variant-numeric: tabular-nums; color: #F472B6; font-weight: 700; font-size: 12px; }
-.fx-pro.fx-comp .fx-viz { padding: 0; }
-.fx-pro.fx-comp .fx-viz .viz-svg { width: 100%; height: 168px; border-radius: 14px; border: 1px solid rgba(168,85,247,.22); box-shadow: inset 0 2px 14px #000a; background: linear-gradient(#0b0712, #120b1f); }
-.fx-pro.fx-comp .fx-viz .viz-box { fill: none; stroke: rgba(255,255,255,.08); }
-.fx-pro.fx-comp .fx-viz .viz-grid { stroke: rgba(255,255,255,.10); stroke-dasharray: 3 3; }
-.fx-pro.fx-comp .fx-viz .viz-fill { fill: rgba(168,85,247,.16); }
-.fx-pro.fx-comp .fx-viz .viz-line { stroke: #C084FC; stroke-width: 2.4; fill: none; filter: drop-shadow(0 0 4px #A855F7aa); }
-.fx-pro.fx-comp .fx-viz .viz-txt { fill: rgba(255,255,255,.35); }
-.fx-pro.fx-comp .fx-viz .viz-pt { fill: #fff; stroke: #A855F7; stroke-width: 2.5; }
-.fx-pro.fx-comp .fx-viz .viz-note { color: rgba(255,255,255,.5); font-size: 11.5px; margin-top: 6px; text-align: center; }
-.fx-pro.fx-comp .fx-viz .viz-note b { color: #F472B6; }
+.fx-pro.fx-comp.skin-S .fx-viz { padding: 0; }
+.fx-pro.fx-comp.skin-S .fx-viz .viz-svg { width: 100%; height: 168px; border-radius: 14px; border: 1px solid rgba(168,85,247,.22); box-shadow: inset 0 2px 14px #000a; background: linear-gradient(#0b0712, #120b1f); }
+.fx-pro.fx-comp.skin-S .fx-viz .viz-box { fill: none; stroke: rgba(255,255,255,.08); }
+.fx-pro.fx-comp.skin-S .fx-viz .viz-grid { stroke: rgba(255,255,255,.10); stroke-dasharray: 3 3; }
+.fx-pro.fx-comp.skin-S .fx-viz .viz-fill { fill: rgba(168,85,247,.16); }
+.fx-pro.fx-comp.skin-S .fx-viz .viz-line { stroke: #C084FC; stroke-width: 2.4; fill: none; filter: drop-shadow(0 0 4px #A855F7aa); }
+.fx-pro.fx-comp.skin-S .fx-viz .viz-txt { fill: rgba(255,255,255,.35); }
+.fx-pro.fx-comp.skin-S .fx-viz .viz-pt { fill: #fff; stroke: #A855F7; stroke-width: 2.5; }
+.fx-pro.fx-comp.skin-S .fx-viz .viz-note { color: rgba(255,255,255,.5); font-size: 11.5px; margin-top: 6px; text-align: center; }
+.fx-pro.fx-comp.skin-S .fx-viz .viz-note b { color: #F472B6; }
 .fx-pro.fx-comp .fx-in-row { display: none; }
 .fx-pro.fx-comp .fx-panel-body.fx-knobs { width: 760px; }
 .fx-pro.fx-comp .fx-row:not(.fx-wide) { width: 78px; }
 .fx-pro.fx-comp .fx-row .fx-label { font-size: 9.5px; letter-spacing: .6px; white-space: nowrap; overflow: visible; text-overflow: clip; max-width: none; }
+
+/* Opto / FET / Bus dans le format large : leur habillage, la disposition de l'écran */
+.fx-pro.fx-comp.skin-U .fx-face { grid-template-areas: none; grid-template-rows: auto; }
+.fx-pro.fx-comp.skin-U .fx-viz, .fx-pro.fx-comp.skin-U .fx-knobs, .fx-pro.fx-comp.skin-U .fx-meter { grid-area: auto; }
+.fx-pro.fx-comp.skin-U .fx-meter { height: auto; align-self: stretch; }
+.fx-pro.fx-comp.skin-U .fx-row { order: 0 !important; }
+.fx-pro.fx-comp:not(.skin-S) .fx-viz { padding: 0; }
+.fx-pro.fx-comp:not(.skin-S) .fx-viz .viz-screen { width: 100%; }
+.fx-pro.fx-comp:not(.skin-S) .fx-viz .viz-svg { width: 100%; height: 168px; border-radius: 10px; }
+.fx-pro.fx-comp.skin-O .cm-hist { background: radial-gradient(ellipse at 50% 110%, #fff3d6, #f1dfb3 60%, #d8bf87); box-shadow: inset 0 2px 10px rgba(0,0,0,.35), 0 0 0 4px #3a2c50; border: 0; border-radius: 10px; }
+.fx-pro.fx-comp.skin-F .cm-hist { background: radial-gradient(ellipse at 50% 110%, #ffb38a, #f0703f 60%, #9a3412); box-shadow: inset 0 2px 12px rgba(0,0,0,.55), 0 0 0 4px #000; border: 0; border-radius: 10px; }
+.fx-pro.fx-comp.skin-O .rv-eq-head b { color: #3a2c50; }
+.fx-pro.fx-comp.skin-U .cm-hist { background: radial-gradient(ellipse at 50% 120%, #3b5bd6 0%, #1b2a6b 45%, #0b1236 100%); box-shadow: inset 0 2px 14px rgba(0,0,0,.7), 0 0 0 4px #0c0c0f, 0 0 0 5px #3a3a40; border: 0; border-radius: 10px; }
+.fx-pro.fx-comp.skin-O .fx-face { background: linear-gradient(180deg, #d9d4dc, #bdb6c3); }
+.fx-pro.fx-comp.skin-O .fx-main { background: rgba(255,255,255,.22); border-color: rgba(58,44,80,.25); box-shadow: inset 0 1px 0 rgba(255,255,255,.5); }
+.fx-pro.fx-comp.skin-O .rv-eq-head b, .fx-pro.fx-comp.skin-O .viz-note { color: #3a2c50; }
+.fx-pro.fx-comp.skin-O .cm-gr { background: #3a2c50; }
+.fx-pro.fx-comp.skin-O .fx-row .fx-label, .fx-pro.fx-comp.skin-O .fx-row.fx-wide .fx-label { color: #3a2c50; }
+.fx-pro.fx-comp.skin-O .fx-val { color: #1a1226; }
+.fx-pro.fx-comp.skin-O .cm-read { color: #b91c1c; }
+.fx-pro.fx-comp.skin-S .vu-hand { stroke: #F472B6; stroke-width: 2.4; filter: drop-shadow(0 0 4px #F472B6); }
+.fx-pro.fx-comp.skin-S .vu-pivot { fill: #1a1226; stroke: #e9d5ff; }
+.fx-pro.fx-comp.skin-S .vu-tick, .fx-pro.fx-comp.skin-S .vu-arc { stroke: rgba(255,255,255,.55); }
+.fx-pro.fx-comp.skin-S .vu-num, .fx-pro.fx-comp.skin-S .vu-title { fill: rgba(255,255,255,.7); }
+.fx-pro.fx-comp.skin-S .vu-tick.hot, .fx-pro.fx-comp.skin-S .vu-arc.hot { stroke: #F472B6; }
+.fx-pro.fx-comp.skin-S .vu-num.hot { fill: #F472B6; }

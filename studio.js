@@ -12103,7 +12103,8 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
     // Façade : seul le compresseur change d'habillage selon son caractère (Propre reste net, numérique)
     const SCREEN = fxName === 'delay' || fxName === 'reverb';   // écran plein + panneau flottant (gamme Digital)
     // Compresseur : façade « écran » moderne pour les 4 caractères (retour Ridwane 20/11 : l'ancienne faisait amateur)
-    const skinOf = () => fxName === 'comp' || SCREEN ? 'S' : 'P';
+    // (Propre = moderne ; Opto, FET, Bus gardent leur habillage : bouton strié, bague violette, capuchon de console)
+    const skinOf = () => fxName === 'comp' ? (Math.round((t.effectParams.comp || {}).mode || 0) ? FX_SKINS[Math.round((t.effectParams.comp || {}).mode)] || 'S' : 'S') : SCREEN ? 'S' : 'P';
     panel.innerHTML = `
         <div class="fx-panel-header">
             <label class="fx-bypass-label fx-power" data-tooltip="Allumer ou éteindre l'effet">
@@ -12127,7 +12128,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
             <input class="fx-preset-name" type="text" maxlength="28" placeholder="Nom du préréglage, puis Entrée" hidden>
         </div>
         <div class="fx-face">
-        ${fxName === 'comp' ? `<div class="scr-col"><div class="rv-eq-head"><b>Niveau et réduction</b><span class="cm-read"></span></div><div class="cm-host"><canvas class="cm-hist"></canvas><div class="cm-gr"><i></i><span>RÉD.</span></div></div></div><div class="scr-col"><div class="rv-eq-head"><b>Courbe</b></div><div class="fx-viz"></div></div>` : ''}
+        ${fxName === 'comp' ? `<div class="scr-col"><div class="rv-eq-head"><b>Niveau et réduction</b><span class="cm-read"></span></div><div class="cm-host"><canvas class="cm-hist"></canvas><div class="cm-gr"><i></i><span>RÉD.</span></div></div></div><div class="scr-col"><div class="rv-eq-head"><b class="cm-vtitle">Courbe</b></div><div class="fx-viz"></div></div>` : ''}
         ${fxName === 'delay' || fxName === 'reverb' ? `<div class="scr-col"><div class="rv-eq-head"><b>${fxName === 'delay' ? 'Répétitions' : 'Queue de la reverb'}</b></div><div class="fx-viz fx-viz-wide"></div></div>` : ''}
         ${fxName === 'reverb' || fxName === 'delay' ? `<div class="rv-eq"><div class="rv-eq-head"><b>${fxName === 'delay' ? 'EQ de l\'écho' : 'EQ de la reverb'}</b><span class="rv-eq-read"></span><button class="rv-eq-btn rv-eq-add" data-tooltip="Pose un point au milieu (ou double-clic sur la courbe)">+ Point</button><button class="rv-eq-btn rv-eq-big" data-tooltip="Agrandir l'EQ sur toute la largeur (re-clic : taille normale)">Agrandir</button><button class="rv-eq-clear rv-eq-wipe" data-tooltip="${fxName === 'delay' ? 'Retirer tous les points de l\'EQ de l\'écho' : 'Retirer tous les points de l\'EQ de la reverb'}">Effacer</button></div><div class="rv-eq-host"></div><div class="rv-eq-detail" hidden></div></div>` : ''}
         <div class="fx-main">
@@ -12245,6 +12246,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
             if (sv && sk !== 'P' && sk !== 'S') { const w = document.createElement('div'); w.className = 'viz-screen'; sv.replaceWith(w); w.appendChild(sv); w.insertAdjacentHTML('beforeend', fxGlassSvg(FX_SKIN_SEED[sk])); }
         }
         if (viewBtn) viewBtn.textContent = analog ? 'Courbe' : 'Analogique';
+        const vt = panel.querySelector('.cm-vtitle'); if (vt) vt.textContent = analog ? 'Vumètre de réduction' : 'Courbe';
     };
     const setParam = (key, val) => {
         const sl = panel.querySelector(`.fx-slider[data-key="${key}"]`); if (!sl) return;
@@ -12297,10 +12299,12 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
             const th = curP().threshold, sig = hIdx + ':' + th + ':' + hAny;
             if (sig === hShown && !playing) return; hShown = sig;
             const g = hist.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+            // encre selon l'écran : clair sur l'écran sombre (Propre, Bus), foncé sur l'écran crème (Opto) ou orange (FET)
+            const sk = skinOf(), ink = sk === 'O' ? '58,44,80' : sk === 'F' ? '58,18,5' : '255,255,255', light = sk === 'O' || sk === 'F';
             const LO = -48, y = (db) => Math.max(0, Math.min(H, (-db / -LO) * H)), x = (i) => i / (HN - 1) * W;
-            g.font = '9px -apple-system, sans-serif'; g.fillStyle = 'rgba(255,255,255,.28)'; g.strokeStyle = 'rgba(255,255,255,.06)'; g.lineWidth = 1;
+            g.font = '9px -apple-system, sans-serif'; g.fillStyle = `rgba(${ink},.4)`; g.strokeStyle = `rgba(${ink},.1)`; g.lineWidth = 1;
             for (let d = -12; d > LO; d -= 12) { g.beginPath(); g.moveTo(0, y(d) + .5); g.lineTo(W, y(d) + .5); g.stroke(); g.fillText(d + ' dB', 4, y(d) - 3); }
-            if (!hAny) { g.fillStyle = 'rgba(255,255,255,.35)'; g.font = '12px -apple-system, sans-serif'; g.textAlign = 'center'; g.fillText('Lance la lecture : le son défile ici', W / 2, H * 0.82); g.textAlign = 'start'; }
+            if (!hAny) { g.fillStyle = `rgba(${ink},.5)`; g.font = '12px -apple-system, sans-serif'; g.textAlign = 'center'; g.fillText('Lance la lecture : le son défile ici', W / 2, H * 0.82); g.textAlign = 'start'; }
             else {
                 const at = (k) => (hIdx + k) % HN;
                 const area = (val, fill, stroke) => {
@@ -12309,18 +12313,18 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
                     g.lineTo(W, H); g.closePath(); g.fillStyle = fill; g.fill();
                     if (stroke) { g.beginPath(); for (let k = 0; k < HN; k++) { const yy = y(val(at(k))); k ? g.lineTo(x(k), yy) : g.moveTo(0, yy); } g.strokeStyle = stroke; g.lineWidth = 1.2; g.stroke(); }
                 };
-                area((i) => hIn[i], 'rgba(255,255,255,.09)', 'rgba(255,255,255,.30)');
-                const og = g.createLinearGradient(0, 0, 0, H); og.addColorStop(0, 'rgba(192,132,252,.75)'); og.addColorStop(1, 'rgba(124,58,237,.25)');
+                area((i) => hIn[i], `rgba(${ink},${light ? .12 : .09})`, `rgba(${ink},.35)`);
+                const og = g.createLinearGradient(0, 0, 0, H); og.addColorStop(0, light ? `rgba(${ink},.55)` : sk === 'U' ? 'rgba(147,197,253,.7)' : 'rgba(192,132,252,.75)'); og.addColorStop(1, light ? `rgba(${ink},.2)` : sk === 'U' ? 'rgba(59,130,246,.25)' : 'rgba(124,58,237,.25)');
                 area((i) => hIn[i] - hGr[i], og, null);
                 // réduction : depuis le haut, 0 à 24 dB sur toute la hauteur
                 g.beginPath(); g.moveTo(0, 0);
                 for (let k = 0; k < HN; k++) g.lineTo(x(k), Math.min(H, hGr[at(k)] / 24 * H));
                 g.lineTo(W, 0); g.closePath(); g.fillStyle = 'rgba(244,114,182,.16)'; g.fill();
                 g.beginPath(); for (let k = 0; k < HN; k++) { const yy = Math.min(H, hGr[at(k)] / 24 * H); k ? g.lineTo(x(k), yy) : g.moveTo(0, yy); }
-                g.strokeStyle = '#F472B6'; g.lineWidth = 2; g.shadowColor = '#F472B6'; g.shadowBlur = 6; g.stroke(); g.shadowBlur = 0;
+                const grc = sk === 'O' ? '#b91c1c' : sk === 'F' ? '#fff' : '#F472B6'; g.strokeStyle = grc; g.lineWidth = 2; g.shadowColor = grc; g.shadowBlur = 6; g.stroke(); g.shadowBlur = 0;
             }
-            g.setLineDash([5, 4]); g.strokeStyle = 'rgba(250,204,21,.75)'; g.lineWidth = 1.2; g.beginPath(); g.moveTo(0, y(th) + .5); g.lineTo(W, y(th) + .5); g.stroke(); g.setLineDash([]);
-            g.fillStyle = 'rgba(250,204,21,.9)'; g.textAlign = 'right'; g.fillText('seuil ' + Math.round(th) + ' dB', W - 6, y(th) - 4); g.textAlign = 'start';
+            const thc = light ? `rgba(${ink},.85)` : 'rgba(250,204,21,.8)'; g.setLineDash([5, 4]); g.strokeStyle = thc; g.lineWidth = 1.2; g.beginPath(); g.moveTo(0, y(th) + .5); g.lineTo(W, y(th) + .5); g.stroke(); g.setLineDash([]);
+            g.fillStyle = thc; g.textAlign = 'right'; g.fillText('seuil ' + Math.round(th) + ' dB', W - 6, y(th) - 4); g.textAlign = 'start';
         };
         // Aiguille : réduction estimée d'après le niveau du son après compression (même courbe que le réglage)
         let buf = null, liveIn = null;
