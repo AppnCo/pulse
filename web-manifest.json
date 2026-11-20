@@ -362,7 +362,7 @@
 "assets/sons/vibra/88v110.m4a": "6380807beaaf928632342fe43b4b5c31a40a9daf0a77370ef69136ecac4d9c83",
 "assets/sons/vibra/88v55.m4a": "6b2f1d0329e8254ea2ba37a99547b7bf4b23127ed102fc1d203aef39c281eaf2",
 "assets/sons/vibra/CREDITS.txt": "a2c87ffc84f20898de0a71a4c40bfb695626ce707d99d025de7ddd6d7a0df2fb",
-"audio.js": "4b657fa1afd3ecfe639244bd5ee9ef093acbc9537b55df7ceb69ac266dc413e5",
+"audio.js": "30494575446c3a52adfd21f7c10c4d7e0bf3026fb4e65302d5fa8087a754b872",
 "automation.js": "cae43d89f7a8fe5c50fe070cd4e405eba4de7e2daa9e3abd03203a7d8497c23c",
 "compteur.js": "cf3470a9fdadf52299a1c984654b1db75556986ffea64ec9c9ceda5137ad3ff3",
 "ext.js": "1989b6caf44baa7a625e525fe3d7d6dcf19204c358f3498b97a8ffe3e2a640e5",
@@ -395,5 +395,5 @@
 "vendor/lame.min.js": "15d285e2587b3bdbfd18a68de6ce07cc074f7480a82c3815da2dc1c348ec6df4",
 "warp.js": "209bb3114410db48c37af5bf718a4cd482fcb95cc5bbf7ae6f024e3420bf6f3e"
 },
-"version": "2026-11-20 20:17"
+"version": "2026-11-20 20:26"
 }
