@@ -63,7 +63,10 @@
                 const shift = den !== 0 ? Math.max(-1, Math.min(1, 0.5 * (p - r) / den)) : 0;
                 const hz = sr2 / (tau + shift);
                 // À qualité égale on préfère la période courte (sinon on tombe une octave trop bas)
-                const cost = q + 0.03 * lg(tau / tauMin);
+                // Qualité = fond réel du creux (entre deux échantillons), pas la valeur à l'échantillon entier le plus proche :
+                // une voix aiguë tombe souvent entre deux, et son octave du dessous paraissait alors plus sûre
+                const qv = den > 0 ? Math.max(0, q - 0.125 * (p - r) * (p - r) / den) : q;
+                const cost = qv + 0.03 * lg(tau / tauMin);
                 let slot = nc < K ? nc++ : -1;
                 if (slot < 0) { let w = 0; for (let k = 1; k < K; k++) if (candC[f * K + k] > candC[f * K + w]) w = k; if (candC[f * K + w] > cost) slot = w; }
                 if (slot >= 0) { candF[f * K + slot] = hz; candC[f * K + slot] = cost; }
@@ -444,11 +447,15 @@
             const m = marks[a], Tl = left(a), Tr = right(a);
             const g = r > 1 ? 1 / r : 1;    // plus de recouvrement quand on monte → on compense le volume
             const k0 = first ? 0 : -Tl; first = false;
+            // Placement au dixième d'échantillon : arrondir la position décalait chaque période d'un demi-échantillon
+            // au hasard → voix granuleuse. On lit la voix décalée de la fraction restante (interpolation linéaire).
+            const fr = voiced[a] ? ts - center : 0;
             for (let k = k0; k < Tr; k++) {
                 const si = m + k, di = center + k;
                 if (si < 0 || si >= n || di < 0 || di >= n) continue;
                 const w = k < 0 ? 0.5 + 0.5 * Math.cos(Math.PI * k / Tl) : 0.5 + 0.5 * Math.cos(Math.PI * k / Tr);
-                y[di] += x[si] * w * g;
+                const v = fr > 0 ? x[si] + (si > 0 ? (x[si - 1] - x[si]) * fr : 0) : fr < 0 && si + 1 < n ? x[si] - (x[si + 1] - x[si]) * fr : x[si];
+                y[di] += v * w * g;
             }
             if (voiced[a]) ts += Tr / r;
             else if (stretched) ts += Tr;
