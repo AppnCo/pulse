@@ -104,7 +104,9 @@ fn msat_curve(sty: &str, x: f64, k: f64) -> f64 {
     let x = x.clamp(-4.0, 4.0);
     match sty {
         "lampe" => (k * (x + 0.18 * x * x)).tanh() / (k * 1.18).tanh(),
-        "ampli" => { let a = k * x; (a / (1.0 + a.abs()) * (1.0 + 1.0 / k)).clamp(-1.0, 1.0) }
+        // Ampli : courbe lisse (a/√(1+a²), vaut 1 à x = 1) — l'ancienne a/(1+|a|) écrêtée à ±1 avait deux cassures
+        // qui repliaient en souffle métallique (−46 dB sur un 11 kHz)
+        "ampli" => { let a = k * x; a / (1.0 + a * a).sqrt() * (1.0 + k * k).sqrt() / k }
         "transfo" => ((x * (0.6 + k * 0.08)).clamp(-1.0, 1.0) * PI / 2.0).sin(),
         "repli" => { let mut a = x * (1.0 + k * 0.35); for _ in 0..4 { if a > 1.0 { a = 2.0 - a; } else if a < -1.0 { a = -2.0 - a; } } a }
         "lofi" => { let q = 10.0 - k.min(7.0); ((k * x).tanh() / k.tanh() * q + 0.5).floor() / q }

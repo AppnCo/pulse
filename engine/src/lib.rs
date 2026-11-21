@@ -416,7 +416,7 @@ mod tests {
             for k in 0..3 { assert!((got[k] - want[k]).abs() < want[k] * 0.01 + 2e-5, "{nom} : {got:?} au lieu de {want:?}"); }
         };
         check(r#"{"bands":[{"base":true,"sty":"bande","va":1,"heat":50}]}"#, [0.159609, 0.073363, 0.008539], "base");
-        check(r#"{"bands":[{"base":true,"sty":"lampe","va":1,"heat":40},{"lo":2000,"hi":6000,"sty":"ampli","va":2,"heat":60,"dyn":20,"fb":30,"hi2":3,"mix":70,"out":-2}]}"#, [0.175589, 0.075585, 0.022301], "libre");
+        check(r#"{"bands":[{"base":true,"sty":"lampe","va":1,"heat":40},{"lo":2000,"hi":6000,"sty":"ampli","va":2,"heat":60,"dyn":20,"fb":30,"hi2":3,"mix":70,"out":-2}]}"#, [0.175279, 0.089986, 0.024344], "libre");
         check(r#"{"bands":[{"lo":100,"hi":400,"sty":"repli","va":1,"heat":80,"slope":48}]}"#, [0.211164, 0.06407, 0.011453], "sansbase");
         check(r#"{"bands":[{"base":true,"sty":"lofi","va":1,"heat":30}],"mix":60,"out":-3}"#, [0.131526, 0.048781, 0.019729], "lofi");
         check(r#"{"bands":[{"base":true,"sty":"transfo","va":0,"heat":50},{"lo":2000,"hi":6000,"sty":"bande","va":0,"heat":20,"solo":true,"dyn":-30}]}"#, [0.060186, 0.013669, 0.009164], "solo");
@@ -448,7 +448,7 @@ mod tests {
         check(r#"{"drive":10,"ag":false}"#, &[("fx:sat:drive", 0.1, 0.9)], [0.317024, 0.57782, 0.034482], "chaleur");
         check(r#"{"drive":40,"sty":"lampe"}"#, &[("fx:sat:input", 1.0 / 3.0, 0.75)], [0.16218, 0.038063, 0.006772], "entrée");
         check(r#"{"drive":50,"sty":"bande"}"#, &[("fx:sat:tone", 0.5, 0.1)], [0.159622, 0.24263, 0.006128], "ton");
-        check(r#"{"drive":80,"sty":"ampli"}"#, &[("fx:sat:mix", 1.0, 0.3), ("fx:sat:out", 0.5, 0.25)], [0.150648, 0.097046, 0.005052], "mélange + sortie");
+        check(r#"{"drive":80,"sty":"ampli"}"#, &[("fx:sat:mix", 1.0, 0.3), ("fx:sat:out", 0.5, 0.25)], [0.143905, 0.095866, 0.004918], "mélange + sortie");
     }
 
     /// Saturation : familles, Entrée, Ton, Mélange, Sortie, Volume égal — chiffres de tests/scenarios/sat-familles-parite.mjs
@@ -474,7 +474,7 @@ mod tests {
         check(r#"{"drive":50}"#, [0.263628, 0.113305, 0.013695], "classique");
         check(r#"{"drive":60,"sty":"bande"}"#, [0.153706, 0.075837, 0.008584], "bande");
         check(r#"{"drive":40,"sty":"lampe","input":6,"tone":-50}"#, [0.126333, 0.080044, 0.005526], "lampe");
-        check(r#"{"drive":80,"sty":"ampli","mix":60,"out":-3}"#, [0.123503, 0.054677, 0.006851], "ampli");
+        check(r#"{"drive":80,"sty":"ampli","mix":60,"out":-3}"#, [0.120323, 0.054396, 0.006424], "ampli");
         check(r#"{"drive":30,"sty":"transfo","tone":70}"#, [0.157702, 0.04976, 0.013736], "transfo");
         check(r#"{"drive":50,"sty":"repli","ag":false}"#, [0.455697, 0.165014, 0.0485], "repli");
         check(r#"{"drive":30,"sty":"lofi","input":-6,"mix":50}"#, [0.217626, 0.070791, 0.019526], "lofi");
@@ -549,7 +549,7 @@ mod tests {
         let l = run("mband", r#"{"bands":[{"lo":200,"hi":2000,"thr":-40,"range":-12}]}"#, &format!(r#"{{"fx:mband:b0-lo":{lim},"fx:mband:b0-hi":{up}}}"#));
         near(rms(&l, 0.2, 0.8), 0.266145); near(rms(&l, 1.2, 1.8), 0.29527);
         let l = run("msat", r#"{"bands":[{"base":true,"sty":"bande","va":1,"heat":10},{"lo":200,"hi":2000,"sty":"ampli","va":1,"heat":60,"fb":30}]}"#, &format!(r#"{{"fx:msat:b1-lo":{lim},"fx:msat:b1-hi":{up}}}"#));
-        near(rms(&l, 0.2, 0.8), 0.281544); near(rms(&l, 1.2, 1.8), 0.278487);
+        near(rms(&l, 0.2, 0.8), 0.278187); near(rms(&l, 1.2, 1.8), 0.278487);
         let l = run("gate", r#"{"threshold":-20,"reduction":40,"ratio":2,"release":150}"#, r#"{"fx:gate:ratio":{"points":[{"t":0,"v":0},{"t":1,"v":0},{"t":1.01,"v":0.6}]},"fx:gate:knee":{"points":[{"t":0,"v":0},{"t":1,"v":0},{"t":1.01,"v":1}]},"fx:gate:attack":{"points":[{"t":0,"v":0},{"t":1,"v":0},{"t":1.01,"v":1}]},"fx:gate:hold":{"points":[{"t":0,"v":0},{"t":1,"v":0},{"t":1.01,"v":1}]}}"#);
         near(rms(&l, 0.2, 0.8), 0.316891); near(rms(&l, 1.2, 1.8), 0.317399);
         let l = run("mband", r#"{"bands":[{"lo":20,"hi":400,"thr":-40,"range":-12},{"lo":400,"hi":20000,"thr":-40,"range":-6}]}"#, r#"{"fx:mband:b0-range":{"points":[{"t":0,"v":0.5},{"t":1,"v":0.5},{"t":1.01,"v":0}]},"fx:mband:b1-out":{"points":[{"t":0,"v":0},{"t":1,"v":0},{"t":1.01,"v":1}]},"fx:mband:b0-att":{"points":[{"t":0,"v":0},{"t":1,"v":0},{"t":1.01,"v":1}]},"fx:mband:b1-thr":{"points":[{"t":0,"v":0},{"t":1,"v":0},{"t":1.01,"v":1}]}}"#);

@@ -297,7 +297,7 @@ window.PulseAudio = (function() {
         const msatCurve = (sty, x, k) => {
             x = Math.max(-4, Math.min(4, x));
             if (sty === 'lampe') return Math.tanh(k * (x + 0.18 * x * x)) / Math.tanh(k * 1.18);
-            if (sty === 'ampli') { const a = k * x; return Math.max(-1, Math.min(1, a / (1 + Math.abs(a)) * (1 + 1 / k))); }
+            if (sty === 'ampli') { const a = k * x; return a / Math.sqrt(1 + a * a) * Math.sqrt(1 + k * k) / k; }   // courbe lisse (l'ancienne repliait), comme fx.rs
             if (sty === 'transfo') return Math.sin(Math.max(-1, Math.min(1, x * (0.6 + k * 0.08))) * Math.PI / 2);
             if (sty === 'repli') { let a = x * (1 + k * 0.35); for (let i = 0; i < 4; i++) { if (a > 1) a = 2 - a; else if (a < -1) a = -2 - a; } return a; }
             if (sty === 'lofi') { const q = 10 - Math.min(7, k); return Math.floor(Math.tanh(k * x) / Math.tanh(k) * q + 0.5) / q; }
