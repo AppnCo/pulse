@@ -12128,7 +12128,7 @@ function openEffectPanel(trackIdx, fxName, anchorEl) {
             <input class="fx-preset-name" type="text" maxlength="28" placeholder="Nom du préréglage, puis Entrée" hidden>
         </div>
         <div class="fx-face">
-        ${fxName === 'comp' ? `<div class="scr-col"><div class="rv-eq-head"><b>Niveau et réduction</b><span class="cm-read"></span></div><div class="cm-host"><canvas class="cm-hist"></canvas><div class="cm-big"><b>0.0</b><span>dB de réduction</span></div><div class="cm-gr"><i></i><span>RÉD.</span></div></div><svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><linearGradient id="pulseRingGrad" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#7C3AED"/><stop offset=".6" stop-color="#C084FC"/><stop offset="1" stop-color="#F472B6"/></linearGradient></defs></svg></div><div class="scr-col"><div class="rv-eq-head"><b class="cm-vtitle">Courbe</b></div><div class="fx-viz"></div></div>` : ''}
+        ${fxName === 'comp' ? `<div class="scr-col"><div class="rv-eq-head"><b>Niveau et réduction</b><span class="cm-read"></span></div><div class="cm-host"><canvas class="cm-hist"></canvas><div class="cm-big"><b>0.0</b><span>dB de réduction</span></div><div class="cm-gr"><i></i><span>RÉD.</span></div></div></div><div class="scr-col"><div class="rv-eq-head"><b class="cm-vtitle">Courbe</b></div><div class="fx-viz"></div></div>` : ''}
         ${fxName === 'delay' || fxName === 'reverb' ? `<div class="scr-col"><div class="rv-eq-head"><b>${fxName === 'delay' ? 'Répétitions' : 'Queue de la reverb'}</b></div><div class="fx-viz fx-viz-wide"></div></div>` : ''}
         ${fxName === 'reverb' || fxName === 'delay' ? `<div class="rv-eq"><div class="rv-eq-head"><b>${fxName === 'delay' ? 'EQ de l\'écho' : 'EQ de la reverb'}</b><span class="rv-eq-read"></span><button class="rv-eq-btn rv-eq-add" data-tooltip="Pose un point au milieu (ou double-clic sur la courbe)">+ Point</button><button class="rv-eq-btn rv-eq-big" data-tooltip="Agrandir l'EQ sur toute la largeur (re-clic : taille normale)">Agrandir</button><button class="rv-eq-clear rv-eq-wipe" data-tooltip="${fxName === 'delay' ? 'Retirer tous les points de l\'EQ de l\'écho' : 'Retirer tous les points de l\'EQ de la reverb'}">Effacer</button></div><div class="rv-eq-host"></div><div class="rv-eq-detail" hidden></div></div>` : ''}
         <div class="fx-main">
@@ -17655,6 +17655,9 @@ function checkAutosaveRecovery() {
 }
 
 // --- Init ---
+// Dégradé violet → rose des bagues de boutons (gamme Pulse), une fois pour toute la page (plugins compris)
+{ const addGrad = () => { if (!document.getElementById('pulseRingGrad')) document.body.insertAdjacentHTML('beforeend', '<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><linearGradient id="pulseRingGrad" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#7C3AED"/><stop offset=".6" stop-color="#C084FC"/><stop offset="1" stop-color="#F472B6"/></linearGradient></defs></svg>'); };
+  if (document.body) addGrad(); else document.addEventListener('DOMContentLoaded', addGrad); }
 document.addEventListener('DOMContentLoaded', async () => {
     if (window.PulseI18n) {
         await PulseI18n.load();

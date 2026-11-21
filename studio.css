@@ -4343,3 +4343,11 @@ body.fx-drag-copy .insp-fx-row.fx-dragging::after { content: '+'; position: abso
 .fx-pro.fx-comp .cm-big b { font-size: 26px; }
 .fx-pro.fx-comp.skin-O .cm-big, .fx-pro.fx-comp.skin-F .cm-big { background: rgba(255,255,255,.4); border-color: rgba(0,0,0,.12); }
 .fx-pro.fx-comp.skin-U .cm-big { background: rgba(5,10,40,.6); }
+
+/* === Finition « studio moderne » de toute la gamme Pulse (21/11) : bagues en dégradé violet → rose, capuchons en relief doux, pastilles actives lumineuses === */
+.plug-win .pk svg path[stroke="#A855F7"], .plug-win .ring-knob path[stroke="var(--fx-ring, #A855F7)"] { stroke: url(#pulseRingGrad); stroke-width: 5; filter: drop-shadow(0 0 6px rgba(192,132,252,.65)); }
+.plug-win .pk svg path[stroke="#ffffff12"], .plug-win .ring-knob path[stroke="#ffffff14"] { stroke: rgba(255,255,255,.07); stroke-width: 5; }
+.plug-win .pk svg circle[fill="#120c1b"], .plug-win .ring-knob circle[fill="#120c1b"] { fill: #160e22; stroke: rgba(255,255,255,.14); filter: drop-shadow(0 4px 8px rgba(0,0,0,.6)); }
+.plug-win .pk .pk-l { letter-spacing: .14em; }
+.plug-win .pk .pk-v { font-variant-numeric: tabular-nums; font-weight: 700; }
+.plug-win .fx-seg button.on, .plug-win .seg button.on { background: linear-gradient(135deg, #7C3AED, #C026D3); color: #fff; box-shadow: 0 3px 12px rgba(192,38,211,.4), inset 0 1px 0 rgba(255,255,255,.22); }
