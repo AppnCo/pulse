@@ -1,0 +1,41 @@
+PULSE — LICENCE PROPRIÉTAIRE
+Copyright © 2026 AppnCo. Tous droits réservés.
+
+Le logiciel « Pulse » (application de musique assistée par ordinateur : interface, moteur audio,
+effets, instruments, plugins VST3 / AU / CLAP, sons maison, documentation, graphismes et noms)
+est une œuvre protégée par le Code de la propriété intellectuelle (articles L111-1 et suivants,
+L112-2 13° et L122-6 pour les logiciels). Pulse est publié par AppnCo (appnco.app). L'identité
+du titulaire des droits est établie par un dépôt daté ; tous les droits lui sont réservés.
+
+1. Ce qui est permis
+   Pulse peut être installé et utilisé par une personne à qui AppnCo l'a remis ou en a donné
+   l'accès, pour ses propres créations musicales. Cette utilisation est une simple licence
+   personnelle, non exclusive, non transférable et révocable. Elle ne transfère aucun droit de
+   propriété. Les morceaux, mixes et enregistrements créés avec Pulse appartiennent à leur auteur.
+
+2. Ce qui est interdit sans accord écrit d'AppnCo
+   - copier, reproduire ou redistribuer tout ou partie du logiciel ou de son code ;
+   - le vendre, le louer, le prêter, le sous-licencier ou le mettre à disposition d'autrui ;
+   - le modifier, l'adapter, le traduire ou créer une œuvre dérivée ;
+   - le décompiler ou le désassembler, sauf dans les cas strictement autorisés par
+     l'article L122-6-1 du Code de la propriété intellectuelle ;
+   - retirer ou modifier les mentions de propriété.
+
+3. Composants de tiers
+   Pulse utilise des composants libres (notamment Tauri, nih-plug, clap-wrapper, des banques de
+   sons sous licence CC0). Chacun reste soumis à sa propre licence, qui prime pour ce composant.
+   La présente licence porte sur tout le reste : le code, les sons, les visuels et les noms
+   créés pour Pulse.
+
+4. Garantie
+   Pulse est fourni « en l'état ». AppnCo ne garantit pas l'absence d'erreurs et n'est pas
+   responsable de la perte de données ou de projets. Pensez à sauvegarder votre travail.
+
+5. Fin de la licence
+   Toute violation de ces conditions met fin immédiatement au droit d'utiliser Pulse.
+
+6. Droit applicable
+   Cette licence est soumise au droit français. Tout litige relève des tribunaux compétents
+   du ressort de Versailles.
+
+Contact : AppnCo — appnco.app

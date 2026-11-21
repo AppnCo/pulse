@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 40" width="120" height="40">
+    <defs>
+        <linearGradient id="pulseGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#C084FC"/>
+            <stop offset="100%" stop-color="#7C3AED"/>
+        </linearGradient>
+        <linearGradient id="pulseText" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#F3EEFF"/>
+            <stop offset="100%" stop-color="#C084FC"/>
+        </linearGradient>
+    </defs>
+    <g transform="translate(4, 10)">
+        <circle cx="4"  cy="20" r="4" fill="url(#pulseGrad)"/>
+        <circle cx="14" cy="14" r="4" fill="url(#pulseGrad)"/>
+        <circle cx="24" cy="20" r="4" fill="url(#pulseGrad)"/>
+    </g>
+    <text x="40" y="27" font-family="-apple-system, Inter, system-ui, sans-serif" font-size="22" font-weight="300" letter-spacing="-0.5" fill="url(#pulseText)">Pulse</text>
+</svg>

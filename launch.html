@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><title>Pulse</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+html,body{height:100%;margin:0;background:#0F0A1A;color:#B8A8D9;font:14px -apple-system,system-ui,sans-serif}
+body{display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px}
+.dots{display:flex;gap:6px;align-items:flex-end;height:28px}
+.dots i{display:block;width:8px;border-radius:4px;background:#A855F7;animation:p 1s ease-in-out infinite}
+.dots i:nth-child(1){height:10px}.dots i:nth-child(2){height:18px;animation-delay:.15s}.dots i:nth-child(3){height:28px;animation-delay:.3s}
+@keyframes p{50%{opacity:.35}}
+</style></head><body>
+<div class="dots"><i></i><i></i><i></i></div><div id="m">Pulse démarre…</div>
+<script>
+// Pulse tourne depuis l'ordinateur (pulse://localhost), comme un vrai logiciel : canal rapide avec l'appli,
+// moteur audio natif, sauvegarde rapide. Au lancement : mise à jour depuis le site (seulement ce qui a changé),
+// puis, la toute première fois, transfert des projets gardés par l'ancienne version (page en ligne).
+(async () => {
+  const inv = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
+  const msg = (t) => { document.getElementById('m').textContent = t; };
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  // adresse de Pulse sur l'ordinateur : pulse://localhost (Mac), http://pulse.localhost (Windows)
+  const LOCAL = (/Windows/.test(navigator.userAgent) ? 'http://pulse.localhost/' : 'pulse://localhost/') + 'studio.html';
+  if (!inv) { location.replace('studio.html'); return; }
+  // 1. mise à jour (on n'attend pas plus de 8 s : sinon elle finit en fond et servira au prochain lancement)
+  msg('Pulse démarre… (recherche de mise à jour)');
+  try { await Promise.race([inv('web_update').catch(() => null), sleep(8000)]); } catch {}
+  // 2. premier lancement de cette version : transfert des projets de l'ancienne (page en ligne)
+  let state = 'fait';
+  try { state = await inv('migration_state'); } catch {}
+  if (state !== 'fait') {
+    const MIG = 'https://appnco.app/pulse/migrate.html';
+    let reach = false;
+    try { const ctl = new AbortController(); setTimeout(() => ctl.abort(), 5000); reach = (await fetch(MIG, { cache: 'no-store', signal: ctl.signal })).ok; } catch {}
+    if (reach) { msg('Transfert de tes projets…'); location.replace(MIG); return; }
+    // pas d'Internet : on ouvre quand même, le transfert se fera au prochain lancement connecté
+    location.replace(LOCAL + '#transfert-en-attente'); return;
+  }
+  location.replace(LOCAL);
+})();
+</script></body></html>

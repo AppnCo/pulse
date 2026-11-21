@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><title>Pulse — transfert des projets</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+html,body{height:100%;margin:0;background:#0F0A1A;color:#B8A8D9;font:14px -apple-system,system-ui,sans-serif}
+body{display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px;padding:0 16px;text-align:center}
+.bar{width:min(420px,90vw);height:8px;border-radius:4px;background:#241a38;overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:#A855F7;transition:width .2s}
+#d{font-size:12px;color:#7d6fa0;min-height:1.2em}
+</style></head><body>
+<div id="m">Transfert de tes projets vers la nouvelle version de Pulse…</div>
+<div class="bar"><i id="b"></i></div>
+<div id="d"></div>
+<script src="migrate.js"></script>
+</body></html>

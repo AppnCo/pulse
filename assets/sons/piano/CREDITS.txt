@@ -1,0 +1,3 @@
+Salamander Grand Piano V3 — Alexander Holm — Creative Commons Attribution 3.0 Unported (https://creativecommons.org/licenses/by/3.0/).
+Source : https://github.com/sfzinstruments/SalamanderGrandPiano
+Modifications pour Pulse : 30 notes x 4 frappes (v4, v8, v12, v16), raccourcies (5 à 9 s, fondu de fin), converties en AAC 160 kb/s.
