@@ -3756,3 +3756,35 @@ body.fx-drag-copy .insp-fx-row.fx-dragging::after { content: '+'; position: abso
 .set-row.set-about { justify-content: flex-start; }
 .set-row.set-about > span:last-child { display: block; flex-shrink: 1; white-space: normal; min-width: 0; overflow-wrap: anywhere; font-size: 12px; color: var(--text-2); }
 .set-row.set-about a { color: #C084FC; }
+.track-item { position: relative; }
+.track-item .track-buttons .t-mini.m-del {
+    position: absolute; top: 4px; right: 6px; z-index: 3;
+    flex: none; width: 20px; min-width: 20px; height: 20px; line-height: 18px;
+    background: var(--bg-2, #1a1426); border-color: color-mix(in srgb, var(--text-3) 45%, var(--border));
+}
+.track-item .track-buttons .t-mini.m-del:hover { background: #3a1820; color: #F87171; border-color: rgba(248,113,113,0.5); }
+.fx-panel-header .fx-cp { display: inline-flex; gap: 4px; margin-left: auto; margin-right: 6px; }
+.fx-panel-header .fx-cp button { height: 22px; padding: 0 8px; border-radius: 6px; font: 600 11px/20px inherit; font-family: inherit;
+    background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12); color: var(--text-2); cursor: pointer; }
+.fx-panel-header .fx-cp button:hover:not(:disabled) { background: rgba(168,85,247,0.25); color: #fff; border-color: rgba(168,85,247,0.5); }
+.fx-panel-header .fx-cp button:disabled { opacity: 0.35; cursor: default; }
+.eq-hover.eq-hb { pointer-events: auto; display: grid; grid-template-columns: auto auto auto; gap: 6px; align-items: stretch;
+    padding: 5px 6px; border-radius: 8px; background: rgba(20,14,30,.96); border: 1px solid #3a2c50; box-shadow: 0 6px 18px rgba(0,0,0,.45); }
+.eq-hb .hb-c1, .eq-hb .hb-c3 { display: flex; flex-direction: column; justify-content: space-between; align-items: center; gap: 4px; }
+.eq-hb .hb-c3 > div { display: flex; gap: 2px; }
+.eq-hb .hb-c2 { display: flex; flex-direction: column; align-items: flex-end; font-size: 11px; line-height: 15px; color: #e9e2f5; min-width: 78px; font-variant-numeric: tabular-nums; }
+.eq-hb .hb-c2 b { font-weight: 600; }
+.eq-hb .hb-c2 span { color: #cbbfe0; }
+.eq-hb button { width: 20px; height: 18px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: #a99bc2; cursor: pointer; font-size: 12px; line-height: 18px; display: grid; place-items: center; }
+.eq-hb button svg { width: 12px; height: 12px; }
+.eq-hb button:hover { background: rgba(255,255,255,.08); color: #fff; }
+.eq-hb .hb-on.on { color: #FBBF24; }
+.eq-hb .hb-solo.on { color: #22D3EE; }
+.eq-hb .hb-x:hover { color: #F87171; }
+.eq-hb .hb-ty { color: #a99bc2; display: grid; place-items: center; }
+.eq-hb .hb-ty svg { width: 16px; height: 12px; }
+.eq-hb-menu .ctx-head { padding: 6px 12px 2px; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-3, #8a7fa0); }
+.eq-hb-menu .ctx-sep { height: 1px; margin: 4px 8px; background: rgba(255,255,255,.08); }
+.eq-detail .eq-knobs { display: flex; gap: 6px; align-items: flex-start; }
+.eq-detail .eq-knobs .pk { width: 64px; }
+.eq-detail .eq-knobs .pk svg { width: 44px; height: 44px; }
