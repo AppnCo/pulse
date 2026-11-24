@@ -3879,6 +3879,52 @@ body.fx-drag-copy .insp-fx-row.fx-dragging::after { content: '+'; position: abso
 .cf-panel[data-skin="colle"] { --cf-screen-solid: #1b1f25; }
 .cf-panel[data-skin="grain"] { --cf-screen-solid: #f29a45; }
 .cf-panel[data-skin="velours"] { --cf-screen-solid: #f3e7c6; }
+.cf-panel { --cf-hair: color-mix(in srgb, var(--cf-ink) 14%, transparent); --cf-hair-strong: color-mix(in srgb, var(--cf-ink) 38%, transparent); }
+.cf-face { border-radius: 6px; padding: 18px 18px 14px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.2), inset 0 0 0 1px rgba(0,0,0,.35), inset 0 -2px 0 rgba(0,0,0,.4), 0 14px 34px rgba(0,0,0,.5); }
+.cf-tabs, .cf-io, .cf-grid, .cf-box { border-radius: 4px;
+    box-shadow: inset 0 1px 2px rgba(0,0,0,.45), inset 0 0 0 1px rgba(0,0,0,.22), 0 1px 0 rgba(255,255,255,.08); }
+.cf-lbl { font-size: 9px; font-weight: 600; letter-spacing: .18em; opacity: .92; }
+.cf-cell > .cf-lbl { padding-bottom: 3px; border-bottom: 1px solid var(--cf-hair); min-width: 64px; justify-content: center; }
+.cf-badge b { letter-spacing: .12em; font-weight: 600; }
+.cf-badge small { letter-spacing: .26em; font-size: 9px; }
+.cf-tab { border-radius: 3px; height: 42px; letter-spacing: .04em; position: relative;
+    background: linear-gradient(180deg, rgba(255,255,255,.09), rgba(255,255,255,.03)); box-shadow: inset 0 1px 0 rgba(255,255,255,.1), 0 1px 1px rgba(0,0,0,.35); }
+.cf-tab small { letter-spacing: .08em; text-transform: uppercase; font-size: 8.5px; }
+.cf-tab::before { content: ''; position: absolute; left: 50%; top: 4px; width: 14px; height: 2px; margin-left: -7px; border-radius: 1px; background: rgba(0,0,0,.35); }
+.cf-tab.on { box-shadow: inset 0 1px 0 rgba(255,255,255,.35), inset 0 -1px 0 rgba(0,0,0,.25), 0 0 0 1px rgba(0,0,0,.3), 0 2px 8px color-mix(in srgb, var(--cf-accent) 30%, transparent); }
+.cf-tab.on::before { background: var(--cf-on); opacity: .85; box-shadow: 0 0 6px var(--cf-on); }
+.cf-lcd, .cf-val, .cf-gr { font-family: 'JetBrains Mono', 'SF Mono', Menlo, monospace; letter-spacing: .02em; }
+.cf-lcd { border-radius: 2px; font-weight: 500; box-shadow: inset 0 1px 2px rgba(0,0,0,.7), 0 1px 0 rgba(255,255,255,.08); }
+.cf-val { font-size: 11px; font-weight: 500; }
+.cf-gr { font-weight: 500; }
+.cf-meter { position: relative; padding-left: 14px; gap: 3px; }
+.cf-meter::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 9px;
+    background: repeating-linear-gradient(180deg, var(--cf-hair-strong) 0 1px, transparent 1px 10%), repeating-linear-gradient(180deg, var(--cf-hair) 0 1px, transparent 1px 2.5%);
+    -webkit-mask: linear-gradient(90deg, #000 0 100%); background-size: 9px 100%, 5px 100%; background-repeat: no-repeat; background-position: 0 0, 4px 0; }
+.cf-meter i { border-radius: 1px; box-shadow: inset 0 1px 2px rgba(0,0,0,.6); }
+.cf-meter i::after { border-radius: 0; -webkit-mask: repeating-linear-gradient(0deg, #000 0 3px, transparent 3px 4px); mask: repeating-linear-gradient(0deg, #000 0 3px, transparent 3px 4px); }
+.cf-bezel { border-radius: 5px; padding: 8px; box-shadow: inset 0 2px 8px rgba(0,0,0,.65), inset 0 0 0 1px rgba(0,0,0,.5), 0 1px 0 rgba(255,255,255,.14); }
+.cf-screen { border-radius: 3px; }
+.cf-screen::before { content: ''; position: absolute; inset: 0; pointer-events: none; z-index: 0; opacity: .5;
+    background-image: linear-gradient(color-mix(in srgb, var(--cf-screen-ink) 9%, transparent) 1px, transparent 1px), linear-gradient(90deg, color-mix(in srgb, var(--cf-screen-ink) 9%, transparent) 1px, transparent 1px);
+    background-size: 100% 20%, 10% 100%; }
+.cf-glass { background: linear-gradient(168deg, rgba(255,255,255,.14), rgba(255,255,255,.03) 32%, rgba(255,255,255,0) 33%); }
+.cf-view { border-radius: 3px; } .cf-view button { font-size: 10.5px; letter-spacing: .06em; padding: 3px 12px; }
+.cf-kslot { position: relative; }
+.cf-kslot::before { content: ''; position: absolute; inset: -7px; border-radius: 50%; pointer-events: none;
+    background: conic-gradient(from -135.7deg, var(--cf-hair-strong) 0deg 1.4deg, transparent 1.4deg 27deg, var(--cf-hair-strong) 27deg 28.4deg, transparent 28.4deg 54deg, var(--cf-hair-strong) 54deg 55.4deg, transparent 55.4deg 81deg, var(--cf-hair-strong) 81deg 82.4deg, transparent 82.4deg 108deg, var(--cf-hair-strong) 108deg 109.4deg, transparent 109.4deg 135deg, var(--cf-hair-strong) 135deg 136.4deg, transparent 136.4deg 162deg, var(--cf-hair-strong) 162deg 163.4deg, transparent 163.4deg 189deg, var(--cf-hair-strong) 189deg 190.4deg, transparent 190.4deg 216deg, var(--cf-hair-strong) 216deg 217.4deg, transparent 217.4deg 243deg, var(--cf-hair-strong) 243deg 244.4deg, transparent 244.4deg 270deg, var(--cf-hair-strong) 270deg 271.4deg, transparent 271.4deg 360deg);
+    -webkit-mask: radial-gradient(closest-side, transparent calc(100% - 5px), #000 calc(100% - 5px) 100%, transparent 100%); mask: radial-gradient(closest-side, transparent calc(100% - 5px), #000 calc(100% - 5px) 100%, transparent 100%); }
+.cf-kslot.sm::before { inset: -5px; }
+.cf-knob { box-shadow: var(--k-ring), 0 3px 6px rgba(0,0,0,.55), 0 1px 0 rgba(255,255,255,.06); }
+.cf-panel[data-knob="glow"], .cf-panel:not([data-knob]) { --k-ring: 0 0 0 1.5px color-mix(in srgb, var(--cf-accent) 80%, transparent), 0 0 8px color-mix(in srgb, var(--cf-accent) 28%, transparent); --k-glow: 0 0 3px #f0abfc; }
+.cf-chip { border-radius: 3px; letter-spacing: .04em; box-shadow: inset 0 1px 2px rgba(0,0,0,.35); }
+.cf-chip.on { box-shadow: inset 0 1px 0 rgba(255,255,255,.3), 0 0 0 1px rgba(0,0,0,.25), 0 0 8px color-mix(in srgb, var(--cf-accent) 25%, transparent); }
+.cf-led { width: 6px; height: 6px; border-radius: 50%; box-shadow: inset 0 1px 1px rgba(0,0,0,.6); }
+.cf-led.on { box-shadow: 0 0 6px var(--cf-led), inset 0 -1px 1px rgba(0,0,0,.25); }
+.cf-foot { font-size: 10.5px; letter-spacing: .04em; border-top: 1px solid var(--cf-hair); padding-top: 8px; }
+.cf-screws i { width: 9px; height: 9px; background: radial-gradient(circle at 35% 30%,#f5f5f5,#8a8a8a 60%,#3a3a3a); }
+.cf-screws i::after { content: ''; position: absolute; left: 1.5px; right: 1.5px; top: 4px; height: 1px; background: rgba(0,0,0,.55); transform: rotate(-35deg); }
 .qh-btn { width: 26px; height: 26px; border-radius: 13px; border: 1px solid rgba(255,255,255,.22); background: transparent; color: var(--text-1, #efe8ff);
     font: italic 700 14px Georgia, serif; cursor: pointer; margin-left: 6px; display: inline-grid; place-items: center; flex: none; }
 .qh-btn:hover { border-color: #a855f7; }
@@ -3946,3 +3992,8 @@ body.qh-on .float-tip { display: none !important; }
 .fx-panel .cf-presets { margin-left: auto; max-width: 210px; height: 26px; border-radius: 6px; border: 1px solid rgba(255,255,255,.12); background: #1d1626; color: #ece6f7; font-size: 12px; padding: 0 6px; }
 .fx-panel .cf-presets + .cf-size { margin-left: 8px; }
 .cf-sc-src, .cf-sc-ext { width: 100%; margin-top: 6px; height: 26px; border-radius: 6px; border: 1px solid rgba(255,255,255,.14); background: rgba(0,0,0,.25); color: inherit; font-size: 11.5px; padding: 0 6px; }
+.fx-viz { position: relative; }
+.rv-live-cv { position: absolute; pointer-events: none; opacity: 0; transition: opacity .35s ease; }
+.fx-viz.rv-live .rv-live-cv { opacity: 1; }
+.viz-rev .rv-glow, .viz-rev .rv-dots { transition: opacity .35s ease; }
+.fx-viz.rv-live .viz-rev .rv-glow, .fx-viz.rv-live .viz-rev .rv-dots { opacity: .12; }
