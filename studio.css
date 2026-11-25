@@ -3338,7 +3338,6 @@ body[data-left-tool="fade"] .timeline-tracks .clip { cursor: ew-resize; }
 .insp-fx-row .fx-pow { color: #c4b5fd; }
 .insp-fx-row .fx-pow:hover, .insp-fx-row .fx-swap:hover { background: rgba(255,255,255,.12); color: #fff; }
 .insp-fx-row.is-off { background: color-mix(in srgb, var(--track-color) 8%, var(--bg-1)); color: var(--text-3, #7a6b96); }
-.insp-fx-row.is-off span { text-decoration: line-through; text-decoration-color: rgba(255,255,255,.25); }
 .insp-fx-row.is-off .fx-pow { color: var(--text-3, #7a6b96); }
 .insp-fx-row .insp-del { padding: 0 3px; }
 .insp-fx-row:has(.fx-pow):hover { padding-right: 34px; }
