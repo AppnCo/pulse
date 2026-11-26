@@ -4050,3 +4050,10 @@ body.qh-on .float-tip { display: none !important; }
 .rv-tmenu button:hover { background: rgba(255,255,255,.07); color: #fff; }
 .rv-tmenu button.on { background: #2c1f45; border-color: var(--violet-2, #A855F7); color: #fff; }
 .fx-viz.rv-live .viz-rev .rv-er { opacity: 0; }   
+.ana-narrow .fx-panel-header .fx-title { flex: 1 1 auto; }
+.ana-narrow .fx-panel-header .fx-title, .ana-narrow .fx-panel-header .fx-title * { text-overflow: clip; }
+.ana-narrow .fx-panel-header :is(.fx-cp-copy, .fx-cp-paste) { font-size: 10px; padding: 2px 5px; }
+.ana-narrow .fx-panel-header .fx-help-btn { width: 18px; height: 18px; font-size: 10px; }
+.eq-range .eq-range-l { padding: 0 2px 0 7px; }
+.eq-range:not(.custom) .eq-range-in { display: none; }
+.eq-range.custom .eq-range-more { display: none; }
